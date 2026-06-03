@@ -34,6 +34,22 @@ importers:
         specifier: ^3.2.3
         version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
 
+  packages/codex:
+    dependencies:
+      '@open-managed-agents/adapter-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.3
+        version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
+
   packages/core:
     dependencies:
       nanoid:

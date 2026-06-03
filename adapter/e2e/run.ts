@@ -12,8 +12,8 @@ import { createInterface } from "node:readline";
 import {
   generateEventId,
   generateTimestamp,
-} from "@open-managed-agents/adapter-core";
-import type { SessionEvent } from "@open-managed-agents/adapter-core";
+} from "../packages/core/src/index.js";
+import type { SessionEvent } from "../packages/core/src/index.js";
 
 interface CliStreamEvent {
   type: string;

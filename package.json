@@ -5,6 +5,7 @@
     "test": "pnpm --dir adapter test",
     "typecheck": "pnpm --dir adapter typecheck",
     "e2e": "pnpm --dir adapter e2e",
+    "e2e:codex": "pnpm --dir adapter e2e:codex",
     "e2e:pi": "pnpm --dir adapter e2e:pi"
   }
 }
