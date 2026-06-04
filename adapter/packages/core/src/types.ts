@@ -54,6 +54,7 @@ export interface AdapterInput {
   history: SessionEvent[];
   constraints?: {
     timeoutSeconds?: number;
+    sandbox?: "none" | "read-only" | "workspace-write" | "full-access";
   };
 }
 
