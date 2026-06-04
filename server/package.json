@@ -1,0 +1,17 @@
+{
+  "name": "open-managed-agents-server",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @oma-server/api dev",
+    "dev:full": "pnpm --filter @oma-server/api dev:full",
+    "dev:memory": "pnpm --filter @oma-server/api dev:memory",
+    "test": "pnpm --filter @oma-server/api test",
+    "typecheck": "pnpm --filter @oma-server/api typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "mongodb-memory-server"
+    ]
+  }
+}

@@ -1,0 +1,868 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Open Managed Agents API",
+    "version": "0.1.0",
+    "description": "API for managing AI agents, sessions, and event streams."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local dev server"
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Health check",
+        "tags": ["System"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents": {
+      "post": {
+        "operationId": "createAgent",
+        "summary": "Create agent",
+        "tags": ["Agents"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Agent created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Agent" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listAgents",
+        "summary": "List agents",
+        "tags": ["Agents"],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of agents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Agent" } },
+                    "has_more": { "type": "boolean" },
+                    "next_cursor": { "type": "string" }
+                  },
+                  "required": ["data", "has_more"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}": {
+      "get": {
+        "operationId": "getAgent",
+        "summary": "Get agent",
+        "tags": ["Agents"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Agent" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateAgent",
+        "summary": "Update agent",
+        "tags": ["Agents"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Agent updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Agent" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAgent",
+        "summary": "Delete agent",
+        "tags": ["Agents"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "example": "agent_deleted" },
+                    "id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "operationId": "createSession",
+        "summary": "Create session",
+        "tags": ["Sessions"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "description": "Agent ID to bind this session to"
+                  }
+                },
+                "required": ["agent"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Session" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listSessions",
+        "summary": "List sessions",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["idle", "running", "terminated"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Session" } },
+                    "has_more": { "type": "boolean" },
+                    "next_cursor": { "type": "string" }
+                  },
+                  "required": ["data", "has_more"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "operationId": "getSession",
+        "summary": "Get session",
+        "tags": ["Sessions"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Session" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "terminateSession",
+        "summary": "Terminate session",
+        "tags": ["Sessions"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session terminated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "example": "session_terminated" },
+                    "id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/messages": {
+      "post": {
+        "operationId": "sendMessage",
+        "summary": "Send message and stream response (SSE)",
+        "description": "Sends a user message to the session and returns a Server-Sent Events stream. The stream ends when session.status_idle is received.",
+        "tags": ["Messages"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "oneOf": [
+                      { "type": "string", "minLength": 1 },
+                      {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/ContentBlock" },
+                        "minItems": 1
+                      }
+                    ],
+                    "description": "Message content — plain string or array of content blocks"
+                  }
+                },
+                "required": ["content"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SSE stream of session events",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/events": {
+      "post": {
+        "operationId": "appendEvents",
+        "summary": "Append user events",
+        "description": "Append one or more user events to the session. Supported types: user.message, user.interrupt, user.tool_confirmation, user.custom_tool_result, user.define_outcome.",
+        "tags": ["Events"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/UserEvent" },
+                    "minItems": 1
+                  }
+                },
+                "required": ["events"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Events accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accepted": { "type": "boolean" },
+                    "interrupted": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getEvents",
+        "summary": "Get events (JSON or SSE stream)",
+        "description": "When Accept: text/event-stream, returns a live SSE stream. Otherwise returns paginated JSON. Use replay=1 or Last-Event-ID header to replay historical events before live stream.",
+        "tags": ["Events"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "after_seq",
+            "in": "query",
+            "description": "Return events after this sequence number (JSON mode)",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max events to return (JSON mode)",
+            "schema": { "type": "integer", "default": 50 }
+          },
+          {
+            "name": "replay",
+            "in": "query",
+            "description": "Set to 1 to replay historical events before live stream (SSE mode)",
+            "schema": { "type": "string", "enum": ["1"] }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "description": "Set to 'chunks' to include streaming chunk events (SSE mode)",
+            "schema": { "type": "string", "enum": ["chunks"] }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "Resume from this event ID (SSE mode)",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events (JSON or SSE depending on Accept header)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/StoredEvent" }
+                    },
+                    "has_more": { "type": "boolean" }
+                  },
+                  "required": ["data", "has_more"]
+                }
+              },
+              "text/event-stream": {
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/api-keys": {
+      "get": {
+        "operationId": "listApiKeys",
+        "summary": "List API keys",
+        "tags": ["API Keys"],
+        "responses": {
+          "200": {
+            "description": "List of API keys (secrets are not returned)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/ApiKeyInfo" }
+                    },
+                    "has_more": { "type": "boolean" }
+                  },
+                  "required": ["data", "has_more"]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createApiKey",
+        "summary": "Create API key",
+        "tags": ["API Keys"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" }
+                },
+                "required": ["name"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API key created (raw key only returned once)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "key": { "type": "string", "description": "Full API key — only returned at creation time" },
+                    "prefix": { "type": "string" },
+                    "createdAt": { "type": "string", "format": "date-time" }
+                  },
+                  "required": ["id", "name", "key", "prefix", "createdAt"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/api-keys/{id}": {
+      "delete": {
+        "operationId": "deleteApiKey",
+        "summary": "Delete API key",
+        "tags": ["API Keys"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "example": "api_key_deleted" },
+                    "id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "API key for tenant authentication. Set AUTH_DISABLED=true in dev to bypass."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        },
+        "required": ["error"]
+      },
+      "Runtime": {
+        "type": "string",
+        "enum": ["claude-code", "codex", "pi-agent"]
+      },
+      "ToolConfig": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": ["name", "inputSchema"]
+      },
+      "McpServerConfig": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "format": "uri" },
+          "transport": { "type": "string", "enum": ["sse", "streamable-http"] },
+          "headers": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "required": ["name", "url"]
+      },
+      "ContentBlock": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "const": "text" },
+              "text": { "type": "string" }
+            },
+            "required": ["type", "text"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "const": "image" },
+              "source": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "base64" },
+                  "mediaType": { "type": "string" },
+                  "data": { "type": "string" }
+                },
+                "required": ["type", "mediaType", "data"]
+              }
+            },
+            "required": ["type", "source"]
+          }
+        ]
+      },
+      "CreateAgentInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "model": { "type": "string", "example": "claude-sonnet-4-6-20250514" },
+          "system": { "type": "string", "description": "System prompt" },
+          "runtime": { "$ref": "#/components/schemas/Runtime" },
+          "tools": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ToolConfig" }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/McpServerConfig" }
+          },
+          "skills": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["name", "model", "system", "runtime"]
+      },
+      "UpdateAgentInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "model": { "type": "string" },
+          "system": { "type": "string" },
+          "runtime": { "$ref": "#/components/schemas/Runtime" },
+          "tools": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ToolConfig" }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/McpServerConfig" }
+          },
+          "skills": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "agent_abc123" },
+          "tenantId": { "type": "string" },
+          "name": { "type": "string" },
+          "model": { "type": "string" },
+          "system": { "type": "string" },
+          "runtime": { "$ref": "#/components/schemas/Runtime" },
+          "tools": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ToolConfig" }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/McpServerConfig" }
+          },
+          "skills": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "tenantId", "name", "model", "system", "runtime", "createdAt", "updatedAt"]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "sess_abc123" },
+          "tenantId": { "type": "string" },
+          "agentId": { "type": "string" },
+          "status": { "type": "string", "enum": ["idle", "running", "terminated"] },
+          "agent": { "$ref": "#/components/schemas/Agent" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "terminatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "tenantId", "agentId", "status", "agent", "createdAt", "updatedAt"]
+      },
+      "UserEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["user.message", "user.interrupt", "user.tool_confirmation", "user.custom_tool_result", "user.define_outcome"]
+          },
+          "data": {
+            "type": "object",
+            "description": "Event payload — schema varies by type"
+          }
+        },
+        "required": ["type", "data"]
+      },
+      "StoredEvent": {
+        "type": "object",
+        "properties": {
+          "sessionId": { "type": "string" },
+          "seq": { "type": "integer" },
+          "type": { "type": "string" },
+          "data": {},
+          "ts": { "type": "string", "format": "date-time" },
+          "sessionThreadId": { "type": "string" }
+        },
+        "required": ["sessionId", "seq", "type", "data", "ts", "sessionThreadId"]
+      },
+      "ApiKeyInfo": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "prefix": { "type": "string", "description": "First few characters of the key for identification" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "name", "prefix", "createdAt"]
+      }
+    }
+  }
+}
