@@ -14,6 +14,7 @@ export interface AgentStoreCreateInput {
   tools?: Agent["tools"];
   mcpServers?: Agent["mcpServers"];
   skills?: Agent["skills"];
+  sandbox?: Agent["sandbox"];
 }
 
 export interface AgentStoreUpdateInput {
@@ -24,6 +25,7 @@ export interface AgentStoreUpdateInput {
   tools?: Agent["tools"];
   mcpServers?: Agent["mcpServers"];
   skills?: Agent["skills"];
+  sandbox?: Agent["sandbox"];
 }
 
 export interface AgentStore {

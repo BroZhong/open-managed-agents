@@ -20,7 +20,7 @@ export function agentRoutes(agentStore: AgentStore) {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    const { name, model, system, runtime, tools, mcpServers, skills } = body;
+    const { name, model, system, runtime, tools, mcpServers, skills, sandbox } = body;
 
     if (!name || typeof name !== "string") {
       return c.json({ error: "name is required" }, 400);
@@ -60,6 +60,7 @@ export function agentRoutes(agentStore: AgentStore) {
       tools,
       mcpServers,
       skills,
+      sandbox,
     });
 
     return c.json(agent, 201);
@@ -151,6 +152,7 @@ export function agentRoutes(agentStore: AgentStore) {
     if (body.tools !== undefined) updateInput.tools = body.tools;
     if (body.mcpServers !== undefined) updateInput.mcpServers = body.mcpServers;
     if (body.skills !== undefined) updateInput.skills = body.skills;
+    if (body.sandbox !== undefined) updateInput.sandbox = body.sandbox;
 
     const updated = await agentStore.update(id, updateInput);
     if (!updated) {

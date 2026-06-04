@@ -2,6 +2,9 @@ import { serve } from "@hono/node-server";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
@@ -33,16 +36,23 @@ class DevClaudeCodeAdapter implements Adapter {
     // Generate a deterministic UUID from sessionId for claude's --session-id
     const hash = createHash("md5").update(input.sessionId).digest("hex");
     const sessionUuid = `${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}`;
+
+    // Check if a session file already exists (to determine --session-id vs --resume)
+    const cwd = process.cwd();
+    const projectKey = cwd.replace(/\//g, "-").replace(/^-/, "");
+    const sessionFile = join(homedir(), ".claude", "projects", projectKey, `${sessionUuid}.jsonl`);
+    const sessionExists = existsSync(sessionFile);
+
     const args = [
       "--print",
       "--output-format", "stream-json",
       "--verbose",
       "--permission-mode", "bypassPermissions",
-      ...(isFirstTurn ? ["--session-id", sessionUuid] : ["--resume", sessionUuid]),
+      ...(sessionExists ? ["--resume", sessionUuid] : ["--session-id", sessionUuid]),
       "-p", prompt,
     ];
     if (input.agent.model && input.agent.model !== "default") args.push("--model", input.agent.model);
-    if (isFirstTurn && input.agent.system) args.push("--system-prompt", input.agent.system);
+    if (!sessionExists && input.agent.system) args.push("--system-prompt", input.agent.system);
 
     yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
 
@@ -51,6 +61,9 @@ class DevClaudeCodeAdapter implements Adapter {
       env: process.env,
     });
     child.stdin.end();
+
+    let stderrData = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderrData += chunk.toString(); });
 
     const rl = createInterface({ input: child.stdout });
     let hasError = false;
@@ -89,15 +102,21 @@ class DevClaudeCodeAdapter implements Adapter {
           }
         }
 
-        if (event.type === "user" && event.parent_tool_use_id && event.message?.content) {
-          const resultContent = event.message.content
-            .map((b: any) => typeof b === "string" ? b : b.type === "tool_result" ? (typeof b.content === "string" ? b.content : JSON.stringify(b.content)) : b.text || JSON.stringify(b))
-            .join("");
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "agent.tool_result", toolUseId: event.parent_tool_use_id,
-            content: [{ type: "text", text: resultContent || "(empty)" }], isError: false,
-          } as SessionEvent;
+        if (event.type === "user" && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === "tool_result" && block.tool_use_id) {
+              const text = typeof block.content === "string"
+                ? block.content
+                : Array.isArray(block.content)
+                  ? block.content.map((c: any) => c.text || JSON.stringify(c)).join("")
+                  : JSON.stringify(block.content ?? "");
+              yield {
+                id: generateEventId(), timestamp: generateTimestamp(),
+                type: "agent.tool_result", toolUseId: block.tool_use_id,
+                content: [{ type: "text", text: text || "(empty)" }], isError: !!block.is_error,
+              } as SessionEvent;
+            }
+          }
         }
 
         if (event.type === "result") {
@@ -113,7 +132,7 @@ class DevClaudeCodeAdapter implements Adapter {
 
       await new Promise<void>((resolve, reject) => {
         child.on("close", (code) => {
-          if (code !== 0 && !hasError) reject(new Error(`claude exited with code ${code}`));
+          if (code !== 0 && !hasError) reject(new Error(`claude exited with code ${code}: ${stderrData}`));
           else resolve();
         });
         child.on("error", reject);
@@ -222,9 +241,10 @@ class DevPiAgentAdapter implements Adapter {
       .join("");
 
     const isFirstTurn = input.history.length === 0;
+    const sessionDir = `/tmp/oma-pi-sessions/${input.sessionId}`;
     const args = [
       "--print", "--mode", "json",
-      "--session", input.sessionId,
+      "--session-dir", sessionDir,
       ...(isFirstTurn ? [] : ["--continue"]),
       "-p", prompt,
     ];

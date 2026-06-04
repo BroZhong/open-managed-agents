@@ -22,6 +22,7 @@ export class InMemoryAgentStore implements AgentStore {
       tools: input.tools,
       mcpServers: input.mcpServers,
       skills: input.skills,
+      sandbox: input.sandbox,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -59,6 +60,7 @@ export class InMemoryAgentStore implements AgentStore {
     if (input.tools !== undefined) agent.tools = input.tools;
     if (input.mcpServers !== undefined) agent.mcpServers = input.mcpServers;
     if (input.skills !== undefined) agent.skills = input.skills;
+    if (input.sandbox !== undefined) agent.sandbox = input.sandbox;
     agent.updatedAt = new Date();
     return agent;
   }
