@@ -16,6 +16,9 @@ importers:
       '@oma-server/event-log':
         specifier: workspace:*
         version: link:../event-log
+      '@oma-server/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
       '@oma-server/session-router':
         specifier: workspace:*
         version: link:../session-router

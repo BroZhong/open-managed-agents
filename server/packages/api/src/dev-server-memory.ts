@@ -321,6 +321,156 @@ class DevMockAdapter implements Adapter {
   }
 }
 
+// ─── OpenSandbox Client ─────────────────────────────────────────────────────
+
+import type { SandboxClient, SandboxRef, CreateOpts } from "@oma-server/sandbox";
+import { SandboxOrchestratorImpl } from "@oma-server/sandbox";
+
+const OPENSANDBOX_URL = process.env.OPENSANDBOX_URL || "http://localhost:8080";
+
+class OpenSandboxClient implements SandboxClient {
+  private readonly baseUrl: string;
+  private readonly execdPorts = new Map<string, number>(); // sandboxId → execd host port
+
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl;
+  }
+
+  async create(opts: CreateOpts): Promise<SandboxRef> {
+    console.log("[sandbox] Creating sandbox with image:", opts.image || "node:22-slim");
+    const res = await fetch(`${this.baseUrl}/sandboxes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: { uri: opts.image || "node:22-slim" },
+        timeout: opts.timeoutSeconds || 3600,
+        entrypoint: ["tail", "-f", "/dev/null"],
+        resourceLimits: { cpus: "1", memoryMB: "512" },
+        env: opts.env,
+      }),
+    });
+    if (!res.ok) throw new Error(`Failed to create sandbox: ${res.status} ${await res.text()}`);
+    const data = await res.json() as any;
+    console.log("[sandbox] Created:", data.id, "status:", data.status?.state);
+
+    // Wait for sandbox to be ready and get execd port
+    await this.waitForReady(data.id);
+    await this.resolveExecdPort(data.id);
+
+    return { sandboxId: data.id, status: "running" };
+  }
+
+  async pause(sandboxId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/sandboxes/${sandboxId}/pause`, { method: "POST" });
+    if (!res.ok) throw new Error(`Failed to pause sandbox: ${res.status} ${await res.text()}`);
+  }
+
+  async resume(sandboxId: string): Promise<SandboxRef> {
+    const res = await fetch(`${this.baseUrl}/sandboxes/${sandboxId}/resume`, { method: "POST" });
+    if (!res.ok) throw new Error(`Failed to resume sandbox: ${res.status} ${await res.text()}`);
+    await this.resolveExecdPort(sandboxId);
+    return { sandboxId, status: "running" };
+  }
+
+  async kill(sandboxId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/sandboxes/${sandboxId}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) throw new Error(`Failed to kill sandbox: ${res.status}`);
+    this.execdPorts.delete(sandboxId);
+  }
+
+  private async runCommand(sandboxId: string, cmd: string, timeoutSec = 30): Promise<{ stdout: string; exitCode: number }> {
+    const port = this.execdPorts.get(sandboxId);
+    if (!port) throw new Error(`No execd port for sandbox ${sandboxId}`);
+
+    const res = await fetch(`http://127.0.0.1:${port}/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd, timeout: timeoutSec }),
+    });
+    if (!res.ok) throw new Error(`Failed to exec command: ${res.status}`);
+
+    // Response is NDJSON stream
+    const text = await res.text();
+    const lines = text.split("\n").filter(l => l.trim());
+    let stdout = "";
+    let exitCode = 0;
+
+    for (const line of lines) {
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "stdout") stdout += event.text + "\n";
+        if (event.type === "stderr" && event.text) stdout += event.text + "\n";
+        if (event.type === "execution_complete") exitCode = event.exit_code ?? 0;
+      } catch {}
+    }
+
+    return { stdout, exitCode };
+  }
+
+  async writeFile(sandboxId: string, path: string, content: string): Promise<void> {
+    const b64 = Buffer.from(content).toString("base64");
+    const cmd = `echo '${b64}' | base64 -d > ${path}`;
+    const { exitCode } = await this.runCommand(sandboxId, cmd);
+    if (exitCode !== 0) throw new Error(`writeFile failed with exit code ${exitCode}`);
+  }
+
+  async *exec(sandboxId: string, command: string[]): AsyncIterable<string> {
+    const cmd = command.join(" ");
+    console.log(`[sandbox] exec: ${cmd}`);
+    const { stdout, exitCode } = await this.runCommand(sandboxId, cmd, 300);
+    console.log(`[sandbox] exec done: exitCode=${exitCode}, stdout=${stdout.length} bytes`);
+    if (stdout) yield stdout;
+    if (exitCode !== 0) throw new Error(`Command exited with code ${exitCode}`);
+  }
+
+  private async waitForReady(sandboxId: string, timeoutMs = 30000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await fetch(`${this.baseUrl}/sandboxes/${sandboxId}`);
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (data.status?.state === "Running") return;
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    throw new Error(`Sandbox ${sandboxId} did not become ready in ${timeoutMs}ms`);
+  }
+
+  private async resolveExecdPort(sandboxId: string): Promise<void> {
+    // Retry a few times since execd might not be ready immediately
+    for (let i = 0; i < 10; i++) {
+      try {
+        const res = await fetch(`${this.baseUrl}/sandboxes/${sandboxId}/endpoints/44772`);
+        if (res.ok) {
+          const data = await res.json() as any;
+          const port = parseInt(data.endpoint.split(":")[1], 10);
+          this.execdPorts.set(sandboxId, port);
+          console.log(`[sandbox] execd for ${sandboxId} at port ${port}`);
+          // Wait for execd to be healthy
+          await this.waitForExecd(port);
+          return;
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    throw new Error(`Failed to resolve execd port for sandbox ${sandboxId}`);
+  }
+
+  private async waitForExecd(port: number): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/ping`, { signal: AbortSignal.timeout(2000) });
+        if (res.ok) {
+          console.log(`[sandbox] execd health OK on port ${port}`);
+          return;
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, 500));
+    }
+    throw new Error(`execd on port ${port} not healthy after 10s`);
+  }
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 function resolveAdapter(runtime: string): Adapter {
@@ -339,12 +489,26 @@ async function main() {
   // Create a dev seed key so auth can be tested
   const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
 
+  // Initialize sandbox orchestration (connects to local OpenSandbox if available)
+  let sandboxOrchestrator: SandboxOrchestratorImpl | undefined;
+  try {
+    const healthRes = await fetch(`${OPENSANDBOX_URL}/health`);
+    if (healthRes.ok) {
+      const client = new OpenSandboxClient(OPENSANDBOX_URL);
+      sandboxOrchestrator = new SandboxOrchestratorImpl(client);
+      console.log(`Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL})`);
+    }
+  } catch {
+    console.log("OpenSandbox not available — sandbox orchestration disabled");
+  }
+
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
+    sandboxOrchestrator,
   });
 
   const app = createApp({
