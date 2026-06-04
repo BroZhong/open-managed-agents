@@ -2,9 +2,14 @@
   "name": "open-managed-agents",
   "private": true,
   "scripts": {
+    "dev": "pnpm dev:server & pnpm dev:web",
+    "dev:server": "pnpm --dir server dev:memory",
+    "dev:web": "pnpm --dir web dev",
+    "dev:full": "pnpm --dir server dev:full",
     "test": "pnpm --dir adapter test",
     "typecheck": "pnpm --dir adapter typecheck",
     "e2e": "pnpm --dir adapter e2e",
+    "e2e:codex": "pnpm --dir adapter e2e:codex",
     "e2e:pi": "pnpm --dir adapter e2e:pi"
   }
 }

@@ -1,0 +1,30 @@
+{
+  "name": "@oma-server/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:full": "tsx watch src/dev-server.ts",
+    "dev:memory": "tsx watch src/dev-server-memory.ts",
+    "start": "node --import tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@hono/node-server": "^1.13.0",
+    "mongodb": "^6.12.0",
+    "@oma-server/store": "workspace:*",
+    "@oma-server/store-memory": "workspace:*",
+    "@oma-server/event-log": "workspace:*",
+    "@oma-server/session-router": "workspace:*",
+    "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

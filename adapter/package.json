@@ -2,9 +2,10 @@
   "name": "open-managed-agents-adapter",
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit --project packages/core/tsconfig.json && tsc --noEmit --project packages/mock/tsconfig.json && tsc --noEmit --project packages/claude-code/tsconfig.json",
+    "typecheck": "tsc --noEmit --project packages/core/tsconfig.json && tsc --noEmit --project packages/mock/tsconfig.json && tsc --noEmit --project packages/claude-code/tsconfig.json && tsc --noEmit --project packages/codex/tsconfig.json && tsc --noEmit --project packages/pi-agent/tsconfig.json",
     "test": "vitest run --workspace vitest.workspace.ts",
     "e2e": "tsx e2e/run.ts",
+    "e2e:codex": "tsx e2e/run-codex.ts",
     "e2e:pi": "tsx e2e/run-pi.ts"
   },
   "devDependencies": {

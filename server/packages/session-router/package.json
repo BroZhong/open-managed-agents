@@ -1,0 +1,23 @@
+{
+  "name": "@oma-server/session-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@oma-server/store": "workspace:*",
+    "@oma-server/event-log": "workspace:*",
+    "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
+  }
+}
