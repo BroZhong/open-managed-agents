@@ -60,6 +60,22 @@ importers:
         specifier: ^3.1.0
         version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
 
+  packages/sandbox:
+    dependencies:
+      '@open-managed-agents/adapter-core':
+        specifier: file:../../../adapter/packages/core
+        version: file:../adapter/packages/core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.3
+        version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
+
   packages/session-router:
     dependencies:
       '@oma-server/event-log':
