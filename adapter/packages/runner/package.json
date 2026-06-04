@@ -1,0 +1,29 @@
+{
+  "name": "@open-managed-agents/adapter-runner",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "adapter-runner": "./src/adapter-runner.ts"
+  },
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@open-managed-agents/adapter-core": "workspace:*",
+    "@open-managed-agents/adapter-mock": "workspace:*",
+    "@open-managed-agents/adapter-claude-code": "workspace:*",
+    "@open-managed-agents/adapter-codex": "workspace:*",
+    "@open-managed-agents/adapter-pi-agent": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.3",
+    "typescript": "^5.8.3"
+  }
+}
