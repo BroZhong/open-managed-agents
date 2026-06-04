@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const runnerDir = new URL("../", import.meta.url).pathname;
 
 describe("adapter-runner", () => {
   it("streams JSONL events from MockAdapter", async () => {
@@ -37,6 +38,7 @@ describe("adapter-runner", () => {
 
       const { stdout } = await execFileAsync("tsx", [runnerPath, inputPath], {
         timeout: 10_000,
+        cwd: runnerDir,
       });
 
       const lines = stdout.trim().split("\n");
@@ -76,6 +78,7 @@ describe("adapter-runner", () => {
     try {
       await execFileAsync("tsx", [runnerPath, "/nonexistent/path.json"], {
         timeout: 10_000,
+        cwd: runnerDir,
       });
       expect.fail("Should have exited with non-zero");
     } catch (err: unknown) {
@@ -117,6 +120,7 @@ describe("adapter-runner", () => {
 
       await execFileAsync("tsx", [runnerPath, inputPath], {
         timeout: 10_000,
+        cwd: runnerDir,
       });
       expect.fail("Should have exited with non-zero");
     } catch (err: unknown) {
