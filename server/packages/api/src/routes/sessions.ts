@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AgentStore, SessionStore } from "@oma-server/store";
+import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 
 type Env = {
@@ -11,6 +12,7 @@ type Env = {
 export interface SessionRouteDeps {
   sessionStore: SessionStore;
   agentStore: AgentStore;
+  sessionRouter?: SessionRouter;
 }
 
 export function sessionRoutes(deps: SessionRouteDeps) {
@@ -102,6 +104,7 @@ export function sessionRoutes(deps: SessionRouteDeps) {
     }
 
     await deps.sessionStore.terminate(id);
+    await deps.sessionRouter?.terminateSession(id);
 
     return c.json({ type: "session_terminated", id });
   });

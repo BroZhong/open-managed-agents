@@ -1,0 +1,7 @@
+node_modules
+**/node_modules
+.git
+web
+server
+docs
+.playwright-mcp

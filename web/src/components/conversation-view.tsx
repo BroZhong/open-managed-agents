@@ -5,7 +5,6 @@ import { AlertCircle, ChevronDown } from "lucide-react";
 import type { SessionEvent } from "@/lib/types";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { ToolCard } from "@/components/tool-card";
-import { cn } from "@/lib/utils";
 
 interface ToolResultData {
   content: unknown;

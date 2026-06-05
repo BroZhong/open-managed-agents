@@ -124,6 +124,23 @@ export default function AgentDetailPage() {
                   {new Date(agent.createdAt).toLocaleString()}
                 </dd>
               </div>
+              <div>
+                <dt className="text-sm font-medium text-neutral-500">
+                  Sandbox
+                </dt>
+                <dd className="mt-1">
+                  <span
+                    className={cn(
+                      "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+                      agent.sandbox?.enabled
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-neutral-100 text-neutral-600"
+                    )}
+                  >
+                    {agent.sandbox?.enabled ? "Enabled" : "Disabled"}
+                  </span>
+                </dd>
+              </div>
               <div className="sm:col-span-2">
                 <dt className="text-sm font-medium text-neutral-500">
                   System Prompt

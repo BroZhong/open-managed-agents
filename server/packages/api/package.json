@@ -18,6 +18,7 @@
     "@oma-server/store": "workspace:*",
     "@oma-server/store-memory": "workspace:*",
     "@oma-server/event-log": "workspace:*",
+    "@oma-server/sandbox": "workspace:*",
     "@oma-server/session-router": "workspace:*",
     "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core"
   },

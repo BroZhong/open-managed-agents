@@ -6,6 +6,7 @@ import {
   isStreamEvent,
   isLifecycleEvent,
   isSpanEvent,
+  buildPromptWithHistory,
 } from "../src/utils.js";
 import type { SessionEvent } from "../src/types.js";
 
@@ -317,5 +318,33 @@ describe("isStreamEvent", () => {
       type: "session.status_running",
     };
     expect(isStreamEvent(event)).toBe(false);
+  });
+});
+
+describe("buildPromptWithHistory", () => {
+  it("returns the prompt unchanged when history is empty", () => {
+    expect(buildPromptWithHistory("hello", [])).toBe("hello");
+  });
+
+  it("formats prior user and assistant messages", () => {
+    const prompt = buildPromptWithHistory("What was it?", [
+      {
+        id: "sevt_user",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Remember CODE-1" }] },
+      } as unknown as SessionEvent,
+      {
+        id: "sevt_assistant",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        type: "agent.message",
+        content: [{ type: "text", text: "stored CODE-1" }],
+      },
+    ]);
+
+    expect(prompt).toContain("<conversation_history>");
+    expect(prompt).toContain("User: Remember CODE-1");
+    expect(prompt).toContain("Assistant: stored CODE-1");
+    expect(prompt).toContain("User: What was it?");
   });
 });

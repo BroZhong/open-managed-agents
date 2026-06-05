@@ -13,6 +13,11 @@ export interface AgentMcpServerConfig {
   headers?: Record<string, string>;
 }
 
+export interface AgentSandboxConfig {
+  enabled: boolean;
+  image?: string;
+}
+
 export interface Agent {
   id: string;
   tenantId: string;
@@ -23,6 +28,7 @@ export interface Agent {
   tools?: AgentToolConfig[];
   mcpServers?: AgentMcpServerConfig[];
   skills?: string[];
+  sandbox?: AgentSandboxConfig;
   createdAt: Date;
   updatedAt: Date;
 }

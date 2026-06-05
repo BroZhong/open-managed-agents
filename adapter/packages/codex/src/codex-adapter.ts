@@ -6,6 +6,7 @@ import type {
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
 import {
+  buildPromptWithHistory,
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
@@ -16,6 +17,7 @@ export interface CodexAdapterOptions {
   model?: string;
   command?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  skipGitRepoCheck?: boolean;
   /** For testing: inject a fake event source */
   _eventSource?: (
     prompt: string,
@@ -27,6 +29,7 @@ export class CodexAdapter implements Adapter {
   private readonly model: string | undefined;
   private readonly command: string;
   private readonly sandbox: string;
+  private readonly skipGitRepoCheck: boolean;
   private readonly eventSource:
     | ((prompt: string, options: any) => AsyncIterable<CodexCliEvent>)
     | undefined;
@@ -35,6 +38,7 @@ export class CodexAdapter implements Adapter {
     this.model = options?.model;
     this.command = options?.command ?? "codex";
     this.sandbox = options?.sandbox ?? "danger-full-access";
+    this.skipGitRepoCheck = options?.skipGitRepoCheck ?? true;
     this.eventSource = options?._eventSource;
   }
 
@@ -46,10 +50,11 @@ export class CodexAdapter implements Adapter {
     } as SessionEvent;
 
     try {
-      const prompt = input.message.content
+      const rawPrompt = input.message.content
         .filter((b) => b.type === "text")
         .map((b) => (b as { type: "text"; text: string }).text)
         .join("");
+      const prompt = buildPromptWithHistory(rawPrompt, input.history);
 
       const translator = new CodexEventTranslator();
       const source = this.eventSource
@@ -107,10 +112,15 @@ export class CodexAdapter implements Adapter {
 
     const model = this.model ?? input.agent.model;
     if (model) {
-      args.push("-m", model);
+      if (model !== "default") {
+        args.push("-m", model);
+      }
     }
 
     args.push("-s", this.sandbox);
+    if (this.skipGitRepoCheck) {
+      args.push("--skip-git-repo-check");
+    }
 
     if (input.constraints?.timeoutSeconds) {
       args.push(

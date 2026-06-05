@@ -2,6 +2,7 @@ export type {
   Agent,
   AgentToolConfig,
   AgentMcpServerConfig,
+  AgentSandboxConfig,
   Session,
   SessionStatus,
   StoredEvent,

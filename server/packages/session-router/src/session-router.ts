@@ -1,6 +1,7 @@
 import type { EventLogStore, PendingEventStore, PendingEvent, StoredEvent, Agent } from "@oma-server/store";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
+import type { SandboxOrchestrator } from "@oma-server/sandbox";
 import type {
   Adapter,
   AdapterInput,
@@ -16,6 +17,7 @@ export interface SessionRouterDeps {
   sessionStore: SessionStore;
   eventStreamHub: EventStreamHub;
   resolveAdapter: (runtime: string) => Adapter;
+  sandboxOrchestrator?: SandboxOrchestrator;
 }
 
 export class SessionRouter {
@@ -24,7 +26,9 @@ export class SessionRouter {
   private readonly sessionStore: SessionStore;
   private readonly eventStreamHub: EventStreamHub;
   private readonly resolveAdapter: (runtime: string) => Adapter;
+  private readonly sandboxOrchestrator?: SandboxOrchestrator;
   private readonly activeSessions = new Map<string, AbortController>();
+  private readonly activeSandboxes = new Set<string>();
 
   constructor(deps: SessionRouterDeps) {
     this.eventLogStore = deps.eventLogStore;
@@ -32,6 +36,7 @@ export class SessionRouter {
     this.sessionStore = deps.sessionStore;
     this.eventStreamHub = deps.eventStreamHub;
     this.resolveAdapter = deps.resolveAdapter;
+    this.sandboxOrchestrator = deps.sandboxOrchestrator;
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
@@ -55,6 +60,18 @@ export class SessionRouter {
     if (controller) {
       controller.abort();
     }
+  }
+
+  async terminateSession(sessionId: string): Promise<void> {
+    this.interrupt(sessionId);
+    if (this.sandboxOrchestrator && this.activeSandboxes.has(sessionId)) {
+      await this.sandboxOrchestrator.kill(sessionId);
+      this.activeSandboxes.delete(sessionId);
+    }
+  }
+
+  private isSandboxed(agentConfig: Agent): boolean {
+    return !!agentConfig.sandbox?.enabled;
   }
 
   private async drainLoop(
@@ -105,11 +122,26 @@ export class SessionRouter {
         priorEvents,
       );
 
-      // Resolve adapter and run
-      const adapter = this.resolveAdapter(agentConfig.runtime);
+      // Determine event source: sandbox orchestrator or direct adapter
+      let events: AsyncIterable<SessionEvent>;
+      if (this.sandboxOrchestrator && this.isSandboxed(agentConfig)) {
+        if (!this.activeSandboxes.has(sessionId)) {
+          await this.sandboxOrchestrator.createForSession(sessionId, {
+            image: agentConfig.sandbox?.image,
+            env: collectSandboxEnv(),
+          });
+          this.activeSandboxes.add(sessionId);
+        } else {
+          await this.sandboxOrchestrator.resume(sessionId);
+        }
+        events = this.sandboxOrchestrator.runAdapterTurn(sessionId, adapterInput, agentConfig.runtime);
+      } else {
+        const adapter = this.resolveAdapter(agentConfig.runtime);
+        events = adapter.run(adapterInput);
+      }
 
       try {
-        for await (const event of adapter.run(adapterInput)) {
+        for await (const event of events) {
           if (signal.aborted) break;
 
           if (isStreamEvent(event)) {
@@ -143,6 +175,11 @@ export class SessionRouter {
           data: { error: { message: String(err), code: "adapter_error" } },
         });
       }
+
+      // After turn completes, pause sandbox if active
+      if (this.sandboxOrchestrator && this.isSandboxed(agentConfig)) {
+        await this.sandboxOrchestrator.pause(sessionId);
+      }
     }
 
     // After drain loop ends, set session status to idle
@@ -158,6 +195,9 @@ export class SessionRouter {
       seq: idleEvent.seq,
       data: {},
     });
+
+    // A paused sandbox is intentionally kept across turns. It is killed when
+    // the session is explicitly terminated.
   }
 
   private buildAdapterInput(
@@ -201,4 +241,19 @@ export class SessionRouter {
       history,
     };
   }
+}
+
+function collectSandboxEnv(): Record<string, string> {
+  const names = [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+  ];
+  return Object.fromEntries(
+    names
+      .map((name) => [name, process.env[name]] as const)
+      .filter((entry): entry is readonly [string, string] => !!entry[1]),
+  );
 }

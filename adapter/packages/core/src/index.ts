@@ -52,4 +52,6 @@ export {
   isSpanEvent,
   isCanonicalEvent,
   isStreamEvent,
+  textFromContentBlocks,
+  buildPromptWithHistory,
 } from "./utils.js";
