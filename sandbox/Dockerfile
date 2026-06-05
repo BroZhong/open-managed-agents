@@ -1,5 +1,9 @@
 FROM node:22
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3-pip python3-venv \
+  && rm -rf /var/lib/apt/lists/*
+
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@10.12.4 --activate
 

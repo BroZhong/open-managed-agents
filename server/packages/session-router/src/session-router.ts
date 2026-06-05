@@ -74,6 +74,13 @@ export class SessionRouter {
     return !!agentConfig.sandbox?.enabled;
   }
 
+  private isAdapterStatusEvent(event: SessionEvent): boolean {
+    return (
+      event.type === "session.status_running" ||
+      event.type === "session.status_idle"
+    );
+  }
+
   private async drainLoop(
     sessionId: string,
     agentConfig: Agent,
@@ -122,27 +129,37 @@ export class SessionRouter {
         priorEvents,
       );
 
-      // Determine event source: sandbox orchestrator or direct adapter
-      let events: AsyncIterable<SessionEvent>;
-      if (this.sandboxOrchestrator && this.isSandboxed(agentConfig)) {
-        if (!this.activeSandboxes.has(sessionId)) {
-          await this.sandboxOrchestrator.createForSession(sessionId, {
-            image: agentConfig.sandbox?.image,
-            env: collectSandboxEnv(),
-          });
-          this.activeSandboxes.add(sessionId);
-        } else {
-          await this.sandboxOrchestrator.resume(sessionId);
-        }
-        events = this.sandboxOrchestrator.runAdapterTurn(sessionId, adapterInput, agentConfig.runtime);
-      } else {
-        const adapter = this.resolveAdapter(agentConfig.runtime);
-        events = adapter.run(adapterInput);
-      }
-
+      let sandboxActiveThisTurn = false;
       try {
+        // Determine event source: sandbox orchestrator or direct adapter
+        let events: AsyncIterable<SessionEvent>;
+        if (this.sandboxOrchestrator && this.isSandboxed(agentConfig)) {
+          if (!this.activeSandboxes.has(sessionId)) {
+            await this.sandboxOrchestrator.createForSession(sessionId, {
+              image: agentConfig.sandbox?.image,
+              env: collectSandboxEnv(),
+            });
+            this.activeSandboxes.add(sessionId);
+          } else {
+            await this.sandboxOrchestrator.resume(sessionId);
+          }
+          sandboxActiveThisTurn = true;
+          events = this.sandboxOrchestrator.runAdapterTurn(
+            sessionId,
+            adapterInput,
+            agentConfig.runtime,
+          );
+        } else {
+          const adapter = this.resolveAdapter(agentConfig.runtime);
+          events = adapter.run(adapterInput);
+        }
+
         for await (const event of events) {
           if (signal.aborted) break;
+
+          if (this.isAdapterStatusEvent(event)) {
+            continue;
+          }
 
           if (isStreamEvent(event)) {
             this.eventStreamHub.publishChunk(sessionId, {
@@ -164,21 +181,21 @@ export class SessionRouter {
         }
       } catch (err) {
         if (signal.aborted) break;
-        const errorEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error: { message: String(err), code: "adapter_error" } },
-          sessionThreadId: "sthr_primary",
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: "session.error",
-          seq: errorEvent.seq,
-          data: { error: { message: String(err), code: "adapter_error" } },
-        });
+        await this.appendSessionError(sessionId, err, "adapter_error");
       }
 
       // After turn completes, pause sandbox if active
-      if (this.sandboxOrchestrator && this.isSandboxed(agentConfig)) {
-        await this.sandboxOrchestrator.pause(sessionId);
+      if (
+        !signal.aborted &&
+        sandboxActiveThisTurn &&
+        this.sandboxOrchestrator &&
+        this.isSandboxed(agentConfig)
+      ) {
+        try {
+          await this.sandboxOrchestrator.pause(sessionId);
+        } catch (err) {
+          await this.appendSessionError(sessionId, err, "sandbox_pause_error");
+        }
       }
     }
 
@@ -240,6 +257,29 @@ export class SessionRouter {
       },
       history,
     };
+  }
+
+  private async appendSessionError(
+    sessionId: string,
+    error: unknown,
+    code: string,
+  ): Promise<void> {
+    const data = {
+      error: {
+        message: error instanceof Error ? error.message : String(error),
+        code,
+      },
+    };
+    const errorEvent = await this.eventLogStore.append(sessionId, {
+      type: "session.error",
+      data,
+      sessionThreadId: "sthr_primary",
+    });
+    this.eventStreamHub.publish(sessionId, {
+      type: "session.error",
+      seq: errorEvent.seq,
+      data,
+    });
   }
 }
 

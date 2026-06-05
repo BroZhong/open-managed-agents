@@ -183,30 +183,34 @@ export class OpenSandboxClient implements SandboxClient {
     let executionError: string | undefined;
     let exitCode: number | null = 0;
 
-    for await (const event of sandbox.commands.runStream(shellCommand, {
-      timeoutSeconds: this.commandTimeoutSeconds,
-      workingDirectory: "/workspace",
-    })) {
-      if (event.type === "stdout" && typeof event.text === "string") {
-        yield event.text.endsWith("\n") ? event.text : `${event.text}\n`;
-      } else if (event.type === "stderr" && typeof event.text === "string") {
-        executionError = executionError
-          ? `${executionError}\n${event.text}`
-          : event.text;
-      } else if (event.type === "error") {
-        const parsed = parseExecutionError(event);
-        if (parsed) {
+    try {
+      for await (const event of sandbox.commands.runStream(shellCommand, {
+        timeoutSeconds: this.commandTimeoutSeconds,
+        workingDirectory: "/workspace",
+      })) {
+        if (event.type === "stdout" && typeof event.text === "string") {
+          yield event.text.endsWith("\n") ? event.text : `${event.text}\n`;
+        } else if (event.type === "stderr" && typeof event.text === "string") {
           executionError = executionError
-            ? `${executionError}\n${parsed.message}`
-            : parsed.message;
-          exitCode = parsed.exitCode;
-        } else {
-          executionError = executionError ?? "Command execution failed";
-          exitCode = null;
+            ? `${executionError}\n${event.text}`
+            : event.text;
+        } else if (event.type === "error") {
+          const parsed = parseExecutionError(event);
+          if (parsed) {
+            executionError = executionError
+              ? `${executionError}\n${parsed.message}`
+              : parsed.message;
+            exitCode = parsed.exitCode;
+          } else {
+            executionError = executionError ?? "Command execution failed";
+            exitCode = null;
+          }
+        } else if (event.type === "execution_complete") {
+          exitCode = exitCode ?? 0;
         }
-      } else if (event.type === "execution_complete") {
-        exitCode = exitCode ?? 0;
       }
+    } catch (err) {
+      throw new Error(formatExecStreamError(err), { cause: err });
     }
 
     if (exitCode !== 0) {
@@ -222,4 +226,22 @@ export class OpenSandboxClient implements SandboxClient {
     }
     return sandbox;
   }
+}
+
+function formatExecStreamError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const details: string[] = [];
+  if (typeof err === "object" && err !== null) {
+    const record = err as Record<string, unknown>;
+    if (typeof record.statusCode === "number") {
+      details.push(`status=${record.statusCode}`);
+    }
+    if (typeof record.requestId === "string" && record.requestId) {
+      details.push(`requestId=${record.requestId}`);
+    }
+    if (typeof record.rawBody === "string" && record.rawBody) {
+      details.push(`body=${record.rawBody}`);
+    }
+  }
+  return details.length > 0 ? `${message} (${details.join(", ")})` : message;
 }

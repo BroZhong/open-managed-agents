@@ -326,6 +326,39 @@ class DevMockAdapter implements Adapter {
 
 const OPENSANDBOX_URL = process.env.OPENSANDBOX_URL || "http://localhost:8080";
 
+function readBoolEnv(name: string): boolean | undefined {
+  const value = process.env[name];
+  if (value == null || value === "") return undefined;
+  return value === "1" || value.toLowerCase() === "true";
+}
+
+function isLocalOpenSandboxUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return ["localhost", "127.0.0.1", "::1", "0.0.0.0"].includes(url.hostname);
+  } catch {
+    return /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|$)/.test(value);
+  }
+}
+
+function resolveOpenSandboxUseServerProxy(): boolean {
+  const requested =
+    readBoolEnv("OPENSANDBOX_USE_SERVER_PROXY") ??
+    readBoolEnv("OPEN_SANDBOX_USE_SERVER_PROXY") ??
+    false;
+  if (
+    requested &&
+    isLocalOpenSandboxUrl(OPENSANDBOX_URL) &&
+    readBoolEnv("OPENSANDBOX_ALLOW_LOCAL_SERVER_PROXY") !== true
+  ) {
+    console.warn(
+      "Ignoring OPENSANDBOX_USE_SERVER_PROXY=true for local OpenSandbox; using direct execd endpoints. Set OPENSANDBOX_ALLOW_LOCAL_SERVER_PROXY=true to override.",
+    );
+    return false;
+  }
+  return requested;
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 function resolveAdapter(runtime: string): Adapter {
@@ -349,9 +382,15 @@ async function main() {
   try {
     const healthRes = await fetch(`${OPENSANDBOX_URL}/health`);
     if (healthRes.ok) {
-      const client = new OpenSandboxClient({ url: OPENSANDBOX_URL });
+      const useServerProxy = resolveOpenSandboxUseServerProxy();
+      const client = new OpenSandboxClient({
+        url: OPENSANDBOX_URL,
+        useServerProxy,
+      });
       sandboxOrchestrator = new SandboxOrchestratorImpl(client);
-      console.log(`Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL})`);
+      console.log(
+        `Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL}, useServerProxy=${useServerProxy})`,
+      );
     }
   } catch {
     console.log("OpenSandbox not available — sandbox orchestration disabled");

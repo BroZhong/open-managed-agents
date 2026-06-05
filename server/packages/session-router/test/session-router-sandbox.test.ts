@@ -521,6 +521,94 @@ describe("SessionRouter - sandbox orchestration", () => {
       const types = allEvents.data.map((e) => e.type);
       expect(types).toContain("agent.message");
     });
+
+    it("ignores adapter lifecycle status events so router status stays authoritative", async () => {
+      const sandboxEvents: SessionEvent[] = [
+        {
+          id: "evt_sbx_running",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "session.status_running",
+        },
+        {
+          id: "evt_sbx_msg",
+          timestamp: "2024-01-01T00:00:01.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "From sandbox" }],
+        },
+        {
+          id: "evt_sbx_idle",
+          timestamp: "2024-01-01T00:00:02.000Z",
+          type: "session.status_idle",
+        },
+      ];
+
+      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
+      const { eventLogStore, pendingEventStore, sessionStore, router } =
+        createTestDeps({
+          sandboxOrchestrator: orchestrator,
+        });
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgentSandboxed,
+      });
+
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await router.handleNewEvent(session.id, testAgentSandboxed);
+
+      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const types = allEvents.data.map((e) => e.type);
+      expect(types.filter((type) => type === "session.status_running")).toHaveLength(1);
+      expect(types.filter((type) => type === "session.status_idle")).toHaveLength(1);
+      expect(types).toContain("agent.message");
+    });
+  });
+
+  describe("sandbox lifecycle errors", () => {
+    it("records session.error instead of throwing when sandbox creation fails", async () => {
+      const orchestrator = createMockSandboxOrchestrator([]);
+      orchestrator.createForSession.mockRejectedValue(
+        new Error("sandbox ready timeout"),
+      );
+      const { eventLogStore, pendingEventStore, sessionStore, router } =
+        createTestDeps({
+          sandboxOrchestrator: orchestrator,
+        });
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgentSandboxed,
+      });
+
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await expect(
+        router.handleNewEvent(session.id, testAgentSandboxed),
+      ).resolves.toBeUndefined();
+
+      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const error = allEvents.data.find((e) => e.type === "session.error");
+      expect(error?.data).toEqual({
+        error: {
+          message: "sandbox ready timeout",
+          code: "adapter_error",
+        },
+      });
+      expect(allEvents.data.map((e) => e.type)).toContain("session.status_idle");
+      expect(orchestrator.runAdapterTurn).not.toHaveBeenCalled();
+      expect(orchestrator.pause).not.toHaveBeenCalled();
+    });
   });
 
   describe("non-sandboxed sessions skip sandbox entirely", () => {
