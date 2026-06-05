@@ -716,6 +716,17 @@
         },
         "required": ["name", "url"]
       },
+      "AgentSandboxConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "image": {
+            "type": "string",
+            "example": "open-managed-agents/sandbox:latest"
+          }
+        },
+        "required": ["enabled"]
+      },
       "ContentBlock": {
         "oneOf": [
           {
@@ -762,7 +773,8 @@
           "skills": {
             "type": "array",
             "items": { "type": "string" }
-          }
+          },
+          "sandbox": { "$ref": "#/components/schemas/AgentSandboxConfig" }
         },
         "required": ["name", "model", "system", "runtime"]
       },
@@ -784,7 +796,8 @@
           "skills": {
             "type": "array",
             "items": { "type": "string" }
-          }
+          },
+          "sandbox": { "$ref": "#/components/schemas/AgentSandboxConfig" }
         }
       },
       "Agent": {
@@ -808,6 +821,7 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "sandbox": { "$ref": "#/components/schemas/AgentSandboxConfig" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         },

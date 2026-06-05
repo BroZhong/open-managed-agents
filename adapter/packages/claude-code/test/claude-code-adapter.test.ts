@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { tmpdir } from "node:os";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import type { SdkMessage } from "../src/sdk-types.js";
 import { ClaudeCodeAdapter } from "../src/claude-code-adapter.js";
@@ -121,6 +122,29 @@ const TOOL_USE_MESSAGES: SdkMessage[] = [
 describe("ClaudeCodeAdapter", () => {
   async function createTmpDir(): Promise<string> {
     return mkdtemp(join(tmpdir(), "adapter-test-"));
+  }
+
+  async function createFakeClaudeCommand(
+    dir: string,
+    argsPath: string,
+  ): Promise<string> {
+    const commandPath = join(dir, "fake-claude.js");
+    await writeFile(
+      commandPath,
+      [
+        "#!/usr/bin/env node",
+        "const { writeFileSync } = require('node:fs');",
+        `writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
+        "console.log(JSON.stringify({ type: 'assistant', message: { id: 'msg_fake', model: 'claude-test', content: [{ type: 'text', text: 'ok' }], usage: { output_tokens: 1 }, stop_reason: 'end_turn' } }));",
+      ].join("\n"),
+    );
+    await chmod(commandPath, 0o755);
+    return commandPath;
+  }
+
+  function sessionIdToUuidForTest(sessionId: string): string {
+    const hash = createHash("md5").update(sessionId).digest("hex");
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
   }
 
   describe("simple text turn", () => {
@@ -484,7 +508,48 @@ describe("ClaudeCodeAdapter", () => {
       expect(capturedOptions.resume).toBe("sess_resume_123");
     });
 
-    it("sets permissionMode to bypassPermissions", async () => {
+    it("uses Claude CLI --resume when the project session file exists", async () => {
+      const tmp = await createTmpDir();
+      const homeDir = join(tmp, "home");
+      const workDir = join(tmp, "workspace");
+      const argsPath = join(tmp, "args.json");
+      const sessionId = "sess_resume_123";
+      const sessionUuid = sessionIdToUuidForTest(sessionId);
+      const projectKey = workDir.replace(/\//g, "-");
+      await mkdir(join(homeDir, ".claude", "projects", projectKey), {
+        recursive: true,
+      });
+      await mkdir(workDir, { recursive: true });
+      await writeFile(
+        join(homeDir, ".claude", "projects", projectKey, `${sessionUuid}.jsonl`),
+        "",
+      );
+      const previousHome = process.env.HOME;
+      process.env.HOME = homeDir;
+
+      try {
+        const adapter = new ClaudeCodeAdapter({
+          apiKey: "",
+          workDir,
+          command: await createFakeClaudeCommand(tmp, argsPath),
+        });
+
+        await collectEvents(adapter.run(makeInput({ sessionId })));
+
+        const args = JSON.parse(await readFile(argsPath, "utf-8")) as string[];
+        expect(args).toContain("--resume");
+        expect(args).toContain(sessionUuid);
+        expect(args).not.toContain("--session-id");
+      } finally {
+        if (previousHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = previousHome;
+        }
+      }
+    });
+
+    it("sets permissionMode to acceptEdits by default", async () => {
       const workDir = await createTmpDir();
       let capturedOptions: any = null;
 
@@ -498,6 +563,29 @@ describe("ClaudeCodeAdapter", () => {
       const adapter = new ClaudeCodeAdapter({
         apiKey: "test-key",
         workDir,
+        _queryFn: queryFn,
+      });
+
+      await collectEvents(adapter.run(makeInput()));
+
+      expect(capturedOptions.permissionMode).toBe("acceptEdits");
+    });
+
+    it("allows permissionMode override", async () => {
+      const workDir = await createTmpDir();
+      let capturedOptions: any = null;
+
+      const queryFn = async function* (options: any) {
+        capturedOptions = options;
+        for (const msg of TEXT_TURN_MESSAGES) {
+          yield msg;
+        }
+      };
+
+      const adapter = new ClaudeCodeAdapter({
+        apiKey: "test-key",
+        workDir,
+        permissionMode: "bypassPermissions",
         _queryFn: queryFn,
       });
 

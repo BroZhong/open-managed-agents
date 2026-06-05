@@ -46,6 +46,7 @@ export default function AgentsPage() {
                 <th className="pb-3 font-medium">Name</th>
                 <th className="pb-3 font-medium">Model</th>
                 <th className="pb-3 font-medium">Runtime</th>
+                <th className="pb-3 font-medium">Sandbox</th>
                 <th className="pb-3 font-medium">Created</th>
               </tr>
             </thead>
@@ -71,6 +72,18 @@ export default function AgentsPage() {
                       )}
                     >
                       {agent.runtime}
+                    </span>
+                  </td>
+                  <td className="py-3">
+                    <span
+                      className={cn(
+                        "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+                        agent.sandbox?.enabled
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-neutral-100 text-neutral-600"
+                      )}
+                    >
+                      {agent.sandbox?.enabled ? "Enabled" : "Disabled"}
                     </span>
                   </td>
                   <td className="py-3 text-sm text-neutral-500">

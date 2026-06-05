@@ -279,9 +279,13 @@ describe("SessionRouter - sandbox orchestration", () => {
       await router.handleNewEvent(session.id, testAgentSandboxed);
 
       expect(orchestrator.createForSession).toHaveBeenCalledTimes(1);
-      expect(orchestrator.createForSession).toHaveBeenCalledWith(session.id, {
-        image: "ubuntu:22.04",
-      });
+      expect(orchestrator.createForSession).toHaveBeenCalledWith(
+        session.id,
+        expect.objectContaining({
+          image: "ubuntu:22.04",
+          env: expect.any(Object),
+        }),
+      );
       expect(orchestrator.resume).not.toHaveBeenCalled();
     });
   });
@@ -327,6 +331,47 @@ describe("SessionRouter - sandbox orchestration", () => {
       expect(orchestrator.resume).toHaveBeenCalledTimes(1);
       expect(orchestrator.resume).toHaveBeenCalledWith(session.id);
     });
+
+    it("resumes across separate handleNewEvent calls", async () => {
+      const sandboxEvents: SessionEvent[] = [
+        {
+          id: "evt_sbx_1",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "Sandbox reply" }],
+        },
+      ];
+
+      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
+      const { pendingEventStore, sessionStore, router } = createTestDeps({
+        sandboxOrchestrator: orchestrator,
+      });
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgentSandboxed,
+      });
+
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "First" }] },
+        sessionThreadId: "sthr_primary",
+      });
+      await router.handleNewEvent(session.id, testAgentSandboxed);
+
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Second" }] },
+        sessionThreadId: "sthr_primary",
+      });
+      await router.handleNewEvent(session.id, testAgentSandboxed);
+
+      expect(orchestrator.createForSession).toHaveBeenCalledTimes(1);
+      expect(orchestrator.resume).toHaveBeenCalledTimes(1);
+      expect(orchestrator.pause).toHaveBeenCalledTimes(2);
+      expect(orchestrator.kill).not.toHaveBeenCalled();
+    });
   });
 
   describe("sandbox is paused after each turn", () => {
@@ -371,8 +416,8 @@ describe("SessionRouter - sandbox orchestration", () => {
     });
   });
 
-  describe("sandbox is killed when session drain loop ends", () => {
-    it("calls kill after the drain loop completes", async () => {
+  describe("sandbox is retained until session termination", () => {
+    it("does not kill after the drain loop completes", async () => {
       const sandboxEvents: SessionEvent[] = [
         {
           id: "evt_sbx_1",
@@ -400,6 +445,40 @@ describe("SessionRouter - sandbox orchestration", () => {
       });
 
       await router.handleNewEvent(session.id, testAgentSandboxed);
+
+      expect(orchestrator.pause).toHaveBeenCalledTimes(1);
+      expect(orchestrator.kill).not.toHaveBeenCalled();
+    });
+
+    it("kills the sandbox when the session is explicitly terminated", async () => {
+      const sandboxEvents: SessionEvent[] = [
+        {
+          id: "evt_sbx_1",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "Reply" }],
+        },
+      ];
+
+      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
+      const { pendingEventStore, sessionStore, router } = createTestDeps({
+        sandboxOrchestrator: orchestrator,
+      });
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgentSandboxed,
+      });
+
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await router.handleNewEvent(session.id, testAgentSandboxed);
+      await router.terminateSession(session.id);
 
       expect(orchestrator.kill).toHaveBeenCalledTimes(1);
       expect(orchestrator.kill).toHaveBeenCalledWith(session.id);

@@ -13,6 +13,7 @@ import {
 
 const RUNTIME_MODELS: Record<string, { label: string; value: string }[]> = {
   "claude-code": [
+    { label: "Default", value: "default" },
     { label: "Claude Opus 4.7 (1M)", value: "global.anthropic.claude-opus-4-7" },
     { label: "Claude Opus 4.6 (1M)", value: "global.anthropic.claude-opus-4-6-v1[1m]" },
     { label: "Claude Opus 4.6", value: "global.anthropic.claude-opus-4-6-v1" },
@@ -22,6 +23,7 @@ const RUNTIME_MODELS: Record<string, { label: string; value: string }[]> = {
     { label: "Claude Haiku 4.5", value: "global.anthropic.claude-haiku-4-5-20251001-v1:0" },
   ],
   codex: [
+    { label: "Default", value: "default" },
     { label: "GPT 5.5", value: "gpt-5.5" },
     { label: "GPT 5.4", value: "gpt-5.4" },
     { label: "GPT 5.4 Mini", value: "gpt-5.4-mini" },
@@ -30,6 +32,7 @@ const RUNTIME_MODELS: Record<string, { label: string; value: string }[]> = {
     { label: "o3", value: "o3" },
   ],
   "pi-agent": [
+    { label: "Default", value: "default" },
     { label: "Gemini 2.5 Pro", value: "google/gemini-2.5-pro" },
     { label: "Gemini 2.5 Flash", value: "google/gemini-2.5-flash" },
     { label: "Gemini 3 Pro Preview", value: "google/gemini-3-pro-preview" },
@@ -58,6 +61,7 @@ export function AgentFormDialog({
   const [model, setModel] = useState("");
   const [system, setSystem] = useState("");
   const [runtime, setRuntime] = useState("claude-code");
+  const [sandboxEnabled, setSandboxEnabled] = useState(true);
 
   const createMutation = useCreateAgent();
   const updateMutation = useUpdateAgent();
@@ -69,11 +73,13 @@ export function AgentFormDialog({
         setModel(agent.model);
         setSystem(agent.system);
         setRuntime(agent.runtime);
+        setSandboxEnabled(agent.sandbox?.enabled ?? false);
       } else {
         setName("");
         setModel("");
         setSystem("");
         setRuntime("claude-code");
+        setSandboxEnabled(true);
       }
     }
   }, [open, agent]);
@@ -111,6 +117,10 @@ export function AgentFormDialog({
       model: model.trim(),
       system: system.trim() || defaultSystem,
       runtime,
+      sandbox: {
+        enabled: sandboxEnabled,
+        image: "open-managed-agents/sandbox:latest",
+      },
     };
 
     if (isEdit) {
@@ -197,6 +207,19 @@ export function AgentFormDialog({
             value={system}
             onChange={(e) => setSystem(e.target.value)}
           />
+          <label
+            htmlFor="agent-sandbox"
+            className="flex items-center gap-2 text-sm font-medium text-neutral-700"
+          >
+            <input
+              id="agent-sandbox"
+              type="checkbox"
+              className="h-4 w-4 rounded border-neutral-300 text-neutral-900"
+              checked={sandboxEnabled}
+              onChange={(e) => setSandboxEnabled(e.target.checked)}
+            />
+            Sandbox
+          </label>
         </div>
         <DialogFooter>
           <Button

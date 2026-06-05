@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import type { PiCliEvent } from "../src/cli-types.js";
 import type {
@@ -437,6 +440,85 @@ describe("PiAgentAdapter", () => {
       const ids2 = events2.map((e) => e.id);
       const overlap = ids1.filter((id) => ids2.includes(id));
       expect(overlap).toHaveLength(0);
+    });
+  });
+
+  describe("history", () => {
+    it("includes prior user and assistant messages in the CLI prompt", async () => {
+      let seenPrompt = "";
+      const adapter = new PiAgentAdapter({
+        _eventSource: async function* (prompt: string) {
+          seenPrompt = prompt;
+          yield {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_end", content: "ok" },
+          } as PiCliEvent;
+        },
+      });
+
+      const input = makeInput("What was it?");
+      input.history = [
+        {
+          id: "sevt_user",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          type: "user.message",
+          data: { content: [{ type: "text", text: "Remember CODE-1" }] },
+        } as unknown as SessionEvent,
+        {
+          id: "sevt_agent",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "stored CODE-1" }],
+        },
+      ];
+
+      await collectEvents(adapter.run(input));
+
+      expect(seenPrompt).toContain("User: Remember CODE-1");
+      expect(seenPrompt).toContain("Assistant: stored CODE-1");
+      expect(seenPrompt).toContain("User: What was it?");
+    });
+
+    it("continues the Pi CLI session when history is present", async () => {
+      const tmp = await mkdtemp(join(tmpdir(), "oma-pi-adapter-"));
+      const commandPath = join(tmp, "fake-pi.js");
+      const argsPath = join(tmp, "args.json");
+      const sessionRootDir = join(tmp, "sessions");
+
+      await writeFile(
+        commandPath,
+        [
+          "#!/usr/bin/env node",
+          "const { writeFileSync } = require('node:fs');",
+          `writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
+          "console.log(JSON.stringify({ type: 'message_start', message: { role: 'assistant', content: [], model: 'pi-test' } }));",
+          "console.log(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_end', content: 'ok' } }));",
+          "console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [], usage: { input: 1, output: 1 } } }));",
+        ].join("\n"),
+      );
+      await chmod(commandPath, 0o755);
+
+      const adapter = new PiAgentAdapter({
+        command: commandPath,
+        sessionRootDir,
+      });
+      const input = makeInput("What was it?");
+      input.history = [
+        {
+          id: "sevt_agent",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "stored CODE-2" }],
+        },
+      ];
+
+      await collectEvents(adapter.run(input));
+
+      const args = JSON.parse(await readFile(argsPath, "utf-8")) as string[];
+      expect(args).toContain("--session-dir");
+      expect(args).toContain(join(sessionRootDir, "test-session"));
+      expect(args).toContain("--continue");
+      expect(args).not.toContain("--no-session");
     });
   });
 });

@@ -243,4 +243,41 @@ describe("CodexAdapter", () => {
       expect(overlap).toHaveLength(0);
     });
   });
+
+  describe("history", () => {
+    it("includes prior user and assistant messages in the CLI prompt", async () => {
+      let seenPrompt = "";
+      const adapter = new CodexAdapter({
+        _eventSource: async function* (prompt: string) {
+          seenPrompt = prompt;
+          yield {
+            type: "item.completed",
+            item: { id: "i0", type: "agent_message", text: "ok" },
+          } as CodexCliEvent;
+        },
+      });
+
+      const input = makeInput("What was it?");
+      input.history = [
+        {
+          id: "sevt_user",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          type: "user.message",
+          data: { content: [{ type: "text", text: "Remember CODE-1" }] },
+        } as unknown as SessionEvent,
+        {
+          id: "sevt_agent",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "stored CODE-1" }],
+        },
+      ];
+
+      await collectEvents(adapter.run(input));
+
+      expect(seenPrompt).toContain("User: Remember CODE-1");
+      expect(seenPrompt).toContain("Assistant: stored CODE-1");
+      expect(seenPrompt).toContain("User: What was it?");
+    });
+  });
 });

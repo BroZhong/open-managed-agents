@@ -6,6 +6,7 @@ import { createMongoStores } from "@oma-server/store";
 import { InMemoryApiKeyStore } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
+import { OpenSandboxClient, SandboxOrchestratorImpl } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
   Adapter,
@@ -20,6 +21,7 @@ import {
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017";
 const DB_NAME = process.env.DB_NAME || "oma_dev";
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const OPENSANDBOX_URL = process.env.OPENSANDBOX_URL || "http://localhost:8080";
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
 
@@ -332,12 +334,26 @@ async function main() {
   const devApiKeyStore = new InMemoryApiKeyStore();
   const seedResult = await devApiKeyStore.create("dev", "dev-console");
 
+  // Initialize sandbox orchestration (connects to local OpenSandbox if available)
+  let sandboxOrchestrator: SandboxOrchestratorImpl | undefined;
+  try {
+    const healthRes = await fetch(`${OPENSANDBOX_URL}/health`);
+    if (healthRes.ok) {
+      const client = new OpenSandboxClient({ url: OPENSANDBOX_URL });
+      sandboxOrchestrator = new SandboxOrchestratorImpl(client);
+      console.log(`Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL})`);
+    }
+  } catch {
+    console.log("OpenSandbox not available — sandbox orchestration disabled");
+  }
+
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
+    sandboxOrchestrator,
   });
 
   const app = createApp({
@@ -346,6 +362,7 @@ async function main() {
     agentStore: stores.agentStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
+    pendingEventStore: stores.pendingEventStore,
     eventStreamHub,
     sessionRouter,
   });

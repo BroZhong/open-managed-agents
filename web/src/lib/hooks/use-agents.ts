@@ -8,8 +8,20 @@ export interface Agent {
   model: string;
   system: string;
   runtime: string;
+  sandbox?: {
+    enabled: boolean;
+    image?: string;
+  };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentMutationBody {
+  name: string;
+  model: string;
+  system: string;
+  runtime: string;
+  sandbox?: Agent["sandbox"];
 }
 
 interface AgentsResponse {
@@ -37,7 +49,7 @@ export function useAgent(id: string) {
 export function useCreateAgent() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; model: string; system: string; runtime: string }) =>
+    mutationFn: (body: AgentMutationBody) =>
       apiFetch<Agent>("/v1/agents", {
         method: "POST",
         body: JSON.stringify(body),
@@ -51,7 +63,7 @@ export function useCreateAgent() {
 export function useUpdateAgent() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; name?: string; model?: string; system?: string; runtime?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string } & Partial<AgentMutationBody>) =>
       apiFetch<Agent>(`/v1/agents/${id}`, {
         method: "POST",
         body: JSON.stringify(body),

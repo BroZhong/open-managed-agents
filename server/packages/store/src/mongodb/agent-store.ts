@@ -13,6 +13,7 @@ interface AgentDoc {
   tools?: Agent["tools"];
   mcpServers?: Agent["mcpServers"];
   skills?: Agent["skills"];
+  sandbox?: Agent["sandbox"];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,6 +29,7 @@ function docToAgent(doc: AgentDoc): Agent {
     tools: doc.tools,
     mcpServers: doc.mcpServers,
     skills: doc.skills,
+    sandbox: doc.sandbox,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -52,6 +54,7 @@ export class MongoAgentStore implements AgentStore {
       tools: input.tools,
       mcpServers: input.mcpServers,
       skills: input.skills,
+      sandbox: input.sandbox,
       createdAt: now,
       updatedAt: now,
     };
@@ -90,6 +93,7 @@ export class MongoAgentStore implements AgentStore {
     if (input.tools !== undefined) setFields.tools = input.tools;
     if (input.mcpServers !== undefined) setFields.mcpServers = input.mcpServers;
     if (input.skills !== undefined) setFields.skills = input.skills;
+    if (input.sandbox !== undefined) setFields.sandbox = input.sandbox;
 
     const result = await this.collection.findOneAndUpdate(
       { _id: id },

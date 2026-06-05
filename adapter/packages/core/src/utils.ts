@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { SessionEvent } from "./types.js";
+import type { ContentBlock, SessionEvent } from "./types.js";
 
 /**
  * Generate a unique event ID with `sevt_` prefix.
@@ -64,4 +64,40 @@ export function isCanonicalEvent(event: SessionEvent): boolean {
 
 export function isStreamEvent(event: SessionEvent): boolean {
   return STREAM_TYPES.has(event.type);
+}
+
+export function textFromContentBlocks(blocks: ContentBlock[] | undefined): string {
+  if (!Array.isArray(blocks)) return "";
+  return blocks
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+}
+
+export function buildPromptWithHistory(
+  prompt: string,
+  history: SessionEvent[],
+): string {
+  const lines = history
+    .map((event) => {
+      const record = event as unknown as {
+        type: string;
+        content?: ContentBlock[];
+        data?: { content?: ContentBlock[] };
+      };
+      if (record.type === "user.message") {
+        const text = textFromContentBlocks(record.content ?? record.data?.content);
+        return text ? `User: ${text}` : "";
+      }
+      if (record.type === "agent.message") {
+        const text = textFromContentBlocks(record.content ?? record.data?.content);
+        return text ? `Assistant: ${text}` : "";
+      }
+      return "";
+    })
+    .filter(Boolean);
+
+  if (lines.length === 0) return prompt;
+
+  return `<conversation_history>\n${lines.join("\n\n")}\n</conversation_history>\n\nUser: ${prompt}`;
 }

@@ -11,11 +11,18 @@ import {
 import { eventsToSessionFile } from "./session-file.js";
 import { SdkEventTranslator } from "./translator.js";
 import type { SdkMessage } from "./sdk-types.js";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
 
 export interface ClaudeCodeAdapterOptions {
   apiKey: string;
   workDir: string;
   command?: string;
+  permissionMode?: string;
   /** For testing: inject a fake query function */
   _queryFn?: (options: any) => AsyncIterable<any>;
 }
@@ -24,12 +31,14 @@ export class ClaudeCodeAdapter implements Adapter {
   private readonly apiKey: string;
   private readonly workDir: string;
   private readonly command: string | undefined;
+  private readonly permissionMode: string;
   private readonly queryFn: ((options: any) => AsyncIterable<any>) | undefined;
 
   constructor(options: ClaudeCodeAdapterOptions) {
     this.apiKey = options.apiKey;
     this.workDir = options.workDir;
     this.command = options.command;
+    this.permissionMode = options.permissionMode ?? "acceptEdits";
     this.queryFn = options._queryFn;
   }
 
@@ -52,11 +61,13 @@ export class ClaudeCodeAdapter implements Adapter {
       const queryOptions: Record<string, unknown> = {
         prompt,
         resume: input.sessionId,
-        model: input.agent.model,
         systemPrompt,
-        permissionMode: "bypassPermissions",
+        permissionMode: this.permissionMode,
         includePartialMessages: true,
       };
+      if (input.agent.model && input.agent.model !== "default") {
+        queryOptions.model = input.agent.model;
+      }
 
       if (input.agent.mcpServers && input.agent.mcpServers.length > 0) {
         queryOptions.mcpServers = input.agent.mcpServers;
@@ -144,11 +155,167 @@ export class ClaudeCodeAdapter implements Adapter {
     if (this.queryFn) {
       return this.queryFn;
     }
-    // In production, this would import and use the real SDK.
-    // For now, throw if no _queryFn is provided.
-    throw new Error(
-      "No query function provided. In production, provide the Claude Code SDK query function."
-    );
+    // Fallback: spawn `claude` CLI and translate stream-json output to SdkMessage-like objects
+    return (options: any) => this.cliQuery(options);
+  }
+
+  private async *cliQuery(options: any): AsyncIterable<any> {
+    const args = [
+      "--print",
+      "--output-format", "stream-json",
+      "--verbose",
+      "--permission-mode", options.permissionMode || "bypassPermissions",
+      "-p", options.prompt,
+    ];
+    if (options.model) args.push("--model", options.model);
+    if (options.systemPrompt) args.push("--system-prompt", options.systemPrompt);
+    if (options.resume) {
+      const sessionUuid = sessionIdToUuid(String(options.resume));
+      const projectKey = this.workDir.replace(/\//g, "-");
+      const sessionFile = join(
+        process.env.HOME || homedir(),
+        ".claude",
+        "projects",
+        projectKey,
+        `${sessionUuid}.jsonl`,
+      );
+      args.push(...(existsSync(sessionFile)
+        ? ["--resume", sessionUuid]
+        : ["--session-id", sessionUuid]));
+    }
+
+    const cmd = this.command || "claude";
+    const env = { ...process.env };
+    if (this.apiKey) {
+      env.ANTHROPIC_API_KEY = this.apiKey;
+    } else {
+      delete env.ANTHROPIC_API_KEY;
+    }
+    const child = spawn(cmd, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: this.workDir,
+      env,
+    });
+    child.stdin.end();
+
+    const rl = createInterface({ input: child.stdout });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === "assistant" && event.message) {
+          yield* this.claudeCliMessageToSdkMessages(event.message);
+        } else if (event.type === "user" && event.message?.content) {
+          yield* this.claudeCliUserMessageToSdkMessages(event.message);
+        }
+      } catch {}
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      child.on("close", (code) => {
+        if (code !== 0) {
+          const details = stderr.trim();
+          reject(
+            new Error(
+              details
+                ? `claude CLI exited with code ${code}: ${details}`
+                : `claude CLI exited with code ${code}`,
+            ),
+          );
+        } else {
+          resolve();
+        }
+      });
+      child.on("error", reject);
+    });
+  }
+
+  private async *claudeCliMessageToSdkMessages(message: any): AsyncIterable<any> {
+    yield {
+      type: "message_start",
+      message: {
+        id: message.id ?? generateEventId(),
+        model: message.model ?? "claude",
+      },
+    };
+
+    for (let index = 0; index < (message.content?.length ?? 0); index++) {
+      const block = message.content[index];
+      if (block.type === "text") {
+        yield {
+          type: "content_block_start",
+          index,
+          content_block: { type: "text" },
+        };
+        yield {
+          type: "content_block_delta",
+          index,
+          delta: { type: "text_delta", text: block.text ?? "" },
+        };
+        yield { type: "content_block_stop", index };
+      } else if (block.type === "thinking") {
+        yield {
+          type: "content_block_start",
+          index,
+          content_block: { type: "thinking" },
+        };
+        yield {
+          type: "content_block_delta",
+          index,
+          delta: { type: "thinking_delta", thinking: block.thinking ?? "" },
+        };
+        yield { type: "content_block_stop", index };
+      } else if (block.type === "tool_use") {
+        yield {
+          type: "content_block_start",
+          index,
+          content_block: {
+            type: "tool_use",
+            id: block.id,
+            name: block.name,
+          },
+        };
+        yield {
+          type: "content_block_delta",
+          index,
+          delta: {
+            type: "input_json_delta",
+            partial_json: JSON.stringify(block.input ?? {}),
+          },
+        };
+        yield { type: "content_block_stop", index };
+      }
+    }
+
+    if (message.usage) {
+      yield {
+        type: "message_delta",
+        delta: { stop_reason: message.stop_reason ?? "end_turn" },
+        usage: { output_tokens: message.usage.output_tokens ?? 0 },
+      };
+    }
+    yield { type: "message_stop" };
+  }
+
+  private async *claudeCliUserMessageToSdkMessages(message: any): AsyncIterable<any> {
+    for (const block of message.content ?? []) {
+      if (block.type !== "tool_result" || !block.tool_use_id) continue;
+      const content = typeof block.content === "string"
+        ? block.content
+        : JSON.stringify(block.content ?? "");
+      yield {
+        type: "tool_result",
+        tool_use_id: block.tool_use_id,
+        content,
+        is_error: block.is_error,
+      };
+    }
   }
 
   private classifyError(error: unknown): string {
@@ -159,4 +326,9 @@ export class ClaudeCodeAdapter implements Adapter {
     }
     return "sdk_error";
   }
+}
+
+function sessionIdToUuid(sessionId: string): string {
+  const hash = createHash("md5").update(sessionId).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 }

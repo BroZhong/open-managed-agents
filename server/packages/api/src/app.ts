@@ -54,7 +54,11 @@ export function createApp(deps: AppDeps) {
 
   // Mount session routes
   if (deps.sessionStore && deps.agentStore) {
-    app.route("", sessionRoutes({ sessionStore: deps.sessionStore, agentStore: deps.agentStore }));
+    app.route("", sessionRoutes({
+      sessionStore: deps.sessionStore,
+      agentStore: deps.agentStore,
+      sessionRouter: deps.sessionRouter,
+    }));
   }
 
   // Mount event routes

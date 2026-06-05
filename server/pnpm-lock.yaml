@@ -65,6 +65,9 @@ importers:
 
   packages/sandbox:
     dependencies:
+      '@alibaba-group/opensandbox':
+        specifier: ^0.1.7
+        version: 0.1.7
       '@open-managed-agents/adapter-core':
         specifier: file:../../../adapter/packages/core
         version: file:../adapter/packages/core
@@ -146,6 +149,10 @@ importers:
         version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
 
 packages:
+
+  '@alibaba-group/opensandbox@0.1.7':
+    resolution: {integrity: sha512-uP7Of/lmTCcfBdy6Tpj6bntKMdVPA1TRDJQhZqtYSlVimxtXsRMPUmdpjwUJmj2cSBE1oEn9uH7LXmN1w5aBmg==}
+    engines: {node: '>=20'}
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -895,6 +902,12 @@ packages:
     resolution: {integrity: sha512-lDcBsjBSMlj3LXH2v/FW3txlh2pYTjmbOXPYJD93HI5EwuLzI11tdHSIpUMmfq/IOsldj4Ps8M8flhm+pCK4Ew==}
     engines: {node: '>=12.22.0'}
 
+  openapi-fetch@0.14.1:
+    resolution: {integrity: sha512-l7RarRHxlEZYjMLd/PR0slfMVse2/vvIAGm75/F7J6MlQ8/b9uUQmUF2kCPrQhJqMXSxmYWObVgeYXbFYzZR+A==}
+
+  openapi-typescript-helpers@0.0.15:
+    resolution: {integrity: sha512-opyTPaunsklCBpTK8JGef6mfPhLSnyy5a0IN9vKtx3+4aExf+KxEqYwIy3hqkedXIB97u357uLMJsOnm3GVjsw==}
+
   p-limit@2.3.0:
     resolution: {integrity: sha512-//88mFWSJx8lxCzwdAABTJL2MyWB12+eIY7MDL2SqLmAkeKU9qxRvWuSyTjm3FUmpBEMuFfckAIqEaVGUDxb6w==}
     engines: {node: '>=6'}
@@ -1027,6 +1040,10 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  undici@7.27.1:
+    resolution: {integrity: sha512-UDdpiex+mzigiyrXrGbiUaF4HzTNhKbh2vRNFaTMzcqmLIPrZxaCtwo/1TMSuWoM1Xz3WiTo9KdgI3kRqYzJGg==}
+    engines: {node: '>=20.18.1'}
+
   vite-node@3.2.4:
     resolution: {integrity: sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
@@ -1118,6 +1135,11 @@ packages:
     engines: {node: '>=12'}
 
 snapshots:
+
+  '@alibaba-group/opensandbox@0.1.7':
+    dependencies:
+      openapi-fetch: 0.14.1
+      undici: 7.27.1
 
   '@esbuild/aix-ppc64@0.27.7':
     optional: true
@@ -1681,6 +1703,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  openapi-fetch@0.14.1:
+    dependencies:
+      openapi-typescript-helpers: 0.0.15
+
+  openapi-typescript-helpers@0.0.15: {}
+
   p-limit@2.3.0:
     dependencies:
       p-try: 2.2.0
@@ -1829,6 +1857,8 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@6.21.0: {}
+
+  undici@7.27.1: {}
 
   vite-node@3.2.4(@types/node@22.19.19)(tsx@4.22.4):
     dependencies:

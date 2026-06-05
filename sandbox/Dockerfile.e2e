@@ -1,0 +1,17 @@
+FROM node:22
+
+RUN corepack enable && corepack prepare pnpm@10.12.4 --activate
+RUN npm install -g tsx @anthropic-ai/claude-code @openai/codex @earendil-works/pi-coding-agent
+
+WORKDIR /app
+
+COPY adapter/ ./adapter/
+
+WORKDIR /app/adapter
+ENV CI=true
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
+
+RUN mkdir -p /workspace
+WORKDIR /workspace
+
+CMD ["node", "--version"]

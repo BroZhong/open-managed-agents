@@ -62,6 +62,14 @@ export class SessionRouter {
     }
   }
 
+  async terminateSession(sessionId: string): Promise<void> {
+    this.interrupt(sessionId);
+    if (this.sandboxOrchestrator && this.activeSandboxes.has(sessionId)) {
+      await this.sandboxOrchestrator.kill(sessionId);
+      this.activeSandboxes.delete(sessionId);
+    }
+  }
+
   private isSandboxed(agentConfig: Agent): boolean {
     return !!agentConfig.sandbox?.enabled;
   }
@@ -120,12 +128,13 @@ export class SessionRouter {
         if (!this.activeSandboxes.has(sessionId)) {
           await this.sandboxOrchestrator.createForSession(sessionId, {
             image: agentConfig.sandbox?.image,
+            env: collectSandboxEnv(),
           });
           this.activeSandboxes.add(sessionId);
         } else {
           await this.sandboxOrchestrator.resume(sessionId);
         }
-        events = this.sandboxOrchestrator.runAdapterTurn(sessionId, adapterInput);
+        events = this.sandboxOrchestrator.runAdapterTurn(sessionId, adapterInput, agentConfig.runtime);
       } else {
         const adapter = this.resolveAdapter(agentConfig.runtime);
         events = adapter.run(adapterInput);
@@ -187,11 +196,8 @@ export class SessionRouter {
       data: {},
     });
 
-    // Kill sandbox when session ends
-    if (this.sandboxOrchestrator && this.isSandboxed(agentConfig) && this.activeSandboxes.has(sessionId)) {
-      await this.sandboxOrchestrator.kill(sessionId);
-      this.activeSandboxes.delete(sessionId);
-    }
+    // A paused sandbox is intentionally kept across turns. It is killed when
+    // the session is explicitly terminated.
   }
 
   private buildAdapterInput(
@@ -235,4 +241,19 @@ export class SessionRouter {
       history,
     };
   }
+}
+
+function collectSandboxEnv(): Record<string, string> {
+  const names = [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+  ];
+  return Object.fromEntries(
+    names
+      .map((name) => [name, process.env[name]] as const)
+      .filter((entry): entry is readonly [string, string] => !!entry[1]),
+  );
 }

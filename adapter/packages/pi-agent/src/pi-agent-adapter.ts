@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type {
   Adapter,
@@ -6,6 +8,7 @@ import type {
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
 import {
+  buildPromptWithHistory,
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
@@ -15,6 +18,7 @@ import { PiEventTranslator } from "./translator.js";
 export interface PiAgentAdapterOptions {
   model?: string;
   command?: string;
+  sessionRootDir?: string;
   /** For testing: inject a fake event source */
   _eventSource?: (prompt: string, options: any) => AsyncIterable<PiCliEvent>;
 }
@@ -22,6 +26,7 @@ export interface PiAgentAdapterOptions {
 export class PiAgentAdapter implements Adapter {
   private readonly model: string | undefined;
   private readonly command: string;
+  private readonly sessionRootDir: string;
   private readonly eventSource:
     | ((prompt: string, options: any) => AsyncIterable<PiCliEvent>)
     | undefined;
@@ -29,6 +34,7 @@ export class PiAgentAdapter implements Adapter {
   constructor(options?: PiAgentAdapterOptions) {
     this.model = options?.model;
     this.command = options?.command ?? "pi";
+    this.sessionRootDir = options?.sessionRootDir ?? "/tmp/oma-pi-sessions";
     this.eventSource = options?._eventSource;
   }
 
@@ -40,10 +46,11 @@ export class PiAgentAdapter implements Adapter {
     } as SessionEvent;
 
     try {
-      const prompt = input.message.content
+      const rawPrompt = input.message.content
         .filter((b) => b.type === "text")
         .map((b) => (b as { type: "text"; text: string }).text)
         .join("");
+      const prompt = buildPromptWithHistory(rawPrompt, input.history);
 
       const translator = new PiEventTranslator();
       const source = this.eventSource
@@ -75,10 +82,22 @@ export class PiAgentAdapter implements Adapter {
     prompt: string,
     input: AdapterInput
   ): AsyncIterable<PiCliEvent> {
-    const args = ["--print", "--mode", "json", "-p", prompt, "--no-session"];
+    const sessionDir = join(this.sessionRootDir, input.sessionId);
+    await mkdir(sessionDir, { recursive: true });
+
+    const args = [
+      "--print",
+      "--mode",
+      "json",
+      "--session-dir",
+      sessionDir,
+      ...(input.history.length === 0 ? [] : ["--continue"]),
+      "-p",
+      prompt,
+    ];
 
     const model = this.model ?? input.agent.model;
-    if (model) {
+    if (model && model !== "default") {
       args.push("--model", model);
     }
 
@@ -95,6 +114,11 @@ export class PiAgentAdapter implements Adapter {
     }
 
     const rl = createInterface({ input: child.stdout });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
 
     try {
       for await (const line of rl) {
@@ -110,7 +134,14 @@ export class PiAgentAdapter implements Adapter {
       await new Promise<void>((resolve, reject) => {
         child.on("close", (code) => {
           if (code !== 0 && code !== null) {
-            reject(new Error(`pi exited with code ${code}`));
+            const details = stderr.trim();
+            reject(
+              new Error(
+                details
+                  ? `pi exited with code ${code}: ${details}`
+                  : `pi exited with code ${code}`,
+              ),
+            );
           } else {
             resolve();
           }

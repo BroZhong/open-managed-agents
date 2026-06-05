@@ -23,6 +23,10 @@ class InMemoryAgentStore implements AgentStore {
       model: input.model,
       system: input.system,
       runtime: input.runtime,
+      tools: input.tools,
+      mcpServers: input.mcpServers,
+      skills: input.skills,
+      sandbox: input.sandbox,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -64,6 +68,10 @@ class InMemoryAgentStore implements AgentStore {
     if (input.model !== undefined) agent.model = input.model;
     if (input.system !== undefined) agent.system = input.system;
     if (input.runtime !== undefined) agent.runtime = input.runtime;
+    if (input.tools !== undefined) agent.tools = input.tools;
+    if (input.mcpServers !== undefined) agent.mcpServers = input.mcpServers;
+    if (input.skills !== undefined) agent.skills = input.skills;
+    if (input.sandbox !== undefined) agent.sandbox = input.sandbox;
     agent.updatedAt = new Date();
 
     return agent;
@@ -256,6 +264,28 @@ describe("POST /v1/agents", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.runtime).toBe("pi-agent");
+  });
+
+  it("creates an agent with sandbox config", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Sandboxed Agent",
+        model: "claude-3",
+        system: "You are helpful",
+        runtime: "claude-code",
+        sandbox: { enabled: true, image: "open-managed-agents/sandbox:latest" },
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.sandbox).toEqual({
+      enabled: true,
+      image: "open-managed-agents/sandbox:latest",
+    });
   });
 });
 

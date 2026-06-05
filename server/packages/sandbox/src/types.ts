@@ -4,6 +4,10 @@ export interface CreateOpts {
   image?: string;
   env?: Record<string, string>;
   timeoutSeconds?: number;
+  entrypoint?: string[];
+  metadata?: Record<string, string>;
+  resource?: Record<string, string>;
+  readyTimeoutSeconds?: number;
 }
 
 export interface SandboxRef {
@@ -28,5 +32,6 @@ export interface SandboxOrchestrator {
   runAdapterTurn(
     sessionId: string,
     input: AdapterInput,
+    runtime?: string,
   ): AsyncIterable<SessionEvent>;
 }
