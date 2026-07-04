@@ -25,6 +25,7 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -224,101 +225,9 @@ class DevCodexAdapter implements Adapter {
   }
 }
 
-// ─── Pi Agent Adapter (spawns `pi` CLI) ────────────────────────────────────
-
-class DevPiAgentAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const prompt = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    const args = ["--print", "--mode", "json", "-p", prompt, "--no-session"];
-    if (input.agent.model) args.push("--model", input.agent.model);
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-
-    const child = spawn("pi", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    });
-
-    // Attach the error handler synchronously: an immediate spawn failure (e.g.
-    // ENOENT when the CLI is not installed) emits 'error' before the readline
-    // loop starts, and an unhandled 'error' would crash the whole Host process.
-    let spawnError: Error | undefined;
-    child.on("error", (err) => {
-      spawnError = err instanceof Error ? err : new Error(String(err));
-    });
-
-    const rl = createInterface({ input: child.stdout });
-    let hasError = false;
-    let textAccumulator = "";
-
-    try {
-      if (spawnError) throw spawnError;
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let event: any;
-        try { event = JSON.parse(line); } catch { continue; }
-
-        if (event.type === "message_update" && event.assistantMessageEvent) {
-          const ame = event.assistantMessageEvent;
-          if (ame.type === "text_delta" && ame.delta) {
-            textAccumulator += ame.delta;
-          }
-          if (ame.type === "text_end") {
-            textAccumulator = ame.content ?? textAccumulator;
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "agent.message", content: [{ type: "text", text: textAccumulator }],
-            } as SessionEvent;
-            textAccumulator = "";
-          }
-          if (ame.type === "toolcall_end" && ame.toolCall) {
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "agent.tool_use", toolUseId: ame.toolCall.id, name: ame.toolCall.name, input: ame.toolCall.args || {},
-            } as SessionEvent;
-          }
-        }
-
-        if (event.type === "tool_execution_end" && event.toolCallId) {
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "agent.tool_result", toolUseId: event.toolCallId,
-            content: [{ type: "text", text: typeof event.result === "string" ? event.result : JSON.stringify(event.result) }],
-            isError: event.isError ?? false,
-          } as SessionEvent;
-        }
-
-        if (event.type === "message_end" && event.message?.usage) {
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "span.model_request_end", usage: { inputTokens: event.message.usage.input || 0, outputTokens: event.message.usage.output || 0 },
-          } as SessionEvent;
-        }
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.on("close", (code) => {
-          if (code !== 0 && !hasError) reject(new Error(`pi exited with code ${code}`));
-          else resolve();
-        });
-        child.on("error", reject);
-      });
-
-      if (!hasError) {
-        yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-      }
-    } catch (err: unknown) {
-      yield {
-        id: generateEventId(), timestamp: generateTimestamp(),
-        type: "session.error", error: { message: String(err), code: "pi_agent_error" },
-      } as SessionEvent;
-    }
-  }
-}
+// ─── Pi Agent: the real SDK adapter is used (see resolveAdapter below). ──
+// The former inline CLI-spawning DevPiAgentAdapter was removed in favor of
+// @open-managed-agents/adapter-pi-agent (SDK + host-tool injection).
 
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
@@ -340,11 +249,17 @@ class DevMockAdapter implements Adapter {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
+// The Pi adapter is the real SDK-based one (@open-managed-agents/adapter-pi-agent):
+// it reads the per-run ToolExecutor from AdapterInput.toolExecutor (injected by
+// the SessionRouter) and, when present, registers custom tools that proxy into
+// it (ADR-0002 §2). A single instance is fine — all per-turn state is per-call.
+const piAgentAdapter = new PiAgentAdapter();
+
 function resolveAdapter(runtime: string): Adapter {
   switch (runtime) {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
-    case "pi-agent": return new DevPiAgentAdapter();
+    case "pi-agent": return piAgentAdapter;
     case "mock": return new DevMockAdapter();
     default: return new DevMockAdapter();
   }

@@ -46,6 +46,18 @@ function classify(raw: string): ProviderAndId | undefined {
   if (lower.startsWith("claude") || lower.startsWith("anthropic")) {
     return { provider: "anthropic", id: model };
   }
+  // Codex (ChatGPT/Codex OAuth) is its own Pi provider `openai-codex` with
+  // model ids like `gpt-5.4`, `gpt-5.3-codex-spark`. Match it BEFORE the generic
+  // openai branch: bare "codex"/"openai-codex", or any "*codex*" model id.
+  if (
+    lower === "codex" ||
+    lower.startsWith("openai-codex") ||
+    lower.includes("codex")
+  ) {
+    // Default codex model when only "codex" is given.
+    const id = lower === "codex" || lower === "openai-codex" ? "gpt-5.4" : model;
+    return { provider: "openai-codex", id };
+  }
   if (
     lower.startsWith("gpt") ||
     lower.startsWith("o1") ||

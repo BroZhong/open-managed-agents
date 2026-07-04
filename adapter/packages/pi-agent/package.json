@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@open-managed-agents/adapter-core": "workspace:*",
+    "@open-managed-agents/adapter-core": "file:../core",
     "@earendil-works/pi-coding-agent": "0.80.3",
     "@earendil-works/pi-ai": "^0.80.3",
     "typebox": "1.1.38"

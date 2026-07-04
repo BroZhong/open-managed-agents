@@ -20,7 +20,8 @@
     "@oma-server/event-log": "workspace:*",
     "@oma-server/sandbox": "workspace:*",
     "@oma-server/session-router": "workspace:*",
-    "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core"
+    "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core",
+    "@open-managed-agents/adapter-pi-agent": "file:../../../adapter/packages/pi-agent"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

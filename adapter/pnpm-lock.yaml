@@ -85,7 +85,7 @@ importers:
         specifier: 0.80.3
         version: 0.80.3(ws@8.21.0)(zod@4.4.3)
       '@open-managed-agents/adapter-core':
-        specifier: workspace:*
+        specifier: file:../core
         version: link:../core
       typebox:
         specifier: 1.1.38
