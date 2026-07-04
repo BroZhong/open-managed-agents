@@ -8,7 +8,7 @@ type Env = {
   };
 };
 
-const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent"];
+const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
 
 export function agentRoutes(agentStore: AgentStore) {
   const router = new Hono<Env>();

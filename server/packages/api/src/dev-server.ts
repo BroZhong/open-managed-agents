@@ -345,6 +345,7 @@ function resolveAdapter(runtime: string): Adapter {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
     case "pi-agent": return new DevPiAgentAdapter();
+    case "mock": return new DevMockAdapter();
     default: return new DevMockAdapter();
   }
 }

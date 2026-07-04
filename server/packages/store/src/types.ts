@@ -1,4 +1,4 @@
-export type Runtime = "claude-code" | "codex" | "pi-agent";
+export type Runtime = "claude-code" | "codex" | "pi-agent" | "mock";
 
 export interface AgentToolConfig {
   name: string;
