@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { createInterface } from "node:readline";
+import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSessionEvent,
+  PromptOptions,
+} from "@earendil-works/pi-coding-agent";
 import type {
   Adapter,
   AdapterInput,
@@ -12,31 +13,52 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
-import type { PiCliEvent } from "./cli-types.js";
+import { buildCustomTools } from "./custom-tools.js";
+import { resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
-import { isRoutableTool, routeToolCall } from "./tool-routing.js";
+
+/**
+ * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
+ * a structural interface (rather than importing the concrete class) gives us
+ * the test seam: `_sessionFactory` can return any object with this shape, so
+ * unit tests drive the adapter without a real model / network.
+ */
+export interface PiSessionLike {
+  subscribe(listener: (event: AgentSessionEvent) => void): () => void;
+  prompt(text: string, options?: PromptOptions): Promise<void>;
+  dispose(): void;
+}
+
+/** Everything the adapter needs to spin up a Pi session for one run(). */
+export interface SessionFactoryArgs {
+  input: AdapterInput;
+  prompt: string;
+  /** Resolved from `input.agent.model`; opaque Pi Model. */
+  model: unknown;
+  /** True when a per-run() ToolExecutor was injected. */
+  hasToolExecutor: boolean;
+}
 
 export interface PiAgentAdapterOptions {
+  /** Override the model string (otherwise taken from `input.agent.model`). */
   model?: string;
-  command?: string;
-  sessionRootDir?: string;
-  /** For testing: inject a fake event source */
-  _eventSource?: (prompt: string, options: any) => AsyncIterable<PiCliEvent>;
+  /**
+   * For testing: inject a fake session factory so run() can be exercised
+   * without a real model/network. Receives the resolved model + prompt and
+   * must return an object implementing {@link PiSessionLike}.
+   */
+  _sessionFactory?: (args: SessionFactoryArgs) => Promise<PiSessionLike>;
 }
 
 export class PiAgentAdapter implements Adapter {
   private readonly model: string | undefined;
-  private readonly command: string;
-  private readonly sessionRootDir: string;
-  private readonly eventSource:
-    | ((prompt: string, options: any) => AsyncIterable<PiCliEvent>)
+  private readonly sessionFactory:
+    | ((args: SessionFactoryArgs) => Promise<PiSessionLike>)
     | undefined;
 
   constructor(options?: PiAgentAdapterOptions) {
     this.model = options?.model;
-    this.command = options?.command ?? "pi";
-    this.sessionRootDir = options?.sessionRootDir ?? "/tmp/oma-pi-sessions";
-    this.eventSource = options?._eventSource;
+    this.sessionFactory = options?._sessionFactory;
   }
 
   async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
@@ -46,6 +68,7 @@ export class PiAgentAdapter implements Adapter {
       type: "session.status_running",
     } as SessionEvent;
 
+    let session: PiSessionLike | undefined;
     try {
       const rawPrompt = input.message.content
         .filter((b) => b.type === "text")
@@ -53,62 +76,51 @@ export class PiAgentAdapter implements Adapter {
         .join("");
       const prompt = buildPromptWithHistory(rawPrompt, input.history);
 
+      const model = resolveModel(this.model ?? input.agent.model);
+      const hasToolExecutor = input.toolExecutor !== undefined;
+
+      session = await this.createSession({
+        input,
+        prompt,
+        model,
+        hasToolExecutor,
+      });
+
       const translator = new PiEventTranslator();
-      const source = this.eventSource
-        ? this.eventSource(prompt, { model: this.model ?? input.agent.model })
-        : this.spawnPi(prompt, input);
 
-      // Tool calls are routed through the executor injected on THIS run() call
-      // only — never shared across runs. `routedCallIds` tracks which tool
-      // calls this run has already satisfied via the executor, so the CLI's
-      // own `tool_execution_end` for the same call is suppressed (no double
-      // result). See CLI-limitation note at the bottom of this file.
-      const executor = input.toolExecutor;
-      const routedCallIds = new Set<string>();
-
-      for await (const event of source) {
-        if (executor && event.type === "tool_execution_start") {
-          const startEvent = event as {
-            toolCallId?: string;
-            toolName?: string;
-            args?: unknown;
-          };
-          const toolName = startEvent.toolName ?? "";
-          const toolCallId = startEvent.toolCallId ?? "";
-          if (toolCallId && toolName && isRoutableTool(toolName)) {
-            routedCallIds.add(toolCallId);
-            const routed = await routeToolCall(
-              executor,
-              toolName,
-              startEvent.args,
-            );
-            // Feed a synthetic tool_execution_end through the translator so
-            // toolUseId correlation and result shaping stay in one place.
-            const synthetic: PiCliEvent = {
-              type: "tool_execution_end",
-              toolCallId,
-              toolName,
-              args: startEvent.args,
-              result: routed.text,
-              isError: routed.isError,
-            };
-            for (const e of translator.processEvent(synthetic)) yield e;
-            continue;
-          }
+      // Bridge the push-based subscribe() into a pull queue. The listener
+      // enqueues each SDK event; the async generator below drains it. We
+      // complete the queue on `agent_end` (the last event of a run) and on
+      // any streamed error event.
+      const queue = new EventQueue<AgentSessionEvent>();
+      const unsubscribe = session.subscribe((event) => {
+        queue.push(event);
+        if (event.type === "agent_end") {
+          queue.close();
         }
+      });
 
-        // Drop the CLI's native end for a call we already routed ourselves.
-        if (
-          executor &&
-          event.type === "tool_execution_end" &&
-          typeof (event as { toolCallId?: string }).toolCallId === "string" &&
-          routedCallIds.has((event as { toolCallId: string }).toolCallId)
-        ) {
-          continue;
+      try {
+        // Fire the turn. prompt() resolves once the turn is accepted; output
+        // arrives via the subscription. A rejection here (bad model, no auth,
+        // ...) is surfaced by closing the queue with the error so it becomes a
+        // single session.error rather than an uncaught throw.
+        session.prompt(prompt).then(
+          () => {
+            // If the SDK ever completes prompt() without an agent_end (e.g. an
+            // extension command that never starts a turn), don't hang forever.
+            queue.closeSoon();
+          },
+          (error: unknown) => {
+            queue.fail(error instanceof Error ? error : new Error(String(error)));
+          },
+        );
+
+        for await (const event of queue) {
+          for (const e of translator.processEvent(event)) yield e;
         }
-
-        const translatedEvents = translator.processEvent(event);
-        for (const e of translatedEvents) yield e;
+      } finally {
+        unsubscribe();
       }
 
       yield {
@@ -124,100 +136,109 @@ export class PiAgentAdapter implements Adapter {
         type: "session.error",
         error: { message: msg, code: "pi_agent_error" },
       } as SessionEvent;
+    } finally {
+      try {
+        session?.dispose();
+      } catch {
+        // dispose() must never mask the real outcome of the run.
+      }
     }
   }
 
-  private async *spawnPi(
-    prompt: string,
-    input: AdapterInput
-  ): AsyncIterable<PiCliEvent> {
-    const sessionDir = join(this.sessionRootDir, input.sessionId);
-    await mkdir(sessionDir, { recursive: true });
-
-    const args = [
-      "--print",
-      "--mode",
-      "json",
-      "--session-dir",
-      sessionDir,
-      ...(input.history.length === 0 ? [] : ["--continue"]),
-      "-p",
-      prompt,
-    ];
-
-    const model = this.model ?? input.agent.model;
-    if (model && model !== "default") {
-      args.push("--model", model);
+  private async createSession(args: SessionFactoryArgs): Promise<PiSessionLike> {
+    if (this.sessionFactory) {
+      return this.sessionFactory(args);
     }
 
-    const child = spawn(this.command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+    // Real SDK path. When a ToolExecutor is injected, disable Pi's own
+    // built-in fs/bash tools ("builtin") and register custom tools that proxy
+    // into the executor (ADR-0002 §2). When absent, keep Pi's default tools.
+    const customTools = args.input.toolExecutor
+      ? buildCustomTools(args.input.toolExecutor)
+      : undefined;
+
+    const { session } = await createAgentSession({
+      model: args.model as never,
+      sessionManager: SessionManager.inMemory(),
+      ...(customTools
+        ? { customTools, noTools: "builtin" as const }
+        : {}),
     });
-
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    if (input.constraints?.timeoutSeconds) {
-      timeoutId = setTimeout(() => {
-        child.kill("SIGTERM");
-      }, input.constraints.timeoutSeconds * 1000);
-    }
-
-    const rl = createInterface({ input: child.stdout });
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-
-    try {
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line) as PiCliEvent;
-          yield event;
-        } catch {
-          // skip unparseable lines
-        }
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.on("close", (code) => {
-          if (code !== 0 && code !== null) {
-            const details = stderr.trim();
-            reject(
-              new Error(
-                details
-                  ? `pi exited with code ${code}: ${details}`
-                  : `pi exited with code ${code}`,
-              ),
-            );
-          } else {
-            resolve();
-          }
-        });
-        child.on("error", reject);
-      });
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
+    return session as PiSessionLike;
   }
 }
 
-/*
- * CLI limitation (spike #37)
- * --------------------------
- * ADR-0002 §2 calls for intercepting Pi tool calls at the SDK layer via a
- * Pi Extension / `host_tools` API and proxying them into a ToolExecutor. That
- * SDK does not exist yet: today Pi is CLI-driven (`pi --print --mode json`)
- * and there is no publicly resolvable Pi SDK exposing `host_tools`. There is
- * therefore no way to pre-empt Pi's own in-CLI tool execution.
- *
- * What this adapter ships faithfully is the SEAM and the PER-CALL INJECTION
- * invariant: the executor is taken from `input.toolExecutor` on every run()
- * call (never constructor state, never a shared registry), the Adapter treats
- * it as an abstract command/file executor, and routable tool calls are run
- * through it — with the CLI's own end-of-tool event for those calls
- * suppressed so results are not duplicated. When a real Pi `host_tools` API
- * lands, only the interception point moves; the ToolExecutor contract and the
- * per-call injection stay identical.
+/**
+ * A minimal single-consumer async queue that bridges a push-based listener to
+ * a pull-based async iterable. Values pushed before the consumer is ready are
+ * buffered; the consumer awaits when the buffer is empty. `close()` ends the
+ * iteration cleanly; `fail()` makes the iteration reject; `closeSoon()` closes
+ * only if nothing else closes/fails first on the next tick (used as a safety
+ * net so a promptless turn cannot hang).
  */
+class EventQueue<T> implements AsyncIterable<T> {
+  private buffer: T[] = [];
+  private resolvers: Array<(result: IteratorResult<T>) => void> = [];
+  private rejectors: Array<(error: unknown) => void> = [];
+  private closed = false;
+  private error: unknown;
+
+  push(value: T): void {
+    if (this.closed) return;
+    const resolve = this.resolvers.shift();
+    if (resolve) {
+      this.rejectors.shift();
+      resolve({ value, done: false });
+    } else {
+      this.buffer.push(value);
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    while (this.resolvers.length > 0) {
+      const resolve = this.resolvers.shift()!;
+      this.rejectors.shift();
+      resolve({ value: undefined as never, done: true });
+    }
+  }
+
+  /** Close on the next tick unless already closed/failed (safety net). */
+  closeSoon(): void {
+    setTimeout(() => this.close(), 0);
+  }
+
+  fail(error: unknown): void {
+    if (this.closed) return;
+    this.error = error;
+    this.closed = true;
+    while (this.rejectors.length > 0) {
+      const reject = this.rejectors.shift()!;
+      this.resolvers.shift();
+      reject(error);
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: (): Promise<IteratorResult<T>> => {
+        if (this.buffer.length > 0) {
+          return Promise.resolve({ value: this.buffer.shift()!, done: false });
+        }
+        if (this.error !== undefined) {
+          const err = this.error;
+          this.error = undefined;
+          return Promise.reject(err);
+        }
+        if (this.closed) {
+          return Promise.resolve({ value: undefined as never, done: true });
+        }
+        return new Promise<IteratorResult<T>>((resolve, reject) => {
+          this.resolvers.push(resolve);
+          this.rejectors.push(reject);
+        });
+      },
+    };
+  }
+}
