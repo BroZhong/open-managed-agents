@@ -24,6 +24,9 @@ data:
   PG_USER: "oma_app"
   PG_SCHEMA: "oma"
   PG_SSL: "false"
+  # The oma schema is pre-provisioned by migration and oma_app lacks CREATE on
+  # the database, so skip the app's startup DDL.
+  PG_ENSURE_SCHEMA: "false"
   # Redis — use ClusterIP, NOT the Service name: even same-ns Service DNS is
   # unreliable on this ECI/virtual-kubelet cluster (name "redis" → NXDOMAIN).
   # Re-check with `kubectl -n oma-infra get svc redis` if it drifts.
@@ -47,6 +50,8 @@ spec:
     metadata:
       labels: { app: oma-server }
     spec:
+      imagePullSecrets:
+        - name: oma-acr
       containers:
         - name: server
           image: OMA_SERVER_IMAGE  # replaced at deploy time
@@ -94,6 +99,8 @@ spec:
     metadata:
       labels: { app: oma-web }
     spec:
+      imagePullSecrets:
+        - name: oma-acr
       containers:
         - name: web
           image: OMA_WEB_IMAGE  # replaced at deploy time
