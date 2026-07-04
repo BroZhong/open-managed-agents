@@ -6,7 +6,7 @@
     "test": "vitest run --workspace vitest.workspace.ts",
     "e2e": "tsx e2e/run.ts",
     "e2e:codex": "tsx e2e/run-codex.ts",
-    "e2e:pi": "tsx e2e/run-pi.ts"
+    "e2e:pi": "pnpm --filter @open-managed-agents/adapter-pi-agent e2e --"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

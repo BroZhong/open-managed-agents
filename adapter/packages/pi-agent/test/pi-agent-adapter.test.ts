@@ -12,6 +12,9 @@ import type {
   AgentThinkingEvent,
   AgentToolUseEvent,
   AgentToolResultEvent,
+  AgentToolUseInputStreamStartEvent,
+  AgentToolUseInputChunkEvent,
+  AgentToolUseInputStreamEndEvent,
   SpanModelRequestEndEvent,
 } from "@open-managed-agents/adapter-core";
 
@@ -274,6 +277,82 @@ describe("PiAgentAdapter (SDK)", () => {
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
       expect(result.isError).toBe(true);
+    });
+  });
+
+  describe("tool_use input stream carries id/name from partial", () => {
+    // The SDK carries the tool call's id/name in `partial.content[contentIndex]`
+    // from the very first stream event (args fill in later). The translator must
+    // surface them on the streamed input events, not just on the final tool_use —
+    // otherwise concurrent tool calls' chunks can't be attributed.
+    function toolCallBlock(id: string, name: string, args: object) {
+      return { type: "toolCall", id, name, arguments: args };
+    }
+
+    it("stream start/chunk/end carry the real toolUseId + name", async () => {
+      const partial = {
+        role: "assistant",
+        content: [toolCallBlock("tc_9", "write_file", {})],
+      };
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "toolcall_start", contentIndex: 0, partial }),
+        ame({ type: "toolcall_delta", contentIndex: 0, delta: '{"path":', partial }),
+        ame({ type: "toolcall_end", contentIndex: 0, partial,
+          toolCall: toolCallBlock("tc_9", "write_file", { path: "a.txt" }) }),
+        assistantEnd(10, 2),
+      ];
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
+      const events = await collectEvents(adapter.run(makeInput("write")));
+
+      const start = events.find(
+        (e) => e.type === "agent.tool_use_input_stream_start",
+      ) as AgentToolUseInputStreamStartEvent;
+      expect(start.toolUseId).toBe("tc_9");
+      expect(start.name).toBe("write_file");
+
+      const chunk = events.find(
+        (e) => e.type === "agent.tool_use_input_chunk",
+      ) as AgentToolUseInputChunkEvent;
+      expect(chunk.toolUseId).toBe("tc_9");
+
+      const end = events.find(
+        (e) => e.type === "agent.tool_use_input_stream_end",
+      ) as AgentToolUseInputStreamEndEvent;
+      expect(end.toolUseId).toBe("tc_9");
+    });
+
+    it("concurrent tool calls keep distinct ids by contentIndex", async () => {
+      // Two tool calls at contentIndex 0 and 1; both blocks live in `partial`.
+      const partial = {
+        role: "assistant",
+        content: [
+          toolCallBlock("tc_a", "read_file", {}),
+          toolCallBlock("tc_b", "exec", {}),
+        ],
+      };
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "toolcall_start", contentIndex: 0, partial }),
+        ame({ type: "toolcall_start", contentIndex: 1, partial }),
+        ame({ type: "toolcall_delta", contentIndex: 1, delta: "{}", partial }),
+        ame({ type: "toolcall_delta", contentIndex: 0, delta: "{}", partial }),
+        assistantEnd(10, 2),
+      ];
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
+      const events = await collectEvents(adapter.run(makeInput("go")));
+
+      const starts = events.filter(
+        (e) => e.type === "agent.tool_use_input_stream_start",
+      ) as AgentToolUseInputStreamStartEvent[];
+      expect(starts.map((s) => s.toolUseId)).toEqual(["tc_a", "tc_b"]);
+      expect(starts.map((s) => s.name)).toEqual(["read_file", "exec"]);
+
+      const chunks = events.filter(
+        (e) => e.type === "agent.tool_use_input_chunk",
+      ) as AgentToolUseInputChunkEvent[];
+      // Deltas arrived in order idx1 then idx0 — each must carry its own id.
+      expect(chunks.map((c) => c.toolUseId)).toEqual(["tc_b", "tc_a"]);
     });
   });
 

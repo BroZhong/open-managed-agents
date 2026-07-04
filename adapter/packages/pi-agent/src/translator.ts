@@ -123,34 +123,42 @@ export class PiEventTranslator {
             }
             break;
 
-          case "toolcall_start":
+          case "toolcall_start": {
+            // The SDK already carries the tool call's id/name at stream start —
+            // they live in `partial.content[contentIndex]` (the ToolCall block,
+            // with args still filling in). Surface them so streamed input chunks
+            // can be attributed to a specific call even when several run at once.
+            const tc = toolCallAt(ame.partial, ame.contentIndex);
             events.push({
               id: generateEventId(),
               timestamp: generateTimestamp(),
               type: "agent.tool_use_input_stream_start",
-              toolUseId: "",
-              name: "",
+              toolUseId: tc?.id ?? "",
+              name: tc?.name ?? "",
             } as SessionEvent);
             break;
+          }
 
           case "toolcall_delta":
             if (ame.delta) {
+              const tc = toolCallAt(ame.partial, ame.contentIndex);
               events.push({
                 id: generateEventId(),
                 timestamp: generateTimestamp(),
                 type: "agent.tool_use_input_chunk",
-                toolUseId: "",
+                toolUseId: tc?.id ?? "",
                 delta: ame.delta,
               } as SessionEvent);
             }
             break;
 
           case "toolcall_end": {
+            const tc = toolCallAt(ame.partial, ame.contentIndex);
             events.push({
               id: generateEventId(),
               timestamp: generateTimestamp(),
               type: "agent.tool_use_input_stream_end",
-              toolUseId: "",
+              toolUseId: tc?.id ?? "",
             } as SessionEvent);
             const toolCall = ame.toolCall;
             if (toolCall) {
@@ -221,6 +229,29 @@ export class PiEventTranslator {
 
     return events;
   }
+}
+
+/**
+ * Extract the in-progress tool call at `contentIndex` from a streamed `partial`
+ * AssistantMessage. During a `toolcall_*` stream the SDK fills
+ * `partial.content[contentIndex]` with a `{ type: "toolCall", id, name, ... }`
+ * block (id/name present from the start, arguments filling in). Returns its
+ * id/name, or undefined if the slot is missing or not a tool call.
+ */
+function toolCallAt(
+  partial: unknown,
+  contentIndex: number,
+): { id: string; name: string } | undefined {
+  const content = (partial as { content?: unknown })?.content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content[contentIndex] as
+    | { type?: string; id?: string; name?: string }
+    | undefined;
+  if (!block || block.type !== "toolCall") return undefined;
+  if (typeof block.id !== "string" || typeof block.name !== "string") {
+    return undefined;
+  }
+  return { id: block.id, name: block.name };
 }
 
 /**
