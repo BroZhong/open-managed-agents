@@ -27,6 +27,23 @@ export interface FilePreview {
 const TEXT_LIKE = /^(text\/|application\/(json|javascript|xml|x-yaml|yaml)|image\/svg)/;
 const MAX_TEXT_PREVIEW = 512 * 1024; // 512 KiB
 
+// S3 stores whatever MIME was set at write time, which is unreliable for
+// shell-created files (a `.md` written via curl can end up as
+// application/x-www-form-urlencoded). Fall back to the file extension so
+// well-known text files still preview inline.
+const TEXT_EXTENSIONS = new Set([
+  "txt", "md", "markdown", "json", "yaml", "yml", "xml", "csv", "tsv", "log",
+  "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt",
+  "c", "h", "cpp", "hpp", "cs", "php", "sh", "bash", "zsh", "sql", "toml", "ini",
+  "cfg", "conf", "env", "html", "css", "scss", "svg", "gitignore", "dockerfile",
+]);
+
+function isTextByExtension(path: string): boolean {
+  const name = path.split("/").pop() ?? path;
+  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : name.toLowerCase();
+  return TEXT_EXTENSIONS.has(ext);
+}
+
 /**
  * Lists a session's Workspace files through the Host proxy and previews a
  * selected file. The tree refetches whenever `refreshKey` changes (driven by
@@ -78,7 +95,7 @@ export function useWorkspaceFiles(sessionId: string, refreshKey: number) {
       if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
       const contentType = res.headers.get("content-type") ?? "application/octet-stream";
       const size = Number(res.headers.get("content-length") ?? "0");
-      const isText = TEXT_LIKE.test(contentType);
+      const isText = TEXT_LIKE.test(contentType) || isTextByExtension(path);
       if (isText && size <= MAX_TEXT_PREVIEW) {
         return { path, text: await res.text(), contentType, size, isBinary: false };
       }
