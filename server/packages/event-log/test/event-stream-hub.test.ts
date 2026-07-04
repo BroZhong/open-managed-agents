@@ -38,6 +38,31 @@ describe("InProcessEventStreamHub", () => {
     reader.releaseLock();
   });
 
+  it("publishChunk merges turnId + blockIndex into the delta frame for alignment", async () => {
+    const hub = new InProcessEventStreamHub();
+    const { stream } = hub.subscribe("sess_1", { includeChunks: true });
+    const reader = stream.getReader();
+
+    hub.publishChunk("sess_1", {
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "hi" },
+      turnId: "turn_1",
+      blockIndex: 2,
+    });
+
+    const frame = await readNext(reader);
+    expect(frame.startsWith("event: agent.message_chunk\n")).toBe(true);
+    const dataLine = frame.split("\n").find((l) => l.startsWith("data: "))!.slice("data: ".length);
+    expect(JSON.parse(dataLine)).toEqual({
+      type: "agent.message_chunk",
+      text: "hi",
+      turnId: "turn_1",
+      blockIndex: 2,
+    });
+
+    reader.releaseLock();
+  });
+
   it("publishChunk respects includeChunks option", async () => {
     const hub = new InProcessEventStreamHub();
 

@@ -6,4 +6,4 @@ export type {
   Subscription,
 } from "./event-stream-hub.js";
 
-export { InProcessEventStreamHub } from "./event-stream-hub.js";
+export { InProcessEventStreamHub, alignedChunkData } from "./event-stream-hub.js";

@@ -1,3 +1,5 @@
+import type { ToolExecutor } from "./tool-executor.js";
+
 // ─── Content blocks ──────────────────────────────────────────────────────────
 
 export interface TextBlock {
@@ -56,6 +58,18 @@ export interface AdapterInput {
     timeoutSeconds?: number;
     sandbox?: "none" | "read-only" | "workspace-write" | "full-access";
   };
+  /**
+   * Per-call injected executor for tool calls (ADR-0002 §2). This is the
+   * single seam between the pure Adapter and infrastructure. It is passed
+   * on every `run()` call — never held as Adapter constructor state, never a
+   * shared mutable registry — so concurrent sessions cannot bleed into each
+   * other's executor. The Adapter treats it as an abstract command/file
+   * executor and does not know what backs it (temp dir, sandbox, ...).
+   *
+   * When absent, an Adapter falls back to whatever tool execution its
+   * underlying agent runtime provides on its own.
+   */
+  toolExecutor?: ToolExecutor;
 }
 
 // ─── Base event ──────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ export type {
   ApiKey,
   PaginatedResult,
   Runtime,
+  Workspace,
 } from "./types.js";
 
 export type {
@@ -41,14 +42,40 @@ export type {
   ApiKeyCreateResult,
 } from "./interfaces/api-key-store.js";
 
-export {
-  createMongoStores,
-  createMongoClient,
-  MongoAgentStore,
-  MongoSessionStore,
-  MongoEventLogStore,
-  MongoPendingEventStore,
-  MongoApiKeyStore,
-} from "./mongodb/index.js";
+export type {
+  WorkspaceStore,
+  WorkspaceStoreCreateInput,
+} from "./interfaces/workspace-store.js";
 
-export type { MongoStores } from "./mongodb/index.js";
+export type {
+  ArtifactStore,
+  Artifact,
+  ArtifactContent,
+  ArtifactPutInput,
+} from "./interfaces/artifact-store.js";
+
+export { S3ArtifactStore } from "./s3/artifact-store.js";
+export type { S3ArtifactStoreOptions } from "./s3/artifact-store.js";
+
+export {
+  createPgStores,
+  createPgPool,
+  pgConfigFromEnv,
+  ensureSchema,
+  schemaDdl,
+  DEFAULT_SCHEMA,
+  PgAgentStore,
+  PgSessionStore,
+  PgEventLogStore,
+  PgPendingEventStore,
+  PgApiKeyStore,
+  PgWorkspaceStore,
+} from "./postgres/index.js";
+
+export type {
+  PgStores,
+  CreatePgStoresOpts,
+  Pool,
+  PoolClient,
+  PgConnectionConfig,
+} from "./postgres/index.js";

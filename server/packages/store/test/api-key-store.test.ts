@@ -1,29 +1,22 @@
-import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { MongoApiKeyStore } from "../src/mongodb/api-key-store.js";
+import { PgApiKeyStore } from "../src/postgres/api-key-store.js";
+import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
-describe("MongoApiKeyStore", () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let store: MongoApiKeyStore;
+describe("PgApiKeyStore", () => {
+  let harness: PgTestHarness;
+  let store: PgApiKeyStore;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
+    harness = await createPgTestHarness();
   });
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await harness.close();
   });
 
   beforeEach(async () => {
-    const db = client.db("test_apikeys");
-    await db.dropDatabase();
-    store = new MongoApiKeyStore(db);
-    await store.ensureIndexes();
+    await harness.reset();
+    store = new PgApiKeyStore(harness.pool);
   });
 
   it("should create an API key with omak_ prefix and return raw key", async () => {
@@ -65,7 +58,6 @@ describe("MongoApiKeyStore", () => {
     const deleted = await store.delete(apiKey.id);
     expect(deleted).toBe(true);
 
-    // Should no longer validate
     const validated = await store.validate(rawKey);
     expect(validated).toBeNull();
   });
@@ -75,6 +67,17 @@ describe("MongoApiKeyStore", () => {
     expect(deleted).toBe(false);
   });
 
+  it("should list keys for a tenant", async () => {
+    await store.create("tenant1", "Key 1");
+    await store.create("tenant1", "Key 2");
+    await store.create("tenant2", "Other");
+
+    const t1 = await store.list("tenant1");
+    expect(t1).toHaveLength(2);
+    const t2 = await store.list("tenant2");
+    expect(t2).toHaveLength(1);
+  });
+
   it("should create multiple keys for same tenant", async () => {
     const key1 = await store.create("tenant1", "Key 1");
     const key2 = await store.create("tenant1", "Key 2");
@@ -82,7 +85,6 @@ describe("MongoApiKeyStore", () => {
     expect(key1.rawKey).not.toBe(key2.rawKey);
     expect(key1.apiKey.id).not.toBe(key2.apiKey.id);
 
-    // Both should validate
     const v1 = await store.validate(key1.rawKey);
     const v2 = await store.validate(key2.rawKey);
     expect(v1).not.toBeNull();

@@ -1,12 +1,20 @@
 import { serve } from "@hono/node-server";
-import { MongoClient } from "mongodb";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createMongoStores } from "@oma-server/store";
-import { InMemoryApiKeyStore } from "@oma-server/store-memory";
+import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore } from "@oma-server/store";
+import type { ArtifactStore } from "@oma-server/store";
+import {
+  createRedisClient,
+  redisConfigFromEnv,
+  RedisTurnStreamStore,
+  RedisPendingEventStore,
+} from "@oma-server/redis";
+import type { TurnStreamStore } from "@oma-server/redis";
+import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import { OpenSandboxClient, SandboxOrchestratorImpl } from "@oma-server/sandbox";
+import { KruiseSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
+import type { ToolExecutorFactory } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
   Adapter,
@@ -18,10 +26,7 @@ import {
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017";
-const DB_NAME = process.env.DB_NAME || "oma_dev";
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const OPENSANDBOX_URL = process.env.OPENSANDBOX_URL || "http://localhost:8080";
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
 
@@ -322,48 +327,97 @@ function resolveAdapter(runtime: string): Adapter {
 }
 
 async function main() {
-  const client = new MongoClient(MONGO_URI);
-  await client.connect();
-  console.log(`Connected to MongoDB at ${MONGO_URI}/${DB_NAME}`);
+  // ─── PostgreSQL (authoritative store) ─────────────────────────────────────
+  const pgConfig = pgConfigFromEnv();
+  const pool = createPgPool(pgConfig);
+  // Fail fast if PG is unreachable.
+  await pool.query("SELECT 1");
+  const schema = pgConfig.schema;
+  const stores = await createPgStores(pool, { schema });
+  console.log(
+    `Connected to PostgreSQL (${pgConfig.connectionString ?? `${pgConfig.host ?? "127.0.0.1"}:${pgConfig.port ?? 5432}`}, schema=${schema})`,
+  );
 
-  const db = client.db(DB_NAME);
-  const stores = await createMongoStores(db);
+  // ─── Redis (transient traffic: pending queue + per-turn delta streams) ────
+  // When Redis is reachable, the pending-input queue and per-turn delta streams
+  // + active-turn map live in Redis (ADR-0002 §3). When it is not, fall back to
+  // the PostgreSQL pending queue and live-only deltas (no reconnect backfill).
+  const redis = createRedisClient(redisConfigFromEnv());
+  let turnStreamStore: TurnStreamStore | undefined;
+  let pendingEventStore: PendingEventStore = stores.pendingEventStore;
+  try {
+    await redis.connect();
+    turnStreamStore = new RedisTurnStreamStore(redis);
+    pendingEventStore = new RedisPendingEventStore(redis);
+    console.log("Connected to Redis (pending queue + delta streams + active-turn map)");
+  } catch (err) {
+    console.log(
+      `Redis not reachable (${String(err)}) — falling back to PostgreSQL pending queue, live-only deltas`,
+    );
+  }
+
   const eventStreamHub = new InProcessEventStreamHub();
 
-  // Create a dev seed key for local testing
-  const devApiKeyStore = new InMemoryApiKeyStore();
-  const seedResult = await devApiKeyStore.create("dev", "dev-console");
+  // ─── S3 artifact store (Workspace file proxy) ─────────────────────────────
+  // Enabled when the Supabase Storage endpoint + service key are configured.
+  let artifactStore: ArtifactStore | undefined;
+  const s3Endpoint = process.env.S3_ENDPOINT || process.env.SUPABASE_STORAGE_URL;
+  const s3ServiceKey = process.env.S3_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (s3Endpoint && s3ServiceKey) {
+    artifactStore = new S3ArtifactStore({
+      endpoint: s3Endpoint,
+      serviceKey: s3ServiceKey,
+      bucket: process.env.S3_BUCKET || "workspace",
+    });
+    console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
+  } else {
+    console.log("Workspace artifact store disabled — set S3_ENDPOINT + S3_SERVICE_KEY to enable");
+  }
 
-  // Initialize sandbox orchestration (connects to local OpenSandbox if available)
-  let sandboxOrchestrator: SandboxOrchestratorImpl | undefined;
-  try {
-    const healthRes = await fetch(`${OPENSANDBOX_URL}/health`);
-    if (healthRes.ok) {
-      const client = new OpenSandboxClient({ url: OPENSANDBOX_URL });
-      sandboxOrchestrator = new SandboxOrchestratorImpl(client);
-      console.log(`Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL})`);
-    }
-  } catch {
-    console.log("OpenSandbox not available — sandbox orchestration disabled");
+  // Create a dev seed key for local testing (persisted in PG).
+  const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
+
+  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): kruise-CRD sandboxes,
+  // hydrated from the S3 Workspace. Requires the artifact store (nothing to
+  // hydrate from without it). Enable with SANDBOX_ENABLED=true.
+  let toolExecutorFactory: ToolExecutorFactory | undefined;
+  if (artifactStore && process.env.SANDBOX_ENABLED === "true") {
+    const sandboxClient = new KruiseSandboxClient({
+      namespace: process.env.SANDBOX_NAMESPACE,
+      defaultImage: process.env.SANDBOX_IMAGE,
+    });
+    toolExecutorFactory = new SandboxToolExecutorFactory({
+      sandboxClient,
+      artifactStore,
+    });
+    console.log("Sandbox ToolExecutor enabled (kruise CRD, hydrate from S3)");
+  } else {
+    console.log(
+      "Sandbox ToolExecutor disabled — set SANDBOX_ENABLED=true (+ S3) to enable",
+    );
   }
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
-    pendingEventStore: stores.pendingEventStore,
+    pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
+    turnStreamStore,
     resolveAdapter,
-    sandboxOrchestrator,
+    toolExecutorFactory,
   });
 
   const app = createApp({
-    apiKeyStore: devApiKeyStore,
-    fullApiKeyStore: devApiKeyStore,
+    apiKeyStore: stores.apiKeyStore,
+    fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
-    pendingEventStore: stores.pendingEventStore,
+    pendingEventStore,
+    workspaceStore: stores.workspaceStore,
+    artifactStore,
     eventStreamHub,
+    turnStreamStore,
     sessionRouter,
   });
 
@@ -376,7 +430,8 @@ async function main() {
   });
 
   process.on("SIGINT", async () => {
-    await client.close();
+    await pool.end().catch(() => {});
+    redis.disconnect();
     process.exit(0);
   });
 }

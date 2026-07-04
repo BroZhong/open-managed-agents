@@ -1,6 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
+import {
+  FakeSandboxClient,
+  SandboxToolExecutorFactory,
+} from "@oma-server/sandbox";
 import type {
   EventLogStore,
   EventLogStoreAppendInput,
@@ -16,13 +20,16 @@ import type {
   StoredEvent,
   PaginatedResult,
   Agent,
+  Artifact,
+  ArtifactContent,
+  ArtifactPutInput,
+  ArtifactStore,
 } from "@oma-server/store";
 import type {
   Adapter,
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
-import type { SandboxOrchestrator, SandboxRef } from "@oma-server/sandbox";
 
 // ─── In-memory EventLogStore ────────────────────────────────────────────────
 
@@ -118,6 +125,7 @@ class InMemorySessionStore implements SessionStore {
       agentId: input.agentId,
       status: "idle",
       agent: structuredClone(input.agent),
+      workspaceId: input.workspaceId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -158,427 +166,529 @@ class InMemorySessionStore implements SessionStore {
   }
 }
 
-// ─── Mock SandboxOrchestrator ───────────────────────────────────────────────
+// ─── In-memory ArtifactStore (stand-in S3 Workspace) ────────────────────────
 
-function createMockSandboxOrchestrator(events: SessionEvent[]): SandboxOrchestrator & {
-  createForSession: ReturnType<typeof vi.fn>;
-  resume: ReturnType<typeof vi.fn>;
-  pause: ReturnType<typeof vi.fn>;
-  kill: ReturnType<typeof vi.fn>;
-  runAdapterTurn: ReturnType<typeof vi.fn>;
-} {
-  const ref: SandboxRef = {
-    sandboxId: "sbx_test_1",
-    sessionId: "sess_1",
-    status: "running",
-  };
+class InMemoryArtifactStore implements ArtifactStore {
+  private readonly objects = new Map<string, Uint8Array>();
+  private key(t: string, w: string, p: string) {
+    return `${t}/${w}/${p}`;
+  }
+  seed(t: string, w: string, p: string, content: string) {
+    this.objects.set(this.key(t, w, p), new TextEncoder().encode(content));
+  }
+  async list(t: string, w: string, prefix = ""): Promise<Artifact[]> {
+    const wsPrefix = `${t}/${w}/`;
+    const out: Artifact[] = [];
+    for (const [k, v] of this.objects) {
+      if (!k.startsWith(wsPrefix)) continue;
+      const rel = k.slice(wsPrefix.length);
+      if (prefix && !rel.startsWith(prefix)) continue;
+      out.push({ path: rel, size: v.byteLength });
+    }
+    return out;
+  }
+  async get(t: string, w: string, p: string): Promise<ArtifactContent | null> {
+    const body = this.objects.get(this.key(t, w, p));
+    return body ? { path: p, body } : null;
+  }
+  async put(input: ArtifactPutInput): Promise<Artifact> {
+    const body =
+      typeof input.body === "string"
+        ? new TextEncoder().encode(input.body)
+        : input.body;
+    this.objects.set(this.key(input.tenantId, input.workspaceId, input.path), body);
+    return { path: input.path, size: body.byteLength };
+  }
+  async delete(t: string, w: string, p: string): Promise<boolean> {
+    return this.objects.delete(this.key(t, w, p));
+  }
+}
 
+// ─── Adapters ────────────────────────────────────────────────────────────────
+
+/** Pure-chat adapter: never touches input.toolExecutor. */
+const chatAdapter: Adapter = {
+  async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+    yield {
+      id: "evt_chat",
+      timestamp: "2024-01-01T00:00:00.000Z",
+      type: "agent.message",
+      content: [{ type: "text", text: "just chatting" }],
+    };
+  },
+};
+
+/**
+ * Tool-using adapter: reads a workspace file through the injected executor and
+ * echoes it back, proving a tool call runs against the hydrated sandbox.
+ */
+function toolReadingAdapter(path: string): Adapter {
   return {
-    createForSession: vi.fn().mockResolvedValue(ref),
-    resume: vi.fn().mockResolvedValue(ref),
-    pause: vi.fn().mockResolvedValue(undefined),
-    kill: vi.fn().mockResolvedValue(undefined),
-    runAdapterTurn: vi.fn().mockImplementation(
-      async function* (_sessionId: string, _input: AdapterInput) {
-        for (const event of events) {
-          yield event;
-        }
-      },
-    ),
+    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      const executor = input.toolExecutor;
+      let body = "<no-executor>";
+      if (executor) {
+        body = await executor.readFile(path);
+      }
+      yield {
+        id: "evt_tool",
+        timestamp: "2024-01-01T00:00:00.000Z",
+        type: "agent.message",
+        content: [{ type: "text", text: body }],
+      };
+    },
   };
 }
 
-// ─── Test helpers ────────────────────────────────────────────────────────────
+/**
+ * Tool-using adapter that WRITES a file through the injected executor, so the
+ * subsequent Host sync produces a real change. The adapter itself emits only a
+ * plain tool-result message — never a workspace/artifact event.
+ */
+function toolWritingAdapter(path: string, content: string): Adapter {
+  return {
+    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      const executor = input.toolExecutor;
+      if (executor) {
+        await executor.writeFile(path, content);
+      }
+      yield {
+        id: "evt_tool_write",
+        timestamp: "2024-01-01T00:00:00.000Z",
+        type: "agent.message",
+        content: [{ type: "text", text: "wrote it" }],
+      };
+    },
+  };
+}
 
-const testAgentSandboxed: Agent = {
-  id: "agent_1",
+// ─── Test fixtures ────────────────────────────────────────────────────────────
+
+const sandboxedAgent: Agent = {
+  id: "agent_sbx",
   tenantId: "tenant_1",
-  name: "Test Agent (Sandboxed)",
+  name: "Sandboxed",
   model: "claude-3",
-  system: "You are helpful",
-  runtime: "claude-code",
+  system: "helpful",
+  runtime: "pi-agent",
   sandbox: { enabled: true, image: "ubuntu:22.04" },
   createdAt: new Date(),
   updatedAt: new Date(),
 };
 
-const testAgentNoSandbox: Agent = {
-  id: "agent_2",
+const plainAgent: Agent = {
+  id: "agent_plain",
   tenantId: "tenant_1",
-  name: "Test Agent (No Sandbox)",
+  name: "Plain",
   model: "claude-3",
-  system: "You are helpful",
-  runtime: "claude-code",
+  system: "helpful",
+  runtime: "pi-agent",
   createdAt: new Date(),
   updatedAt: new Date(),
 };
 
-function createTestDeps(opts: {
-  adapter?: Adapter;
-  sandboxOrchestrator?: SandboxOrchestrator;
+function createDeps(opts: {
+  adapter: Adapter;
+  sandboxClient?: FakeSandboxClient;
+  artifactStore?: InMemoryArtifactStore;
+  withFactory?: boolean;
 }) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
   const sessionStore = new InMemorySessionStore();
   const eventStreamHub = new InProcessEventStreamHub();
+  const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
+  const artifactStore = opts.artifactStore ?? new InMemoryArtifactStore();
 
-  const defaultAdapter: Adapter = {
-    async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
-      yield {
-        id: "evt_direct",
-        timestamp: "2024-01-01T00:00:00.000Z",
-        type: "agent.message",
-        content: [{ type: "text", text: "Direct adapter reply" }],
-      };
-    },
-  };
+  const toolExecutorFactory =
+    opts.withFactory === false
+      ? undefined
+      : new SandboxToolExecutorFactory({ sandboxClient, artifactStore });
 
   const router = new SessionRouter({
     eventLogStore,
     pendingEventStore,
     sessionStore,
     eventStreamHub,
-    resolveAdapter: () => opts.adapter ?? defaultAdapter,
-    sandboxOrchestrator: opts.sandboxOrchestrator,
+    resolveAdapter: () => opts.adapter,
+    toolExecutorFactory,
   });
 
-  return { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, router };
+  return {
+    eventLogStore,
+    pendingEventStore,
+    sessionStore,
+    eventStreamHub,
+    sandboxClient,
+    artifactStore,
+    router,
+  };
+}
+
+async function enqueue(
+  pendingEventStore: PendingEventStore,
+  sessionId: string,
+  text: string,
+) {
+  await pendingEventStore.enqueue(sessionId, {
+    type: "user.message",
+    data: { content: [{ type: "text", text }] },
+    sessionThreadId: "sthr_primary",
+  });
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describe("SessionRouter - sandbox orchestration", () => {
-  describe("sandboxed session creates sandbox on first turn", () => {
-    it("calls createForSession on the first turn", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "Sandbox reply" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
-      });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Hello" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      expect(orchestrator.createForSession).toHaveBeenCalledTimes(1);
-      expect(orchestrator.createForSession).toHaveBeenCalledWith(
-        session.id,
-        expect.objectContaining({
-          image: "ubuntu:22.04",
-          env: expect.any(Object),
-        }),
-      );
-      expect(orchestrator.resume).not.toHaveBeenCalled();
+describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => {
+  it("a pure-chat turn creates NO sandbox (lazy)", async () => {
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: chatAdapter,
     });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "hi");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    expect(sandboxClient.created).toHaveLength(0);
+    expect(sandboxClient.liveCount).toBe(0);
   });
 
-  describe("sandboxed session resumes on subsequent turns", () => {
-    it("calls resume instead of createForSession on the second turn", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "Sandbox reply" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
-      });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      // Enqueue two messages to process in one drain loop
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "First" }] },
-        sessionThreadId: "sthr_primary",
-      });
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Second" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      // First turn: create, second turn: resume
-      expect(orchestrator.createForSession).toHaveBeenCalledTimes(1);
-      expect(orchestrator.resume).toHaveBeenCalledTimes(1);
-      expect(orchestrator.resume).toHaveBeenCalledWith(session.id);
+  it("the first file/code tool call creates a sandbox lazily", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      artifactStore,
     });
-
-    it("resumes across separate handleNewEvent calls", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "Sandbox reply" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
-      });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "First" }] },
-        sessionThreadId: "sthr_primary",
-      });
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Second" }] },
-        sessionThreadId: "sthr_primary",
-      });
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      expect(orchestrator.createForSession).toHaveBeenCalledTimes(1);
-      expect(orchestrator.resume).toHaveBeenCalledTimes(1);
-      expect(orchestrator.pause).toHaveBeenCalledTimes(2);
-      expect(orchestrator.kill).not.toHaveBeenCalled();
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
     });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    expect(sandboxClient.created).toHaveLength(1);
   });
 
-  describe("sandbox is paused after each turn", () => {
-    it("calls pause after each turn execution", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "Sandbox reply" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
+  it("hydrates the sandbox from the S3 Workspace and a tool call reads a hydrated file", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "notes.md", "hydrated-content");
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
+      createDeps({
+        adapter: toolReadingAdapter("notes.md"),
+        artifactStore,
       });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      // Two turns
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "First" }] },
-        sessionThreadId: "sthr_primary",
-      });
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Second" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      // Pause should be called once per turn
-      expect(orchestrator.pause).toHaveBeenCalledTimes(2);
-      expect(orchestrator.pause).toHaveBeenCalledWith(session.id);
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
     });
+    await enqueue(pendingEventStore, session.id, "read notes");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    // The hydrated file landed in the sandbox under /workspace.
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.filesOf(id).get("/workspace/notes.md")?.content).toBe(
+      "hydrated-content",
+    );
+
+    // The adapter's tool call read it back and emitted it as a message.
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    const message = data.find((e) => e.type === "agent.message");
+    expect((message?.data as { content: Array<{ text: string }> }).content[0].text).toBe(
+      "hydrated-content",
+    );
   });
 
-  describe("sandbox is retained until session termination", () => {
-    it("does not kill after the drain loop completes", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "Reply" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
-      });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Hello" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      expect(orchestrator.pause).toHaveBeenCalledTimes(1);
-      expect(orchestrator.kill).not.toHaveBeenCalled();
+  it("destroys the sandbox at session end (terminateSession)", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "f.txt", "x");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("f.txt"),
+      artifactStore,
     });
-
-    it("kills the sandbox when the session is explicitly terminated", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "Reply" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
-      });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Hello" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-      await router.terminateSession(session.id);
-
-      expect(orchestrator.kill).toHaveBeenCalledTimes(1);
-      expect(orchestrator.kill).toHaveBeenCalledWith(session.id);
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
     });
+    await enqueue(pendingEventStore, session.id, "read");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    expect(sandboxClient.liveCount).toBe(1);
+    const id = sandboxClient.created[0];
+
+    await router.terminateSession(session.id);
+
+    expect(sandboxClient.destroyed).toEqual([id]);
+    expect(sandboxClient.liveCount).toBe(0);
   });
 
-  describe("sandbox runAdapterTurn produces events correctly", () => {
-    it("events from sandbox orchestrator are persisted in the event log", async () => {
-      const sandboxEvents: SessionEvent[] = [
-        {
-          id: "evt_sbx_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "From sandbox" }],
-        },
-      ];
-
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
-      });
-
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
-
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Hello" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      expect(orchestrator.runAdapterTurn).toHaveBeenCalledTimes(1);
-
-      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
-      const types = allEvents.data.map((e) => e.type);
-      expect(types).toContain("agent.message");
+  it("reuses one sandbox across turns and destroys it once at session end", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "f.txt", "x");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("f.txt"),
+      artifactStore,
     });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "turn 1");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    await enqueue(pendingEventStore, session.id, "turn 2");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    expect(sandboxClient.created).toHaveLength(1);
+
+    await router.terminateSession(session.id);
+    expect(sandboxClient.destroyed).toHaveLength(1);
   });
 
-  describe("non-sandboxed sessions skip sandbox entirely", () => {
-    it("does not call any sandbox orchestrator methods for non-sandboxed agent", async () => {
-      const sandboxEvents: SessionEvent[] = [];
-      const orchestrator = createMockSandboxOrchestrator(sandboxEvents);
-      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps({
-        sandboxOrchestrator: orchestrator,
+  it("does not inject an executor for a non-sandboxed agent", async () => {
+    let sawExecutor = true;
+    const probeAdapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        sawExecutor = input.toolExecutor != null;
+        yield {
+          id: "e",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "ok" }],
+        };
+      },
+    };
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: probeAdapter,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_plain",
+      agent: plainAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "hi");
+
+    await router.handleNewEvent(session.id, plainAgent);
+
+    expect(sawExecutor).toBe(false);
+    expect(sandboxClient.created).toHaveLength(0);
+  });
+
+  it("does not inject an executor when no factory is configured", async () => {
+    let sawExecutor = true;
+    const probeAdapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        sawExecutor = input.toolExecutor != null;
+        yield {
+          id: "e",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "ok" }],
+        };
+      },
+    };
+    const { router, sessionStore, pendingEventStore } = createDeps({
+      adapter: probeAdapter,
+      withFactory: false,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "hi");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    expect(sawExecutor).toBe(false);
+  });
+
+  it("isolates concurrent sessions in distinct sandboxes (no cross-session bleed)", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_a", "who.txt", "session-A");
+    artifactStore.seed("tenant_1", "ws_b", "who.txt", "session-B");
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
+      createDeps({
+        adapter: toolReadingAdapter("who.txt"),
+        artifactStore,
       });
 
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_2",
-        agent: testAgentNoSandbox,
-      });
+    const a = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_a",
+    });
+    const b = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_b",
+    });
+    await enqueue(pendingEventStore, a.id, "read");
+    await enqueue(pendingEventStore, b.id, "read");
 
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Hello" }] },
-        sessionThreadId: "sthr_primary",
-      });
+    await Promise.all([
+      router.handleNewEvent(a.id, sandboxedAgent),
+      router.handleNewEvent(b.id, sandboxedAgent),
+    ]);
 
-      await router.handleNewEvent(session.id, testAgentNoSandbox);
+    // Two distinct sandboxes, each hydrated from its own Workspace.
+    expect(sandboxClient.created).toHaveLength(2);
 
-      // No sandbox methods called
-      expect(orchestrator.createForSession).not.toHaveBeenCalled();
-      expect(orchestrator.resume).not.toHaveBeenCalled();
-      expect(orchestrator.pause).not.toHaveBeenCalled();
-      expect(orchestrator.kill).not.toHaveBeenCalled();
-      expect(orchestrator.runAdapterTurn).not.toHaveBeenCalled();
+    const textOf = async (sessionId: string) => {
+      const { data } = await eventLogStore.getEvents(sessionId, { limit: 100 });
+      const msg = data.find((e) => e.type === "agent.message");
+      return (msg?.data as { content: Array<{ text: string }> }).content[0].text;
+    };
+    expect(await textOf(a.id)).toBe("session-A");
+    expect(await textOf(b.id)).toBe("session-B");
+  });
+});
 
-      // Direct adapter was used instead
-      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
-      const types = allEvents.data.map((e) => e.type);
-      expect(types).toContain("agent.message");
+// ─── Host-emitted workspace.file_change on sync (#43) ───────────────────────
+
+/** Collect all SSE frame event types seen on a session's live stream. */
+async function collectEventTypes(sub: {
+  stream: ReadableStream<string>;
+}): Promise<string[]> {
+  const reader = sub.stream.getReader();
+  const types: string[] = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const m = value.match(/^event: (.+)$/m);
+    if (m) types.push(m[1]);
+  }
+  return types;
+}
+
+describe("SessionRouter — Host emits workspace.file_change on sync (#43)", () => {
+  it("emits workspace.file_change on sync completion; the Adapter emits none", async () => {
+    const { router, sessionStore, pendingEventStore, eventLogStore, eventStreamHub } =
+      createDeps({ adapter: toolWritingAdapter("created.txt", "hi") });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
     });
 
-    it("does not use sandbox when orchestrator is not provided", async () => {
-      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps({});
+    // Subscribe (with chunks) to capture the live SSE emit.
+    const sub = eventStreamHub.subscribe(session.id, { includeChunks: true });
 
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgentSandboxed,
-      });
+    await enqueue(pendingEventStore, session.id, "make a file");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    sub.unsubscribe();
 
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "Hello" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      // Even with sandboxed agent, no orchestrator means direct adapter
-      await router.handleNewEvent(session.id, testAgentSandboxed);
-
-      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
-      const types = allEvents.data.map((e) => e.type);
-      expect(types).toContain("agent.message");
+    // Persisted: exactly one workspace.file_change, listing the new file.
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    const fileChanges = data.filter((e) => e.type === "workspace.file_change");
+    expect(fileChanges).toHaveLength(1);
+    expect(fileChanges[0].data).toMatchObject({
+      workspaceId: "ws_1",
+      changed: ["created.txt"],
+      deleted: [],
     });
+
+    // The Host owns the event: its seq shows it went through the event log.
+    expect(fileChanges[0].seq).toBeGreaterThan(0);
+
+    // The adapter emitted only its plain message — no workspace/artifact event.
+    const agentMessages = data.filter((e) => e.type === "agent.message");
+    expect(agentMessages).toHaveLength(1);
+
+    // Live SSE stream carried the file-change frame too.
+    const liveTypes = await collectEventTypes(sub);
+    expect(liveTypes).toContain("workspace.file_change");
+  });
+
+  it("a pure-chat turn emits NO workspace.file_change (sync no-op)", async () => {
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
+      adapter: chatAdapter,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "just chat");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    expect(data.filter((e) => e.type === "workspace.file_change")).toHaveLength(0);
+  });
+
+  it("propagates a delete: a hydrated file removed via bash emits it in deleted[]", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "doomed.txt", "x");
+
+    // Fake sandbox whose exec understands `rm <abs-path>` by mutating its map,
+    // so the file is removed by shell (not a tool) before the Host's sync.
+    const sandboxClient = new FakeSandboxClient({
+      execHandler: (command, files) => {
+        if (command[0] === "rm" && command[1]) {
+          files.delete(command[1]);
+          return [];
+        }
+        return undefined;
+      },
+    });
+
+    // Adapter runs `rm /workspace/doomed.txt` through the injected executor.
+    const removingAdapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const executor = input.toolExecutor;
+        if (executor) {
+          for await (const _ of executor.exec(["rm", "/workspace/doomed.txt"])) {
+            // discard output
+          }
+        }
+        yield {
+          id: "e",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "removed" }],
+        };
+      },
+    };
+
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
+      adapter: removingAdapter,
+      artifactStore,
+      sandboxClient,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "remove it");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    const fileChanges = data.filter((e) => e.type === "workspace.file_change");
+    expect(fileChanges).toHaveLength(1);
+    expect(fileChanges[0].data).toMatchObject({ deleted: ["doomed.txt"] });
   });
 });

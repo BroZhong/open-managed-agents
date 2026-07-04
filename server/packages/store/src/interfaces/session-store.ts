@@ -11,6 +11,12 @@ export interface SessionStoreCreateInput {
   tenantId: string;
   agentId: string;
   agent: Agent;
+  /**
+   * The Workspace to bind this Session to. Immutable after creation. The
+   * caller (session-creation route) is responsible for having created/resolved
+   * the Workspace before binding.
+   */
+  workspaceId: string;
 }
 
 export interface SessionStore {

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, ApiKeyStore as FullApiKeyStore, EventLogStore, PendingEventStore, SessionStore } from "@oma-server/store";
+import type { AgentStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, WorkspaceStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
+import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "./types.js";
 import { authMiddleware } from "./middleware/auth.js";
@@ -10,6 +11,7 @@ import { apiKeyRoutes } from "./routes/api-keys.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { eventRoutes } from "./routes/events.js";
 import { messageRoutes } from "./routes/messages.js";
+import { workspaceRoutes } from "./routes/workspace.js";
 
 type Env = {
   Variables: {
@@ -24,7 +26,10 @@ export interface AppDeps {
   sessionStore?: SessionStore;
   eventLogStore?: EventLogStore;
   pendingEventStore?: PendingEventStore;
+  workspaceStore?: WorkspaceStore;
+  artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
+  turnStreamStore?: TurnStreamStore;
   sessionRouter?: SessionRouter;
 }
 
@@ -53,10 +58,11 @@ export function createApp(deps: AppDeps) {
   }
 
   // Mount session routes
-  if (deps.sessionStore && deps.agentStore) {
+  if (deps.sessionStore && deps.agentStore && deps.workspaceStore) {
     app.route("", sessionRoutes({
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,
+      workspaceStore: deps.workspaceStore,
       sessionRouter: deps.sessionRouter,
     }));
   }
@@ -68,7 +74,16 @@ export function createApp(deps: AppDeps) {
       pendingEventStore: deps.pendingEventStore,
       sessionStore: deps.sessionStore,
       eventStreamHub: deps.eventStreamHub,
+      turnStreamStore: deps.turnStreamStore,
       sessionRouter: deps.sessionRouter,
+    }));
+  }
+
+  // Mount Workspace file proxy routes (list + preview/download through the Host)
+  if (deps.sessionStore && deps.artifactStore) {
+    app.route("", workspaceRoutes({
+      sessionStore: deps.sessionStore,
+      artifactStore: deps.artifactStore,
     }));
   }
 

@@ -82,6 +82,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@open-managed-agents/adapter-tool-executor-local':
+        specifier: workspace:*
+        version: link:../tool-executor-local
       '@types/node':
         specifier: ^22.15.0
         version: 22.19.19
@@ -110,6 +113,22 @@ importers:
         specifier: workspace:*
         version: link:../pi-agent
     devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.3
+        version: 3.2.6(@types/node@22.19.19)(tsx@4.22.4)
+
+  packages/tool-executor-local:
+    dependencies:
+      '@open-managed-agents/adapter-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.19.19
       typescript:
         specifier: ^5.8.3
         version: 5.9.3

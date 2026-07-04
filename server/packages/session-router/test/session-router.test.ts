@@ -2,6 +2,12 @@ import { describe, it, expect } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type {
+  TurnStreamStore,
+  TurnDelta,
+  StoredTurnDelta,
+  ActiveTurn,
+} from "@oma-server/redis";
+import type {
   EventLogStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
@@ -104,6 +110,53 @@ class InMemoryPendingEventStore implements PendingEventStore {
   }
 }
 
+// ─── In-memory TurnStreamStore (Redis stand-in) ──────────────────────────────
+
+class InMemoryTurnStreamStore implements TurnStreamStore {
+  streams = new Map<string, StoredTurnDelta[]>();
+  activeTurns = new Map<string, ActiveTurn>();
+  /** Every delta ever appended, retained across reclaim() for assertions. */
+  appendedDeltas: StoredTurnDelta[] = [];
+  private seq = 0;
+
+  async appendDelta(delta: TurnDelta): Promise<string> {
+    const id = `0-${this.seq++}`;
+    const list = this.streams.get(delta.turnId) ?? [];
+    const stored = { ...delta, id };
+    list.push(stored);
+    this.streams.set(delta.turnId, list);
+    this.appendedDeltas.push(stored);
+    return id;
+  }
+
+  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
+    const list = this.streams.get(turnId) ?? [];
+    if (!afterId) return [...list];
+    const idx = list.findIndex((d) => d.id === afterId);
+    return list.slice(idx + 1);
+  }
+
+  async deltaCount(turnId: string): Promise<number> {
+    return this.streams.get(turnId)?.length ?? 0;
+  }
+
+  async reclaim(turnId: string): Promise<void> {
+    this.streams.delete(turnId);
+  }
+
+  async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
+    this.activeTurns.set(sessionId, { ...turn });
+  }
+
+  async getActiveTurn(sessionId: string): Promise<ActiveTurn | null> {
+    return this.activeTurns.get(sessionId) ?? null;
+  }
+
+  async clearActiveTurn(sessionId: string): Promise<void> {
+    this.activeTurns.delete(sessionId);
+  }
+}
+
 // ─── In-memory SessionStore ──────────────────────────────────────────────────
 
 class InMemorySessionStore implements SessionStore {
@@ -117,6 +170,7 @@ class InMemorySessionStore implements SessionStore {
       agentId: input.agentId,
       status: "idle",
       agent: structuredClone(input.agent),
+      workspaceId: input.workspaceId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -210,6 +264,25 @@ function createTestDeps(adapter: Adapter) {
   return { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, router };
 }
 
+function createTestDepsWithTurnStream(adapter: Adapter) {
+  const eventLogStore = new InMemoryEventLogStore();
+  const pendingEventStore = new InMemoryPendingEventStore();
+  const sessionStore = new InMemorySessionStore();
+  const eventStreamHub = new InProcessEventStreamHub();
+  const turnStreamStore = new InMemoryTurnStreamStore();
+
+  const router = new SessionRouter({
+    eventLogStore,
+    pendingEventStore,
+    sessionStore,
+    eventStreamHub,
+    turnStreamStore,
+    resolveAdapter: () => adapter,
+  });
+
+  return { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, turnStreamStore, router };
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("SessionRouter", () => {
@@ -231,6 +304,7 @@ describe("SessionRouter", () => {
         tenantId: "tenant_1",
         agentId: "agent_1",
         agent: testAgent,
+        workspaceId: "ws_test",
       });
 
       // Enqueue a user.message into pending
@@ -284,6 +358,7 @@ describe("SessionRouter", () => {
         tenantId: "tenant_1",
         agentId: "agent_1",
         agent: testAgent,
+        workspaceId: "ws_test",
       });
 
       // Enqueue two pending messages
@@ -347,6 +422,7 @@ describe("SessionRouter", () => {
         tenantId: "tenant_1",
         agentId: "agent_1",
         agent: testAgent,
+        workspaceId: "ws_test",
       });
 
       await pendingEventStore.enqueue(session.id, {
@@ -422,6 +498,7 @@ describe("SessionRouter", () => {
         tenantId: "tenant_1",
         agentId: "agent_1",
         agent: testAgent,
+        workspaceId: "ws_test",
       });
 
       await pendingEventStore.enqueue(session.id, {
@@ -462,6 +539,7 @@ describe("SessionRouter", () => {
         tenantId: "tenant_1",
         agentId: "agent_1",
         agent: testAgent,
+        workspaceId: "ws_test",
       });
 
       await pendingEventStore.enqueue(session.id, {
@@ -478,6 +556,130 @@ describe("SessionRouter", () => {
       const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
       const agentMessages = allEvents.data.filter((e) => e.type === "agent.message");
       expect(agentMessages).toHaveLength(1);
+    });
+  });
+
+  describe("turn stream (delta→Redis, full→PostgreSQL, active-turn map)", () => {
+    const streamingEvents: SessionEvent[] = [
+      { id: "s0", timestamp: "2024-01-01T00:00:00.000Z", type: "agent.message_stream_start" },
+      { id: "s1", timestamp: "2024-01-01T00:00:01.000Z", type: "agent.message_chunk", text: "Hel" },
+      { id: "s2", timestamp: "2024-01-01T00:00:02.000Z", type: "agent.message_chunk", text: "lo" },
+      { id: "s3", timestamp: "2024-01-01T00:00:03.000Z", type: "agent.message_stream_end" },
+      {
+        id: "s4",
+        timestamp: "2024-01-01T00:00:04.000Z",
+        type: "agent.message",
+        content: [{ type: "text", text: "Hello" }],
+      },
+    ];
+
+    async function runOneTurn() {
+      const adapter = createMockAdapter(streamingEvents);
+      const deps = createTestDepsWithTurnStream(adapter);
+      const session = await deps.sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await deps.pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hi" }] },
+        sessionThreadId: "sthr_primary",
+      });
+      await deps.router.handleNewEvent(session.id, testAgent);
+      return { ...deps, session };
+    }
+
+    it("writes deltas to the per-turn Redis stream, never to PostgreSQL", async () => {
+      const { eventLogStore, turnStreamStore, session } = await runOneTurn();
+
+      // Deltas were written to the per-turn Redis stream (turnId is
+      // turn_<seq of promoted user.message> => turn_1). We assert against the
+      // retained append log because the live stream is reclaimed at turn end.
+      const deltas = turnStreamStore.appendedDeltas.filter((d) => d.turnId === "turn_1");
+      const deltaTypes = deltas.map((d) => d.type);
+      expect(deltaTypes).toContain("agent.message_chunk");
+      expect(deltaTypes).toContain("agent.message_stream_start");
+
+      // Deltas carry the turnId + blockIndex alignment.
+      const chunk = deltas.find((d) => d.type === "agent.message_chunk")!;
+      expect(chunk.turnId).toBe("turn_1");
+      expect(chunk.blockIndex).toBe(0);
+
+      // PostgreSQL (canonical log) holds the full agent.message but NO deltas.
+      const stored = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const storedTypes = stored.data.map((e) => e.type);
+      expect(storedTypes).toContain("agent.message");
+      expect(storedTypes).not.toContain("agent.message_chunk");
+      expect(storedTypes).not.toContain("agent.message_stream_start");
+      expect(storedTypes).not.toContain("agent.message_stream_end");
+    });
+
+    it("aligns deltas and their full event via turnId + blockIndex", async () => {
+      const { turnStreamStore } = await runOneTurn();
+      const deltas = turnStreamStore.appendedDeltas.filter((d) => d.turnId === "turn_1");
+      // All message-block deltas share (turn_1, blockIndex 0), which is the same
+      // pair the full agent.message would carry.
+      for (const d of deltas) {
+        expect(d.turnId).toBe("turn_1");
+        expect(d.blockIndex).toBe(0);
+      }
+    });
+
+    it("reclaims the per-turn Redis stream after the turn completes", async () => {
+      const { turnStreamStore } = await runOneTurn();
+      // The stream was reclaimed (DEL) at turn end.
+      expect(await turnStreamStore.deltaCount("turn_1")).toBe(0);
+      expect(await turnStreamStore.readDeltas("turn_1")).toEqual([]);
+    });
+
+    it("records the active turn in Redis and clears it when the session goes idle", async () => {
+      const { turnStreamStore, session } = await runOneTurn();
+      // Drain loop ended => active-turn record cleared.
+      expect(await turnStreamStore.getActiveTurn(session.id)).toBeNull();
+    });
+
+    it("marks the active turn running mid-flight so a reconnect can find it", async () => {
+      // A slow adapter lets us observe the active-turn map while the turn runs.
+      const slow: Adapter = {
+        async *run(): AsyncIterable<SessionEvent> {
+          yield { id: "s0", timestamp: "t", type: "agent.message_stream_start" };
+          yield { id: "s1", timestamp: "t", type: "agent.message_chunk", text: "Hel" };
+          await new Promise((r) => setTimeout(r, 50));
+          yield { id: "s2", timestamp: "t", type: "agent.message_chunk", text: "lo" };
+          yield { id: "s3", timestamp: "t", type: "agent.message_stream_end" };
+          yield {
+            id: "s4",
+            timestamp: "t",
+            type: "agent.message",
+            content: [{ type: "text", text: "Hello" }],
+          };
+        },
+      };
+      const deps = createTestDepsWithTurnStream(slow);
+      const session = await deps.sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await deps.pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hi" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      const run = deps.router.handleNewEvent(session.id, testAgent);
+
+      // Mid-turn: active turn is running and half-emitted deltas are buffered.
+      await new Promise((r) => setTimeout(r, 20));
+      const active = await deps.turnStreamStore.getActiveTurn(session.id);
+      expect(active).toEqual({ turnId: "turn_1", status: "running" });
+      const midDeltas = await deps.turnStreamStore.readDeltas("turn_1");
+      expect(midDeltas.some((d) => d.type === "agent.message_chunk")).toBe(true);
+
+      await run;
     });
   });
 });

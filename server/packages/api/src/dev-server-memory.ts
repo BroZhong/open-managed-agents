@@ -8,7 +8,6 @@ import { join } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import { OpenSandboxClient, SandboxOrchestratorImpl } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
   Adapter,
@@ -322,10 +321,6 @@ class DevMockAdapter implements Adapter {
   }
 }
 
-// ─── OpenSandbox Client ─────────────────────────────────────────────────────
-
-const OPENSANDBOX_URL = process.env.OPENSANDBOX_URL || "http://localhost:8080";
-
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 function resolveAdapter(runtime: string): Adapter {
@@ -344,26 +339,15 @@ async function main() {
   // Create a dev seed key so auth can be tested
   const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
 
-  // Initialize sandbox orchestration (connects to local OpenSandbox if available)
-  let sandboxOrchestrator: SandboxOrchestratorImpl | undefined;
-  try {
-    const healthRes = await fetch(`${OPENSANDBOX_URL}/health`);
-    if (healthRes.ok) {
-      const client = new OpenSandboxClient({ url: OPENSANDBOX_URL });
-      sandboxOrchestrator = new SandboxOrchestratorImpl(client);
-      console.log(`Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL})`);
-    }
-  } catch {
-    console.log("OpenSandbox not available — sandbox orchestration disabled");
-  }
-
+  // In-memory dev mode has no S3 Workspace to hydrate from, so the
+  // sandbox-backed ToolExecutor is intentionally not wired here. Use the full
+  // dev server (S3 + SANDBOX_ENABLED=true) to exercise the kruise sandbox.
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
-    sandboxOrchestrator,
   });
 
   const app = createApp({
@@ -373,13 +357,14 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
+    workspaceStore: stores.workspaceStore,
     eventStreamHub,
     sessionRouter,
   });
 
   serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`\nServer listening on http://localhost:${info.port}`);
-    console.log(`Storage: in-memory (no MongoDB required)`);
+    console.log(`Storage: in-memory (no PostgreSQL/Redis required)`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
     console.log(`Adapters: claude-code, codex, pi-agent`);
     console.log(`\nDev API key: ${seedResult.rawKey}`);

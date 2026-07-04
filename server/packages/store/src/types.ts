@@ -33,6 +33,21 @@ export interface Agent {
   updatedAt: Date;
 }
 
+/**
+ * A Workspace is the S3-authoritative home of a Session's artifacts.
+ *
+ * There is only one kind of Workspace: a user-supplied ID is used as-is, and
+ * an unspecified one is auto-created (same entity, just an auto-generated ID).
+ * A Workspace belongs to a tenant. A Session binds exactly one Workspace
+ * immutably at creation; a single Workspace may be bound by many Sessions
+ * concurrently (collisions are the user's responsibility). See ADR-0002 §4.
+ */
+export interface Workspace {
+  id: string;
+  tenantId: string;
+  createdAt: Date;
+}
+
 export type SessionStatus = "idle" | "running" | "terminated";
 
 export interface Session {
@@ -42,6 +57,8 @@ export interface Session {
   status: SessionStatus;
   /** Snapshot of the Agent at session creation time */
   agent: Agent;
+  /** The Workspace this Session is bound to. Immutable after creation. */
+  workspaceId: string;
   createdAt: Date;
   updatedAt: Date;
   terminatedAt?: Date;

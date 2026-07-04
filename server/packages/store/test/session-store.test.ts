@@ -1,8 +1,8 @@
-import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { MongoSessionStore } from "../src/mongodb/session-store.js";
+import { PgSessionStore } from "../src/postgres/session-store.js";
+import { PgWorkspaceStore } from "../src/postgres/workspace-store.js";
 import type { Agent } from "../src/types.js";
+import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
 const mockAgent: Agent = {
   id: "agent_test123",
@@ -15,33 +15,37 @@ const mockAgent: Agent = {
   updatedAt: new Date("2024-01-01"),
 };
 
-describe("MongoSessionStore", () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let store: MongoSessionStore;
+describe("PgSessionStore", () => {
+  let harness: PgTestHarness;
+  let store: PgSessionStore;
+  let workspaces: PgWorkspaceStore;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
+    harness = await createPgTestHarness();
   });
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await harness.close();
   });
 
   beforeEach(async () => {
-    const db = client.db("test_sessions");
-    await db.dropDatabase();
-    store = new MongoSessionStore(db);
+    await harness.reset();
+    store = new PgSessionStore(harness.pool);
+    workspaces = new PgWorkspaceStore(harness.pool);
   });
 
+  async function newWorkspace(tenantId = "tenant1"): Promise<string> {
+    const ws = await workspaces.create({ tenantId });
+    return ws.id;
+  }
+
   it("should create a session with sess_ prefix and idle status", async () => {
+    const workspaceId = await newWorkspace();
     const session = await store.create({
       tenantId: "tenant1",
       agentId: mockAgent.id,
       agent: mockAgent,
+      workspaceId,
     });
 
     expect(session.id).toMatch(/^sess_/);
@@ -49,15 +53,18 @@ describe("MongoSessionStore", () => {
     expect(session.agentId).toBe(mockAgent.id);
     expect(session.status).toBe("idle");
     expect(session.agent).toEqual(mockAgent);
+    expect(session.workspaceId).toBe(workspaceId);
     expect(session.createdAt).toBeInstanceOf(Date);
     expect(session.terminatedAt).toBeUndefined();
   });
 
   it("should get a session by id", async () => {
+    const workspaceId = await newWorkspace();
     const created = await store.create({
       tenantId: "tenant1",
       agentId: mockAgent.id,
       agent: mockAgent,
+      workspaceId,
     });
 
     const found = await store.getById(created.id);
@@ -71,10 +78,12 @@ describe("MongoSessionStore", () => {
   });
 
   it("should update session status", async () => {
+    const workspaceId = await newWorkspace();
     const created = await store.create({
       tenantId: "tenant1",
       agentId: mockAgent.id,
       agent: mockAgent,
+      workspaceId,
     });
 
     const updated = await store.updateStatus(created.id, "running");
@@ -83,10 +92,12 @@ describe("MongoSessionStore", () => {
   });
 
   it("should terminate a session", async () => {
+    const workspaceId = await newWorkspace();
     const created = await store.create({
       tenantId: "tenant1",
       agentId: mockAgent.id,
       agent: mockAgent,
+      workspaceId,
     });
 
     const terminated = await store.terminate(created.id);
@@ -96,8 +107,9 @@ describe("MongoSessionStore", () => {
   });
 
   it("should list sessions with filtering by status", async () => {
-    await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent });
-    const sess2 = await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent });
+    const workspaceId = await newWorkspace();
+    await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId });
+    const sess2 = await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId });
     await store.updateStatus(sess2.id, "running");
 
     const running = await store.list("tenant1", { status: "running" });
@@ -110,8 +122,9 @@ describe("MongoSessionStore", () => {
   });
 
   it("should list sessions with filtering by agentId", async () => {
-    await store.create({ tenantId: "tenant1", agentId: "agent_a", agent: { ...mockAgent, id: "agent_a" } });
-    await store.create({ tenantId: "tenant1", agentId: "agent_b", agent: { ...mockAgent, id: "agent_b" } });
+    const workspaceId = await newWorkspace();
+    await store.create({ tenantId: "tenant1", agentId: "agent_a", agent: { ...mockAgent, id: "agent_a" }, workspaceId });
+    await store.create({ tenantId: "tenant1", agentId: "agent_b", agent: { ...mockAgent, id: "agent_b" }, workspaceId });
 
     const result = await store.list("tenant1", { agentId: "agent_a" });
     expect(result.data).toHaveLength(1);
@@ -119,8 +132,9 @@ describe("MongoSessionStore", () => {
   });
 
   it("should list sessions with pagination", async () => {
+    const workspaceId = await newWorkspace();
     for (let i = 0; i < 5; i++) {
-      await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent });
+      await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId });
     }
 
     const page1 = await store.list("tenant1", { limit: 3 });
@@ -133,8 +147,10 @@ describe("MongoSessionStore", () => {
   });
 
   it("should isolate sessions by tenant", async () => {
-    await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent });
-    await store.create({ tenantId: "tenant2", agentId: mockAgent.id, agent: mockAgent });
+    const ws1 = await newWorkspace("tenant1");
+    const ws2 = await newWorkspace("tenant2");
+    await store.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: ws1 });
+    await store.create({ tenantId: "tenant2", agentId: mockAgent.id, agent: mockAgent, workspaceId: ws2 });
 
     const t1 = await store.list("tenant1");
     expect(t1.data).toHaveLength(1);

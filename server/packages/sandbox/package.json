@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@alibaba-group/opensandbox": "^0.1.7",
+    "@oma-server/store": "workspace:*",
     "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core"
   },
   "devDependencies": {

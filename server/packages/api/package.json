@@ -14,9 +14,9 @@
   "dependencies": {
     "hono": "^4.7.0",
     "@hono/node-server": "^1.13.0",
-    "mongodb": "^6.12.0",
     "@oma-server/store": "workspace:*",
     "@oma-server/store-memory": "workspace:*",
+    "@oma-server/redis": "workspace:*",
     "@oma-server/event-log": "workspace:*",
     "@oma-server/sandbox": "workspace:*",
     "@oma-server/session-router": "workspace:*",

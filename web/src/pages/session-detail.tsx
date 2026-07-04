@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConversationView } from "@/components/conversation-view";
 import { TimelineView } from "@/components/timeline-view";
+import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
@@ -13,13 +14,13 @@ import { useSendMessage } from "@/lib/hooks/use-send-message";
 import { cn } from "@/lib/utils";
 import type { SessionEvent } from "@/lib/types";
 
-type Tab = "conversation" | "timeline";
+type Tab = "conversation" | "timeline" | "workspace";
 
 export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: session, isLoading: sessionLoading } = useSession(id);
-  const { events, status, isConnected } = useSessionEvents(id);
+  const { events, status, isConnected, fileChange } = useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
   const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
@@ -140,6 +141,12 @@ export default function SessionDetailPage() {
         >
           Timeline{events.length > 0 ? ` (${events.length})` : ""}
         </TabButton>
+        <TabButton
+          active={activeTab === "workspace"}
+          onClick={() => setActiveTab("workspace")}
+        >
+          Workspace
+        </TabButton>
       </div>
 
       {/* Content */}
@@ -150,9 +157,13 @@ export default function SessionDetailPage() {
           </div>
           <MessageInput onSend={handleSend} disabled={inputDisabled} pendingMessages={status === "running" ? unconfirmedEvents : []} />
         </>
-      ) : (
+      ) : activeTab === "timeline" ? (
         <div className="flex-1 overflow-hidden">
           <TimelineView events={events} />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-hidden">
+          <WorkspacePanel sessionId={id} refreshKey={fileChange.nonce} />
         </div>
       )}
     </div>
