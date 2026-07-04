@@ -1,12 +1,20 @@
 import { serve } from "@hono/node-server";
-import { MongoClient } from "mongodb";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createMongoStores } from "@oma-server/store";
-import { InMemoryApiKeyStore } from "@oma-server/store-memory";
+import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore } from "@oma-server/store";
+import type { ArtifactStore } from "@oma-server/store";
+import {
+  createRedisClient,
+  redisConfigFromEnv,
+  RedisTurnStreamStore,
+  RedisPendingEventStore,
+} from "@oma-server/redis";
+import type { TurnStreamStore } from "@oma-server/redis";
+import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import { OpenSandboxClient, SandboxOrchestratorImpl } from "@oma-server/sandbox";
+import { KruiseSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
+import type { ToolExecutorFactory } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
   Adapter,
@@ -17,11 +25,20 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017";
-const DB_NAME = process.env.DB_NAME || "oma_dev";
+// Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
+// egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
+// OpenAI/Anthropic; the in-cluster sing-box proxy tunnels past it. Node's fetch
+// (undici) ignores HTTP(S)_PROXY env, so we must install a global dispatcher.
+const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
+if (proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  console.log(`Global fetch proxy enabled → ${proxyUrl}`);
+}
+
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const OPENSANDBOX_URL = process.env.OPENSANDBOX_URL || "http://localhost:8080";
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
 
@@ -55,12 +72,19 @@ class DevClaudeCodeAdapter implements Adapter {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
+    // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
+    // unhandled 'error' event can never crash the Host process.
+    let spawnError: Error | undefined;
+    child.on("error", (err) => {
+      spawnError = err instanceof Error ? err : new Error(String(err));
+    });
     child.stdin.end();
 
     const rl = createInterface({ input: child.stdout });
     let hasError = false;
 
     try {
+      if (spawnError) throw spawnError;
       for await (const line of rl) {
         if (!line.trim()) continue;
         let event: any;
@@ -137,12 +161,19 @@ class DevCodexAdapter implements Adapter {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
+    // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
+    // unhandled 'error' event can never crash the Host process.
+    let spawnError: Error | undefined;
+    child.on("error", (err) => {
+      spawnError = err instanceof Error ? err : new Error(String(err));
+    });
     child.stdin.end();
 
     const rl = createInterface({ input: child.stdout });
     let hasError = false;
 
     try {
+      if (spawnError) throw spawnError;
       for await (const line of rl) {
         if (!line.trim()) continue;
         let event: any;
@@ -205,92 +236,9 @@ class DevCodexAdapter implements Adapter {
   }
 }
 
-// ─── Pi Agent Adapter (spawns `pi` CLI) ────────────────────────────────────
-
-class DevPiAgentAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const prompt = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    const args = ["--print", "--mode", "json", "-p", prompt, "--no-session"];
-    if (input.agent.model) args.push("--model", input.agent.model);
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-
-    const child = spawn("pi", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    });
-
-    const rl = createInterface({ input: child.stdout });
-    let hasError = false;
-    let textAccumulator = "";
-
-    try {
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let event: any;
-        try { event = JSON.parse(line); } catch { continue; }
-
-        if (event.type === "message_update" && event.assistantMessageEvent) {
-          const ame = event.assistantMessageEvent;
-          if (ame.type === "text_delta" && ame.delta) {
-            textAccumulator += ame.delta;
-          }
-          if (ame.type === "text_end") {
-            textAccumulator = ame.content ?? textAccumulator;
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "agent.message", content: [{ type: "text", text: textAccumulator }],
-            } as SessionEvent;
-            textAccumulator = "";
-          }
-          if (ame.type === "toolcall_end" && ame.toolCall) {
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "agent.tool_use", toolUseId: ame.toolCall.id, name: ame.toolCall.name, input: ame.toolCall.args || {},
-            } as SessionEvent;
-          }
-        }
-
-        if (event.type === "tool_execution_end" && event.toolCallId) {
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "agent.tool_result", toolUseId: event.toolCallId,
-            content: [{ type: "text", text: typeof event.result === "string" ? event.result : JSON.stringify(event.result) }],
-            isError: event.isError ?? false,
-          } as SessionEvent;
-        }
-
-        if (event.type === "message_end" && event.message?.usage) {
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "span.model_request_end", usage: { inputTokens: event.message.usage.input || 0, outputTokens: event.message.usage.output || 0 },
-          } as SessionEvent;
-        }
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.on("close", (code) => {
-          if (code !== 0 && !hasError) reject(new Error(`pi exited with code ${code}`));
-          else resolve();
-        });
-        child.on("error", reject);
-      });
-
-      if (!hasError) {
-        yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-      }
-    } catch (err: unknown) {
-      yield {
-        id: generateEventId(), timestamp: generateTimestamp(),
-        type: "session.error", error: { message: String(err), code: "pi_agent_error" },
-      } as SessionEvent;
-    }
-  }
-}
+// ─── Pi Agent: the real SDK adapter is used (see resolveAdapter below). ──
+// The former inline CLI-spawning DevPiAgentAdapter was removed in favor of
+// @open-managed-agents/adapter-pi-agent (SDK + host-tool injection).
 
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
@@ -312,58 +260,117 @@ class DevMockAdapter implements Adapter {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
+// The Pi adapter is the real SDK-based one (@open-managed-agents/adapter-pi-agent):
+// it reads the per-run ToolExecutor from AdapterInput.toolExecutor (injected by
+// the SessionRouter) and, when present, registers custom tools that proxy into
+// it (ADR-0002 §2). A single instance is fine — all per-turn state is per-call.
+const piAgentAdapter = new PiAgentAdapter();
+
 function resolveAdapter(runtime: string): Adapter {
   switch (runtime) {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
-    case "pi-agent": return new DevPiAgentAdapter();
+    case "pi-agent": return piAgentAdapter;
+    case "mock": return new DevMockAdapter();
     default: return new DevMockAdapter();
   }
 }
 
 async function main() {
-  const client = new MongoClient(MONGO_URI);
-  await client.connect();
-  console.log(`Connected to MongoDB at ${MONGO_URI}/${DB_NAME}`);
+  // ─── PostgreSQL (authoritative store) ─────────────────────────────────────
+  const pgConfig = pgConfigFromEnv();
+  const pool = createPgPool(pgConfig);
+  // Fail fast if PG is unreachable.
+  await pool.query("SELECT 1");
+  const schema = pgConfig.schema;
+  // When the schema is pre-provisioned by a migration (and the app role lacks
+  // CREATE on the database), set PG_ENSURE_SCHEMA=false to skip the startup DDL.
+  const ensureSchema = process.env.PG_ENSURE_SCHEMA !== "false";
+  const stores = await createPgStores(pool, { schema, ensureSchema });
+  console.log(
+    `Connected to PostgreSQL (${pgConfig.connectionString ?? `${pgConfig.host ?? "127.0.0.1"}:${pgConfig.port ?? 5432}`}, schema=${schema})`,
+  );
 
-  const db = client.db(DB_NAME);
-  const stores = await createMongoStores(db);
+  // ─── Redis (transient traffic: pending queue + per-turn delta streams) ────
+  // When Redis is reachable, the pending-input queue and per-turn delta streams
+  // + active-turn map live in Redis (ADR-0002 §3). When it is not, fall back to
+  // the PostgreSQL pending queue and live-only deltas (no reconnect backfill).
+  const redis = createRedisClient(redisConfigFromEnv());
+  let turnStreamStore: TurnStreamStore | undefined;
+  let pendingEventStore: PendingEventStore = stores.pendingEventStore;
+  try {
+    await redis.connect();
+    turnStreamStore = new RedisTurnStreamStore(redis);
+    pendingEventStore = new RedisPendingEventStore(redis);
+    console.log("Connected to Redis (pending queue + delta streams + active-turn map)");
+  } catch (err) {
+    console.log(
+      `Redis not reachable (${String(err)}) — falling back to PostgreSQL pending queue, live-only deltas`,
+    );
+  }
+
   const eventStreamHub = new InProcessEventStreamHub();
 
-  // Create a dev seed key for local testing
-  const devApiKeyStore = new InMemoryApiKeyStore();
-  const seedResult = await devApiKeyStore.create("dev", "dev-console");
+  // ─── S3 artifact store (Workspace file proxy) ─────────────────────────────
+  // Enabled when the Supabase Storage endpoint + service key are configured.
+  let artifactStore: ArtifactStore | undefined;
+  const s3Endpoint = process.env.S3_ENDPOINT || process.env.SUPABASE_STORAGE_URL;
+  const s3ServiceKey = process.env.S3_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (s3Endpoint && s3ServiceKey) {
+    artifactStore = new S3ArtifactStore({
+      endpoint: s3Endpoint,
+      serviceKey: s3ServiceKey,
+      bucket: process.env.S3_BUCKET || "workspace",
+    });
+    console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
+  } else {
+    console.log("Workspace artifact store disabled — set S3_ENDPOINT + S3_SERVICE_KEY to enable");
+  }
 
-  // Initialize sandbox orchestration (connects to local OpenSandbox if available)
-  let sandboxOrchestrator: SandboxOrchestratorImpl | undefined;
-  try {
-    const healthRes = await fetch(`${OPENSANDBOX_URL}/health`);
-    if (healthRes.ok) {
-      const client = new OpenSandboxClient({ url: OPENSANDBOX_URL });
-      sandboxOrchestrator = new SandboxOrchestratorImpl(client);
-      console.log(`Sandbox orchestration enabled (OpenSandbox at ${OPENSANDBOX_URL})`);
-    }
-  } catch {
-    console.log("OpenSandbox not available — sandbox orchestration disabled");
+  // Create a dev seed key for local testing (persisted in PG).
+  const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
+
+  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): kruise-CRD sandboxes,
+  // hydrated from the S3 Workspace. Requires the artifact store (nothing to
+  // hydrate from without it). Enable with SANDBOX_ENABLED=true.
+  let toolExecutorFactory: ToolExecutorFactory | undefined;
+  if (artifactStore && process.env.SANDBOX_ENABLED === "true") {
+    const sandboxClient = new KruiseSandboxClient({
+      namespace: process.env.SANDBOX_NAMESPACE,
+      defaultImage: process.env.SANDBOX_IMAGE,
+    });
+    toolExecutorFactory = new SandboxToolExecutorFactory({
+      sandboxClient,
+      artifactStore,
+    });
+    console.log("Sandbox ToolExecutor enabled (kruise CRD, hydrate from S3)");
+  } else {
+    console.log(
+      "Sandbox ToolExecutor disabled — set SANDBOX_ENABLED=true (+ S3) to enable",
+    );
   }
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
-    pendingEventStore: stores.pendingEventStore,
+    pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
+    turnStreamStore,
     resolveAdapter,
-    sandboxOrchestrator,
+    toolExecutorFactory,
   });
 
   const app = createApp({
-    apiKeyStore: devApiKeyStore,
-    fullApiKeyStore: devApiKeyStore,
+    apiKeyStore: stores.apiKeyStore,
+    fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
-    pendingEventStore: stores.pendingEventStore,
+    pendingEventStore,
+    workspaceStore: stores.workspaceStore,
+    artifactStore,
     eventStreamHub,
+    turnStreamStore,
     sessionRouter,
   });
 
@@ -376,7 +383,8 @@ async function main() {
   });
 
   process.on("SIGINT", async () => {
-    await client.close();
+    await pool.end().catch(() => {});
+    redis.disconnect();
     process.exit(0);
   });
 }

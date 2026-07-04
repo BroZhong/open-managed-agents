@@ -1,29 +1,22 @@
-import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { MongoPendingEventStore } from "../src/mongodb/pending-event-store.js";
+import { PgPendingEventStore } from "../src/postgres/pending-event-store.js";
+import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
-describe("MongoPendingEventStore", () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let store: MongoPendingEventStore;
+describe("PgPendingEventStore", () => {
+  let harness: PgTestHarness;
+  let store: PgPendingEventStore;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
+    harness = await createPgTestHarness();
   });
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await harness.close();
   });
 
   beforeEach(async () => {
-    const db = client.db("test_pending");
-    await db.dropDatabase();
-    store = new MongoPendingEventStore(db);
-    await store.ensureIndexes();
+    await harness.reset();
+    store = new PgPendingEventStore(harness.pool);
   });
 
   it("enqueue writes an event and dequeue returns it FIFO then deletes", async () => {
@@ -42,9 +35,18 @@ describe("MongoPendingEventStore", () => {
     expect(event!.arrivedAt).toBeInstanceOf(Date);
     expect(event!.id).toBeDefined();
 
-    // dequeue again should return null (deleted)
     const next = await store.dequeue("sess_1");
     expect(next).toBeNull();
+  });
+
+  it("dequeue returns events in FIFO order", async () => {
+    await store.enqueue("sess_1", { type: "m", data: { n: 1 }, sessionThreadId: "t" });
+    await store.enqueue("sess_1", { type: "m", data: { n: 2 }, sessionThreadId: "t" });
+    await store.enqueue("sess_1", { type: "m", data: { n: 3 }, sessionThreadId: "t" });
+
+    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 1 });
+    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 2 });
+    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 3 });
   });
 
   it("peek returns the next event without removing it", async () => {
@@ -58,11 +60,9 @@ describe("MongoPendingEventStore", () => {
     expect(peeked).not.toBeNull();
     expect(peeked!.data).toEqual({ content: "first" });
 
-    // peek again returns the same event (not deleted)
     const peekedAgain = await store.peek("sess_1");
     expect(peekedAgain!.id).toBe(peeked!.id);
 
-    // dequeue still returns it
     const dequeued = await store.dequeue("sess_1");
     expect(dequeued!.id).toBe(peeked!.id);
   });

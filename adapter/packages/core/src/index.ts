@@ -45,6 +45,13 @@ export type {
 
 export type { Adapter } from "./interface.js";
 
+export type {
+  ToolExecutor,
+  ExecOutputChunk,
+  ExecOptions,
+  FileListEntry,
+} from "./tool-executor.js";
+
 export {
   generateEventId,
   generateTimestamp,

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@oma-server/event-log": "workspace:*",
+    "@oma-server/redis": "workspace:*",
     "@oma-server/sandbox": "workspace:*",
     "@oma-server/store": "workspace:*",
     "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core"

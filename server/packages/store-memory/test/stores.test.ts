@@ -48,30 +48,59 @@ describe("createMemoryStores", () => {
   });
 
   describe("SessionStore", () => {
-    it("creates and retrieves a session", async () => {
+    it("creates and retrieves a session bound to a workspace", async () => {
       const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
-      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent });
+      const ws = await stores.workspaceStore.create({ tenantId: "t1" });
+      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
       expect(session.status).toBe("idle");
+      expect(session.workspaceId).toBe(ws.id);
 
       const found = await stores.sessionStore.getById(session.id);
       expect(found).toEqual(session);
     });
 
-    it("updates status", async () => {
+    it("updates status without touching the workspace binding", async () => {
       const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
-      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent });
+      const ws = await stores.workspaceStore.create({ tenantId: "t1", id: "bound" });
+      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
 
       const updated = await stores.sessionStore.updateStatus(session.id, "running");
       expect(updated?.status).toBe("running");
+      expect(updated?.workspaceId).toBe("bound");
     });
 
     it("terminates a session", async () => {
       const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
-      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent });
+      const ws = await stores.workspaceStore.create({ tenantId: "t1" });
+      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
 
       const terminated = await stores.sessionStore.terminate(session.id);
       expect(terminated?.status).toBe("terminated");
       expect(terminated?.terminatedAt).toBeDefined();
+      expect(terminated?.workspaceId).toBe(ws.id);
+    });
+  });
+
+  describe("WorkspaceStore", () => {
+    it("auto-creates a workspace when no id is supplied", async () => {
+      const ws = await stores.workspaceStore.create({ tenantId: "t1" });
+      expect(ws.id).toMatch(/^ws_/);
+      expect(ws.tenantId).toBe("t1");
+    });
+
+    it("uses a user-supplied id as-is and is idempotent", async () => {
+      const first = await stores.workspaceStore.create({ tenantId: "t1", id: "shared" });
+      const second = await stores.workspaceStore.create({ tenantId: "t1", id: "shared" });
+      expect(first).toEqual(second);
+      expect((await stores.workspaceStore.getById("t1", "shared"))?.id).toBe("shared");
+    });
+
+    it("isolates workspaces by tenant", async () => {
+      await stores.workspaceStore.create({ tenantId: "t1", id: "ws" });
+      await stores.workspaceStore.create({ tenantId: "t2", id: "ws" });
+      expect(await stores.workspaceStore.getById("t1", "ws")).not.toBeNull();
+      expect(await stores.workspaceStore.getById("t2", "ws")).not.toBeNull();
+      expect(await stores.workspaceStore.getById("t3", "ws")).toBeNull();
     });
   });
 

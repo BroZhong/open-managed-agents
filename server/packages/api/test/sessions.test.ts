@@ -13,6 +13,9 @@ import type {
   SessionStoreListOpts,
   SessionStatus,
   PaginatedResult,
+  WorkspaceStore,
+  WorkspaceStoreCreateInput,
+  Workspace,
 } from "@oma-server/store";
 
 // In-memory AgentStore for testing
@@ -86,6 +89,7 @@ class InMemorySessionStore implements SessionStore {
       agentId: input.agentId,
       status: "idle",
       agent: structuredClone(input.agent),
+      workspaceId: input.workspaceId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -138,6 +142,32 @@ class InMemorySessionStore implements SessionStore {
   }
 }
 
+// In-memory WorkspaceStore for testing
+class InMemoryWorkspaceStore implements WorkspaceStore {
+  private workspaces = new Map<string, Workspace>();
+  private nextId = 1;
+  public createCalls: WorkspaceStoreCreateInput[] = [];
+
+  private key(tenantId: string, id: string): string {
+    return `${tenantId} ${id}`;
+  }
+
+  async create(input: WorkspaceStoreCreateInput): Promise<Workspace> {
+    this.createCalls.push(input);
+    const id = input.id ?? `ws_${this.nextId++}`;
+    const key = this.key(input.tenantId, id);
+    const existing = this.workspaces.get(key);
+    if (existing) return existing;
+    const workspace: Workspace = { id, tenantId: input.tenantId, createdAt: new Date() };
+    this.workspaces.set(key, workspace);
+    return workspace;
+  }
+
+  async getById(tenantId: string, id: string): Promise<Workspace | null> {
+    return this.workspaces.get(this.key(tenantId, id)) ?? null;
+  }
+}
+
 function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   return {
     async findByKeyHash(keyHash) {
@@ -150,12 +180,14 @@ function createTestApp() {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
   const sessionStore = new InMemorySessionStore();
+  const workspaceStore = new InMemoryWorkspaceStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
     agentStore,
     sessionStore,
+    workspaceStore,
   });
-  return { app, agentStore, sessionStore };
+  return { app, agentStore, sessionStore, workspaceStore };
 }
 
 describe("POST /v1/sessions", () => {
@@ -190,6 +222,104 @@ describe("POST /v1/sessions", () => {
     expect(body.agent.name).toBe("My Agent");
     expect(body.agent.model).toBe("claude-3");
     expect(body.agent.runtime).toBe("claude-code");
+  });
+
+  it("auto-creates and binds a Workspace when none is supplied", async () => {
+    const { app, agentStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent.id }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.workspaceId).toBeDefined();
+    // Auto-created (no id supplied to the workspace store).
+    expect(workspaceStore.createCalls).toHaveLength(1);
+    expect(workspaceStore.createCalls[0].id).toBeUndefined();
+    const ws = await workspaceStore.getById("dev", body.workspaceId);
+    expect(ws).not.toBeNull();
+    expect(ws!.tenantId).toBe("dev");
+  });
+
+  it("binds a supplied workspace_id as-is", async () => {
+    const { app, agentStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent.id, workspace_id: "my-workspace" }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.workspaceId).toBe("my-workspace");
+    expect(workspaceStore.createCalls[0].id).toBe("my-workspace");
+  });
+
+  it("lets many sessions bind the same Workspace concurrently", async () => {
+    const { app, agentStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+
+    const mk = () =>
+      app.request("/v1/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent: agent.id, workspace_id: "shared" }),
+      });
+
+    const [a, b] = await Promise.all([mk(), mk()]);
+    const sa = await a.json();
+    const sb = await b.json();
+    expect(sa.workspaceId).toBe("shared");
+    expect(sb.workspaceId).toBe("shared");
+    expect(sa.id).not.toBe(sb.id);
+    // Only one Workspace entity exists for the shared id.
+    const ws = await workspaceStore.getById("dev", "shared");
+    expect(ws).not.toBeNull();
+  });
+
+  it("rejects a non-string workspace_id", async () => {
+    const { app, agentStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent.id, workspace_id: 123 }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("workspace_id must be a string");
   });
 
   it("stores a snapshot of the agent config at creation time", async () => {
@@ -318,8 +448,8 @@ describe("GET /v1/sessions", () => {
       system: "sys",
       runtime: "claude-code",
     });
-    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
-    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
+    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
+    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
 
     const res = await app.request("/v1/sessions");
     expect(res.status).toBe(200);
@@ -344,8 +474,8 @@ describe("GET /v1/sessions", () => {
       system: "sys",
       runtime: "codex",
     });
-    await sessionStore.create({ tenantId: "dev", agentId: agent1.id, agent: agent1 });
-    await sessionStore.create({ tenantId: "dev", agentId: agent2.id, agent: agent2 });
+    await sessionStore.create({ tenantId: "dev", agentId: agent1.id, agent: agent1, workspaceId: "ws_test" });
+    await sessionStore.create({ tenantId: "dev", agentId: agent2.id, agent: agent2, workspaceId: "ws_test" });
 
     const res = await app.request(`/v1/sessions?agent_id=${agent1.id}`);
     expect(res.status).toBe(200);
@@ -363,8 +493,8 @@ describe("GET /v1/sessions", () => {
       system: "sys",
       runtime: "claude-code",
     });
-    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
-    const sess2 = await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
+    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
+    const sess2 = await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
     await sessionStore.updateStatus(sess2.id, "running");
 
     const res = await app.request("/v1/sessions?status=running");
@@ -384,7 +514,7 @@ describe("GET /v1/sessions", () => {
       runtime: "claude-code",
     });
     for (let i = 0; i < 5; i++) {
-      await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
+      await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
     }
 
     const res = await app.request("/v1/sessions?limit=3");
@@ -405,7 +535,7 @@ describe("GET /v1/sessions", () => {
       runtime: "claude-code",
     });
     for (let i = 0; i < 5; i++) {
-      await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
+      await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
     }
 
     const page1 = await app.request("/v1/sessions?limit=3");
@@ -428,8 +558,8 @@ describe("GET /v1/sessions", () => {
       system: "sys",
       runtime: "claude-code",
     });
-    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent });
-    await sessionStore.create({ tenantId: "other-tenant", agentId: agent.id, agent });
+    await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
+    await sessionStore.create({ tenantId: "other-tenant", agentId: agent.id, agent, workspaceId: "ws_test" });
 
     const res = await app.request("/v1/sessions");
     const body = await res.json();
@@ -456,6 +586,7 @@ describe("GET /v1/sessions/:id", () => {
       tenantId: "dev",
       agentId: agent.id,
       agent,
+      workspaceId: "ws_test",
     });
 
     const res = await app.request(`/v1/sessions/${session.id}`);
@@ -488,6 +619,7 @@ describe("GET /v1/sessions/:id", () => {
       tenantId: "other-tenant",
       agentId: agent.id,
       agent,
+      workspaceId: "ws_test",
     });
 
     const res = await app.request(`/v1/sessions/${session.id}`);
@@ -515,6 +647,7 @@ describe("DELETE /v1/sessions/:id", () => {
       tenantId: "dev",
       agentId: agent.id,
       agent,
+      workspaceId: "ws_test",
     });
 
     const res = await app.request(`/v1/sessions/${session.id}`, {
@@ -557,6 +690,7 @@ describe("DELETE /v1/sessions/:id", () => {
       tenantId: "other-tenant",
       agentId: agent.id,
       agent,
+      workspaceId: "ws_test",
     });
 
     const res = await app.request(`/v1/sessions/${session.id}`, {
@@ -581,6 +715,7 @@ describe("DELETE /v1/sessions/:id", () => {
       tenantId: "dev",
       agentId: agent.id,
       agent,
+      workspaceId: "ws_test",
     });
     await sessionStore.updateStatus(session.id, "running");
 

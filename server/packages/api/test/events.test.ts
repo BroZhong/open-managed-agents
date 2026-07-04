@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../src/app.js";
+import { InProcessEventStreamHub } from "@oma-server/event-log";
+import type {
+  TurnStreamStore,
+  TurnDelta,
+  StoredTurnDelta,
+  ActiveTurn,
+} from "@oma-server/redis";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   AgentStore,
@@ -93,6 +100,7 @@ class InMemorySessionStore implements SessionStore {
       agentId: input.agentId,
       status: "idle",
       agent: structuredClone(input.agent),
+      workspaceId: input.workspaceId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -225,6 +233,107 @@ class InMemoryPendingEventStore implements PendingEventStore {
   }
 }
 
+// In-memory TurnStreamStore for testing the server-side reconnect merge.
+class InMemoryTurnStreamStore implements TurnStreamStore {
+  streams = new Map<string, StoredTurnDelta[]>();
+  activeTurns = new Map<string, ActiveTurn>();
+  private seq = 0;
+
+  async appendDelta(delta: TurnDelta): Promise<string> {
+    const id = `0-${this.seq++}`;
+    const list = this.streams.get(delta.turnId) ?? [];
+    list.push({ ...delta, id });
+    this.streams.set(delta.turnId, list);
+    return id;
+  }
+
+  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
+    const list = this.streams.get(turnId) ?? [];
+    if (!afterId) return [...list];
+    const idx = list.findIndex((d) => d.id === afterId);
+    return list.slice(idx + 1);
+  }
+
+  async deltaCount(turnId: string): Promise<number> {
+    return this.streams.get(turnId)?.length ?? 0;
+  }
+
+  async reclaim(turnId: string): Promise<void> {
+    this.streams.delete(turnId);
+  }
+
+  async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
+    this.activeTurns.set(sessionId, { ...turn });
+  }
+
+  async getActiveTurn(sessionId: string): Promise<ActiveTurn | null> {
+    return this.activeTurns.get(sessionId) ?? null;
+  }
+
+  async clearActiveTurn(sessionId: string): Promise<void> {
+    this.activeTurns.delete(sessionId);
+  }
+}
+
+interface SSEFrame {
+  event: string;
+  id?: string;
+  data: unknown;
+}
+
+/** Parse a chunk of SSE text into structured frames (ignores retry:/comments). */
+function parseSSE(text: string): SSEFrame[] {
+  const frames: SSEFrame[] = [];
+  for (const block of text.split("\n\n")) {
+    if (!block.trim()) continue;
+    let event: string | undefined;
+    let id: string | undefined;
+    let dataLine: string | undefined;
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event: ")) event = line.slice("event: ".length);
+      else if (line.startsWith("id: ")) id = line.slice("id: ".length);
+      else if (line.startsWith("data: ")) dataLine = line.slice("data: ".length);
+    }
+    if (event === undefined || dataLine === undefined) continue;
+    let data: unknown = dataLine;
+    try {
+      data = JSON.parse(dataLine);
+    } catch {
+      // keep raw
+    }
+    frames.push({ event, id, data });
+  }
+  return frames;
+}
+
+/** Read `count` SSE frames (or until the stream/timeout ends) from a Response. */
+async function readSSEFrames(res: Response, count: number, timeoutMs = 300): Promise<SSEFrame[]> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const frames: SSEFrame[] = [];
+  const deadline = Date.now() + timeoutMs;
+
+  while (frames.length < count && Date.now() < deadline) {
+    const readPromise = reader.read();
+    const timeout = new Promise<{ done: true; value: undefined }>((resolve) =>
+      setTimeout(() => resolve({ done: true, value: undefined }), deadline - Date.now()),
+    );
+    const { value, done } = await Promise.race([readPromise, timeout]);
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Parse only complete frames (terminated by a blank line).
+    const lastSep = buffer.lastIndexOf("\n\n");
+    if (lastSep >= 0) {
+      const complete = buffer.slice(0, lastSep + 2);
+      buffer = buffer.slice(lastSep + 2);
+      frames.push(...parseSSE(complete));
+    }
+  }
+  await reader.cancel().catch(() => {});
+  return frames;
+}
+
 function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   return {
     async findByKeyHash(keyHash) {
@@ -265,6 +374,7 @@ async function createTestSession(
     tenantId,
     agentId: agent.id,
     agent,
+    workspaceId: "ws_test",
   });
   return { agent, session };
 }
@@ -542,5 +652,217 @@ describe("GET /v1/sessions/:id/events", () => {
     const body = await res.json();
     expect(body.data).toHaveLength(50);
     expect(body.has_more).toBe(true);
+  });
+});
+
+describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  function createMergeApp() {
+    process.env.AUTH_DISABLED = "true";
+    const agentStore = new InMemoryAgentStore();
+    const sessionStore = new InMemorySessionStore();
+    const eventLogStore = new InMemoryEventLogStore();
+    const pendingEventStore = new InMemoryPendingEventStore();
+    const eventStreamHub = new InProcessEventStreamHub();
+    const turnStreamStore = new InMemoryTurnStreamStore();
+    const app = createApp({
+      apiKeyStore: makeApiKeyStore(new Map()),
+      agentStore,
+      sessionStore,
+      eventLogStore,
+      pendingEventStore,
+      eventStreamHub,
+      turnStreamStore,
+    });
+    return { app, agentStore, sessionStore, eventLogStore, pendingEventStore, eventStreamHub, turnStreamStore };
+  }
+
+  it("reconnect mid-turn: backfills PG completed events, then the half-emitted deltas, then continues live", async () => {
+    const { app, agentStore, sessionStore, eventLogStore, eventStreamHub, turnStreamStore } =
+      createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    // PostgreSQL holds the turn's completed (structured) events so far.
+    await eventLogStore.append(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "Hi" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    await eventLogStore.append(session.id, {
+      type: "session.status_running",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+
+    // The turn is still running: Redis holds half-emitted deltas + active turn.
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
+    await turnStreamStore.appendDelta({
+      turnId: "turn_1",
+      blockIndex: 0,
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "Hel" },
+    });
+    await turnStreamStore.appendDelta({
+      turnId: "turn_1",
+      blockIndex: 0,
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "lo" },
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, {
+      headers: { accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    // Push one more live delta AFTER the connection is open, simulating the turn
+    // continuing. Give the start() replay a tick to run first.
+    await new Promise((r) => setTimeout(r, 20));
+    eventStreamHub.publishChunk(session.id, {
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "!" },
+      turnId: "turn_1",
+      blockIndex: 0,
+    });
+
+    // Expect: 2 PG events + 2 backfilled deltas + 1 live delta = 5 frames.
+    const frames = await readSSEFrames(res, 5, 400);
+
+    const types = frames.map((f) => f.event);
+    expect(types).toEqual([
+      "user.message",
+      "session.status_running",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+    ]);
+
+    // The backfilled deltas carry turnId + blockIndex and the token text.
+    const backfilled = frames.slice(2, 4).map((f) => f.data as Record<string, unknown>);
+    expect(backfilled[0]).toMatchObject({ turnId: "turn_1", blockIndex: 0, text: "Hel" });
+    expect(backfilled[1]).toMatchObject({ turnId: "turn_1", blockIndex: 0, text: "lo" });
+
+    // The live delta was NOT duplicated by the backfill (drop budget of 2 only
+    // cancels the 2 backfilled tokens); the "!" continues the same block.
+    const live = frames[4].data as Record<string, unknown>;
+    expect(live).toMatchObject({ turnId: "turn_1", blockIndex: 0, text: "!" });
+  });
+
+  it("de-overlaps a live delta that duplicates a backfilled one (same Redis entry id)", async () => {
+    const { app, agentStore, sessionStore, eventStreamHub, turnStreamStore } = createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
+    // Two deltas buffered in Redis: ids 0-0, 0-1.
+    const id0 = await turnStreamStore.appendDelta({
+      turnId: "turn_1",
+      blockIndex: 0,
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "Hel" },
+    });
+    const id1 = await turnStreamStore.appendDelta({
+      turnId: "turn_1",
+      blockIndex: 0,
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "lo" },
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, {
+      headers: { accept: "text/event-stream" },
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+    // Re-publish the SECOND delta live (same entry id 0-1) — the overlap race —
+    // then a genuinely new delta 0-2. Only the new one should reach the client.
+    eventStreamHub.publishChunk(session.id, {
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "lo" },
+      turnId: "turn_1",
+      blockIndex: 0,
+      deltaId: id1,
+    });
+    eventStreamHub.publishChunk(session.id, {
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: "!" },
+      turnId: "turn_1",
+      blockIndex: 0,
+      deltaId: "0-2",
+    });
+
+    // Backfill 2 (Hel, lo) + 1 genuinely-new live (!) = 3; the duplicated 0-1 is
+    // skipped.
+    const frames = await readSSEFrames(res, 3, 400);
+    const texts = frames.map((f) => (f.data as { text: string }).text);
+    expect(texts).toEqual(["Hel", "lo", "!"]);
+    void id0;
+  });
+
+  it("reconnect after turn end: renders the full message from PG only, no delta backfill", async () => {
+    const { app, agentStore, sessionStore, eventLogStore, turnStreamStore } = createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    // Turn completed: full events persisted to PG, delta stream reclaimed, and
+    // the active turn cleared (as SessionRouter does at turn end).
+    await eventLogStore.append(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "Hi" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    await eventLogStore.append(session.id, {
+      type: "agent.message",
+      data: { type: "agent.message", content: [{ type: "text", text: "Hello!" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    await eventLogStore.append(session.id, {
+      type: "session.status_idle",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+    // No active turn (cleared) and stream reclaimed.
+    await turnStreamStore.reclaim("turn_1");
+
+    const res = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, {
+      headers: { accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(200);
+
+    const frames = await readSSEFrames(res, 3, 300);
+    const types = frames.map((f) => f.event);
+    expect(types).toEqual(["user.message", "agent.message", "session.status_idle"]);
+
+    // No delta frames whatsoever — reconnect after turn end is PG-only.
+    expect(types.some((t) => t.endsWith("_chunk"))).toBe(false);
+    const fullMsg = frames[1].data as { content: Array<{ text: string }> };
+    expect(fullMsg.content[0].text).toBe("Hello!");
+  });
+
+  it("does not backfill deltas for an idle active turn (turn already ended)", async () => {
+    const { app, agentStore, sessionStore, eventLogStore, turnStreamStore } = createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await eventLogStore.append(session.id, {
+      type: "agent.message",
+      data: { type: "agent.message", content: [{ type: "text", text: "done" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    // Active turn marked idle (turn ended); any lingering deltas must be ignored.
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "idle" });
+    await turnStreamStore.appendDelta({
+      turnId: "turn_1",
+      blockIndex: 0,
+      type: "agent.message_chunk",
+      data: { text: "stale" },
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, {
+      headers: { accept: "text/event-stream" },
+    });
+    const frames = await readSSEFrames(res, 2, 250);
+    const types = frames.map((f) => f.event);
+    expect(types).toEqual(["agent.message"]);
+    expect(types.some((t) => t.endsWith("_chunk"))).toBe(false);
   });
 });

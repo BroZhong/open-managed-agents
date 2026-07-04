@@ -15,9 +15,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@open-managed-agents/adapter-core": "workspace:*"
+    "@open-managed-agents/adapter-core": "file:../core",
+    "@earendil-works/pi-coding-agent": "0.80.3",
+    "@earendil-works/pi-ai": "^0.80.3",
+    "typebox": "1.1.38"
   },
   "devDependencies": {
+    "@open-managed-agents/adapter-tool-executor-local": "workspace:*",
     "@types/node": "^22.15.0",
     "vitest": "^3.2.3",
     "typescript": "^5.8.3"

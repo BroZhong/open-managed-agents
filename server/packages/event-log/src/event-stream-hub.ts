@@ -7,6 +7,20 @@ export interface StreamEvent {
 export interface StreamChunk {
   type: string;
   data: unknown;
+  /**
+   * The turn this delta belongs to. Emitted on the SSE frame so a reconnecting
+   * client can align live deltas to the Redis-backfilled ones and to the full
+   * Event they roll up into.
+   */
+  turnId?: string;
+  /** Which content block within the turn (see TurnDelta.blockIndex). */
+  blockIndex?: number;
+  /**
+   * The Redis stream entry id this delta was written under. Emitted so a
+   * reconnecting client can skip live deltas already covered by the Redis
+   * backfill (dedup by "entry id <= max backfilled id").
+   */
+  deltaId?: string;
 }
 
 export interface SubscribeOpts {
@@ -27,6 +41,33 @@ export interface EventStreamHub {
 interface Subscriber {
   controller: ReadableStreamDefaultController<string>;
   includeChunks: boolean;
+}
+
+/**
+ * Build the SSE `data` payload for a delta frame: the raw stream event with
+ * `turnId` + `blockIndex` merged in for alignment. Used by both the live hub
+ * and the server-side reconnect backfill so live and backfilled delta frames
+ * are byte-identical to the client.
+ */
+export function alignedChunkData(opts: {
+  data: unknown;
+  turnId?: string;
+  blockIndex?: number;
+  deltaId?: string;
+}): Record<string, unknown> {
+  const base =
+    opts.data && typeof opts.data === "object"
+      ? (opts.data as Record<string, unknown>)
+      : { value: opts.data };
+  const out: Record<string, unknown> = { ...base };
+  if (opts.turnId !== undefined) out.turnId = opts.turnId;
+  if (opts.blockIndex !== undefined) out.blockIndex = opts.blockIndex;
+  if (opts.deltaId !== undefined) out.deltaId = opts.deltaId;
+  return out;
+}
+
+function withAlignment(chunk: StreamChunk): Record<string, unknown> {
+  return alignedChunkData(chunk);
 }
 
 function formatSSEFrame(opts: { event: string; id?: string; data: string }): string {
@@ -62,7 +103,7 @@ export class InProcessEventStreamHub implements EventStreamHub {
 
     const frame = formatSSEFrame({
       event: chunk.type,
-      data: JSON.stringify(chunk.data),
+      data: JSON.stringify(withAlignment(chunk)),
     });
 
     for (const sub of subscribers) {

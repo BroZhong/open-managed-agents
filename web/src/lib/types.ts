@@ -5,6 +5,26 @@ export interface SessionEvent {
   ts: string;
 }
 
+/** A single file in a session's Workspace, as listed by the Host proxy. */
+export interface WorkspaceFile {
+  path: string;
+  size: number;
+  updated_at: string | null;
+}
+
+/**
+ * Payload of the Host's `workspace.file_change` SSE event (emitted on sync
+ * completion, per ADR-0002 §5). Consumed defensively: the frontend refetches
+ * the tree on any occurrence, and applies incremental hints when present.
+ */
+export interface WorkspaceFileChangeEvent extends SessionEvent {
+  type: "workspace.file_change";
+  data: {
+    changed?: string[];
+    deleted?: string[];
+  };
+}
+
 export interface UserMessageEvent extends SessionEvent {
   type: "user.message";
   data: { content: Array<{ type: "text"; text: string }> };

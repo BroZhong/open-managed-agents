@@ -1,28 +1,22 @@
-import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { MongoAgentStore } from "../src/mongodb/agent-store.js";
+import { PgAgentStore } from "../src/postgres/agent-store.js";
+import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
-describe("MongoAgentStore", () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let store: MongoAgentStore;
+describe("PgAgentStore", () => {
+  let harness: PgTestHarness;
+  let store: PgAgentStore;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
+    harness = await createPgTestHarness();
   });
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await harness.close();
   });
 
   beforeEach(async () => {
-    const db = client.db("test_agents");
-    await db.dropDatabase();
-    store = new MongoAgentStore(db);
+    await harness.reset();
+    store = new PgAgentStore(harness.pool);
   });
 
   it("should create an agent with agent_ prefix", async () => {
@@ -42,6 +36,26 @@ describe("MongoAgentStore", () => {
     expect(agent.runtime).toBe("claude-code");
     expect(agent.createdAt).toBeInstanceOf(Date);
     expect(agent.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("should persist and revive JSON config fields", async () => {
+    const agent = await store.create({
+      tenantId: "tenant1",
+      name: "Configured",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+      tools: [{ name: "grep", inputSchema: { type: "object" } }],
+      mcpServers: [{ name: "srv", url: "https://example.com" }],
+      skills: ["s1", "s2"],
+      sandbox: { enabled: true, image: "img" },
+    });
+
+    const found = await store.getById(agent.id);
+    expect(found!.tools).toEqual([{ name: "grep", inputSchema: { type: "object" } }]);
+    expect(found!.mcpServers).toEqual([{ name: "srv", url: "https://example.com" }]);
+    expect(found!.skills).toEqual(["s1", "s2"]);
+    expect(found!.sandbox).toEqual({ enabled: true, image: "img" });
   });
 
   it("should get an agent by id", async () => {
@@ -78,6 +92,11 @@ describe("MongoAgentStore", () => {
     expect(updated!.name).toBe("Updated Agent");
     expect(updated!.runtime).toBe("codex");
     expect(updated!.updatedAt.getTime()).toBeGreaterThanOrEqual(created.updatedAt.getTime());
+  });
+
+  it("should return null when updating non-existent agent", async () => {
+    const updated = await store.update("agent_nope", { name: "x" });
+    expect(updated).toBeNull();
   });
 
   it("should delete an agent", async () => {

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AgentStore, SessionStore } from "@oma-server/store";
+import type { AgentStore, SessionStore, WorkspaceStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 
@@ -12,6 +12,7 @@ type Env = {
 export interface SessionRouteDeps {
   sessionStore: SessionStore;
   agentStore: AgentStore;
+  workspaceStore: WorkspaceStore;
   sessionRouter?: SessionRouter;
 }
 
@@ -30,16 +31,31 @@ export function sessionRoutes(deps: SessionRouteDeps) {
       return c.json({ error: "Missing required field: agent" }, 400);
     }
 
+    // Optional user-supplied Workspace ID (snake_case wire, camelCase alias).
+    const workspaceIdInput = body.workspace_id ?? body.workspaceId;
+    if (workspaceIdInput !== undefined && typeof workspaceIdInput !== "string") {
+      return c.json({ error: "workspace_id must be a string" }, 400);
+    }
+
     const tenant = c.get("tenant");
     const agent = await deps.agentStore.getById(agentId);
     if (!agent || agent.tenantId !== tenant.tenantId) {
       return c.json({ error: "Agent not found" }, 404);
     }
 
+    // Resolve the Workspace to bind: use the supplied ID as-is (idempotent
+    // create), otherwise auto-create one. The Session→Workspace binding is
+    // then set immutably at creation.
+    const workspace = await deps.workspaceStore.create({
+      tenantId: tenant.tenantId,
+      id: workspaceIdInput,
+    });
+
     const session = await deps.sessionStore.create({
       tenantId: tenant.tenantId,
       agentId: agent.id,
       agent,
+      workspaceId: workspace.id,
     });
 
     return c.json(session, 201);

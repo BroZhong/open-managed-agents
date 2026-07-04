@@ -1,0 +1,141 @@
+# Nautilus Server + Web on the brozhong ACS HK cluster.
+# Deployed into ns oma-infra (same ns as Redis → avoids the cross-ns Service DNS
+# NXDOMAIN trap on this ECI/virtual-kubelet cluster). Secrets injected via
+# the oma-secrets Secret, never baked into the image.
+#
+# Create the secret first (values NOT committed):
+#   kubectl -n oma-infra create secret generic oma-secrets \
+#     --from-literal=PG_PASSWORD=... \
+#     --from-literal=REDIS_PASSWORD=... \
+#     --from-literal=SUPABASE_SERVICE_KEY=...
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oma-server-config
+  namespace: oma-infra
+data:
+  PORT: "3000"
+  AUTH_DISABLED: "true"
+  # PostgreSQL (internal RDS; oma schema; sslmode=disable)
+  PG_HOST: "pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com"
+  PG_PORT: "5432"
+  PG_DATABASE: "supabase_db"
+  PG_USER: "oma_app"
+  PG_SCHEMA: "oma"
+  PG_SSL: "false"
+  # The oma schema is pre-provisioned by migration and oma_app lacks CREATE on
+  # the database, so skip the app's startup DDL.
+  PG_ENSURE_SCHEMA: "false"
+  # Redis — use ClusterIP, NOT the Service name: even same-ns Service DNS is
+  # unreliable on this ECI/virtual-kubelet cluster (name "redis" → NXDOMAIN).
+  # Re-check with `kubectl -n oma-infra get svc redis` if it drifts.
+  REDIS_HOST: "10.0.56.147"
+  REDIS_PORT: "6379"
+  # Supabase Storage (S3 artifacts) — VPC endpoint, bucket workspace
+  S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"
+  S3_BUCKET: "workspace"
+  # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
+  # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
+  OMA_PROXY_URL: "http://10.0.200.134:7890"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oma-server
+  namespace: oma-infra
+  labels: { app: oma-server }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: oma-server }
+  template:
+    metadata:
+      labels: { app: oma-server }
+    spec:
+      imagePullSecrets:
+        - name: oma-acr
+      volumes:
+        # Pi provider credentials (openai-codex OAuth). Copied to a writable
+        # emptyDir by initContainer so Pi's AuthStorage can refresh the token.
+        - name: pi-auth-seed
+          secret: { secretName: oma-pi-auth }
+        - name: pi-agent-dir
+          emptyDir: {}
+      initContainers:
+        - name: seed-pi-auth
+          image: OMA_SERVER_IMAGE  # replaced at deploy time
+          command: ["sh", "-c", "mkdir -p /root/.pi/agent && cp /seed/auth.json /root/.pi/agent/auth.json && chmod 600 /root/.pi/agent/auth.json"]
+          volumeMounts:
+            - { name: pi-auth-seed, mountPath: /seed, readOnly: true }
+            - { name: pi-agent-dir, mountPath: /root/.pi/agent }
+      containers:
+        - name: server
+          image: OMA_SERVER_IMAGE  # replaced at deploy time
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: oma-server-config }
+          env:
+            - name: PG_PASSWORD
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: PG_PASSWORD } }
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: REDIS_PASSWORD } }
+            - name: SUPABASE_SERVICE_KEY
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: SUPABASE_SERVICE_KEY } }
+          volumeMounts:
+            - { name: pi-agent-dir, mountPath: /root/.pi/agent }
+          readinessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oma-server
+  namespace: oma-infra
+spec:
+  selector: { app: oma-server }
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oma-web
+  namespace: oma-infra
+  labels: { app: oma-web }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: oma-web }
+  template:
+    metadata:
+      labels: { app: oma-web }
+    spec:
+      imagePullSecrets:
+        - name: oma-acr
+      containers:
+        - name: web
+          image: OMA_WEB_IMAGE  # replaced at deploy time
+          ports:
+            - containerPort: 80
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oma-web
+  namespace: oma-infra
+spec:
+  selector: { app: oma-web }
+  ports:
+    - port: 80
+      targetPort: 80

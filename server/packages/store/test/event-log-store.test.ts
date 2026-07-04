@@ -1,29 +1,22 @@
-import { MongoMemoryServer } from "mongodb-memory-server";
-import { MongoClient } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { MongoEventLogStore } from "../src/mongodb/event-log-store.js";
+import { PgEventLogStore } from "../src/postgres/event-log-store.js";
+import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
-describe("MongoEventLogStore", () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let store: MongoEventLogStore;
+describe("PgEventLogStore", () => {
+  let harness: PgTestHarness;
+  let store: PgEventLogStore;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
+    harness = await createPgTestHarness();
   });
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await harness.close();
   });
 
   beforeEach(async () => {
-    const db = client.db("test_events");
-    await db.dropDatabase();
-    store = new MongoEventLogStore(db);
-    await store.ensureIndexes();
+    await harness.reset();
+    store = new PgEventLogStore(harness.pool);
   });
 
   it("should append events with monotonically increasing seq", async () => {
@@ -49,6 +42,7 @@ describe("MongoEventLogStore", () => {
     expect(e1.sessionId).toBe("sess_1");
     expect(e1.type).toBe("user_message");
     expect(e1.ts).toBeInstanceOf(Date);
+    expect(e1.data).toEqual({ content: "hello" });
   });
 
   it("should maintain independent seq per session", async () => {
@@ -89,9 +83,7 @@ describe("MongoEventLogStore", () => {
     expect(page2.data[1].seq).toBe(5);
   });
 
-  it("should enforce unique (sessionId, seq) index", async () => {
-    // This is implicitly tested by the monotonic increment, but let's verify
-    // the index prevents duplicates by checking seq values
+  it("should assign a unique seq per (sessionId) even under concurrent appends", async () => {
     const events = await Promise.all([
       store.append("sess_1", { type: "msg", data: { i: 1 }, sessionThreadId: "t1" }),
       store.append("sess_1", { type: "msg", data: { i: 2 }, sessionThreadId: "t1" }),
@@ -100,5 +92,11 @@ describe("MongoEventLogStore", () => {
 
     const seqs = events.map((e) => e.seq).sort((a, b) => a - b);
     expect(seqs).toEqual([1, 2, 3]);
+  });
+
+  it("should return empty for a session with no events", async () => {
+    const result = await store.getEvents("sess_empty");
+    expect(result.data).toHaveLength(0);
+    expect(result.hasMore).toBe(false);
   });
 });

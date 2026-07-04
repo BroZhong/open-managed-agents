@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
-import type { PiCliEvent } from "../src/cli-types.js";
+import type {
+  PiSessionLike,
+  SessionFactoryArgs,
+} from "../src/pi-agent-adapter.js";
 import type {
   AdapterInput,
   SessionEvent,
@@ -19,88 +20,105 @@ function makeInput(prompt: string): AdapterInput {
     sessionId: "test-session",
     turnId: "test-turn",
     message: { role: "user", content: [{ type: "text", text: prompt }] },
-    agent: { model: "pi-1", system: "You are helpful." },
+    agent: { model: "claude-sonnet-4-5", system: "You are helpful." },
     history: [],
   };
 }
 
 async function collectEvents(
-  iterable: AsyncIterable<SessionEvent>
+  iterable: AsyncIterable<SessionEvent>,
 ): Promise<SessionEvent[]> {
   const events: SessionEvent[] = [];
   for await (const e of iterable) events.push(e);
   return events;
 }
 
-function fakeSource(events: PiCliEvent[]) {
-  return async function* () {
-    for (const e of events) yield e;
+/**
+ * A fake Pi session driven by a fixed script of AgentSessionEvents. When
+ * prompt() is called it replays the script through the subscriber, then emits
+ * an `agent_end` so the adapter's queue completes.
+ */
+function fakeFactory(
+  script: AgentSessionEvent[],
+  hook?: (args: SessionFactoryArgs) => void,
+) {
+  return async (args: SessionFactoryArgs): Promise<PiSessionLike> => {
+    hook?.(args);
+    let listener: ((e: AgentSessionEvent) => void) | undefined;
+    return {
+      subscribe(l) {
+        listener = l;
+        return () => {
+          listener = undefined;
+        };
+      },
+      async prompt() {
+        for (const e of script) listener?.(e);
+        listener?.({
+          type: "agent_end",
+          messages: [],
+          willRetry: false,
+        } as AgentSessionEvent);
+      },
+      dispose() {},
+    };
   };
 }
 
-describe("PiAgentAdapter", () => {
+const assistantStart: AgentSessionEvent = {
+  type: "message_start",
+  message: { role: "assistant", model: "claude-sonnet-4-5" } as never,
+} as AgentSessionEvent;
+
+function assistantEnd(input: number, output: number): AgentSessionEvent {
+  return {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      usage: {
+        input,
+        output,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: input + output,
+        cost: { total: 0 },
+      },
+    },
+  } as never as AgentSessionEvent;
+}
+
+function ame(event: Record<string, unknown>): AgentSessionEvent {
+  return {
+    type: "message_update",
+    message: { role: "assistant" },
+    assistantMessageEvent: event,
+  } as never as AgentSessionEvent;
+}
+
+describe("PiAgentAdapter (SDK)", () => {
   describe("simple text turn", () => {
-    const cliEvents: PiCliEvent[] = [
-      { type: "session" },
-      { type: "agent_start" },
-      { type: "turn_start" },
-      {
-        type: "message_start",
-        message: { role: "assistant", content: [], model: "pi-1" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_start" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "Four." },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_end", content: "Four." },
-      },
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "Four." }],
-          model: "pi-1",
-          usage: {
-            input: 100,
-            output: 5,
-            cacheRead: 10,
-            cacheWrite: 0,
-            totalTokens: 105,
-            cost: { total: 0.001 },
-          },
-          stopReason: "stop",
-        },
-      },
-      { type: "turn_end" },
-      { type: "agent_end" },
+    const script: AgentSessionEvent[] = [
+      assistantStart,
+      ame({ type: "text_start", contentIndex: 0 }),
+      ame({ type: "text_delta", contentIndex: 0, delta: "Four." }),
+      ame({ type: "text_end", contentIndex: 0, content: "Four." }),
+      assistantEnd(100, 5),
     ];
 
     it("first event is session.status_running", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       expect(events[0].type).toBe("session.status_running");
     });
 
     it("last event is session.status_idle", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       expect(events[events.length - 1].type).toBe("session.status_idle");
     });
 
     it("emits span.model_request_start and span.model_request_end", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       const types = events.map((e) => e.type);
       expect(types).toContain("span.model_request_start");
@@ -108,33 +126,27 @@ describe("PiAgentAdapter", () => {
     });
 
     it("emits agent.message with correct text", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       const msg = events.find(
-        (e) => e.type === "agent.message"
+        (e) => e.type === "agent.message",
       ) as AgentMessageEvent;
       expect(msg).toBeDefined();
       expect(msg.content[0]).toEqual({ type: "text", text: "Four." });
     });
 
     it("span.model_request_end contains usage", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       const end = events.find(
-        (e) => e.type === "span.model_request_end"
+        (e) => e.type === "span.model_request_end",
       ) as SpanModelRequestEndEvent;
       expect(end.usage.inputTokens).toBe(100);
       expect(end.usage.outputTokens).toBe(5);
     });
 
     it("emits streaming events in correct order", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       const types = events.map((e) => e.type);
       const streamStart = types.indexOf("agent.message_stream_start");
@@ -149,75 +161,29 @@ describe("PiAgentAdapter", () => {
   });
 
   describe("thinking turn", () => {
-    const cliEvents: PiCliEvent[] = [
-      { type: "session" },
-      {
-        type: "message_start",
-        message: { role: "assistant", content: [], model: "pi-1" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "thinking_start" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "thinking_delta",
-          delta: "Let me think...",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "thinking_end",
-          content: "Let me think...",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_start" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "Done." },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_end", content: "Done." },
-      },
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [],
-          usage: {
-            input: 50,
-            output: 20,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 70,
-            cost: { total: 0.001 },
-          },
-        },
-      },
+    const script: AgentSessionEvent[] = [
+      assistantStart,
+      ame({ type: "thinking_start", contentIndex: 0 }),
+      ame({ type: "thinking_delta", contentIndex: 0, delta: "Let me think..." }),
+      ame({ type: "thinking_end", contentIndex: 0, content: "Let me think..." }),
+      ame({ type: "text_start", contentIndex: 1 }),
+      ame({ type: "text_delta", contentIndex: 1, delta: "Done." }),
+      ame({ type: "text_end", contentIndex: 1, content: "Done." }),
+      assistantEnd(50, 20),
     ];
 
     it("emits agent.thinking with accumulated text", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("think")));
       const thinking = events.find(
-        (e) => e.type === "agent.thinking"
+        (e) => e.type === "agent.thinking",
       ) as AgentThinkingEvent;
       expect(thinking).toBeDefined();
       expect(thinking.text).toBe("Let me think...");
     });
 
     it("emits thinking stream events", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("think")));
       const types = events.map((e) => e.type);
       expect(types).toContain("agent.thinking_stream_start");
@@ -227,85 +193,48 @@ describe("PiAgentAdapter", () => {
   });
 
   describe("tool use turn", () => {
-    const cliEvents: PiCliEvent[] = [
-      { type: "session" },
-      {
-        type: "message_start",
-        message: { role: "assistant", content: [], model: "pi-1" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "toolcall_start" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "toolcall_end",
-          toolCall: { id: "tc_1", name: "shell", args: { command: "ls" } },
+    const script: AgentSessionEvent[] = [
+      assistantStart,
+      ame({ type: "toolcall_start", contentIndex: 0 }),
+      ame({
+        type: "toolcall_end",
+        contentIndex: 0,
+        toolCall: {
+          type: "toolCall",
+          id: "tc_1",
+          name: "exec",
+          arguments: { command: "ls" },
         },
-      },
+      }),
       {
         type: "tool_execution_end",
         toolCallId: "tc_1",
-        toolName: "shell",
+        toolName: "exec",
         result: "file1.ts\nfile2.ts",
         isError: false,
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_start" },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "text_delta",
-          delta: "There are 2 files.",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "text_end",
-          content: "There are 2 files.",
-        },
-      },
-      {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [],
-          usage: {
-            input: 200,
-            output: 20,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 220,
-            cost: { total: 0.002 },
-          },
-        },
-      },
+      } as AgentSessionEvent,
+      ame({ type: "text_start", contentIndex: 1 }),
+      ame({ type: "text_delta", contentIndex: 1, delta: "There are 2 files." }),
+      ame({ type: "text_end", contentIndex: 1, content: "There are 2 files." }),
+      assistantEnd(200, 20),
     ];
 
     it("emits agent.tool_use with correct name and input", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("ls")));
       const toolUse = events.find(
-        (e) => e.type === "agent.tool_use"
+        (e) => e.type === "agent.tool_use",
       ) as AgentToolUseEvent;
       expect(toolUse).toBeDefined();
-      expect(toolUse.name).toBe("shell");
+      expect(toolUse.name).toBe("exec");
       expect(toolUse.input).toEqual({ command: "ls" });
     });
 
     it("emits agent.tool_result with output", async () => {
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("ls")));
       const result = events.find(
-        (e) => e.type === "agent.tool_result"
+        (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
       expect(result).toBeDefined();
       expect(result.content[0]).toEqual({
@@ -316,74 +245,76 @@ describe("PiAgentAdapter", () => {
     });
 
     it("marks error results correctly", async () => {
-      const errorEvents: PiCliEvent[] = [
-        { type: "session" },
-        {
-          type: "message_start",
-          message: { role: "assistant", content: [], model: "pi-1" },
-        },
-        {
-          type: "message_update",
-          assistantMessageEvent: {
-            type: "toolcall_end",
-            toolCall: {
-              id: "tc_2",
-              name: "shell",
-              args: { command: "false" },
-            },
+      const errorScript: AgentSessionEvent[] = [
+        assistantStart,
+        ame({
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: {
+            type: "toolCall",
+            id: "tc_2",
+            name: "exec",
+            arguments: { command: "false" },
           },
-        },
+        }),
         {
           type: "tool_execution_end",
           toolCallId: "tc_2",
-          toolName: "shell",
+          toolName: "exec",
           result: "",
           isError: true,
-        },
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [],
-            usage: {
-              input: 50,
-              output: 5,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 55,
-              cost: { total: 0.001 },
-            },
-          },
-        },
+        } as AgentSessionEvent,
+        assistantEnd(50, 5),
       ];
       const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(errorEvents),
+        _sessionFactory: fakeFactory(errorScript),
       });
       const events = await collectEvents(adapter.run(makeInput("run false")));
       const result = events.find(
-        (e) => e.type === "agent.tool_result"
+        (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
       expect(result.isError).toBe(true);
     });
   });
 
   describe("error handling", () => {
-    it("emits session.error when event source throws", async () => {
+    it("emits session.error when the session factory throws", async () => {
       const adapter = new PiAgentAdapter({
-        _eventSource: async function* () {
+        _sessionFactory: async () => {
           throw new Error("unexpected crash");
         },
       });
       const events = await collectEvents(adapter.run(makeInput("crash")));
-      const last = events[events.length - 1] as any;
+      const last = events[events.length - 1] as SessionEvent & {
+        error?: { message: string; code: string };
+      };
       expect(last.type).toBe("session.error");
-      expect(last.error.message).toBe("unexpected crash");
-      expect(last.error.code).toBe("pi_agent_error");
+      expect(last.error?.message).toBe("unexpected crash");
+      expect(last.error?.code).toBe("pi_agent_error");
+    });
+
+    it("emits session.error when prompt() rejects (model/auth failure)", async () => {
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async () => ({
+          subscribe: () => () => {},
+          prompt: async () => {
+            throw new Error("no API key configured");
+          },
+          dispose: () => {},
+        }),
+      });
+      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const last = events[events.length - 1] as SessionEvent & {
+        error?: { message: string; code: string };
+      };
+      expect(last.type).toBe("session.error");
+      expect(last.error?.message).toBe("no API key configured");
+      expect(last.error?.code).toBe("pi_agent_error");
     });
 
     it("never throws from the async iterable", async () => {
       const adapter = new PiAgentAdapter({
-        _eventSource: async function* () {
+        _sessionFactory: async () => {
           throw new Error("boom");
         },
       });
@@ -395,43 +326,14 @@ describe("PiAgentAdapter", () => {
 
   describe("statelessness", () => {
     it("concurrent runs produce independent events", async () => {
-      const cliEvents: PiCliEvent[] = [
-        { type: "session" },
-        {
-          type: "message_start",
-          message: { role: "assistant", content: [], model: "pi-1" },
-        },
-        {
-          type: "message_update",
-          assistantMessageEvent: { type: "text_start" },
-        },
-        {
-          type: "message_update",
-          assistantMessageEvent: { type: "text_delta", delta: "ok" },
-        },
-        {
-          type: "message_update",
-          assistantMessageEvent: { type: "text_end", content: "ok" },
-        },
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [],
-            usage: {
-              input: 10,
-              output: 2,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 12,
-              cost: { total: 0 },
-            },
-          },
-        },
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_delta", contentIndex: 0, delta: "ok" }),
+        ame({ type: "text_end", contentIndex: 0, content: "ok" }),
+        assistantEnd(10, 2),
       ];
-      const adapter = new PiAgentAdapter({
-        _eventSource: fakeSource(cliEvents),
-      });
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const [events1, events2] = await Promise.all([
         collectEvents(adapter.run(makeInput("a"))),
         collectEvents(adapter.run(makeInput("b"))),
@@ -443,17 +345,20 @@ describe("PiAgentAdapter", () => {
     });
   });
 
-  describe("history", () => {
-    it("includes prior user and assistant messages in the CLI prompt", async () => {
+  describe("history + model", () => {
+    it("includes prior user and assistant messages in the prompt", async () => {
       let seenPrompt = "";
       const adapter = new PiAgentAdapter({
-        _eventSource: async function* (prompt: string) {
-          seenPrompt = prompt;
-          yield {
-            type: "message_update",
-            assistantMessageEvent: { type: "text_end", content: "ok" },
-          } as PiCliEvent;
-        },
+        _sessionFactory: fakeFactory(
+          [
+            assistantStart,
+            ame({ type: "text_end", contentIndex: 0, content: "ok" }),
+            assistantEnd(1, 1),
+          ],
+          (args) => {
+            seenPrompt = args.prompt;
+          },
+        ),
       });
 
       const input = makeInput("What was it?");
@@ -469,7 +374,7 @@ describe("PiAgentAdapter", () => {
           timestamp: "2026-01-01T00:00:01.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "stored CODE-1" }],
-        },
+        } as SessionEvent,
       ];
 
       await collectEvents(adapter.run(input));
@@ -479,46 +384,20 @@ describe("PiAgentAdapter", () => {
       expect(seenPrompt).toContain("User: What was it?");
     });
 
-    it("continues the Pi CLI session when history is present", async () => {
-      const tmp = await mkdtemp(join(tmpdir(), "oma-pi-adapter-"));
-      const commandPath = join(tmp, "fake-pi.js");
-      const argsPath = join(tmp, "args.json");
-      const sessionRootDir = join(tmp, "sessions");
-
-      await writeFile(
-        commandPath,
-        [
-          "#!/usr/bin/env node",
-          "const { writeFileSync } = require('node:fs');",
-          `writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
-          "console.log(JSON.stringify({ type: 'message_start', message: { role: 'assistant', content: [], model: 'pi-test' } }));",
-          "console.log(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_end', content: 'ok' } }));",
-          "console.log(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [], usage: { input: 1, output: 1 } } }));",
-        ].join("\n"),
-      );
-      await chmod(commandPath, 0o755);
-
+    it("resolves the model and passes it to the factory", async () => {
+      let resolved: unknown;
       const adapter = new PiAgentAdapter({
-        command: commandPath,
-        sessionRootDir,
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            resolved = args.model;
+          },
+        ),
       });
-      const input = makeInput("What was it?");
-      input.history = [
-        {
-          id: "sevt_agent",
-          timestamp: "2026-01-01T00:00:01.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "stored CODE-2" }],
-        },
-      ];
-
-      await collectEvents(adapter.run(input));
-
-      const args = JSON.parse(await readFile(argsPath, "utf-8")) as string[];
-      expect(args).toContain("--session-dir");
-      expect(args).toContain(join(sessionRootDir, "test-session"));
-      expect(args).toContain("--continue");
-      expect(args).not.toContain("--no-session");
+      await collectEvents(adapter.run(makeInput("hi")));
+      // A real Pi Model object with provider + id.
+      expect(resolved).toBeDefined();
+      expect((resolved as { provider?: string }).provider).toBe("anthropic");
     });
   });
 });
