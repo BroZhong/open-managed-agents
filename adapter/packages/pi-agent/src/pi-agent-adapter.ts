@@ -1,4 +1,9 @@
-import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import type {
   AgentSessionEvent,
   PromptOptions,
@@ -29,6 +34,25 @@ export interface PiSessionLike {
   dispose(): void;
 }
 
+/**
+ * The `DefaultResourceLoaderOptions` fields this adapter drives per run().
+ * Assembled from `input.agent` in {@link buildResourceLoaderOptions} so the
+ * adapter-seam test can assert exactly what the resource loader receives
+ * without a real model / network.
+ */
+export interface PiResourceLoaderOptions {
+  /**
+   * Instruction text appended to Pi's system prompt, in order: the Agent's
+   * `system` first (previously discarded — now wired through), then any
+   * Host-assembled `appendSystemPrompt` entries (e.g. Agent Files).
+   */
+  appendSystemPrompt: string[];
+  /** Host-materialized equipped-Skill directories (`additionalSkillPaths`). */
+  additionalSkillPaths: string[];
+  /** Host owns instructions; never auto-discover cwd context files. */
+  noContextFiles: true;
+}
+
 /** Everything the adapter needs to spin up a Pi session for one run(). */
 export interface SessionFactoryArgs {
   input: AdapterInput;
@@ -37,6 +61,31 @@ export interface SessionFactoryArgs {
   model: unknown;
   /** True when a per-run() ToolExecutor was injected. */
   hasToolExecutor: boolean;
+  /**
+   * Resource-loader options assembled from `input.agent` for this run — the
+   * injected instructions + Skill paths the Pi session will load. Exposed on
+   * the factory args so the adapter-seam test can assert them directly.
+   */
+  resourceLoaderOptions: PiResourceLoaderOptions;
+}
+
+/**
+ * Assemble the per-run() Pi resource-loader options from an Agent's config.
+ * The Agent's `system` (historically discarded) leads the appended prompt,
+ * followed by any Host-assembled `appendSystemPrompt` entries; equipped Skill
+ * directories become `additionalSkillPaths`. Empty/whitespace-only entries are
+ * dropped so a blank system prompt does not inject an empty block.
+ */
+export function buildResourceLoaderOptions(
+  agent: AdapterInput["agent"],
+): PiResourceLoaderOptions {
+  const appendSystemPrompt = [agent.system, ...(agent.appendSystemPrompt ?? [])]
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+  return {
+    appendSystemPrompt,
+    additionalSkillPaths: agent.skillPaths ?? [],
+    noContextFiles: true,
+  };
 }
 
 export interface PiAgentAdapterOptions {
@@ -78,12 +127,14 @@ export class PiAgentAdapter implements Adapter {
 
       const model = resolveModel(this.model ?? input.agent.model);
       const hasToolExecutor = input.toolExecutor !== undefined;
+      const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
 
       session = await this.createSession({
         input,
         prompt,
         model,
         hasToolExecutor,
+        resourceLoaderOptions,
       });
 
       const translator = new PiEventTranslator();
@@ -157,9 +208,23 @@ export class PiAgentAdapter implements Adapter {
       ? buildCustomTools(args.input.toolExecutor)
       : undefined;
 
+    // Inject the Host-assembled instructions + equipped Skills per run() via a
+    // DefaultResourceLoader (ADR-0002: the Host owns *what* to inject; the
+    // Adapter only points the runtime at it). `noContextFiles` keeps Pi from
+    // auto-discovering cwd files — instructions come solely from the Host.
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: process.cwd(),
+      agentDir: getAgentDir(),
+      appendSystemPrompt: args.resourceLoaderOptions.appendSystemPrompt,
+      additionalSkillPaths: args.resourceLoaderOptions.additionalSkillPaths,
+      noContextFiles: args.resourceLoaderOptions.noContextFiles,
+    });
+    await resourceLoader.reload();
+
     const { session } = await createAgentSession({
       model: args.model as never,
       sessionManager: SessionManager.inMemory(),
+      resourceLoader,
       ...(customTools
         ? { customTools, noTools: "builtin" as const }
         : {}),

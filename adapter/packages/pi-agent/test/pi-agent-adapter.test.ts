@@ -463,6 +463,62 @@ describe("PiAgentAdapter (SDK)", () => {
       expect(seenPrompt).toContain("User: What was it?");
     });
 
+    it("forwards agent.system into resource-loader appendSystemPrompt", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      // makeInput sets agent.system = "You are helpful." — previously discarded.
+      await collectEvents(adapter.run(makeInput("hi")));
+      expect(opts?.appendSystemPrompt).toEqual(["You are helpful."]);
+      expect(opts?.additionalSkillPaths).toEqual([]);
+      expect(opts?.noContextFiles).toBe(true);
+    });
+
+    it("assembles appendSystemPrompt (system first) + skillPaths per run()", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      const input = makeInput("hi");
+      input.agent.system = "BASE";
+      input.agent.appendSystemPrompt = ["IDENTITY", "SOUL"];
+      input.agent.skillPaths = ["/tmp/skills/a", "/tmp/skills/b"];
+      await collectEvents(adapter.run(input));
+      expect(opts?.appendSystemPrompt).toEqual(["BASE", "IDENTITY", "SOUL"]);
+      expect(opts?.additionalSkillPaths).toEqual([
+        "/tmp/skills/a",
+        "/tmp/skills/b",
+      ]);
+    });
+
+    it("drops empty/whitespace system so no blank instruction block is injected", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      const input = makeInput("hi");
+      input.agent.system = "   ";
+      input.agent.appendSystemPrompt = ["", "REAL"];
+      await collectEvents(adapter.run(input));
+      expect(opts?.appendSystemPrompt).toEqual(["REAL"]);
+    });
+
     it("resolves the model and passes it to the factory", async () => {
       let resolved: unknown;
       const adapter = new PiAgentAdapter({

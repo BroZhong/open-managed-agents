@@ -52,6 +52,21 @@ export interface AdapterInput {
     tools?: ToolConfig[];
     mcpServers?: McpServerConfig[];
     skills?: string[];
+    /**
+     * Assembled instruction text the runtime should append to its system
+     * prompt, in order (e.g. an Agent's Files). Per-call injection only — the
+     * Host decides what to inject on each `run()`; the Adapter forwards it and
+     * never stores it (ADR-0002: the Adapter is a pure translator). When
+     * absent, no instructions are appended.
+     */
+    appendSystemPrompt?: string[];
+    /**
+     * Host-materialized directories of equipped Skills (each a folder with a
+     * `SKILL.md`) for the runtime to load natively. Per-call injection only —
+     * the Host materializes and cleans these up; the Adapter only points the
+     * runtime's resource loader at them. When absent, no Skills are loaded.
+     */
+    skillPaths?: string[];
   };
   history: SessionEvent[];
   constraints?: {
