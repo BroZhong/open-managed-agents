@@ -26,6 +26,17 @@ import {
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
+
+// Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
+// egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
+// OpenAI/Anthropic; the in-cluster sing-box proxy tunnels past it. Node's fetch
+// (undici) ignores HTTP(S)_PROXY env, so we must install a global dispatcher.
+const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
+if (proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  console.log(`Global fetch proxy enabled → ${proxyUrl}`);
+}
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 

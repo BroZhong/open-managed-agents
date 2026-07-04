@@ -35,6 +35,9 @@ data:
   # Supabase Storage (S3 artifacts) — VPC endpoint, bucket workspace
   S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"
   S3_BUCKET: "workspace"
+  # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
+  # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
+  OMA_PROXY_URL: "http://10.0.200.134:7890"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -52,6 +55,20 @@ spec:
     spec:
       imagePullSecrets:
         - name: oma-acr
+      volumes:
+        # Pi provider credentials (openai-codex OAuth). Copied to a writable
+        # emptyDir by initContainer so Pi's AuthStorage can refresh the token.
+        - name: pi-auth-seed
+          secret: { secretName: oma-pi-auth }
+        - name: pi-agent-dir
+          emptyDir: {}
+      initContainers:
+        - name: seed-pi-auth
+          image: OMA_SERVER_IMAGE  # replaced at deploy time
+          command: ["sh", "-c", "mkdir -p /root/.pi/agent && cp /seed/auth.json /root/.pi/agent/auth.json && chmod 600 /root/.pi/agent/auth.json"]
+          volumeMounts:
+            - { name: pi-auth-seed, mountPath: /seed, readOnly: true }
+            - { name: pi-agent-dir, mountPath: /root/.pi/agent }
       containers:
         - name: server
           image: OMA_SERVER_IMAGE  # replaced at deploy time
@@ -66,6 +83,8 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: REDIS_PASSWORD } }
             - name: SUPABASE_SERVICE_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: SUPABASE_SERVICE_KEY } }
+          volumeMounts:
+            - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:
             httpGet: { path: /health, port: 3000 }
             initialDelaySeconds: 10
