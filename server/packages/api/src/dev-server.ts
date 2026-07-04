@@ -60,12 +60,19 @@ class DevClaudeCodeAdapter implements Adapter {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
+    // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
+    // unhandled 'error' event can never crash the Host process.
+    let spawnError: Error | undefined;
+    child.on("error", (err) => {
+      spawnError = err instanceof Error ? err : new Error(String(err));
+    });
     child.stdin.end();
 
     const rl = createInterface({ input: child.stdout });
     let hasError = false;
 
     try {
+      if (spawnError) throw spawnError;
       for await (const line of rl) {
         if (!line.trim()) continue;
         let event: any;
@@ -142,12 +149,19 @@ class DevCodexAdapter implements Adapter {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
+    // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
+    // unhandled 'error' event can never crash the Host process.
+    let spawnError: Error | undefined;
+    child.on("error", (err) => {
+      spawnError = err instanceof Error ? err : new Error(String(err));
+    });
     child.stdin.end();
 
     const rl = createInterface({ input: child.stdout });
     let hasError = false;
 
     try {
+      if (spawnError) throw spawnError;
       for await (const line of rl) {
         if (!line.trim()) continue;
         let event: any;
@@ -229,11 +243,20 @@ class DevPiAgentAdapter implements Adapter {
       env: process.env,
     });
 
+    // Attach the error handler synchronously: an immediate spawn failure (e.g.
+    // ENOENT when the CLI is not installed) emits 'error' before the readline
+    // loop starts, and an unhandled 'error' would crash the whole Host process.
+    let spawnError: Error | undefined;
+    child.on("error", (err) => {
+      spawnError = err instanceof Error ? err : new Error(String(err));
+    });
+
     const rl = createInterface({ input: child.stdout });
     let hasError = false;
     let textAccumulator = "";
 
     try {
+      if (spawnError) throw spawnError;
       for await (const line of rl) {
         if (!line.trim()) continue;
         let event: any;
@@ -333,7 +356,10 @@ async function main() {
   // Fail fast if PG is unreachable.
   await pool.query("SELECT 1");
   const schema = pgConfig.schema;
-  const stores = await createPgStores(pool, { schema });
+  // When the schema is pre-provisioned by a migration (and the app role lacks
+  // CREATE on the database), set PG_ENSURE_SCHEMA=false to skip the startup DDL.
+  const ensureSchema = process.env.PG_ENSURE_SCHEMA !== "false";
+  const stores = await createPgStores(pool, { schema, ensureSchema });
   console.log(
     `Connected to PostgreSQL (${pgConfig.connectionString ?? `${pgConfig.host ?? "127.0.0.1"}:${pgConfig.port ?? 5432}`}, schema=${schema})`,
   );

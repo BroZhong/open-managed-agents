@@ -37,19 +37,35 @@ function makeFakeFetch(initial: Record<string, Uint8Array> = {}) {
         limit: number;
         offset: number;
       };
-      const matched = [...objects.keys()]
-        .filter((k) => k.startsWith(`object/${listMatch[1]}/${prefix}`))
-        .sort();
-      const page = matched.slice(offset, offset + limit).map((k) => {
-        const rel = k.slice(`object/${listMatch[1]}/${prefix}`.length);
-        return {
-          name: rel,
-          id: k,
-          updated_at: "2024-01-01T00:00:00Z",
-          metadata: { size: objects.get(k)!.byteLength },
-        };
-      });
-      return jsonResponse(page);
+      // Mimic Supabase Storage's object/list: it is NOT recursive. For a given
+      // prefix it returns files at that exact level, plus a single folder
+      // placeholder (id/metadata null) per subdir name for anything deeper.
+      const base = `object/${listMatch[1]}/${prefix}`;
+      const seenFolders = new Set<string>();
+      const fileEntries: Array<Record<string, unknown>> = [];
+      for (const k of [...objects.keys()].sort()) {
+        if (!k.startsWith(base)) continue;
+        const rel = k.slice(base.length);
+        const slash = rel.indexOf("/");
+        if (slash === -1) {
+          fileEntries.push({
+            name: rel,
+            id: k,
+            updated_at: "2024-01-01T00:00:00Z",
+            metadata: { size: objects.get(k)!.byteLength },
+          });
+        } else {
+          seenFolders.add(rel.slice(0, slash));
+        }
+      }
+      const folderEntries = [...seenFolders].sort().map((name) => ({
+        name,
+        id: null,
+        updated_at: null,
+        metadata: null,
+      }));
+      const all = [...folderEntries, ...fileEntries];
+      return jsonResponse(all.slice(offset, offset + limit));
     }
 
     const objMatch = url.match(/\/object\/(.+)$/);

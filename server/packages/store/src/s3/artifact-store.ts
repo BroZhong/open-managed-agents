@@ -97,7 +97,20 @@ export class S3ArtifactStore implements ArtifactStore {
     // the workspace prefix, so results can never span another tenant/workspace.
     const listPrefix = relPrefix ? `${wsPrefix}/${relPrefix}` : `${wsPrefix}/`;
 
+    // Supabase's object/list is NOT recursive — it returns files at the exact
+    // prefix level plus folder placeholders (id/metadata null) for subdirs. To
+    // present a full workspace tree (shell-created files at any depth appear),
+    // we recurse into each folder placeholder. See ADR-0002 §5.
     const results: Artifact[] = [];
+    await this.listRecursive(wsPrefix, listPrefix, results);
+    return results;
+  }
+
+  private async listRecursive(
+    wsPrefix: string,
+    listPrefix: string,
+    results: Artifact[],
+  ): Promise<void> {
     let offset = 0;
     for (;;) {
       const res = await this.fetchImpl(`${this.endpoint}/object/list/${this.bucket}`, {
@@ -114,8 +127,12 @@ export class S3ArtifactStore implements ArtifactStore {
       }
       const entries = (await res.json()) as SupabaseListEntry[];
       for (const entry of entries) {
-        // Skip folder placeholders (no metadata) that Supabase may emit.
-        if (entry.id == null && entry.metadata == null) continue;
+        const isFolder = entry.id == null && entry.metadata == null;
+        if (isFolder) {
+          // Recurse into the subdirectory to collect its files.
+          await this.listRecursive(wsPrefix, `${listPrefix}${entry.name}/`, results);
+          continue;
+        }
         const fullKey = `${listPrefix}${entry.name}`;
         const relPath = fullKey.slice(wsPrefix.length + 1);
         results.push({
@@ -127,7 +144,6 @@ export class S3ArtifactStore implements ArtifactStore {
       if (entries.length < LIST_PAGE_SIZE) break;
       offset += entries.length;
     }
-    return results;
   }
 
   async get(

@@ -24,8 +24,10 @@ data:
   PG_USER: "oma_app"
   PG_SCHEMA: "oma"
   PG_SSL: "false"
-  # Redis (same-ns Service name resolves here)
-  REDIS_HOST: "redis"
+  # Redis — use ClusterIP, NOT the Service name: even same-ns Service DNS is
+  # unreliable on this ECI/virtual-kubelet cluster (name "redis" → NXDOMAIN).
+  # Re-check with `kubectl -n oma-infra get svc redis` if it drifts.
+  REDIS_HOST: "10.0.56.147"
   REDIS_PORT: "6379"
   # Supabase Storage (S3 artifacts) — VPC endpoint, bucket workspace
   S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"

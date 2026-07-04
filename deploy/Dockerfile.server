@@ -22,6 +22,6 @@ RUN pnpm install --no-frozen-lockfile
 ENV PORT=3000
 EXPOSE 3000
 
-# Production entrypoint (PostgreSQL + Redis + S3-backed). tsx runs TS directly.
+# Entrypoint: the full PG + Redis + S3 + sandbox wiring (config-driven from env).
 WORKDIR /app/server/packages/api
-CMD ["pnpm", "exec", "tsx", "src/prod-server.ts"]
+CMD ["pnpm", "exec", "tsx", "src/dev-server.ts"]
