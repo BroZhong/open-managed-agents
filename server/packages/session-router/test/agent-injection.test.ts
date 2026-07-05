@@ -19,6 +19,10 @@ const AGENT: Agent = {
   model: "m",
   system: "You are helpful",
   runtime: "pi-agent",
+  // Opt out of the mandatory sandbox (#54): these tests run with no
+  // toolExecutorFactory and assert on the captured AdapterInput, so the agent
+  // must be opted-out to avoid the sandbox_unavailable fail-loud path.
+  sandbox: { enabled: false },
   createdAt: new Date(),
   updatedAt: new Date(),
 };

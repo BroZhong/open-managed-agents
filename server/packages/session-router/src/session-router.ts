@@ -159,8 +159,15 @@ export class SessionRouter {
     await this.disposeExecutor(sessionId);
   }
 
+  /**
+   * Sandbox is mandatory (issue #54): an Agent is sandboxed unless it *explicitly*
+   * opts out with `sandbox.enabled === false`. A missing `sandbox` field therefore
+   * means sandboxed — a legacy Agent with no sandbox config runs in a sandbox and
+   * will fail loud if no executor can be provisioned, which is the intended
+   * mandatory behavior. Only an explicit `enabled: false` is treated as opted-out.
+   */
   private isSandboxed(agentConfig: Agent): boolean {
-    return !!agentConfig.sandbox?.enabled;
+    return agentConfig.sandbox?.enabled !== false;
   }
 
   /**
@@ -169,6 +176,18 @@ export class SessionRouter {
    * its first filesystem/code call — so obtaining it here is cheap and does
    * not spin anything up for a pure-chat turn.
    */
+  /**
+   * The fail-loud condition (issue #54): the Agent is sandboxed (mandatory by
+   * default) but no {@link ToolExecutorFactory} was configured, so no sandbox
+   * executor can be provisioned. Running the turn anyway would let the adapter
+   * fall back to built-in fs/bash tools writing to the server pod filesystem —
+   * the exact bug this guard prevents. When true the router emits a
+   * `session.error` and skips the adapter instead of running unsandboxed.
+   */
+  private isSandboxedButUnprovisionable(agentConfig: Agent): boolean {
+    return this.isSandboxed(agentConfig) && !this.toolExecutorFactory;
+  }
+
   private async getExecutorForSession(
     sessionId: string,
     agentConfig: Agent,
@@ -308,6 +327,36 @@ export class SessionRouter {
         seq: runningEvent.seq,
         data: {},
       });
+
+      // Fail-loud (issue #54): a sandboxed Agent with no provisionable executor
+      // must NOT run — otherwise the adapter falls back to built-in fs/bash tools
+      // that write to the server pod filesystem. Emit a session.error, mark the
+      // turn handled (it was already dequeued), and skip the adapter for this turn.
+      if (this.isSandboxedButUnprovisionable(agentConfig)) {
+        const error = {
+          message:
+            "Agent is sandboxed but no sandbox executor is available (SANDBOX_ENABLED / E2B config missing)",
+          code: "sandbox_unavailable",
+        };
+        const errorEvent = await this.eventLogStore.append(sessionId, {
+          type: "session.error",
+          data: { error },
+          sessionThreadId: "sthr_primary",
+        });
+        this.eventStreamHub.publish(sessionId, {
+          type: "session.error",
+          seq: errorEvent.seq,
+          data: { error },
+        });
+        // Mirror the normal turn-end housekeeping so the transient stream/active
+        // turn record don't leak, then move on to the next pending event (the
+        // drain loop falls through to the idle transition when the queue empties).
+        if (this.turnStreamStore) {
+          await this.turnStreamStore.reclaim(turnId);
+          await this.turnStreamStore.setActiveTurn(sessionId, { turnId, status: "idle" });
+        }
+        continue;
+      }
 
       // Build adapter input (include history for multi-turn)
       const { data: priorEvents } = await this.eventLogStore.getEvents(sessionId);

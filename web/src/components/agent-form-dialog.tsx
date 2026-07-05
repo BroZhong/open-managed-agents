@@ -61,7 +61,6 @@ export function AgentFormDialog({
   const [model, setModel] = useState("");
   const [system, setSystem] = useState("");
   const [runtime, setRuntime] = useState("claude-code");
-  const [sandboxEnabled, setSandboxEnabled] = useState(true);
 
   const createMutation = useCreateAgent();
   const updateMutation = useUpdateAgent();
@@ -73,13 +72,11 @@ export function AgentFormDialog({
         setModel(agent.model);
         setSystem(agent.system);
         setRuntime(agent.runtime);
-        setSandboxEnabled(agent.sandbox?.enabled ?? false);
       } else {
         setName("");
         setModel("");
         setSystem("");
         setRuntime("claude-code");
-        setSandboxEnabled(true);
       }
     }
   }, [open, agent]);
@@ -117,8 +114,10 @@ export function AgentFormDialog({
       model: model.trim(),
       system: system.trim() || defaultSystem,
       runtime,
+      // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
+      // There is no opt-out in the UI; always send enabled: true.
       sandbox: {
-        enabled: sandboxEnabled,
+        enabled: true,
         image: "open-managed-agents/sandbox:latest",
       },
     };
@@ -207,19 +206,9 @@ export function AgentFormDialog({
             value={system}
             onChange={(e) => setSystem(e.target.value)}
           />
-          <label
-            htmlFor="agent-sandbox"
-            className="flex items-center gap-2 text-sm font-medium text-neutral-700"
-          >
-            <input
-              id="agent-sandbox"
-              type="checkbox"
-              className="h-4 w-4 rounded border-neutral-300 text-neutral-900"
-              checked={sandboxEnabled}
-              onChange={(e) => setSandboxEnabled(e.target.checked)}
-            />
-            Sandbox
-          </label>
+          <p className="text-xs text-neutral-500">
+            Every agent runs inside an isolated sandbox.
+          </p>
         </div>
         <DialogFooter>
           <Button

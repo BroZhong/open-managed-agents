@@ -50,3 +50,33 @@ kubectl get sbs -n sandbox-system code-interpreter
 ```
 
 `apply` is idempotent. The SandboxSet is ready once `AVAILABLE >= 1`.
+
+## Mandatory sandbox (issue #54)
+
+The sandbox is not optional. Every Agent run must execute inside a sandbox and
+the server fails loud when it can't provision one.
+
+Server wiring (see `deploy/k8s.yaml`):
+
+- `SANDBOX_ENABLED=true` — in the `oma-server-config` ConfigMap (non-secret).
+  This turns on the sandbox-backed `ToolExecutor`.
+- `SANDBOX_TEMPLATE=code-interpreter` — ConfigMap; the E2B templateID, i.e. the
+  SandboxSet name above.
+- `E2B_DOMAIN` + `E2B_API_KEY` — provided via the `oma-secrets` Secret
+  (`secretKeyRef`), **never baked into the image**. Add them alongside the other
+  secrets:
+
+  ```bash
+  kubectl -n oma-infra create secret generic oma-secrets \
+    --from-literal=E2B_DOMAIN=... \
+    --from-literal=E2B_API_KEY=... \
+    ...   # plus PG_PASSWORD / REDIS_PASSWORD / SUPABASE_SERVICE_KEY
+  ```
+
+Fail-loud behavior: a sandboxed Agent (which, by default, is every Agent —
+`sandbox.enabled` is treated as true unless explicitly `false`) whose turn has no
+provisionable sandbox executor does **not** run the adapter. Instead the session
+emits a `session.error` with `code: "sandbox_unavailable"` and returns to idle.
+This prevents the adapter from falling back to built-in fs/bash tools that would
+write to the server pod filesystem. In practice this triggers when
+`SANDBOX_ENABLED` is unset/false or the `E2B_*` secrets are missing.
