@@ -36,6 +36,14 @@ _Avoid_: marketplace, catalog, registry
 To reference a **Skill** from the **Skill Library** on an **Agent** so the Agent's Sessions load it. Equipping does not copy the Skill; unequipping removes only the reference.
 _Avoid_: install, add, attach
 
+**User**:
+A human who signs in to the web console with a username and password. Registration requires a valid invite code. Each User is paired one-to-one with a **Tenant** created at registration time; a User has exactly one Tenant and a Tenant has exactly one User. A User's login produces a session token that resolves to that same **Tenant**, so everything the User sees (Agents, Sessions, Skills, API keys) is scoped to their Tenant.
+_Avoid_: account, member, person
+
+**Tenant**:
+The isolation boundary that owns everything in the system — **Agents**, **Sessions**, **Skills**, **API keys**. Historically a Tenant was an implicit identifier with no record of its own. It is now created together with a **User** at registration (one-to-one). A request reaches a Tenant through one of two credentials that both resolve to the same `tenantId`: an **API key** (`x-api-key`, for machines) or a **User**'s session token (`Authorization: Bearer`, for humans). API keys a User creates while signed in belong to that User's Tenant.
+_Avoid_: org, organization, workspace, account
+
 ## Example Dialogue
 
 Developer: "Should this Agent run directly in the API service?"

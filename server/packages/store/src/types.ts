@@ -16,6 +16,14 @@ export interface AgentMcpServerConfig {
 export interface AgentSandboxConfig {
   enabled: boolean;
   image?: string;
+  /**
+   * Environment variables injected into the Agent's sandbox at create time
+   * (e.g. a `VFS_TOKEN` a CLI in the sandbox needs). These are baked into the
+   * sandbox by the ToolExecutor and never enter the model context or event log
+   * — unlike anything passed through a turn's prompt. Per-Agent, so two Agents
+   * on the same template get isolated secrets.
+   */
+  env?: Record<string, string>;
 }
 
 export interface Agent {
@@ -87,6 +95,14 @@ export interface ApiKey {
   name: string;
   keyHash: string;
   prefix: string;
+  createdAt: Date;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  passwordHash: string;
+  tenantId: string;
   createdAt: Date;
 }
 

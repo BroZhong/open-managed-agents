@@ -5,6 +5,7 @@ import type { EventLogStore } from "../interfaces/event-log-store.js";
 import type { PendingEventStore } from "../interfaces/pending-event-store.js";
 import type { SessionStore } from "../interfaces/session-store.js";
 import type { WorkspaceStore } from "../interfaces/workspace-store.js";
+import type { UserStore } from "../interfaces/user-store.js";
 import type { Pool } from "./connection.js";
 import { DEFAULT_SCHEMA } from "./connection.js";
 import { ensureSchema } from "./schema.js";
@@ -16,6 +17,7 @@ import { PgEventLogStore } from "./event-log-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
 import { PgSessionStore } from "./session-store.js";
 import { PgWorkspaceStore } from "./workspace-store.js";
+import { PgUserStore } from "./user-store.js";
 
 export { createPgPool, pgConfigFromEnv, DEFAULT_SCHEMA } from "./connection.js";
 export type { Pool, PoolClient, PgConnectionConfig } from "./connection.js";
@@ -27,6 +29,7 @@ export { PgSessionStore } from "./session-store.js";
 export { PgEventLogStore } from "./event-log-store.js";
 export { PgPendingEventStore } from "./pending-event-store.js";
 export { PgApiKeyStore } from "./api-key-store.js";
+export { PgUserStore } from "./user-store.js";
 export { PgWorkspaceStore } from "./workspace-store.js";
 
 export interface PgStores {
@@ -42,6 +45,7 @@ export interface PgStores {
    * `MemoryStores` exposes the concrete `InMemoryApiKeyStore`.
    */
   apiKeyStore: PgApiKeyStore;
+  userStore: UserStore;
   workspaceStore: WorkspaceStore;
 }
 
@@ -65,6 +69,7 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     eventLogStore: new PgEventLogStore(pool),
     pendingEventStore: new PgPendingEventStore(pool),
     apiKeyStore: new PgApiKeyStore(pool),
+    userStore: new PgUserStore(pool),
     workspaceStore: new PgWorkspaceStore(pool),
   };
 }

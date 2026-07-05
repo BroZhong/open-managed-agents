@@ -400,6 +400,35 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
     expect(sandboxClient.created).toHaveLength(1);
   });
 
+  it("injects the Agent's sandbox.env into the created sandbox", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      artifactStore,
+    });
+    const envAgent: Agent = {
+      ...sandboxedAgent,
+      sandbox: { enabled: true, image: "ubuntu:22.04", env: { VFS_TOKEN: "tok-123" } },
+    };
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: envAgent.id,
+      agent: envAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, envAgent);
+
+    expect(sandboxClient.created).toHaveLength(1);
+    const id = sandboxClient.created[0];
+    // The per-Agent env must reach the sandbox's create options.
+    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
+      VFS_TOKEN: "tok-123",
+    });
+  });
+
   it("hydrates the sandbox from the S3 Workspace and a tool call reads a hydrated file", async () => {
     const artifactStore = new InMemoryArtifactStore();
     artifactStore.seed("tenant_1", "ws_1", "notes.md", "hydrated-content");

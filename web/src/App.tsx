@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from "react-router";
 import { useAuth } from "@/lib/auth";
 import LoginPage from "@/pages/login";
+import RegisterPage from "@/pages/register";
 import { AppLayout } from "@/components/app-layout";
 import OverviewPage from "@/pages/overview";
 import SessionDetailPage from "@/pages/session-detail";
@@ -23,6 +24,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route
         element={
           <ProtectedRoute>

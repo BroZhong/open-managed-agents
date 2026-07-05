@@ -723,6 +723,12 @@
           "image": {
             "type": "string",
             "example": "open-managed-agents/sandbox:latest"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Environment variables injected into the Agent sandbox at create time (e.g. a CLI token). Never enters the model context or event log.",
+            "example": { "VFS_TOKEN": "<token>" }
           }
         },
         "required": ["enabled"]

@@ -76,6 +76,11 @@ export class FakeSandboxClient implements SandboxClient {
     return this.require(id).files;
   }
 
+  /** Inspect the options a sandbox was created with, e.g. injected env (test helper). */
+  createOptsOf(id: string): SandboxCreateOptions {
+    return this.require(id).createOpts;
+  }
+
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
     const id = this.generateId();
     this.sandboxes.set(id, {

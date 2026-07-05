@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, SkillStore, SkillArtifactStore, WorkspaceStore } from "@oma-server/store";
+import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -10,6 +10,7 @@ import { agentRoutes } from "./routes/agents.js";
 import { agentFileRoutes } from "./routes/agent-files.js";
 import { skillRoutes } from "./routes/skills.js";
 import { apiKeyRoutes } from "./routes/api-keys.js";
+import { authRoutes } from "./routes/auth.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { eventRoutes } from "./routes/events.js";
 import { messageRoutes } from "./routes/messages.js";
@@ -33,6 +34,7 @@ export interface AppDeps {
   eventLogStore?: EventLogStore;
   pendingEventStore?: PendingEventStore;
   workspaceStore?: WorkspaceStore;
+  userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
   turnStreamStore?: TurnStreamStore;
@@ -49,6 +51,12 @@ export function createApp(deps: AppDeps) {
   app.get("/health", (c) => {
     return c.json({ status: "ok" });
   });
+
+  // Auth routes (register/login) — mounted at /auth/*, OUTSIDE the /v1/* auth
+  // middleware so they are reachable unauthenticated.
+  if (deps.userStore) {
+    app.route("", authRoutes(deps.userStore));
+  }
 
   // Auth middleware on all /v1/* routes
   app.use("/v1/*", authMiddleware(deps.apiKeyStore));
