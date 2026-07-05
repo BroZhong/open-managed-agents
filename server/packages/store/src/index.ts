@@ -7,6 +7,7 @@ export type {
   SessionStatus,
   StoredEvent,
   ApiKey,
+  User,
   PaginatedResult,
   Runtime,
   Workspace,
@@ -63,6 +64,11 @@ export type {
 } from "./interfaces/api-key-store.js";
 
 export type {
+  UserStore,
+  UserStoreCreateInput,
+} from "./interfaces/user-store.js";
+
+export type {
   WorkspaceStore,
   WorkspaceStoreCreateInput,
 } from "./interfaces/workspace-store.js";
@@ -94,6 +100,7 @@ export {
   PgEventLogStore,
   PgPendingEventStore,
   PgApiKeyStore,
+  PgUserStore,
   PgWorkspaceStore,
 } from "./postgres/index.js";
 

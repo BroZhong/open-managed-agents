@@ -400,6 +400,7 @@ async function main() {
     eventLogStore: stores.eventLogStore,
     pendingEventStore,
     workspaceStore: stores.workspaceStore,
+    userStore: stores.userStore,
     artifactStore,
     eventStreamHub,
     turnStreamStore,

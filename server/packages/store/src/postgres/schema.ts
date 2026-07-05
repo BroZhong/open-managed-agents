@@ -121,6 +121,15 @@ CREATE TABLE IF NOT EXISTS ${s}.api_keys (
   created_at  TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS api_keys_tenant_id_idx ON ${s}.api_keys (tenant_id);
+
+CREATE TABLE IF NOT EXISTS ${s}.users (
+  id            TEXT PRIMARY KEY,
+  username      TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  tenant_id     TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON ${s}.users (lower(username));
 `;
 }
 

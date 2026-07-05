@@ -365,6 +365,7 @@ async function main() {
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     workspaceStore: stores.workspaceStore,
+    userStore: stores.userStore,
     eventStreamHub,
     sessionRouter,
   });

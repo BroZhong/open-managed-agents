@@ -98,6 +98,14 @@ export interface ApiKey {
   createdAt: Date;
 }
 
+export interface User {
+  id: string;
+  username: string;
+  passwordHash: string;
+  tenantId: string;
+  createdAt: Date;
+}
+
 export interface PaginatedResult<T> {
   data: T[];
   hasMore: boolean;
