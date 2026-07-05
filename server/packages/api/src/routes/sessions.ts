@@ -37,6 +37,14 @@ export function sessionRoutes(deps: SessionRouteDeps) {
       return c.json({ error: "workspace_id must be a string" }, 400);
     }
 
+    // Optional name for an auto-created Workspace (snake_case wire, camelCase
+    // alias). Only meaningful when creating a fresh Workspace; on an existing
+    // (idempotent) id it is ignored by the store (ON CONFLICT DO NOTHING).
+    const workspaceNameInput = body.workspace_name ?? body.workspaceName;
+    if (workspaceNameInput !== undefined && typeof workspaceNameInput !== "string") {
+      return c.json({ error: "workspace_name must be a string" }, 400);
+    }
+
     const tenant = c.get("tenant");
     const agent = await deps.agentStore.getById(agentId);
     if (!agent || agent.tenantId !== tenant.tenantId) {
@@ -49,6 +57,7 @@ export function sessionRoutes(deps: SessionRouteDeps) {
     const workspace = await deps.workspaceStore.create({
       tenantId: tenant.tenantId,
       id: workspaceIdInput,
+      name: workspaceNameInput,
     });
 
     const session = await deps.sessionStore.create({

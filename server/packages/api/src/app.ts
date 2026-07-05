@@ -14,6 +14,7 @@ import { sessionRoutes } from "./routes/sessions.js";
 import { eventRoutes } from "./routes/events.js";
 import { messageRoutes } from "./routes/messages.js";
 import { workspaceRoutes } from "./routes/workspace.js";
+import { workspaceEntityRoutes } from "./routes/workspaces.js";
 
 type Env = {
   Variables: {
@@ -70,6 +71,11 @@ export function createApp(deps: AppDeps) {
   // Mount API key CRUD routes
   if (deps.fullApiKeyStore) {
     app.route("", apiKeyRoutes(deps.fullApiKeyStore));
+  }
+
+  // Mount Workspace entity routes (create-named + list + get)
+  if (deps.workspaceStore) {
+    app.route("", workspaceEntityRoutes(deps.workspaceStore));
   }
 
   // Mount session routes

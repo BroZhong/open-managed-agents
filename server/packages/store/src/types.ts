@@ -45,6 +45,8 @@ export interface Agent {
 export interface Workspace {
   id: string;
   tenantId: string;
+  /** Optional human-friendly name. Set at creation; not renamable (out of scope). */
+  name?: string;
   createdAt: Date;
 }
 

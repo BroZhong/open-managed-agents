@@ -65,6 +65,7 @@ CREATE INDEX IF NOT EXISTS skills_tenant_id_idx ON ${s}.skills (tenant_id, skill
 CREATE TABLE IF NOT EXISTS ${s}.workspaces (
   id          TEXT NOT NULL,
   tenant_id   TEXT NOT NULL,
+  name        TEXT,
   created_at  TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (tenant_id, id)
 );

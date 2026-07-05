@@ -102,6 +102,23 @@ describe("createMemoryStores", () => {
       expect(await stores.workspaceStore.getById("t2", "ws")).not.toBeNull();
       expect(await stores.workspaceStore.getById("t3", "ws")).toBeNull();
     });
+
+    it("stores a name and does not clobber it on idempotent re-create", async () => {
+      const ws = await stores.workspaceStore.create({ tenantId: "t1", id: "named", name: "Files" });
+      expect(ws.name).toBe("Files");
+      const again = await stores.workspaceStore.create({ tenantId: "t1", id: "named", name: "Renamed" });
+      expect(again.name).toBe("Files");
+    });
+
+    it("lists a tenant's workspaces ordered by created_at", async () => {
+      await stores.workspaceStore.create({ tenantId: "t1", id: "a", name: "A" });
+      await stores.workspaceStore.create({ tenantId: "t1", id: "b", name: "B" });
+      await stores.workspaceStore.create({ tenantId: "t2", id: "c" });
+
+      const list = await stores.workspaceStore.list("t1");
+      expect(list.map((w) => w.id)).toEqual(["a", "b"]);
+      expect(await stores.workspaceStore.list("t3")).toEqual([]);
+    });
   });
 
   describe("EventLogStore", () => {

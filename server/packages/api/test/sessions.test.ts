@@ -159,12 +159,19 @@ class InMemoryWorkspaceStore implements WorkspaceStore {
     const existing = this.workspaces.get(key);
     if (existing) return existing;
     const workspace: Workspace = { id, tenantId: input.tenantId, createdAt: new Date() };
+    if (input.name != null) workspace.name = input.name;
     this.workspaces.set(key, workspace);
     return workspace;
   }
 
   async getById(tenantId: string, id: string): Promise<Workspace | null> {
     return this.workspaces.get(this.key(tenantId, id)) ?? null;
+  }
+
+  async list(tenantId: string): Promise<Workspace[]> {
+    return [...this.workspaces.values()]
+      .filter((w) => w.tenantId === tenantId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 }
 
@@ -299,6 +306,50 @@ describe("POST /v1/sessions", () => {
     // Only one Workspace entity exists for the shared id.
     const ws = await workspaceStore.getById("dev", "shared");
     expect(ws).not.toBeNull();
+  });
+
+  it("passes workspace_name through when auto-creating a Workspace", async () => {
+    const { app, agentStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent.id, workspace_name: "Project X" }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(workspaceStore.createCalls[0].name).toBe("Project X");
+    const ws = await workspaceStore.getById("dev", body.workspaceId);
+    expect(ws!.name).toBe("Project X");
+  });
+
+  it("rejects a non-string workspace_name", async () => {
+    const { app, agentStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent.id, workspace_name: 123 }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("workspace_name must be a string");
   });
 
   it("rejects a non-string workspace_id", async () => {
