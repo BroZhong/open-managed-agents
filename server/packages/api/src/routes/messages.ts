@@ -19,6 +19,22 @@ export interface MessageRouteDeps {
   sessionRouter: SessionRouter;
 }
 
+/**
+ * Derive a Session title from the incoming message: the first text block,
+ * trimmed, whitespace-collapsed, truncated to ~60 chars (with … if cut).
+ * Returns null when there is no non-empty text block.
+ */
+function deriveTitle(content: ContentBlock[]): string | null {
+  const firstText = content.find(
+    (b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
+  );
+  if (!firstText) return null;
+  const normalized = firstText.text.replace(/\s+/g, " ").trim();
+  if (normalized === "") return null;
+  const MAX = 60;
+  return normalized.length > MAX ? normalized.slice(0, MAX) + "…" : normalized;
+}
+
 export function messageRoutes(deps: MessageRouteDeps) {
   const router = new Hono<Env>();
 
@@ -52,6 +68,20 @@ export function messageRoutes(deps: MessageRouteDeps) {
       content = body.content as ContentBlock[];
     } else {
       return c.json({ error: "Content must not be empty" }, 400);
+    }
+
+    // Snapshot a title from the FIRST user message (only when unset, so later
+    // messages never overwrite it). Best-effort: a store failure must not break
+    // message send.
+    if (!session.title) {
+      const derived = deriveTitle(content);
+      if (derived) {
+        try {
+          await deps.sessionStore.setTitle(sessionId, derived);
+        } catch {
+          // ignore — titling is non-essential
+        }
+      }
     }
 
     // Subscribe to hub FIRST (before appending, to not miss events)

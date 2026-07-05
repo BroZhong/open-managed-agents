@@ -24,5 +24,10 @@ export interface SessionStore {
   getById(id: string): Promise<Session | null>;
   list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>>;
   updateStatus(id: string, status: SessionStatus): Promise<Session | null>;
+  /**
+   * Set the Session's title (a snapshot of the user's first message). Callers
+   * set it once, on the first message, only when it is currently unset.
+   */
+  setTitle(id: string, title: string): Promise<Session | null>;
   terminate(id: string): Promise<Session | null>;
 }

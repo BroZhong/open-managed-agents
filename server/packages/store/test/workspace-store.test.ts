@@ -72,6 +72,33 @@ describe("PgWorkspaceStore", () => {
     expect(cross).toBeNull();
   });
 
+  it("stores a name when supplied at creation", async () => {
+    const ws = await store.create({ tenantId: "tenant1", id: "named", name: "My Files" });
+    expect(ws.name).toBe("My Files");
+    const found = await store.getById("tenant1", "named");
+    expect(found!.name).toBe("My Files");
+  });
+
+  it("does not clobber an existing name on idempotent re-create", async () => {
+    await store.create({ tenantId: "tenant1", id: "keep", name: "Original" });
+    const second = await store.create({ tenantId: "tenant1", id: "keep", name: "Renamed" });
+    expect(second.name).toBe("Original");
+  });
+
+  it("lists a tenant's workspaces ordered by created_at ascending", async () => {
+    await store.create({ tenantId: "tenant1", id: "a", name: "A" });
+    await store.create({ tenantId: "tenant1", id: "b", name: "B" });
+    await store.create({ tenantId: "tenant2", id: "c", name: "C" });
+
+    const list = await store.list("tenant1");
+    expect(list.map((w) => w.id)).toEqual(["a", "b"]);
+    expect(list.every((w) => w.tenantId === "tenant1")).toBe(true);
+  });
+
+  it("returns an empty list for a tenant with no workspaces", async () => {
+    expect(await store.list("nobody")).toEqual([]);
+  });
+
   it("binds a Session to a Workspace immutably", async () => {
     const sessions = new PgSessionStore(harness.pool);
     const ws = await store.create({ tenantId: "tenant1", id: "bound" });

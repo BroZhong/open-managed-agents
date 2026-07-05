@@ -8,6 +8,8 @@ export interface Agent {
   model: string;
   system: string;
   runtime: string;
+  /** Equipped Skill ids (by reference into the tenant Skill Library). */
+  skills?: string[];
   sandbox?: {
     enabled: boolean;
     image?: string;
@@ -21,6 +23,7 @@ export interface AgentMutationBody {
   model: string;
   system: string;
   runtime: string;
+  skills?: string[];
   sandbox?: Agent["sandbox"];
 }
 

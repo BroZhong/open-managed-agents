@@ -8,6 +8,7 @@ interface SessionRow {
   tenant_id: string;
   agent_id: string;
   status: SessionStatus;
+  title: string | null;
   agent: Agent;
   workspace_id: string;
   created_at: Date;
@@ -29,6 +30,7 @@ function rowToSession(row: SessionRow): Session {
     tenantId: row.tenant_id,
     agentId: row.agent_id,
     status: row.status,
+    title: row.title ?? undefined,
     agent: reviveAgent(row.agent),
     workspaceId: row.workspace_id,
     createdAt: new Date(row.created_at),
@@ -88,6 +90,14 @@ export class PgSessionStore implements SessionStore {
     const { rows } = await this.pool.query<SessionRow>(
       `UPDATE sessions SET status = $2, updated_at = $3 WHERE id = $1 RETURNING *`,
       [id, status, new Date()],
+    );
+    return rows[0] ? rowToSession(rows[0]) : null;
+  }
+
+  async setTitle(id: string, title: string): Promise<Session | null> {
+    const { rows } = await this.pool.query<SessionRow>(
+      `UPDATE sessions SET title = $2, updated_at = $3 WHERE id = $1 RETURNING *`,
+      [id, title, new Date()],
     );
     return rows[0] ? rowToSession(rows[0]) : null;
   }

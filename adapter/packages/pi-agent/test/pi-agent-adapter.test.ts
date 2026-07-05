@@ -247,6 +247,19 @@ describe("PiAgentAdapter (SDK)", () => {
       expect(result.isError).toBe(false);
     });
 
+    it("tool_result.toolUseId equals the tool_use's toolUseId (toolCall.id pairing)", async () => {
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
+      const events = await collectEvents(adapter.run(makeInput("ls")));
+      const toolUse = events.find(
+        (e) => e.type === "agent.tool_use",
+      ) as AgentToolUseEvent;
+      const result = events.find(
+        (e) => e.type === "agent.tool_result",
+      ) as AgentToolResultEvent;
+      expect(result.toolUseId).toBe("tc_1");
+      expect(result.toolUseId).toBe(toolUse.toolUseId);
+    });
+
     it("marks error results correctly", async () => {
       const errorScript: AgentSessionEvent[] = [
         assistantStart,
@@ -425,8 +438,9 @@ describe("PiAgentAdapter (SDK)", () => {
   });
 
   describe("history + model", () => {
-    it("includes prior user and assistant messages in the prompt", async () => {
+    it("prompts with only the current turn; prior turns become structured history (ADR-0003)", async () => {
       let seenPrompt = "";
+      let seenHistory: SessionFactoryArgs["historyMessages"] = [];
       const adapter = new PiAgentAdapter({
         _sessionFactory: fakeFactory(
           [
@@ -436,6 +450,7 @@ describe("PiAgentAdapter (SDK)", () => {
           ],
           (args) => {
             seenPrompt = args.prompt;
+            seenHistory = args.historyMessages;
           },
         ),
       });
@@ -458,9 +473,74 @@ describe("PiAgentAdapter (SDK)", () => {
 
       await collectEvents(adapter.run(input));
 
-      expect(seenPrompt).toContain("User: Remember CODE-1");
-      expect(seenPrompt).toContain("Assistant: stored CODE-1");
-      expect(seenPrompt).toContain("User: What was it?");
+      // The current turn is passed verbatim (no flattened history blob).
+      expect(seenPrompt).toBe("What was it?");
+      // Prior turns are rebuilt as structured messages, not concatenated text.
+      expect(seenHistory).toHaveLength(2);
+      expect(seenHistory[0]).toMatchObject({
+        role: "user",
+        content: [{ type: "text", text: "Remember CODE-1" }],
+      });
+      expect(seenHistory[1]).toMatchObject({
+        role: "assistant",
+        content: [{ type: "text", text: "stored CODE-1" }],
+      });
+    });
+
+    it("forwards agent.system into resource-loader appendSystemPrompt", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      // makeInput sets agent.system = "You are helpful." — previously discarded.
+      await collectEvents(adapter.run(makeInput("hi")));
+      expect(opts?.appendSystemPrompt).toEqual(["You are helpful."]);
+      expect(opts?.additionalSkillPaths).toEqual([]);
+      expect(opts?.noContextFiles).toBe(true);
+    });
+
+    it("assembles appendSystemPrompt (system first) + skillPaths per run()", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      const input = makeInput("hi");
+      input.agent.system = "BASE";
+      input.agent.appendSystemPrompt = ["IDENTITY", "SOUL"];
+      input.agent.skillPaths = ["/tmp/skills/a", "/tmp/skills/b"];
+      await collectEvents(adapter.run(input));
+      expect(opts?.appendSystemPrompt).toEqual(["BASE", "IDENTITY", "SOUL"]);
+      expect(opts?.additionalSkillPaths).toEqual([
+        "/tmp/skills/a",
+        "/tmp/skills/b",
+      ]);
+    });
+
+    it("drops empty/whitespace system so no blank instruction block is injected", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      const input = makeInput("hi");
+      input.agent.system = "   ";
+      input.agent.appendSystemPrompt = ["", "REAL"];
+      await collectEvents(adapter.run(input));
+      expect(opts?.appendSystemPrompt).toEqual(["REAL"]);
     });
 
     it("resolves the model and passes it to the factory", async () => {
@@ -477,6 +557,115 @@ describe("PiAgentAdapter (SDK)", () => {
       // A real Pi Model object with provider + id.
       expect(resolved).toBeDefined();
       expect((resolved as { provider?: string }).provider).toBe("anthropic");
+    });
+
+    it("agent.message carries origin provider/model from message_start", async () => {
+      const start: AgentSessionEvent = {
+        type: "message_start",
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          api: "anthropic-messages",
+          model: "claude-sonnet-4-5",
+        },
+      } as never as AgentSessionEvent;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory([
+          start,
+          ame({ type: "text_start", contentIndex: 0 }),
+          ame({ type: "text_end", contentIndex: 0, content: "hi" }),
+          assistantEnd(1, 1),
+        ]),
+      });
+      const events = await collectEvents(adapter.run(makeInput("hi")));
+      const msg = events.find(
+        (e) => e.type === "agent.message",
+      ) as AgentMessageEvent & {
+        provider?: string;
+        api?: string;
+        model?: string;
+      };
+      expect(msg.provider).toBe("anthropic");
+      expect(msg.api).toBe("anthropic-messages");
+      expect(msg.model).toBe("claude-sonnet-4-5");
+    });
+
+    it("round-trips a tool-call turn through the event log into structured history", async () => {
+      // Turn 1: assistant calls a tool, gets a result, then answers.
+      const turn1Script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: {
+            type: "toolCall",
+            id: "tc_1",
+            name: "exec",
+            arguments: { command: "ls" },
+          },
+        }),
+        {
+          type: "tool_execution_end",
+          toolCallId: "tc_1",
+          toolName: "exec",
+          result: "a.ts\nb.ts",
+          isError: false,
+        } as AgentSessionEvent,
+        ame({ type: "text_start", contentIndex: 1 }),
+        ame({ type: "text_end", contentIndex: 1, content: "2 files." }),
+        assistantEnd(10, 5),
+      ];
+      const adapter1 = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(turn1Script),
+      });
+      const turn1Events = await collectEvents(adapter1.run(makeInput("count")));
+
+      // Reshape emitted canonical events as history does on the wire
+      // (`{ type, ...body }`), prepending the user's turn-1 prompt.
+      const canonical = new Set([
+        "agent.message",
+        "agent.tool_use",
+        "agent.tool_result",
+      ]);
+      const history: SessionEvent[] = [
+        {
+          id: "sevt_u1",
+          timestamp: "t",
+          type: "user.message",
+          data: { content: [{ type: "text", text: "count" }] },
+        } as unknown as SessionEvent,
+        ...turn1Events.filter((e) => canonical.has(e.type)),
+      ];
+
+      // Turn 2: assert the rebuilt structured history seen by the factory.
+      let seenHistory: SessionFactoryArgs["historyMessages"] = [];
+      const adapter2 = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, ame({ type: "text_end", contentIndex: 0, content: "ok" }), assistantEnd(1, 1)],
+          (args) => {
+            seenHistory = args.historyMessages;
+          },
+        ),
+      });
+      const input2 = makeInput("and again?");
+      input2.history = history;
+      await collectEvents(adapter2.run(input2));
+
+      // user, assistant(toolCall), toolResult, assistant(text)
+      expect(seenHistory.map((m) => m.role)).toEqual([
+        "user",
+        "assistant",
+        "toolResult",
+        "assistant",
+      ]);
+      const assistantWithTool = seenHistory[1] as {
+        content: Array<{ type: string; id?: string }>;
+      };
+      const toolCall = assistantWithTool.content.find((c) => c.type === "toolCall");
+      const toolResult = seenHistory[2] as { toolCallId: string };
+      // Tool id survived the event-log round-trip byte-for-byte.
+      expect(toolCall?.id).toBe("tc_1");
+      expect(toolResult.toolCallId).toBe("tc_1");
     });
   });
 });

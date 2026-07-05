@@ -1,10 +1,38 @@
 import { useState, useEffect, createContext, useContext } from "react"
-import { useLocation, Link } from "react-router"
-import { MessageSquare, Bot, Key, PanelLeftClose, PanelLeftOpen, LogOut } from "lucide-react"
+import { useLocation, useParams, useNavigate, Link } from "react-router"
+import {
+  LayoutDashboard,
+  Bot,
+  Key,
+  PanelLeftClose,
+  PanelLeftOpen,
+  LogOut,
+  ChevronLeft,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Settings,
+  FolderClosed,
+  MessagesSquare,
+} from "lucide-react"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Tooltip } from "@/components/ui/tooltip"
+import { useAgent } from "@/lib/hooks/use-agents"
+import {
+  useSession,
+  useAgentSessions,
+  useCreateSession,
+  type Session,
+} from "@/lib/hooks/use-sessions"
+import {
+  useWorkspaces,
+  useCreateWorkspace,
+  type Workspace,
+} from "@/lib/hooks/use-workspaces"
+import { StatusBadge } from "@/components/status-badge"
 
 const STORAGE_KEY = "oma_sidebar_collapsed"
 
@@ -18,8 +46,10 @@ export function useSidebarState() {
   return useContext(SidebarContext)
 }
 
+// Agents are the primary subject of the console (Agent-centric entry). Sessions
+// are no longer a global nav item — they are only reached through an Agent.
 const navItems = [
-  { label: "Sessions", icon: MessageSquare, path: "/sessions" },
+  { label: "Overview", icon: LayoutDashboard, path: "/" },
   { label: "Agents", icon: Bot, path: "/agents" },
   { label: "API Keys", icon: Key, path: "/api-keys" },
 ]
@@ -36,12 +66,29 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Resolve the Agent whose context the sidebar should show, from the route:
+ * `/agents/:id` directly, or `/sessions/:id` via the session's `agentId`.
+ * Returns null in the global context (Agents list, API keys, …).
+ */
+function useActiveAgentId(): string | null {
+  const location = useLocation()
+  const params = useParams()
+  const onAgent = location.pathname.startsWith("/agents/") && !!params.id
+  const onSession = location.pathname.startsWith("/sessions/") && !!params.id
+  const { data: session } = useSession(onSession ? (params.id as string) : "")
+  if (onAgent) return params.id as string
+  if (onSession && session) return session.agentId
+  return null
+}
+
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEY) === "true"
   })
   const location = useLocation()
   const { logout } = useAuth()
+  const activeAgentId = useActiveAgentId()
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(collapsed))
@@ -63,40 +110,45 @@ export function Sidebar() {
         </span>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-0.5 px-2 py-2">
-        {navItems.map((item) => {
-          const isActive =
-            location.pathname === item.path ||
-            location.pathname.startsWith(item.path + "/")
-          const Icon = item.icon
+      {/* Navigation — swaps between the global context (Agents list, …) and
+          the in-Agent context (the current Agent + its workspaces & chats). */}
+      <nav className="flex-1 overflow-y-auto space-y-0.5 px-2 py-2">
+        {activeAgentId ? (
+          <AgentContextNav agentId={activeAgentId} collapsed={collapsed} />
+        ) : (
+          navItems.map((item) => {
+            const isActive =
+              location.pathname === item.path ||
+              location.pathname.startsWith(item.path + "/")
+            const Icon = item.icon
 
-          const linkContent = (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
-                  : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
-              )}
-            >
-              <Icon className="h-[18px] w-[18px] shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </Link>
-          )
-
-          if (collapsed) {
-            return (
-              <Tooltip key={item.path} content={item.label}>
-                {linkContent}
-              </Tooltip>
+            const linkContent = (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+                    : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
+                )}
+              >
+                <Icon className="h-[18px] w-[18px] shrink-0" />
+                {!collapsed && <span>{item.label}</span>}
+              </Link>
             )
-          }
 
-          return linkContent
-        })}
+            if (collapsed) {
+              return (
+                <Tooltip key={item.path} content={item.label}>
+                  {linkContent}
+                </Tooltip>
+              )
+            }
+
+            return linkContent
+          })
+        )}
       </nav>
 
       {/* Bottom area */}
@@ -146,5 +198,280 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+  )
+}
+
+/** A session row: `title ?? id` + status badge, linking to the chat. */
+function SessionLink({ session }: { session: Session }) {
+  const location = useLocation()
+  const active = location.pathname === `/sessions/${session.id}`
+  const label = session.title ?? session.id
+  return (
+    <Link
+      to={`/sessions/${session.id}`}
+      className={cn(
+        "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
+        active
+          ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+          : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]",
+      )}
+    >
+      <span className={cn("truncate", session.title ? "" : "font-mono")}>{label}</span>
+      <StatusBadge status={session.status} />
+    </Link>
+  )
+}
+
+/**
+ * In-Agent sidebar context, mirroring the FastClaw chat sidebar
+ * (docs/design/fc_chat.png):
+ *   - a "back to all Agents" switcher + the current Agent name,
+ *   - an `agent` entry that opens the Agent's config detail,
+ *   - `+ New chat` (creates a loose session in a fresh anonymous workspace),
+ *   - a collapsible `workspaces` group (the named Workspaces this Agent uses),
+ *   - a flat `chats` group (loose sessions, i.e. in an unnamed workspace).
+ */
+function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: boolean }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { data: agent } = useAgent(agentId)
+  const { data: sessions } = useAgentSessions(agentId)
+  const { data: workspaces } = useWorkspaces()
+  const createSession = useCreateSession()
+  const createWorkspace = useCreateWorkspace()
+
+  const [workspacesOpen, setWorkspacesOpen] = useState(true)
+  const [openWorkspaces, setOpenWorkspaces] = useState<Record<string, boolean>>({})
+  // Inline "new named Workspace" input, toggled by the WORKSPACES header `+`.
+  const [newWorkspaceName, setNewWorkspaceName] = useState<string | null>(null)
+  const creatingWorkspace = createWorkspace.isPending || createSession.isPending
+
+  if (collapsed) {
+    return (
+      <Tooltip content="All Agents">
+        <Link
+          to="/agents"
+          className="flex items-center justify-center rounded-lg px-2.5 py-2 text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]"
+        >
+          <ChevronLeft className="h-[18px] w-[18px]" />
+        </Link>
+      </Tooltip>
+    )
+  }
+
+  // Named workspaces this Agent actually uses = the intersection of the tenant's
+  // named Workspaces with the workspaceIds bound by this Agent's sessions.
+  const namedById = new Map<string, Workspace>()
+  for (const w of workspaces ?? []) {
+    if (w.name) namedById.set(w.id, w)
+  }
+  const sessionsByWorkspace = new Map<string, Session[]>()
+  for (const s of sessions ?? []) {
+    const list = sessionsByWorkspace.get(s.workspaceId) ?? []
+    list.push(s)
+    sessionsByWorkspace.set(s.workspaceId, list)
+  }
+  const usedWorkspaces = [...namedById.values()].filter((w) =>
+    sessionsByWorkspace.has(w.id),
+  )
+  // Loose chats = sessions whose workspace is not a named one (anonymous).
+  const looseChats = (sessions ?? []).filter((s) => !namedById.has(s.workspaceId))
+
+  function newChat() {
+    createSession.mutate(agentId, {
+      onSuccess: (session) => navigate(`/sessions/${session.id}`),
+      onError: (err) => toast.error(err.message || "Failed to start chat"),
+    })
+  }
+
+  // Create a named Workspace, then a Session bound to it, then navigate in.
+  function submitNewWorkspace() {
+    const name = newWorkspaceName?.trim()
+    if (!name || creatingWorkspace) return
+    createWorkspace.mutate(name, {
+      onSuccess: (workspace) => {
+        setWorkspacesOpen(true)
+        createSession.mutate(
+          { agentId, workspaceId: workspace.id },
+          {
+            onSuccess: (session) => {
+              setNewWorkspaceName(null)
+              navigate(`/sessions/${session.id}`)
+            },
+            onError: (err) => toast.error(err.message || "Failed to start chat"),
+          },
+        )
+      },
+      onError: (err) => toast.error(err.message || "Failed to create workspace"),
+    })
+  }
+
+  return (
+    <div className="space-y-2">
+      <Link
+        to="/agents"
+        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-medium text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        All Agents
+      </Link>
+
+      <Link
+        to={`/agents/${agentId}`}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-semibold transition-colors",
+          location.pathname === `/agents/${agentId}`
+            ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+            : "text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)]",
+        )}
+      >
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+          <Bot className="h-4 w-4" />
+        </span>
+        <span className="truncate">{agent?.name ?? "Agent"}</span>
+      </Link>
+
+      {/* agent — opens the Agent's config detail (files, skills, model). */}
+      <Link
+        to={`/agents/${agentId}`}
+        className={cn(
+          "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+          location.pathname === `/agents/${agentId}`
+            ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+            : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]",
+        )}
+      >
+        <Settings className="h-[18px] w-[18px] shrink-0" />
+        <span>agent</span>
+      </Link>
+
+      {/* + New chat — a loose session bound to a fresh anonymous workspace. */}
+      <button
+        type="button"
+        onClick={newChat}
+        disabled={createSession.isPending}
+        className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent-muted)] disabled:opacity-50"
+      >
+        <Plus className="h-[18px] w-[18px] shrink-0" />
+        <span>{createSession.isPending ? "Starting…" : "New chat"}</span>
+      </button>
+
+      {/* workspaces — named Workspaces this Agent uses (collapsible). */}
+      <div className="pt-2">
+        <div className="flex items-center pr-1">
+          <button
+            type="button"
+            onClick={() => setWorkspacesOpen((o) => !o)}
+            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400 hover:text-[var(--color-fg-muted)]"
+          >
+            {workspacesOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            <span>workspaces</span>
+          </button>
+          <Tooltip content="New workspace">
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspacesOpen(true)
+                setNewWorkspaceName((v) => (v === null ? "" : v))
+              }}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+        {workspacesOpen && newWorkspaceName !== null && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              submitNewWorkspace()
+            }}
+            className="px-2.5 py-1"
+          >
+            <input
+              autoFocus
+              value={newWorkspaceName}
+              onChange={(e) => setNewWorkspaceName(e.target.value)}
+              onBlur={() => {
+                if (!newWorkspaceName.trim() && !creatingWorkspace) setNewWorkspaceName(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setNewWorkspaceName(null)
+              }}
+              disabled={creatingWorkspace}
+              placeholder="Workspace name…"
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-xs text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
+            />
+          </form>
+        )}
+        {workspacesOpen && (
+          <div className="space-y-0.5">
+            {usedWorkspaces.length === 0 && (
+              <p className="px-2.5 py-1 text-xs text-neutral-400">None</p>
+            )}
+            {usedWorkspaces.map((w) => {
+              const wsOpen = openWorkspaces[w.id] ?? false
+              const wsSessions = sessionsByWorkspace.get(w.id) ?? []
+              return (
+                <div key={w.id}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenWorkspaces((prev) => ({ ...prev, [w.id]: !wsOpen }))
+                    }
+                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]"
+                  >
+                    {wsOpen ? (
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <FolderClosed className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{w.name}</span>
+                  </button>
+                  {wsOpen && (
+                    <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
+                      {wsSessions.map((s) => (
+                        <SessionLink key={s.id} session={s} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* chats — flat list of loose (anonymous-workspace) sessions. */}
+      <div className="pt-2">
+        <div className="flex items-center pr-1">
+          <p className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+            <MessagesSquare className="h-3.5 w-3.5" />
+            chats
+          </p>
+          <Tooltip content="New chat">
+            <button
+              type="button"
+              onClick={newChat}
+              disabled={createSession.isPending}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+        {looseChats.length === 0 && (
+          <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
+        )}
+        {looseChats.map((s) => (
+          <SessionLink key={s.id} session={s} />
+        ))}
+      </div>
+    </div>
   )
 }

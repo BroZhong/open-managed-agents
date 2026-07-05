@@ -52,6 +52,21 @@ export interface AdapterInput {
     tools?: ToolConfig[];
     mcpServers?: McpServerConfig[];
     skills?: string[];
+    /**
+     * Assembled instruction text the runtime should append to its system
+     * prompt, in order (e.g. an Agent's Files). Per-call injection only — the
+     * Host decides what to inject on each `run()`; the Adapter forwards it and
+     * never stores it (ADR-0002: the Adapter is a pure translator). When
+     * absent, no instructions are appended.
+     */
+    appendSystemPrompt?: string[];
+    /**
+     * Host-materialized directories of equipped Skills (each a folder with a
+     * `SKILL.md`) for the runtime to load natively. Per-call injection only —
+     * the Host materializes and cleans these up; the Adapter only points the
+     * runtime's resource loader at them. When absent, no Skills are loaded.
+     */
+    skillPaths?: string[];
   };
   history: SessionEvent[];
   constraints?: {
@@ -131,6 +146,17 @@ export type SpanEvent =
 export interface AgentMessageEvent extends BaseEvent {
   type: "agent.message";
   content: ContentBlock[];
+  /**
+   * Origin model metadata for this assistant turn (ADR-0003). Optional so
+   * existing producers/persisted events remain valid; when a runtime knows
+   * which model produced the message it records the provider/api/model here so
+   * a later per-turn history rebuild can keep tool-call ids byte-stable for
+   * same-model turns and normalize only across a model switch. Absent for
+   * legacy events — the worst case is a safe cross-model normalization pass.
+   */
+  provider?: string;
+  api?: string;
+  model?: string;
 }
 
 export interface AgentThinkingEvent extends BaseEvent {

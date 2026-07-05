@@ -30,6 +30,34 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
 );
 CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 
+-- Agent Files are small editable markdown documents (IDENTITY, SOUL, USER,
+-- MEMORY) that shape an Agent's persona/instructions, isolated per
+-- (tenant_id, agent_id). They are part of the Agent, never a Session's
+-- Workspace — Agent Files never touch a Session's Workspace/S3.
+CREATE TABLE IF NOT EXISTS ${s}.agent_files (
+  tenant_id   TEXT NOT NULL,
+  agent_id    TEXT NOT NULL,
+  filename    TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (tenant_id, agent_id, filename)
+);
+
+-- Skills are a tenant-scoped Library of reusable, instruction-only capabilities
+-- (a directory with a SKILL.md). Metadata lives here; file bodies live in S3
+-- under <tenantId>/skills/<skillId>/… (isolated from Workspace prefixes).
+-- Equipping a Skill onto an Agent is by reference (Agent.skills holds skillIds);
+-- there is no join table.
+CREATE TABLE IF NOT EXISTS ${s}.skills (
+  skill_id     TEXT NOT NULL,
+  tenant_id    TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  description  TEXT NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (tenant_id, skill_id)
+);
+CREATE INDEX IF NOT EXISTS skills_tenant_id_idx ON ${s}.skills (tenant_id, skill_id);
+
 -- Workspaces are tenant-owned; the S3-authoritative home of a Session's
 -- artifacts. A user-supplied id is used as-is, else auto-generated. The
 -- (tenant_id, id) PK makes binding to a user-supplied id idempotent so many
@@ -37,6 +65,7 @@ CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 CREATE TABLE IF NOT EXISTS ${s}.workspaces (
   id          TEXT NOT NULL,
   tenant_id   TEXT NOT NULL,
+  name        TEXT,
   created_at  TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (tenant_id, id)
 );
@@ -46,6 +75,7 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   tenant_id      TEXT NOT NULL,
   agent_id       TEXT NOT NULL,
   status         TEXT NOT NULL,
+  title          TEXT,
   agent          JSONB NOT NULL,
   workspace_id   TEXT NOT NULL,
   created_at     TIMESTAMPTZ NOT NULL,

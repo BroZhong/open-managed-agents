@@ -11,3 +11,8 @@ Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-h
 ### Domain docs
 
 Single-context layout (one CONTEXT.md + docs/adr/ at root). See `docs/agents/domain.md`.
+
+## 约定
+
+如果有现成的组件可以完成的事情，就不要自己实现
+

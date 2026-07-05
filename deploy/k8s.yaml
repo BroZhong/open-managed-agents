@@ -7,7 +7,14 @@
 #   kubectl -n oma-infra create secret generic oma-secrets \
 #     --from-literal=PG_PASSWORD=... \
 #     --from-literal=REDIS_PASSWORD=... \
-#     --from-literal=SUPABASE_SERVICE_KEY=...
+#     --from-literal=SUPABASE_SERVICE_KEY=... \
+#     --from-literal=E2B_DOMAIN=... \
+#     --from-literal=E2B_API_KEY=...
+#
+# The sandbox is mandatory (issue #54): SANDBOX_ENABLED=true below + the E2B_*
+# secrets are what make Agent runs execute inside a sandbox. A sandboxed Agent
+# with no provisionable executor now fails loud (session.error
+# code=sandbox_unavailable) instead of falling back to the pod filesystem.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -38,6 +45,12 @@ data:
   # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
   # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
   OMA_PROXY_URL: "http://10.0.200.134:7890"
+  # Sandbox is mandatory (issue #54). This turns on the sandbox-backed
+  # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
+  SANDBOX_ENABLED: "true"
+  # E2B templateID = the SandboxSet name in the sandbox-system namespace
+  # (see deploy/sandbox/README.md). The code-interpreter warm pool.
+  SANDBOX_TEMPLATE: "code-interpreter"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -83,6 +96,11 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: REDIS_PASSWORD } }
             - name: SUPABASE_SERVICE_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: SUPABASE_SERVICE_KEY } }
+            # E2B sandbox endpoint + key (issue #54) — never baked into the image.
+            - name: E2B_DOMAIN
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
+            - name: E2B_API_KEY
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_API_KEY } }
           volumeMounts:
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:

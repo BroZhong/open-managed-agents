@@ -1,8 +1,8 @@
 import { serve } from "@hono/node-server";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore } from "@oma-server/store";
-import type { ArtifactStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore, S3SkillArtifactStore } from "@oma-server/store";
+import type { ArtifactStore, SkillArtifactStore } from "@oma-server/store";
 import {
   createRedisClient,
   redisConfigFromEnv,
@@ -13,7 +13,7 @@ import type { TurnStreamStore } from "@oma-server/redis";
 import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import { KruiseSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
+import { E2BSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
 import type { ToolExecutorFactory } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
@@ -26,7 +26,7 @@ import {
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -37,6 +37,16 @@ if (proxyUrl) {
   setGlobalDispatcher(new ProxyAgent(proxyUrl));
   console.log(`Global fetch proxy enabled → ${proxyUrl}`);
 }
+
+// S3 (Supabase Storage) lives on the internal VPC and must NOT traverse the
+// egress proxy — the proxy is for external LLM calls only and closes internal
+// connections. Give the S3 stores a direct-dispatcher fetch that bypasses the
+// global proxy dispatcher. When no proxy is set this is just plain fetch.
+const directDispatcher = new UndiciAgent();
+const directFetch: typeof fetch = proxyUrl
+  ? ((input, init) =>
+      fetch(input, { ...(init ?? {}), dispatcher: directDispatcher } as RequestInit)) as typeof fetch
+  : fetch;
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -321,29 +331,44 @@ async function main() {
       endpoint: s3Endpoint,
       serviceKey: s3ServiceKey,
       bucket: process.env.S3_BUCKET || "workspace",
+      fetch: directFetch,
     });
     console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
   } else {
     console.log("Workspace artifact store disabled — set S3_ENDPOINT + S3_SERVICE_KEY to enable");
   }
 
+  // Skill file bodies share the S3 backend but live under a distinct
+  // `<tenantId>/skills/<skillId>/…` namespace (isolated from Workspaces).
+  let skillArtifactStore: SkillArtifactStore | undefined;
+  if (s3Endpoint && s3ServiceKey) {
+    skillArtifactStore = new S3SkillArtifactStore({
+      endpoint: s3Endpoint,
+      serviceKey: s3ServiceKey,
+      bucket: process.env.S3_BUCKET || "workspace",
+      fetch: directFetch,
+    });
+  }
+
   // Create a dev seed key for local testing (persisted in PG).
   const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
 
-  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): kruise-CRD sandboxes,
+  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): e2b-SDK sandboxes,
   // hydrated from the S3 Workspace. Requires the artifact store (nothing to
-  // hydrate from without it). Enable with SANDBOX_ENABLED=true.
+  // hydrate from without it) plus E2B_DOMAIN + E2B_API_KEY. Enable with
+  // SANDBOX_ENABLED=true. (Full wiring/fail-loud is #54's job.)
   let toolExecutorFactory: ToolExecutorFactory | undefined;
   if (artifactStore && process.env.SANDBOX_ENABLED === "true") {
-    const sandboxClient = new KruiseSandboxClient({
-      namespace: process.env.SANDBOX_NAMESPACE,
-      defaultImage: process.env.SANDBOX_IMAGE,
+    const sandboxClient = new E2BSandboxClient({
+      domain: process.env.E2B_DOMAIN ?? "",
+      apiKey: process.env.E2B_API_KEY ?? "",
+      defaultTemplate: process.env.SANDBOX_TEMPLATE,
     });
     toolExecutorFactory = new SandboxToolExecutorFactory({
       sandboxClient,
       artifactStore,
     });
-    console.log("Sandbox ToolExecutor enabled (kruise CRD, hydrate from S3)");
+    console.log("Sandbox ToolExecutor enabled (e2b SDK, hydrate from S3)");
   } else {
     console.log(
       "Sandbox ToolExecutor disabled — set SANDBOX_ENABLED=true (+ S3) to enable",
@@ -358,12 +383,19 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     toolExecutorFactory,
+    agentStore: stores.agentStore,
+    agentFileStore: stores.agentFileStore,
+    skillStore: stores.skillStore,
+    skillArtifactStore,
   });
 
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,
+    agentFileStore: stores.agentFileStore,
+    skillStore: stores.skillStore,
+    skillArtifactStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
     pendingEventStore,

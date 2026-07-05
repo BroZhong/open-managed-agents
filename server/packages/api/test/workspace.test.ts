@@ -48,6 +48,12 @@ class InMemorySessionStore implements SessionStore {
     s.status = status;
     return s;
   }
+  async setTitle(id: string, title: string): Promise<Session | null> {
+    const s = this.sessions.find((x) => x.id === id);
+    if (!s) return null;
+    s.title = title;
+    return s;
+  }
   async terminate(id: string): Promise<Session | null> {
     const s = this.sessions.find((x) => x.id === id);
     if (!s) return null;

@@ -156,6 +156,14 @@ class InMemorySessionStore implements SessionStore {
     return session;
   }
 
+  async setTitle(id: string, title: string): Promise<Session | null> {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return null;
+    session.title = title;
+    session.updatedAt = new Date();
+    return session;
+  }
+
   async terminate(id: string): Promise<Session | null> {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return null;
@@ -276,10 +284,24 @@ const sandboxedAgent: Agent = {
   updatedAt: new Date(),
 };
 
-const plainAgent: Agent = {
-  id: "agent_plain",
+/** Explicitly opts out of the mandatory sandbox (sandbox.enabled === false). */
+const optedOutAgent: Agent = {
+  id: "agent_optout",
   tenantId: "tenant_1",
-  name: "Plain",
+  name: "Opted out",
+  model: "claude-3",
+  system: "helpful",
+  runtime: "pi-agent",
+  sandbox: { enabled: false },
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+/** Legacy agent with NO sandbox field — treated as sandboxed by default (#54). */
+const legacyAgent: Agent = {
+  id: "agent_legacy",
+  tenantId: "tenant_1",
+  name: "Legacy",
   model: "claude-3",
   system: "helpful",
   runtime: "pi-agent",
@@ -460,7 +482,7 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
     expect(sandboxClient.destroyed).toHaveLength(1);
   });
 
-  it("does not inject an executor for a non-sandboxed agent", async () => {
+  it("does not inject an executor for a non-sandboxed agent when a factory IS present", async () => {
     let sawExecutor = true;
     const probeAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
@@ -473,37 +495,42 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
         };
       },
     };
+    // Factory present, but the agent explicitly opts out of the sandbox.
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: probeAdapter,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
-      agentId: "agent_plain",
-      agent: plainAgent,
+      agentId: "agent_optout",
+      agent: optedOutAgent,
       workspaceId: "ws_1",
     });
     await enqueue(pendingEventStore, session.id, "hi");
 
-    await router.handleNewEvent(session.id, plainAgent);
+    await router.handleNewEvent(session.id, optedOutAgent);
 
     expect(sawExecutor).toBe(false);
     expect(sandboxClient.created).toHaveLength(0);
   });
+});
 
-  it("does not inject an executor when no factory is configured", async () => {
-    let sawExecutor = true;
+// ─── Fail-loud: mandatory sandbox with no provisionable executor (#54) ───────
+
+describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
+  it("emits session.error(sandbox_unavailable) and does NOT run the adapter when sandboxed but no factory", async () => {
+    let adapterInvoked = false;
     const probeAdapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-        sawExecutor = input.toolExecutor != null;
+      async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+        adapterInvoked = true;
         yield {
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
-          content: [{ type: "text", text: "ok" }],
+          content: [{ type: "text", text: "should not run" }],
         };
       },
     };
-    const { router, sessionStore, pendingEventStore } = createDeps({
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
       adapter: probeAdapter,
       withFactory: false,
     });
@@ -517,7 +544,96 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
 
     await router.handleNewEvent(session.id, sandboxedAgent);
 
-    expect(sawExecutor).toBe(false);
+    // The adapter was skipped entirely — no unsandboxed fallback ran.
+    expect(adapterInvoked).toBe(false);
+
+    // A session.error with the sandbox_unavailable code was persisted.
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    const errors = data.filter((e) => e.type === "session.error");
+    expect(errors).toHaveLength(1);
+    expect((errors[0].data as { error: { code: string } }).error.code).toBe(
+      "sandbox_unavailable",
+    );
+
+    // No agent.message was emitted because the adapter never ran.
+    expect(data.filter((e) => e.type === "agent.message")).toHaveLength(0);
+
+    // The session still transitions back to idle so it isn't left running.
+    const final = await sessionStore.getById(session.id);
+    expect(final?.status).toBe("idle");
+  });
+
+  it("treats a legacy agent with NO sandbox field as sandboxed (fail-loud without a factory)", async () => {
+    let adapterInvoked = false;
+    const probeAdapter: Adapter = {
+      async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+        adapterInvoked = true;
+        yield {
+          id: "e",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "x" }],
+        };
+      },
+    };
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
+      adapter: probeAdapter,
+      withFactory: false,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_legacy",
+      agent: legacyAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "hi");
+
+    await router.handleNewEvent(session.id, legacyAgent);
+
+    expect(adapterInvoked).toBe(false);
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    expect(
+      data.some(
+        (e) =>
+          e.type === "session.error" &&
+          (e.data as { error: { code: string } }).error.code === "sandbox_unavailable",
+      ),
+    ).toBe(true);
+  });
+
+  it("runs normally with an injected executor when sandboxed AND a factory is present", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    artifactStore.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
+      createDeps({
+        adapter: toolReadingAdapter("hello.txt"),
+        artifactStore,
+      });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    // The adapter ran with an injected executor (a sandbox was created) and
+    // there is no fail-loud session.error.
+    expect(sandboxClient.created).toHaveLength(1);
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    expect(
+      data.some(
+        (e) =>
+          e.type === "session.error" &&
+          (e.data as { error?: { code?: string } }).error?.code === "sandbox_unavailable",
+      ),
+    ).toBe(false);
+    const msg = data.find((e) => e.type === "agent.message");
+    expect((msg?.data as { content: Array<{ text: string }> }).content[0].text).toBe(
+      "world",
+    );
   });
 
   it("isolates concurrent sessions in distinct sandboxes (no cross-session bleed)", async () => {

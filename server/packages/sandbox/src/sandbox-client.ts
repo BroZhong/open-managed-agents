@@ -1,16 +1,17 @@
 /**
  * SandboxClient — the low-level port over a single disposable sandbox.
  *
- * Per ADR-0002 §4 and the #37 spike, the sandbox backend is the OpenKruise
- * `agents.kruise.io` CRD (NOT `@alibaba-group/opensandbox`). Sandboxes are
- * short-lived and hold no authoritative state: created lazily, hydrated from
- * S3, and destroyed at session end — there is no pause/resume, because that
- * model is 1:1 per-instance and conflicts with 1:N Workspace sharing.
+ * Per ADR-0002 §4, the sandbox backend is the official `e2b` SDK against a
+ * self-hosted gateway (#53, replacing the kruise CRD; NOT
+ * `@alibaba-group/opensandbox`). Sandboxes are short-lived and hold no
+ * authoritative state: created lazily, hydrated from S3, and destroyed at
+ * session end — there is no pause/resume, because that model is 1:1
+ * per-instance and conflicts with 1:N Workspace sharing.
  *
  * This port is deliberately small (`create/exec/readFile/writeFile/list/
- * destroy`) so it can be backed by the kruise CRD in production and by a fake
- * in tests, and so the {@link SandboxToolExecutor} above it never learns which
- * backend it is talking to.
+ * destroy`) so it can be backed by e2b in production and by a fake in tests,
+ * and so the {@link SandboxToolExecutor} above it never learns which backend it
+ * is talking to.
  */
 
 /** A chunk of output from a running command inside the sandbox. */
@@ -39,7 +40,7 @@ export interface SandboxFileEntry {
 
 /** Options for creating a sandbox. */
 export interface SandboxCreateOptions {
-  /** Container image / kruise template the sandbox runtime should use. */
+  /** Container image / e2b template the sandbox runtime should use. */
   image?: string;
   /** Environment variables baked into the sandbox runtime. */
   env?: Record<string, string>;
@@ -50,8 +51,8 @@ export interface SandboxCreateOptions {
 }
 
 /**
- * A handle to one live sandbox. The `id` is backend-specific (the kruise
- * Sandbox CR name); everything else is done through the client keyed by it.
+ * A handle to one live sandbox. The `id` is backend-specific (the e2b
+ * `sandboxId`); everything else is done through the client keyed by it.
  */
 export interface SandboxHandle {
   id: string;

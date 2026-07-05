@@ -14,7 +14,7 @@ import { contentHash, type WorkspaceSyncResult } from "./workspace-sync.js";
 const DEFAULT_WORKSPACE_DIR = "/workspace";
 
 export interface SandboxToolExecutorOptions {
-  /** Low-level sandbox port (kruise in prod, fake in tests). */
+  /** Low-level sandbox port (e2b in prod, fake in tests). */
   sandboxClient: SandboxClient;
   /** S3-authoritative artifact store the Workspace lives in. */
   artifactStore: ArtifactStore;

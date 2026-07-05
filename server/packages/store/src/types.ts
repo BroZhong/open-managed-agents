@@ -45,6 +45,8 @@ export interface Agent {
 export interface Workspace {
   id: string;
   tenantId: string;
+  /** Optional human-friendly name. Set at creation; not renamable (out of scope). */
+  name?: string;
   createdAt: Date;
 }
 
@@ -55,6 +57,12 @@ export interface Session {
   tenantId: string;
   agentId: string;
   status: SessionStatus;
+  /**
+   * A truncated snapshot of the user's first message, set when that first
+   * message arrives. Optional: historical sessions may have none. The console
+   * shows `title ?? id`.
+   */
+  title?: string;
   /** Snapshot of the Agent at session creation time */
   agent: Agent;
   /** The Workspace this Session is bound to. Immutable after creation. */

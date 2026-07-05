@@ -1,63 +1,43 @@
-# Nautilus
+# Open Managed Agents
 
-An orchestration platform that runs AI coding agents (Pi, Claude Code, Codex) as multi-user sessions, translating each runtime's output into a unified event stream and surfacing the agent's file artifacts to a frontend.
+Open Managed Agents coordinates long-running AI coding agents across sessions and turns while preserving their working state.
 
 ## Language
 
-### Runtime & translation
+**Agent**:
+A configured AI coding worker that can be used to create **Sessions**. An Agent has one runtime and may be configured to run as a **Sandboxed Agent**.
+_Avoid_: bot, assistant, worker
 
-**Adapter**:
-A stateless translator between a unified event stream and one agent runtime's SDK session. It converts session history into the runtime's context and the runtime's output back into events. It never touches persistence, messaging, sandboxing, or storage.
-_Avoid_: Connector, driver, integration
-
-**Runtime**:
-A concrete agent backend the platform can drive — Pi, Claude Code, or Codex. Each has one Adapter.
-_Avoid_: Engine, backend, provider
-
-**Host**:
-The resident, multi-user process that owns everything an Adapter refuses to touch: building context, persistence, messaging, sandbox lifecycle, and artifact storage. In this repo the Host is the Server.
-_Avoid_: Orchestrator (ambiguous), gateway
-
-### Conversation
+**Sandboxed Agent**:
+An **Agent** whose turns run inside an isolated sandbox environment. In the online alpha, all real agent execution is expected to use Sandboxed Agents.
+_Avoid_: sandbox agent, isolated agent, Kubernetes agent
 
 **Session**:
-One conversation between a user and an agent. Bound to exactly one Workspace at creation; the binding never changes.
-_Avoid_: Conversation, thread, chat
+A conversation and work history for a single **Agent**. A Session contains one or more **Turns** and keeps the Agent's working state between turns when the Agent is sandboxed. An Agent owns many Sessions; a Session belongs to exactly one Agent. The console is entered through an Agent, and its Sessions are listed within it.
+_Avoid_: chat, thread, run
 
 **Turn**:
-One round within a Session: a user message and everything the agent emits in response until it goes idle.
-_Avoid_: Round, exchange, step
+One user message and the Agent execution that responds to it within a **Session**.
+_Avoid_: request, job, invocation
 
-**Event**:
-An immutable, sequenced record of something that happened in a Session — a message, a tool use, a status change. The authoritative log of a Session is its ordered Events.
-_Avoid_: Log entry, record
+**Agent File**:
+A named markdown document that shapes an **Agent**'s identity or instructions (e.g. SOUL, IDENTITY, MEMORY, USER). Agent Files belong to one Agent and are isolated per Agent — one Agent can never read another's Files. They are Agent-scoped, not Session-scoped: every Session of an Agent sees the same Files. The Host assembles them into the instructions given to the runtime; the runtime never reads them from a Session's Workspace.
+_Avoid_: prompt file, persona file, SOUL (as a category name)
 
-**Delta**:
-A token-level increment of an in-progress agent message. Deltas exist only to animate live output; once a Turn ends, their content is captured whole as an Event. Deltas are never part of the authoritative log.
-_Avoid_: Chunk (overloaded), partial, fragment
+**Skill**:
+A self-contained, reusable capability packaged as a directory containing a `SKILL.md`. Skills live in a tenant-scoped **Skill Library** and are first-class: one Skill can be equipped by many **Agents**, and one Agent can equip many Skills (many-to-many). An Agent references the Skills it has equipped by identity, not by copy. When a Session runs, the Host materializes that Agent's equipped Skills into a resource location the runtime loads natively; a Skill is not a Session artifact and does not live in a Workspace.
+_Avoid_: plugin, tool (a Skill may bundle tools, but is not itself a tool)
 
-### Filesystem & isolation
+**Skill Library**:
+The tenant-scoped collection of all **Skills** a tenant has, independent of any **Agent**. Skills are added to the Library once (by uploading a folder — one folder is one Skill if it holds a `SKILL.md`, or many Skills if its subfolders each hold one) and then equipped onto Agents as desired. The Library is managed from the same entry page that lists Agents; equipping happens on an individual Agent's page.
+_Avoid_: marketplace, catalog, registry
 
-**Workspace**:
-The persistent, authoritative home of a Session's file artifacts. Identified by a Workspace ID that is either user-supplied or auto-created. One Workspace may be bound by many Sessions concurrently. There is only one kind of Workspace — "temporary" merely means its ID was auto-generated, not that its data is impermanent.
-_Avoid_: Project, folder, directory, environment
+**Equip** (a Skill onto an Agent):
+To reference a **Skill** from the **Skill Library** on an **Agent** so the Agent's Sessions load it. Equipping does not copy the Skill; unequipping removes only the reference.
+_Avoid_: install, add, attach
 
-**Sandbox**:
-A short-lived, stateless execution environment for one Session's tool calls. Created lazily on first filesystem/code tool use, hydrated from the Workspace, synced back, then destroyed. Holds no authoritative state.
-_Avoid_: Container, VM, box
+## Example Dialogue
 
-**Sandbox-as-Tool**:
-The isolation model where the agent runs in the Host and only its tool calls are proxied into a Sandbox. Contrast with Agent-in-the-Sandbox, where the whole agent runs inside the Sandbox.
-_Avoid_: Tool proxying, remote execution
+Developer: "Should this Agent run directly in the API service?"
 
-**Hydrate**:
-Populating a freshly created Sandbox's filesystem from the Workspace's authoritative store before the agent runs.
-_Avoid_: Restore, seed, load
-
-**Sync**:
-Writing a Sandbox's filesystem changes back to the Workspace: a full scan (to catch files created by any means, including shell), content-hash comparison to push changes, and a baseline diff to propagate deletions.
-_Avoid_: Snapshot, backup, flush
-
-**Artifact**:
-A file produced by an agent inside a Workspace, surfaced to the frontend.
-_Avoid_: Output, product, deliverable
+Domain expert: "No. For the online alpha, make it a Sandboxed Agent so each Turn runs in the sandbox and the Session can preserve working state."

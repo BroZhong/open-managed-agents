@@ -11,6 +11,10 @@
   --color-fg-subtle: #999990;
   --color-primary: #1a1a1a;
   --color-primary-fg: #ffffff;
+  /* Warm terracotta accent (FastClaw-style visual pass). */
+  --color-accent: #c2410c;
+  --color-accent-fg: #ffffff;
+  --color-accent-muted: #fbe9e2;
   --color-danger: #d4483b;
   --color-success: #2d8a4e;
   --color-warning: #c07d1a;

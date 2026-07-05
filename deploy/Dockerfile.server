@@ -5,19 +5,44 @@ FROM node:22-slim
 RUN corepack enable && corepack prepare pnpm@10.12.4 --activate
 
 WORKDIR /app
+ENV CI=true
 
-# The server workspace depends on the adapter core via file: path (../../../adapter/packages/core),
-# so both workspaces must be present in the image.
+# ─── Dependency layer (cached across source-only changes) ───────────────────
+# Copy ONLY the workspace manifests + lockfiles first, so `pnpm install` is its
+# own layer that stays cached unless a package.json / lockfile actually changes.
+# Editing a .ts file no longer busts the (slow, amd64-emulated) install step.
+# The server workspace depends on the adapter core via a file: path, so both
+# workspaces' manifests must be present.
+COPY adapter/pnpm-workspace.yaml adapter/package.json adapter/pnpm-lock.yaml ./adapter/
+COPY adapter/packages/claude-code/package.json ./adapter/packages/claude-code/
+COPY adapter/packages/codex/package.json ./adapter/packages/codex/
+COPY adapter/packages/core/package.json ./adapter/packages/core/
+COPY adapter/packages/mock/package.json ./adapter/packages/mock/
+COPY adapter/packages/pi-agent/package.json ./adapter/packages/pi-agent/
+COPY adapter/packages/runner/package.json ./adapter/packages/runner/
+COPY adapter/packages/tool-executor-local/package.json ./adapter/packages/tool-executor-local/
+
+COPY server/pnpm-workspace.yaml server/package.json server/pnpm-lock.yaml ./server/
+COPY server/packages/api/package.json ./server/packages/api/
+COPY server/packages/event-log/package.json ./server/packages/event-log/
+COPY server/packages/redis/package.json ./server/packages/redis/
+COPY server/packages/sandbox/package.json ./server/packages/sandbox/
+COPY server/packages/session-router/package.json ./server/packages/session-router/
+COPY server/packages/store/package.json ./server/packages/store/
+COPY server/packages/store-memory/package.json ./server/packages/store-memory/
+
+# Install the adapter workspace first (server references it by relative path).
+RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
+ && cd /app/server && pnpm install --no-frozen-lockfile
+
+# ─── Source layer (changes on every code edit; deps above stay cached) ──────
 COPY adapter/ ./adapter/
 COPY server/ ./server/
 
-# Install adapter workspace first (server references it by relative path)
-WORKDIR /app/adapter
-ENV CI=true
-RUN pnpm install --no-frozen-lockfile
-
-WORKDIR /app/server
-RUN pnpm install --no-frozen-lockfile
+# Re-run install so any manifest not copied above (or workspace linking) settles.
+# With the deps already installed + cached in the store, this is near-instant.
+RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
+ && cd /app/server && pnpm install --no-frozen-lockfile
 
 ENV PORT=3000
 EXPOSE 3000

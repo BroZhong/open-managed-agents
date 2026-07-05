@@ -348,12 +348,19 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
+    agentStore: stores.agentStore,
+    agentFileStore: stores.agentFileStore,
+    skillStore: stores.skillStore,
+    skillArtifactStore: stores.skillArtifactStore,
   });
 
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,
+    agentFileStore: stores.agentFileStore,
+    skillStore: stores.skillStore,
+    skillArtifactStore: stores.skillArtifactStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,

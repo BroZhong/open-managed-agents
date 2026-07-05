@@ -9,15 +9,18 @@ import type { Workspace } from "../types.js";
 interface WorkspaceRow {
   id: string;
   tenant_id: string;
+  name: string | null;
   created_at: Date;
 }
 
 function rowToWorkspace(row: WorkspaceRow): Workspace {
-  return {
+  const ws: Workspace = {
     id: row.id,
     tenantId: row.tenant_id,
     createdAt: new Date(row.created_at),
   };
+  if (row.name != null) ws.name = row.name;
+  return ws;
 }
 
 /**
@@ -33,11 +36,11 @@ export class PgWorkspaceStore implements WorkspaceStore {
     const now = new Date();
     const id = input.id ?? `ws_${nanoid()}`;
     const { rows } = await this.pool.query<WorkspaceRow>(
-      `INSERT INTO workspaces (id, tenant_id, created_at)
-       VALUES ($1, $2, $3)
+      `INSERT INTO workspaces (id, tenant_id, name, created_at)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (tenant_id, id) DO NOTHING
        RETURNING *`,
-      [id, input.tenantId, now],
+      [id, input.tenantId, input.name ?? null, now],
     );
     if (rows[0]) return rowToWorkspace(rows[0]);
 
@@ -54,5 +57,13 @@ export class PgWorkspaceStore implements WorkspaceStore {
       [tenantId, id],
     );
     return rows[0] ? rowToWorkspace(rows[0]) : null;
+  }
+
+  async list(tenantId: string): Promise<Workspace[]> {
+    const { rows } = await this.pool.query<WorkspaceRow>(
+      `SELECT * FROM workspaces WHERE tenant_id = $1 ORDER BY created_at ASC`,
+      [tenantId],
+    );
+    return rows.map(rowToWorkspace);
   }
 }

@@ -79,6 +79,22 @@ describe("createMemoryStores", () => {
       expect(terminated?.terminatedAt).toBeDefined();
       expect(terminated?.workspaceId).toBe(ws.id);
     });
+
+    it("has no title until one is set, then setTitle persists it", async () => {
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const ws = await stores.workspaceStore.create({ tenantId: "t1" });
+      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
+      expect(session.title).toBeUndefined();
+
+      const titled = await stores.sessionStore.setTitle(session.id, "Hello there");
+      expect(titled?.title).toBe("Hello there");
+      const found = await stores.sessionStore.getById(session.id);
+      expect(found?.title).toBe("Hello there");
+    });
+
+    it("setTitle returns null for a non-existent session", async () => {
+      expect(await stores.sessionStore.setTitle("sess_missing", "x")).toBeNull();
+    });
   });
 
   describe("WorkspaceStore", () => {
@@ -101,6 +117,23 @@ describe("createMemoryStores", () => {
       expect(await stores.workspaceStore.getById("t1", "ws")).not.toBeNull();
       expect(await stores.workspaceStore.getById("t2", "ws")).not.toBeNull();
       expect(await stores.workspaceStore.getById("t3", "ws")).toBeNull();
+    });
+
+    it("stores a name and does not clobber it on idempotent re-create", async () => {
+      const ws = await stores.workspaceStore.create({ tenantId: "t1", id: "named", name: "Files" });
+      expect(ws.name).toBe("Files");
+      const again = await stores.workspaceStore.create({ tenantId: "t1", id: "named", name: "Renamed" });
+      expect(again.name).toBe("Files");
+    });
+
+    it("lists a tenant's workspaces ordered by created_at", async () => {
+      await stores.workspaceStore.create({ tenantId: "t1", id: "a", name: "A" });
+      await stores.workspaceStore.create({ tenantId: "t1", id: "b", name: "B" });
+      await stores.workspaceStore.create({ tenantId: "t2", id: "c" });
+
+      const list = await stores.workspaceStore.list("t1");
+      expect(list.map((w) => w.id)).toEqual(["a", "b"]);
+      expect(await stores.workspaceStore.list("t3")).toEqual([]);
     });
   });
 
@@ -155,6 +188,61 @@ describe("createMemoryStores", () => {
       const peeked = await stores.pendingEventStore.peek("s1");
       expect(peeked?.data).toEqual({ x: 1 });
       expect(await stores.pendingEventStore.count("s1")).toBe(1);
+    });
+  });
+
+  describe("AgentFileStore", () => {
+    it("upserts and reads back identical content", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "SOUL", "be warm");
+      const f = await stores.agentFileStore.get("t1", "a1", "SOUL");
+      expect(f?.content).toBe("be warm");
+    });
+
+    it("list omits content", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "SOUL", "x");
+      const list = await stores.agentFileStore.list("t1", "a1");
+      expect(list).toEqual([{ filename: "SOUL", updatedAt: expect.any(Date) }]);
+    });
+
+    it("isolates by tenant and agent", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "SOUL", "x");
+      expect(await stores.agentFileStore.get("t2", "a1", "SOUL")).toBeNull();
+      expect(await stores.agentFileStore.get("t1", "a2", "SOUL")).toBeNull();
+      expect(await stores.agentFileStore.list("t2", "a1")).toEqual([]);
+    });
+
+    it("deletes a file", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "USER", "x");
+      expect(await stores.agentFileStore.delete("t1", "a1", "USER")).toBe(true);
+      expect(await stores.agentFileStore.get("t1", "a1", "USER")).toBeNull();
+      expect(await stores.agentFileStore.delete("t1", "a1", "USER")).toBe(false);
+    });
+  });
+
+  describe("SkillStore + SkillArtifactStore", () => {
+    it("creates a Skill and isolates by tenant", async () => {
+      const s = await stores.skillStore.create({ tenantId: "t1", name: "greeter", description: "d" });
+      expect(await stores.skillStore.getById(s.id)).toEqual(s);
+      const t1 = await stores.skillStore.list("t1");
+      const t2 = await stores.skillStore.list("t2");
+      expect(t1.data).toHaveLength(1);
+      expect(t2.data).toHaveLength(0);
+    });
+
+    it("stores + reads + deletes Skill file bodies under an isolated namespace", async () => {
+      await stores.skillArtifactStore.put("t1", "sk1", "SKILL.md", "hi");
+      await stores.skillArtifactStore.put("t1", "sk1", "notes/x.md", "n");
+      expect((await stores.skillArtifactStore.list("t1", "sk1")).sort()).toEqual(
+        ["SKILL.md", "notes/x.md"].sort(),
+      );
+      // A different tenant cannot see another tenant's Skill files.
+      expect(await stores.skillArtifactStore.list("t2", "sk1")).toEqual([]);
+
+      const all = await stores.skillArtifactStore.getAll("t1", "sk1");
+      expect(all).toHaveLength(2);
+
+      await stores.skillArtifactStore.deleteTree("t1", "sk1");
+      expect(await stores.skillArtifactStore.list("t1", "sk1")).toEqual([]);
     });
   });
 });

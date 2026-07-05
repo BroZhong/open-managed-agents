@@ -1,17 +1,18 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { Plus } from "lucide-react";
+import { Plus, Bot } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
+import { SkillLibrary } from "@/components/skill-library";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { cn } from "@/lib/utils";
 
 const runtimeColors: Record<string, string> = {
   "claude-code": "bg-blue-100 text-blue-700",
   codex: "bg-green-100 text-green-700",
-  "pi-agent": "bg-purple-100 text-purple-700",
+  "pi-agent": "bg-[var(--color-accent-muted)] text-[var(--color-accent)]",
 };
 
 export default function AgentsPage() {
@@ -28,72 +29,63 @@ export default function AgentsPage() {
         </Button>
       </PageHeader>
 
-      <div className="p-6">
-        {isLoading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        ) : !agents || agents.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-neutral-500">
-            <p>No agents yet. Create your first agent to get started.</p>
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead className="border-b text-left text-sm text-neutral-500">
-              <tr>
-                <th className="pb-3 font-medium">Name</th>
-                <th className="pb-3 font-medium">Model</th>
-                <th className="pb-3 font-medium">Runtime</th>
-                <th className="pb-3 font-medium">Sandbox</th>
-                <th className="pb-3 font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
+      {/* Layout 甲: Agents as the primary subject, Skill Library alongside. */}
+      <div className="grid grid-cols-1 gap-6 p-6 lg:grid-cols-[1fr_320px]">
+        <div>
+          {isLoading ? (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-24 w-full" />
+              ))}
+            </div>
+          ) : !agents || agents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--color-border)] py-24 text-neutral-500">
+              <Bot className="mb-3 h-6 w-6 text-neutral-300" />
+              <p>No agents yet. Create your first agent to get started.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {agents.map((agent) => (
-                <tr
+                <button
                   key={agent.id}
-                  className="cursor-pointer hover:bg-neutral-50"
                   onClick={() => navigate(`/agents/${agent.id}`)}
+                  className="flex flex-col items-start gap-3 rounded-xl border border-[var(--color-border)] bg-white p-4 text-left transition-colors hover:border-[var(--color-accent)]"
                 >
-                  <td className="py-3 text-sm font-medium text-neutral-900">
-                    {agent.name}
-                  </td>
-                  <td className="py-3 text-sm text-neutral-600">
-                    {agent.model}
-                  </td>
-                  <td className="py-3">
+                  <div className="flex w-full items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+                      <Bot className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-[var(--color-fg)]">
+                        {agent.name}
+                      </p>
+                      <p className="truncate text-xs text-neutral-500">{agent.model}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                     <span
                       className={cn(
                         "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                        runtimeColors[agent.runtime] ??
-                          "bg-neutral-100 text-neutral-700"
+                        runtimeColors[agent.runtime] ?? "bg-neutral-100 text-neutral-700",
                       )}
                     >
                       {agent.runtime}
                     </span>
-                  </td>
-                  <td className="py-3">
-                    <span
-                      className={cn(
-                        "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                        agent.sandbox?.enabled
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-neutral-100 text-neutral-600"
-                      )}
-                    >
-                      {agent.sandbox?.enabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </td>
-                  <td className="py-3 text-sm text-neutral-500">
-                    {new Date(agent.createdAt).toLocaleDateString()}
-                  </td>
-                </tr>
+                    {agent.sandbox?.enabled && (
+                      <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        Sandbox
+                      </span>
+                    )}
+                  </div>
+                </button>
               ))}
-            </tbody>
-          </table>
-        )}
+            </div>
+          )}
+        </div>
+
+        <aside className="lg:border-l lg:border-[var(--color-border)] lg:pl-6">
+          <SkillLibrary />
+        </aside>
       </div>
 
       <AgentFormDialog open={createOpen} onOpenChange={setCreateOpen} />
