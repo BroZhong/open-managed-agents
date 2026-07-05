@@ -13,7 +13,7 @@ import type { TurnStreamStore } from "@oma-server/redis";
 import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import { KruiseSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
+import { E2BSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
 import type { ToolExecutorFactory } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
@@ -353,20 +353,22 @@ async function main() {
   // Create a dev seed key for local testing (persisted in PG).
   const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
 
-  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): kruise-CRD sandboxes,
+  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): e2b-SDK sandboxes,
   // hydrated from the S3 Workspace. Requires the artifact store (nothing to
-  // hydrate from without it). Enable with SANDBOX_ENABLED=true.
+  // hydrate from without it) plus E2B_DOMAIN + E2B_API_KEY. Enable with
+  // SANDBOX_ENABLED=true. (Full wiring/fail-loud is #54's job.)
   let toolExecutorFactory: ToolExecutorFactory | undefined;
   if (artifactStore && process.env.SANDBOX_ENABLED === "true") {
-    const sandboxClient = new KruiseSandboxClient({
-      namespace: process.env.SANDBOX_NAMESPACE,
-      defaultImage: process.env.SANDBOX_IMAGE,
+    const sandboxClient = new E2BSandboxClient({
+      domain: process.env.E2B_DOMAIN ?? "",
+      apiKey: process.env.E2B_API_KEY ?? "",
+      defaultTemplate: process.env.SANDBOX_TEMPLATE,
     });
     toolExecutorFactory = new SandboxToolExecutorFactory({
       sandboxClient,
       artifactStore,
     });
-    console.log("Sandbox ToolExecutor enabled (kruise CRD, hydrate from S3)");
+    console.log("Sandbox ToolExecutor enabled (e2b SDK, hydrate from S3)");
   } else {
     console.log(
       "Sandbox ToolExecutor disabled — set SANDBOX_ENABLED=true (+ S3) to enable",

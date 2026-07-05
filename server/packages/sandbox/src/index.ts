@@ -1,5 +1,6 @@
-// Sandbox backend = OpenKruise `agents.kruise.io` CRD (ADR-0002 §4, #37 spike).
-// The abandoned `@alibaba-group/opensandbox` model is intentionally NOT here.
+// Sandbox backend = the official `e2b` Node SDK against a self-hosted gateway
+// (#53, replacing the abandoned kruise-CRD client). The `@alibaba-group/
+// opensandbox` model is intentionally NOT here.
 
 export type {
   SandboxClient,
@@ -11,12 +12,13 @@ export type {
 } from "./sandbox-client.js";
 
 export {
-  KruiseSandboxClient,
+  E2BSandboxClient,
   parseFindOutput,
-  type KruiseSandboxClientOptions,
-  type CommandRunner,
-  type StreamRunner,
-} from "./kruise-sandbox-client.js";
+  wrapCommand,
+  type E2BSandboxClientOptions,
+  type E2BSandbox,
+  type CreateSandboxFn,
+} from "./e2b-sandbox-client.js";
 
 export {
   FakeSandboxClient,

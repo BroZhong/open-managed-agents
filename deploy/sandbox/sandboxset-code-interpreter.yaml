@@ -1,0 +1,48 @@
+# Warm pool for the `code-interpreter` E2B template on the brozhong ACS HK
+# cluster (Alibaba ACK 托管 Agent Sandbox / OpenKruise `agents.kruise.io`).
+#
+# The SandboxSet name IS the E2B templateID: clients that call
+# `Sandbox.create("code-interpreter")` get a pre-warmed pod from this pool.
+# Without a SandboxSet for the template, `POST /sandboxes` returns
+# 400 "Template or Checkpoint not found".
+#
+# Only two things are meant to be tuned here:
+#   - spec.replicas      → warm-pool size
+#   - the container image tag
+# Everything else (runtimes, ECI scheduling labels, resources) is fixed by the
+# cluster's serverless/ECI contract.
+#
+# Apply (idempotent):
+#   kubectl apply -f deploy/sandbox/sandboxset-code-interpreter.yaml
+apiVersion: agents.kruise.io/v1alpha1
+kind: SandboxSet
+metadata:
+  name: code-interpreter
+  namespace: sandbox-system
+spec:
+  replicas: 1
+  # csi injects the NAS/OSS mounts; agent-runtime injects the e2b envd daemon.
+  runtimes:
+    - name: csi
+    - name: agent-runtime
+  template:
+    metadata:
+      # Required for ECI / serverless scheduling on this cluster — without these
+      # the pod stays Pending with no ECI node assigned.
+      labels:
+        alibabacloud.com/acs: "true"
+        alibabacloud.com/compute-class: agent-sandbox
+        alibabacloud.com/compute-qos: default
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: sandbox
+          image: registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 30Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi

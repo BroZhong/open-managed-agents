@@ -1,0 +1,276 @@
+import { describe, it, expect } from "vitest";
+import {
+  E2BSandboxClient,
+  parseFindOutput,
+  type CreateSandboxFn,
+  type E2BSandbox,
+} from "../src/e2b-sandbox-client.js";
+import type { SandboxExecChunk } from "../src/sandbox-client.js";
+
+/** A recorded `commands.run` call. */
+interface RunCall {
+  cmd: string;
+  opts?: {
+    cwd?: string;
+    envs?: Record<string, string>;
+    timeoutMs?: number;
+    onStdout?: (data: string) => void | Promise<void>;
+    onStderr?: (data: string) => void | Promise<void>;
+  };
+}
+
+/**
+ * A hand-rolled fake e2b Sandbox. `runHandler` decides output + exit for each
+ * command; if it returns undefined the command is a no-op success (exit 0).
+ */
+class FakeSandbox implements E2BSandbox {
+  readonly sandboxId: string;
+  readonly runCalls: RunCall[] = [];
+  readonly writes: Array<{ path: string; data: string }> = [];
+  readonly reads = new Map<string, string>();
+  killed = false;
+  private runHandler?: (
+    cmd: string,
+  ) =>
+    | { stdout?: string; stderr?: string; exitCode?: number; throwExit?: boolean }
+    | undefined;
+
+  constructor(
+    id: string,
+    runHandler?: FakeSandbox["runHandler"],
+  ) {
+    this.sandboxId = id;
+    this.runHandler = runHandler;
+  }
+
+  commands = {
+    run: async (
+      cmd: string,
+      opts?: RunCall["opts"],
+    ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+      this.runCalls.push({ cmd, opts });
+      const r = this.runHandler?.(cmd) ?? {};
+      if (r.stdout && opts?.onStdout) await opts.onStdout(r.stdout);
+      if (r.stderr && opts?.onStderr) await opts.onStderr(r.stderr);
+      const exitCode = r.exitCode ?? 0;
+      if (r.throwExit) {
+        // Mimic CommandExitError: an object carrying a numeric exitCode.
+        throw { exitCode, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      }
+      return { exitCode, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    },
+  };
+
+  files = {
+    read: async (path: string): Promise<string> => {
+      const body = this.reads.get(path);
+      if (body === undefined) throw new Error(`no such file ${path}`);
+      return body;
+    },
+    write: async (path: string, data: string): Promise<unknown> => {
+      this.writes.push({ path, data });
+      this.reads.set(path, data);
+      return { path };
+    },
+  };
+
+  async kill(): Promise<void> {
+    this.killed = true;
+  }
+}
+
+/** Build a client wired to a fake factory; expose the created sandboxes. */
+function makeClient(
+  runHandler?: FakeSandbox["runHandler"],
+  opts?: { failKill?: boolean },
+): {
+  client: E2BSandboxClient;
+  factoryCalls: Array<{ template: string; opts: Parameters<CreateSandboxFn>[1] }>;
+  sandboxes: FakeSandbox[];
+} {
+  const factoryCalls: Array<{
+    template: string;
+    opts: Parameters<CreateSandboxFn>[1];
+  }> = [];
+  const sandboxes: FakeSandbox[] = [];
+  let counter = 0;
+  const createSandbox: CreateSandboxFn = async (template, o) => {
+    factoryCalls.push({ template, opts: o });
+    const s = new FakeSandbox(`sbx-${++counter}`, runHandler);
+    if (opts?.failKill) {
+      s.kill = async () => {
+        throw new Error("not found");
+      };
+    }
+    sandboxes.push(s);
+    return s;
+  };
+  const client = new E2BSandboxClient({
+    domain: "sandbox.example.com",
+    apiKey: "gw-key",
+    defaultTemplate: "code-interpreter",
+    createSandbox,
+  });
+  return { client, factoryCalls, sandboxes };
+}
+
+async function collect(
+  it: AsyncIterable<SandboxExecChunk>,
+): Promise<SandboxExecChunk[]> {
+  const chunks: SandboxExecChunk[] = [];
+  for await (const c of it) chunks.push(c);
+  return chunks;
+}
+
+describe("E2BSandboxClient", () => {
+  it("requires domain and apiKey", () => {
+    expect(() => new E2BSandboxClient({ domain: "", apiKey: "k" })).toThrow(
+      /domain/,
+    );
+    expect(() => new E2BSandboxClient({ domain: "d", apiKey: "" })).toThrow(
+      /apiKey/,
+    );
+  });
+
+  it("create passes templateID + apiKey + domain and returns the sandboxId", async () => {
+    const { client, factoryCalls } = makeClient();
+    const handle = await client.create({
+      env: { FOO: "bar" },
+      metadata: { sessionId: "s1" },
+      timeoutSeconds: 30,
+    });
+    expect(handle.id).toBe("sbx-1");
+    expect(factoryCalls).toHaveLength(1);
+    expect(factoryCalls[0].template).toBe("code-interpreter");
+    expect(factoryCalls[0].opts.apiKey).toBe("gw-key");
+    expect(factoryCalls[0].opts.domain).toBe("sandbox.example.com");
+    expect(factoryCalls[0].opts.envs).toEqual({ FOO: "bar" });
+    expect(factoryCalls[0].opts.metadata).toEqual({ sessionId: "s1" });
+    expect(factoryCalls[0].opts.timeoutMs).toBe(30_000);
+  });
+
+  it("create maps opts.image to the template, else uses defaultTemplate", async () => {
+    const { client, factoryCalls } = makeClient();
+    await client.create({ image: "my-custom-set" });
+    expect(factoryCalls[0].template).toBe("my-custom-set");
+  });
+
+  it("create runs mkdir -p /workspace once ready", async () => {
+    const { client, sandboxes } = makeClient();
+    await client.create();
+    const sb = sandboxes[0];
+    // argv is shell-quoted per element: 'mkdir' '-p' '/workspace'.
+    expect(sb.runCalls.some((c) => c.cmd === "'mkdir' '-p' '/workspace'")).toBe(
+      true,
+    );
+  });
+
+  it("exec streams stdout and stderr chunks and wraps in cd/argv", async () => {
+    const { client, sandboxes } = makeClient((cmd) => {
+      if (cmd.includes("'echo'")) {
+        return { stdout: "hello\n", stderr: "warn\n" };
+      }
+      return {};
+    });
+    const { id } = await client.create();
+    const chunks = await collect(
+      client.exec(id, ["echo", "hello"], { cwd: "/workspace" }),
+    );
+    expect(chunks).toEqual([
+      { stream: "stdout", text: "hello\n" },
+      { stream: "stderr", text: "warn\n" },
+    ]);
+    const echoCall = sandboxes[0].runCalls.at(-1)!;
+    expect(echoCall.cmd).toBe("cd '/workspace' && 'echo' 'hello'");
+  });
+
+  it("exec surfaces a non-zero exit as streamed stderr, not a throw", async () => {
+    const { client } = makeClient((cmd) => {
+      if (cmd.includes("'false'")) {
+        return { stderr: "boom\n", exitCode: 1, throwExit: true };
+      }
+      return {};
+    });
+    const { id } = await client.create();
+    const chunks = await collect(client.exec(id, ["false"]));
+    // The failing command's stderr streams through; no throw.
+    expect(chunks).toEqual([{ stream: "stderr", text: "boom\n" }]);
+  });
+
+  it("exec passes env and timeout through to commands.run", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    await collect(
+      client.exec(id, ["ls"], { env: { A: "1" }, timeoutSeconds: 5 }),
+    );
+    const call = sandboxes[0].runCalls.at(-1)!;
+    expect(call.opts?.envs).toEqual({ A: "1" });
+    expect(call.opts?.timeoutMs).toBe(5_000);
+  });
+
+  it("readFile reads via files.read", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].reads.set("/workspace/a.txt", "file-body");
+    expect(await client.readFile(id, "/workspace/a.txt")).toBe("file-body");
+  });
+
+  it("writeFile writes via files.write (SDK creates parent dirs)", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    await client.writeFile(id, "/workspace/dir/b.txt", "payload");
+    expect(sandboxes[0].writes).toContainEqual({
+      path: "/workspace/dir/b.txt",
+      data: "payload",
+    });
+  });
+
+  it("list runs find and parses recursive entries", async () => {
+    const findOut =
+      "1700000000.5 12 /workspace/a.txt\n1700000001 4 /workspace/d/b.txt\n";
+    const { client, sandboxes } = makeClient((cmd) =>
+      cmd.includes("find") ? { stdout: findOut } : {},
+    );
+    const { id } = await client.create();
+    const entries = await client.list(id, "/workspace");
+    expect(entries).toEqual([
+      { path: "/workspace/a.txt", size: 12, mtimeMs: 1700000000500 },
+      { path: "/workspace/d/b.txt", size: 4, mtimeMs: 1700000001000 },
+    ]);
+    const findCall = sandboxes[0].runCalls.find((c) => c.cmd.includes("find"));
+    expect(findCall!.cmd).toContain("'/workspace'");
+    expect(findCall!.cmd).toContain("-type f");
+  });
+
+  it("destroy kills the sandbox and is idempotent", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    await client.destroy(id);
+    expect(sandboxes[0].killed).toBe(true);
+    // Second destroy is a no-op (no throw, sandbox already gone).
+    await expect(client.destroy(id)).resolves.toBeUndefined();
+  });
+
+  it("destroy swallows a kill failure (idempotent)", async () => {
+    const { client } = makeClient(undefined, { failKill: true });
+    const { id } = await client.create();
+    await expect(client.destroy(id)).resolves.toBeUndefined();
+  });
+
+  it("ops on an unknown id throw", async () => {
+    const { client } = makeClient();
+    await expect(client.readFile("nope", "/x")).rejects.toThrow(
+      /No live sandbox/,
+    );
+  });
+});
+
+describe("parseFindOutput", () => {
+  it("skips malformed lines and sorts by path", () => {
+    const out = "\n1700.0 5 /z\ngarbage\n1700.0 10 /a\n";
+    expect(parseFindOutput(out)).toEqual([
+      { path: "/a", size: 10, mtimeMs: 1700000 },
+      { path: "/z", size: 5, mtimeMs: 1700000 },
+    ]);
+  });
+});

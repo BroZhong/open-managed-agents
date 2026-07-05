@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext } from "react"
 import { useLocation, useParams, Link } from "react-router"
 import {
+  LayoutDashboard,
   MessageSquare,
   Bot,
   Key,
@@ -32,6 +33,7 @@ export function useSidebarState() {
 
 // Agents are the primary subject of the console (Agent-centric entry).
 const navItems = [
+  { label: "Overview", icon: LayoutDashboard, path: "/" },
   { label: "Agents", icon: Bot, path: "/agents" },
   { label: "Sessions", icon: MessageSquare, path: "/sessions" },
   { label: "API Keys", icon: Key, path: "/api-keys" },
