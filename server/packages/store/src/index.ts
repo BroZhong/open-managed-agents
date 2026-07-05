@@ -20,6 +20,26 @@ export type {
 } from "./interfaces/agent-store.js";
 
 export type {
+  AgentFile,
+  AgentFileSummary,
+  AgentFileStore,
+} from "./interfaces/agent-file-store.js";
+
+export type {
+  Skill,
+  SkillSummary,
+  SkillStore,
+  SkillStoreCreateInput,
+  SkillStoreUpdateInput,
+  SkillStoreListOpts,
+} from "./interfaces/skill-store.js";
+
+export type {
+  SkillArtifactStore,
+  SkillFile,
+} from "./interfaces/skill-artifact-store.js";
+
+export type {
   SessionStore,
   SessionStoreCreateInput,
   SessionStoreListOpts,
@@ -57,6 +77,9 @@ export type {
 export { S3ArtifactStore } from "./s3/artifact-store.js";
 export type { S3ArtifactStoreOptions } from "./s3/artifact-store.js";
 
+export { S3SkillArtifactStore } from "./s3/skill-artifact-store.js";
+export type { S3SkillArtifactStoreOptions } from "./s3/skill-artifact-store.js";
+
 export {
   createPgStores,
   createPgPool,
@@ -65,6 +88,8 @@ export {
   schemaDdl,
   DEFAULT_SCHEMA,
   PgAgentStore,
+  PgAgentFileStore,
+  PgSkillStore,
   PgSessionStore,
   PgEventLogStore,
   PgPendingEventStore,

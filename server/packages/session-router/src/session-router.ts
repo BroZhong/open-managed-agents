@@ -1,4 +1,16 @@
-import type { EventLogStore, PendingEventStore, PendingEvent, StoredEvent, Agent } from "@oma-server/store";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import type {
+  EventLogStore,
+  PendingEventStore,
+  PendingEvent,
+  StoredEvent,
+  Agent,
+  AgentFileStore,
+  SkillStore,
+  SkillArtifactStore,
+} from "@oma-server/store";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
@@ -29,6 +41,12 @@ type DisposableToolExecutor = ToolExecutor & {
   dispose(): Promise<void>;
 };
 
+/**
+ * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
+ * Missing files are skipped. See issue #48.
+ */
+const AGENT_FILE_ORDER = ["IDENTITY", "SOUL", "USER", "MEMORY"] as const;
+
 /** Stream event types that open a new content block within a turn. */
 const STREAM_START_TYPES: ReadonlySet<string> = new Set([
   "agent.message_stream_start",
@@ -51,6 +69,21 @@ export interface SessionRouterDeps {
    */
   toolExecutorFactory?: ToolExecutorFactory;
   /**
+   * Per-Agent editable Files (IDENTITY/SOUL/USER/MEMORY). When present, the
+   * router assembles the running Agent's Files into `appendSystemPrompt` in a
+   * fixed order before each turn (issue #48). Absent ⇒ no instructions
+   * assembled (no regression). See ADR-0002: the Host owns *what* to inject.
+   */
+  agentFileStore?: AgentFileStore;
+  /**
+   * Tenant Skill Library metadata + S3 bodies. When both are present, the
+   * router materializes the Agent's *equipped* Skills (`agent.skills`) into a
+   * Host-side temp directory per turn, passes them as `skillPaths`, and cleans
+   * them up at turn end (issue #49). Absent ⇒ no Skills materialized.
+   */
+  skillStore?: SkillStore;
+  skillArtifactStore?: SkillArtifactStore;
+  /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * token-level deltas are written to `stream:turn:{turnId}` for server-side
    * reconnect backfill and reclaimed (DEL) at turn end; the active-turn map is
@@ -67,6 +100,9 @@ export class SessionRouter {
   private readonly eventStreamHub: EventStreamHub;
   private readonly resolveAdapter: (runtime: string) => Adapter;
   private readonly toolExecutorFactory?: ToolExecutorFactory;
+  private readonly agentFileStore?: AgentFileStore;
+  private readonly skillStore?: SkillStore;
+  private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
   private readonly activeSessions = new Map<string, AbortController>();
   /**
@@ -84,6 +120,9 @@ export class SessionRouter {
     this.eventStreamHub = deps.eventStreamHub;
     this.resolveAdapter = deps.resolveAdapter;
     this.toolExecutorFactory = deps.toolExecutorFactory;
+    this.agentFileStore = deps.agentFileStore;
+    this.skillStore = deps.skillStore;
+    this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
   }
 
@@ -277,6 +316,13 @@ export class SessionRouter {
       // A pure-chat turn never touches it, so nothing is created.
       const toolExecutor = await this.getExecutorForSession(sessionId, agentConfig);
 
+      // Assemble the Agent's Files into appendSystemPrompt (fixed order,
+      // missing skipped) and materialize its equipped Skills to a temp dir.
+      // Both are per-turn Host injections (ADR-0002); Skills are cleaned up at
+      // turn end regardless of how the turn ends.
+      const appendSystemPrompt = await this.assembleAgentFiles(agentConfig);
+      const skills = await this.materializeSkills(agentConfig);
+
       const adapterInput = this.buildAdapterInput(
         sessionId,
         turnId,
@@ -284,6 +330,8 @@ export class SessionRouter {
         agentConfig,
         priorEvents,
         toolExecutor,
+        appendSystemPrompt,
+        skills.paths,
       );
 
       // The Adapter is a pure translator: it runs directly and routes any tool
@@ -350,6 +398,8 @@ export class SessionRouter {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(turnId);
           }
+          // Materialized Skills are per-turn; drop them even on interrupt.
+          await skills.cleanup();
           break;
         }
         const errorEvent = await this.eventLogStore.append(sessionId, {
@@ -371,6 +421,10 @@ export class SessionRouter {
       if (toolExecutor) {
         await this.syncWorkspace(sessionId, toolExecutor);
       }
+
+      // Materialized Skills are per-turn scratch — remove the temp dir now that
+      // the adapter run has finished (idempotent with the abort-path cleanup).
+      await skills.cleanup();
 
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
@@ -411,6 +465,8 @@ export class SessionRouter {
     agentConfig: Agent,
     priorEvents: StoredEvent[],
     toolExecutor?: ToolExecutor,
+    appendSystemPrompt?: string[],
+    skillPaths?: string[],
   ): AdapterInput {
     const eventData = promotedEvent.data as Record<string, unknown> | undefined;
     let content: ContentBlock[];
@@ -443,10 +499,83 @@ export class SessionRouter {
         tools: agentConfig.tools,
         mcpServers: agentConfig.mcpServers,
         skills: agentConfig.skills,
+        // Per-call Host injections (ADR-0002): assembled Agent Files and
+        // materialized equipped-Skill directories. Undefined when their stores
+        // are absent, preserving prior behavior.
+        appendSystemPrompt: appendSystemPrompt && appendSystemPrompt.length > 0
+          ? appendSystemPrompt
+          : undefined,
+        skillPaths: skillPaths && skillPaths.length > 0 ? skillPaths : undefined,
       },
       history,
       // Per-call injection: the single seam between the pure Adapter and infra.
       toolExecutor,
     };
+  }
+
+  /**
+   * Assemble the running Agent's Files into `appendSystemPrompt` in the fixed
+   * order IDENTITY → SOUL → USER → MEMORY, skipping any missing file. Returns
+   * an empty array when no store is configured or the Agent has no Files.
+   */
+  private async assembleAgentFiles(agentConfig: Agent): Promise<string[]> {
+    if (!this.agentFileStore) return [];
+    const parts: string[] = [];
+    for (const filename of AGENT_FILE_ORDER) {
+      const file = await this.agentFileStore.get(
+        agentConfig.tenantId,
+        agentConfig.id,
+        filename,
+      );
+      if (file && file.content.trim().length > 0) parts.push(file.content);
+    }
+    return parts;
+  }
+
+  /**
+   * Materialize the Agent's equipped Skills (`agentConfig.skills` = skillIds)
+   * from S3 into a fresh Host-side temp directory — one subdirectory per Skill,
+   * each a valid skill root (SKILL.md at its top) — and return their absolute
+   * paths plus an idempotent cleanup. Returns no paths (and a no-op cleanup)
+   * when the Skill stores are absent or the Agent has no equipped Skills.
+   */
+  private async materializeSkills(
+    agentConfig: Agent,
+  ): Promise<{ paths: string[]; cleanup: () => Promise<void> }> {
+    const noop = { paths: [] as string[], cleanup: async () => {} };
+    const skillIds = agentConfig.skills ?? [];
+    if (!this.skillStore || !this.skillArtifactStore || skillIds.length === 0) {
+      return noop;
+    }
+
+    const root = await mkdtemp(join(tmpdir(), "oma-skills-"));
+    let cleaned = false;
+    const cleanup = async () => {
+      if (cleaned) return;
+      cleaned = true;
+      await rm(root, { recursive: true, force: true });
+    };
+
+    try {
+      const paths: string[] = [];
+      for (const skillId of skillIds) {
+        // Only materialize Skills the Agent's tenant actually owns.
+        const skill = await this.skillStore.getById(skillId);
+        if (!skill || skill.tenantId !== agentConfig.tenantId) continue;
+        const files = await this.skillArtifactStore.getAll(agentConfig.tenantId, skillId);
+        if (files.length === 0) continue;
+        const skillDir = join(root, skillId);
+        for (const file of files) {
+          const dest = join(skillDir, file.path);
+          await mkdir(dirname(dest), { recursive: true });
+          await writeFile(dest, file.body);
+        }
+        paths.push(skillDir);
+      }
+      return { paths, cleanup };
+    } catch (err) {
+      await cleanup();
+      throw err;
+    }
   }
 }

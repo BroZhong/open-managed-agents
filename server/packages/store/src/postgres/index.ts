@@ -1,4 +1,6 @@
 import type { AgentStore } from "../interfaces/agent-store.js";
+import type { AgentFileStore } from "../interfaces/agent-file-store.js";
+import type { SkillStore } from "../interfaces/skill-store.js";
 import type { EventLogStore } from "../interfaces/event-log-store.js";
 import type { PendingEventStore } from "../interfaces/pending-event-store.js";
 import type { SessionStore } from "../interfaces/session-store.js";
@@ -7,6 +9,8 @@ import type { Pool } from "./connection.js";
 import { DEFAULT_SCHEMA } from "./connection.js";
 import { ensureSchema } from "./schema.js";
 import { PgAgentStore } from "./agent-store.js";
+import { PgAgentFileStore } from "./agent-file-store.js";
+import { PgSkillStore } from "./skill-store.js";
 import { PgApiKeyStore } from "./api-key-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
@@ -17,6 +21,8 @@ export { createPgPool, pgConfigFromEnv, DEFAULT_SCHEMA } from "./connection.js";
 export type { Pool, PoolClient, PgConnectionConfig } from "./connection.js";
 export { ensureSchema, schemaDdl } from "./schema.js";
 export { PgAgentStore } from "./agent-store.js";
+export { PgAgentFileStore } from "./agent-file-store.js";
+export { PgSkillStore } from "./skill-store.js";
 export { PgSessionStore } from "./session-store.js";
 export { PgEventLogStore } from "./event-log-store.js";
 export { PgPendingEventStore } from "./pending-event-store.js";
@@ -25,6 +31,8 @@ export { PgWorkspaceStore } from "./workspace-store.js";
 
 export interface PgStores {
   agentStore: AgentStore;
+  agentFileStore: AgentFileStore;
+  skillStore: SkillStore;
   sessionStore: SessionStore;
   eventLogStore: EventLogStore;
   pendingEventStore: PendingEventStore;
@@ -51,6 +59,8 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
 
   return {
     agentStore: new PgAgentStore(pool),
+    agentFileStore: new PgAgentFileStore(pool),
+    skillStore: new PgSkillStore(pool),
     sessionStore: new PgSessionStore(pool),
     eventLogStore: new PgEventLogStore(pool),
     pendingEventStore: new PgPendingEventStore(pool),

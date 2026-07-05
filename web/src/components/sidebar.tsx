@@ -18,9 +18,10 @@ export function useSidebarState() {
   return useContext(SidebarContext)
 }
 
+// Agents are the primary subject of the console (Agent-centric entry).
 const navItems = [
-  { label: "Sessions", icon: MessageSquare, path: "/sessions" },
   { label: "Agents", icon: Bot, path: "/agents" },
+  { label: "Sessions", icon: MessageSquare, path: "/sessions" },
   { label: "API Keys", icon: Key, path: "/api-keys" },
 ]
 

@@ -25,6 +25,16 @@ export function useSessions(status?: string) {
   });
 }
 
+/** Sessions belonging to a single Agent (nested under the Agent, not global). */
+export function useAgentSessions(agentId: string) {
+  return useQuery({
+    queryKey: ["sessions", "byAgent", agentId],
+    queryFn: () =>
+      apiFetch<SessionsResponse>(`/v1/sessions?agent_id=${agentId}`).then((r) => r.data),
+    enabled: !!agentId,
+  });
+}
+
 export function useSession(id: string) {
   return useQuery({
     queryKey: ["sessions", id],

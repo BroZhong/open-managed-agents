@@ -30,7 +30,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/sessions" replace />} />
+        <Route index element={<Navigate to="/agents" replace />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/agents" element={<AgentsPage />} />

@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, WorkspaceStore } from "@oma-server/store";
+import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, SkillStore, SkillArtifactStore, WorkspaceStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "./types.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { agentRoutes } from "./routes/agents.js";
+import { agentFileRoutes } from "./routes/agent-files.js";
+import { skillRoutes } from "./routes/skills.js";
 import { apiKeyRoutes } from "./routes/api-keys.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { eventRoutes } from "./routes/events.js";
@@ -23,6 +25,9 @@ export interface AppDeps {
   apiKeyStore: ApiKeyStore;
   fullApiKeyStore?: FullApiKeyStore;
   agentStore?: AgentStore;
+  agentFileStore?: AgentFileStore;
+  skillStore?: SkillStore;
+  skillArtifactStore?: SkillArtifactStore;
   sessionStore?: SessionStore;
   eventLogStore?: EventLogStore;
   pendingEventStore?: PendingEventStore;
@@ -50,6 +55,16 @@ export function createApp(deps: AppDeps) {
   // Mount agent routes
   if (deps.agentStore) {
     app.route("", agentRoutes(deps.agentStore));
+  }
+
+  // Mount Agent Files routes (per-Agent editable persona/instruction docs)
+  if (deps.agentFileStore && deps.agentStore) {
+    app.route("", agentFileRoutes(deps.agentFileStore, deps.agentStore));
+  }
+
+  // Mount Skill Library routes (tenant-scoped reusable Skills)
+  if (deps.skillStore && deps.skillArtifactStore) {
+    app.route("", skillRoutes(deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount API key CRUD routes

@@ -49,6 +49,40 @@ export async function apiFetch<T = unknown>(
   return JSON.parse(text) as T;
 }
 
+/**
+ * POST a `FormData` body (multipart) with auth, without forcing a JSON
+ * Content-Type — the browser sets the multipart boundary itself. Used for the
+ * Skill folder upload (POST /v1/skills).
+ */
+export async function apiUpload<T = unknown>(path: string, form: FormData): Promise<T> {
+  const token = localStorage.getItem(STORAGE_KEY);
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+
+  if (response.status === 401) {
+    localStorage.removeItem(STORAGE_KEY);
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message =
+      (body as { message?: string }).message ??
+      (body as { error?: string }).error ??
+      `Upload failed with status ${response.status}`;
+    throw new Error(message);
+  }
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
+}
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

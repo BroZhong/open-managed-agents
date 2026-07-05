@@ -1,8 +1,8 @@
 import { serve } from "@hono/node-server";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore } from "@oma-server/store";
-import type { ArtifactStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore, S3SkillArtifactStore } from "@oma-server/store";
+import type { ArtifactStore, SkillArtifactStore } from "@oma-server/store";
 import {
   createRedisClient,
   redisConfigFromEnv,
@@ -327,6 +327,17 @@ async function main() {
     console.log("Workspace artifact store disabled — set S3_ENDPOINT + S3_SERVICE_KEY to enable");
   }
 
+  // Skill file bodies share the S3 backend but live under a distinct
+  // `<tenantId>/skills/<skillId>/…` namespace (isolated from Workspaces).
+  let skillArtifactStore: SkillArtifactStore | undefined;
+  if (s3Endpoint && s3ServiceKey) {
+    skillArtifactStore = new S3SkillArtifactStore({
+      endpoint: s3Endpoint,
+      serviceKey: s3ServiceKey,
+      bucket: process.env.S3_BUCKET || "workspace",
+    });
+  }
+
   // Create a dev seed key for local testing (persisted in PG).
   const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
 
@@ -358,12 +369,18 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     toolExecutorFactory,
+    agentFileStore: stores.agentFileStore,
+    skillStore: stores.skillStore,
+    skillArtifactStore,
   });
 
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,
+    agentFileStore: stores.agentFileStore,
+    skillStore: stores.skillStore,
+    skillArtifactStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,
     pendingEventStore,

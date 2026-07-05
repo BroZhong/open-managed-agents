@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, useNavigate } from "react-router";
+import { useParams, useNavigate, Link } from "react-router";
 import { Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -8,8 +8,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
 import { CreateSessionDialog } from "@/components/create-session-dialog";
+import { AgentFilesEditor } from "@/components/agent-files-editor";
+import { EquipPicker } from "@/components/equip-picker";
+import { StatusBadge } from "@/components/status-badge";
 import { useAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
-import { cn } from "@/lib/utils";
+import { useAgentSessions } from "@/lib/hooks/use-sessions";
+import { cn, formatRelativeTime } from "@/lib/utils";
 
 const runtimeColors: Record<string, string> = {
   "claude-code": "bg-blue-100 text-blue-700",
@@ -152,7 +156,20 @@ export default function AgentDetailPage() {
             </dl>
           </section>
 
-          {/* Sessions section */}
+          {/* Agent Files — editable persona/instructions (Slice 2) */}
+          <section>
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+              Customize
+            </h2>
+            <AgentFilesEditor agentId={agent.id} />
+          </section>
+
+          {/* Equip Skills from the tenant Library (Slice 4) */}
+          <section>
+            <EquipPicker agent={agent} />
+          </section>
+
+          {/* Sessions nested under this Agent (Slice 5) */}
           <section>
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
@@ -166,9 +183,7 @@ export default function AgentDetailPage() {
                 New Session
               </Button>
             </div>
-            <div className="mt-4 flex items-center justify-center rounded-md border border-dashed border-neutral-300 py-12 text-sm text-neutral-500">
-              Sessions for this agent will appear here.
-            </div>
+            <AgentSessionList agentId={agent.id} />
           </section>
         </div>
       </div>
@@ -193,6 +208,38 @@ export default function AgentDetailPage() {
         onOpenChange={setCreateSessionOpen}
         preselectedAgentId={agent.id}
       />
+    </div>
+  );
+}
+
+function AgentSessionList({ agentId }: { agentId: string }) {
+  const { data: sessions, isLoading } = useAgentSessions(agentId);
+
+  if (isLoading) {
+    return <Skeleton className="mt-4 h-16 w-full" />;
+  }
+  if (!sessions || sessions.length === 0) {
+    return (
+      <div className="mt-4 flex items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-12 text-sm text-neutral-500">
+        No sessions yet. Start one with “New Session”.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 space-y-2">
+      {sessions.map((s) => (
+        <Link
+          key={s.id}
+          to={`/sessions/${s.id}`}
+          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3 transition-colors hover:bg-[var(--color-bg-muted)]"
+        >
+          <div className="min-w-0">
+            <p className="truncate font-mono text-xs text-neutral-500">{s.id}</p>
+            <p className="text-xs text-neutral-400">{formatRelativeTime(s.updatedAt)}</p>
+          </div>
+          <StatusBadge status={s.status} />
+        </Link>
+      ))}
     </div>
   );
 }

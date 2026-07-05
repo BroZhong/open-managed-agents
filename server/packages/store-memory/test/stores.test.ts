@@ -157,4 +157,59 @@ describe("createMemoryStores", () => {
       expect(await stores.pendingEventStore.count("s1")).toBe(1);
     });
   });
+
+  describe("AgentFileStore", () => {
+    it("upserts and reads back identical content", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "SOUL", "be warm");
+      const f = await stores.agentFileStore.get("t1", "a1", "SOUL");
+      expect(f?.content).toBe("be warm");
+    });
+
+    it("list omits content", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "SOUL", "x");
+      const list = await stores.agentFileStore.list("t1", "a1");
+      expect(list).toEqual([{ filename: "SOUL", updatedAt: expect.any(Date) }]);
+    });
+
+    it("isolates by tenant and agent", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "SOUL", "x");
+      expect(await stores.agentFileStore.get("t2", "a1", "SOUL")).toBeNull();
+      expect(await stores.agentFileStore.get("t1", "a2", "SOUL")).toBeNull();
+      expect(await stores.agentFileStore.list("t2", "a1")).toEqual([]);
+    });
+
+    it("deletes a file", async () => {
+      await stores.agentFileStore.upsert("t1", "a1", "USER", "x");
+      expect(await stores.agentFileStore.delete("t1", "a1", "USER")).toBe(true);
+      expect(await stores.agentFileStore.get("t1", "a1", "USER")).toBeNull();
+      expect(await stores.agentFileStore.delete("t1", "a1", "USER")).toBe(false);
+    });
+  });
+
+  describe("SkillStore + SkillArtifactStore", () => {
+    it("creates a Skill and isolates by tenant", async () => {
+      const s = await stores.skillStore.create({ tenantId: "t1", name: "greeter", description: "d" });
+      expect(await stores.skillStore.getById(s.id)).toEqual(s);
+      const t1 = await stores.skillStore.list("t1");
+      const t2 = await stores.skillStore.list("t2");
+      expect(t1.data).toHaveLength(1);
+      expect(t2.data).toHaveLength(0);
+    });
+
+    it("stores + reads + deletes Skill file bodies under an isolated namespace", async () => {
+      await stores.skillArtifactStore.put("t1", "sk1", "SKILL.md", "hi");
+      await stores.skillArtifactStore.put("t1", "sk1", "notes/x.md", "n");
+      expect((await stores.skillArtifactStore.list("t1", "sk1")).sort()).toEqual(
+        ["SKILL.md", "notes/x.md"].sort(),
+      );
+      // A different tenant cannot see another tenant's Skill files.
+      expect(await stores.skillArtifactStore.list("t2", "sk1")).toEqual([]);
+
+      const all = await stores.skillArtifactStore.getAll("t1", "sk1");
+      expect(all).toHaveLength(2);
+
+      await stores.skillArtifactStore.deleteTree("t1", "sk1");
+      expect(await stores.skillArtifactStore.list("t1", "sk1")).toEqual([]);
+    });
+  });
 });
