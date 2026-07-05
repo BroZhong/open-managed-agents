@@ -71,6 +71,7 @@ export type {
 export type {
   WorkspaceStore,
   WorkspaceStoreCreateInput,
+  WorkspaceStoreUpdateInput,
 } from "./interfaces/workspace-store.js";
 
 export type {

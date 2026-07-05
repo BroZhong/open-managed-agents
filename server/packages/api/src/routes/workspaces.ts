@@ -61,5 +61,26 @@ export function workspaceEntityRoutes(workspaceStore: WorkspaceStore) {
     return c.json(workspace);
   });
 
+  // POST /v1/workspaces/:id — Update a Workspace (currently just rename).
+  router.post("/v1/workspaces/:id", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => null);
+    if (!body) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    if (body.name !== undefined && typeof body.name !== "string") {
+      return c.json({ error: "name must be a string" }, 400);
+    }
+
+    const tenant = c.get("tenant");
+    const updated = await workspaceStore.update(tenant.tenantId, id, {
+      name: body.name,
+    });
+    if (!updated) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    return c.json(updated);
+  });
+
   return router;
 }

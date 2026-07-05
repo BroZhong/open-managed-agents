@@ -120,6 +120,59 @@ describe("GET /v1/workspaces/:id", () => {
   });
 });
 
+describe("POST /v1/workspaces/:id (rename)", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("renames a Workspace", async () => {
+    const { app, stores } = createTestApp();
+    await stores.workspaceStore.create({ tenantId: "dev", id: "w1", name: "Old" });
+    const res = await app.request("/v1/workspaces/w1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).name).toBe("New");
+    expect((await stores.workspaceStore.getById("dev", "w1"))?.name).toBe("New");
+  });
+
+  it("rejects a non-string name", async () => {
+    const { app, stores } = createTestApp();
+    await stores.workspaceStore.create({ tenantId: "dev", id: "w1", name: "Old" });
+    const res = await app.request("/v1/workspaces/w1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: 42 }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("name must be a string");
+  });
+
+  it("returns 404 for a Workspace in another tenant", async () => {
+    const { app, stores } = createTestApp();
+    await stores.workspaceStore.create({ tenantId: "other", id: "secret", name: "X" });
+    const res = await app.request("/v1/workspaces/secret", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "hijack" }),
+    });
+    expect(res.status).toBe(404);
+    expect((await stores.workspaceStore.getById("other", "secret"))?.name).toBe("X");
+  });
+
+  it("returns 404 for a non-existent Workspace", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/workspaces/nope", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "x" }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("Session mounts a named Workspace", () => {
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";

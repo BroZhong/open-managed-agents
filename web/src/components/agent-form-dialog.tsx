@@ -58,6 +58,7 @@ export function AgentFormDialog({
 }: AgentFormDialogProps) {
   const isEdit = !!agent;
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [model, setModel] = useState("");
   const [system, setSystem] = useState("");
   const [runtime, setRuntime] = useState("claude-code");
@@ -69,11 +70,13 @@ export function AgentFormDialog({
     if (open) {
       if (agent) {
         setName(agent.name);
+        setDescription(agent.description ?? "");
         setModel(agent.model);
         setSystem(agent.system);
         setRuntime(agent.runtime);
       } else {
         setName("");
+        setDescription("");
         setModel("");
         setSystem("");
         setRuntime("claude-code");
@@ -111,6 +114,9 @@ export function AgentFormDialog({
     const defaultSystem = "You are a helpful coding assistant. Help the user with their tasks.";
     const body = {
       name: name.trim(),
+      // Human-readable, informational only — sent as "" to clear rather than
+      // omitted, so editing can remove a previously-set description.
+      description: description.trim(),
       model: model.trim(),
       system: system.trim() || defaultSystem,
       runtime,
@@ -178,6 +184,20 @@ export function AgentFormDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label
+              htmlFor="agent-description"
+              className="text-sm font-medium text-neutral-700"
+            >
+              Description
+            </label>
+            <Input
+              id="agent-description"
+              placeholder="What this agent is for (shown in the console, not sent to the model)"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </div>
           <Select

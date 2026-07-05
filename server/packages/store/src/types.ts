@@ -30,6 +30,12 @@ export interface Agent {
   id: string;
   tenantId: string;
   name: string;
+  /**
+   * Optional human-readable description of the Agent, shown in the console
+   * (cards, detail) to help people tell Agents apart. Purely informational:
+   * it is NOT injected into the model context / prompt.
+   */
+  description?: string;
   model: string;
   system: string;
   runtime: Runtime;

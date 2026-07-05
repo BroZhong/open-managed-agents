@@ -8,6 +8,7 @@ export interface AgentStoreListOpts {
 export interface AgentStoreCreateInput {
   tenantId: string;
   name: string;
+  description?: string;
   model: string;
   system: string;
   runtime: Agent["runtime"];
@@ -19,6 +20,7 @@ export interface AgentStoreCreateInput {
 
 export interface AgentStoreUpdateInput {
   name?: string;
+  description?: string;
   model?: string;
   system?: string;
   runtime?: Agent["runtime"];

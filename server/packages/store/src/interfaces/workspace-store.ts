@@ -10,8 +10,13 @@ export interface WorkspaceStoreCreateInput {
   /**
    * Optional human-friendly name. Only applied when the Workspace is newly
    * created; on idempotent re-create (existing id) it is NOT overwritten (see
-   * `create`). Renaming is out of scope.
+   * `create`). Rename an existing Workspace via {@link WorkspaceStore.update}.
    */
+  name?: string;
+}
+
+export interface WorkspaceStoreUpdateInput {
+  /** New human-friendly name. */
   name?: string;
 }
 
@@ -28,6 +33,16 @@ export interface WorkspaceStore {
    */
   create(input: WorkspaceStoreCreateInput): Promise<Workspace>;
   getById(tenantId: string, id: string): Promise<Workspace | null>;
+  /**
+   * Update a Workspace's mutable fields (currently just `name`). Returns the
+   * updated Workspace, or null if no Workspace with the given (tenant, id)
+   * exists.
+   */
+  update(
+    tenantId: string,
+    id: string,
+    input: WorkspaceStoreUpdateInput,
+  ): Promise<Workspace | null>;
   /**
    * List a tenant's Workspaces ordered by `createdAt` ascending. Returns a
    * plain array (not a PaginatedResult): Workspaces are few per tenant, so

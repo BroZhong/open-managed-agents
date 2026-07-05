@@ -7,6 +7,7 @@ interface AgentRow {
   id: string;
   tenant_id: string;
   name: string;
+  description: string | null;
   model: string;
   system: string;
   runtime: Agent["runtime"];
@@ -23,6 +24,7 @@ function rowToAgent(row: AgentRow): Agent {
     id: row.id,
     tenantId: row.tenant_id,
     name: row.name,
+    description: row.description ?? undefined,
     model: row.model,
     system: row.system,
     runtime: row.runtime,
@@ -46,13 +48,14 @@ export class PgAgentStore implements AgentStore {
     const now = new Date();
     const id = `agent_${nanoid()}`;
     const { rows } = await this.pool.query<AgentRow>(
-      `INSERT INTO agents (id, tenant_id, name, model, system, runtime, tools, mcp_servers, skills, sandbox, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO agents (id, tenant_id, name, description, model, system, runtime, tools, mcp_servers, skills, sandbox, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         id,
         input.tenantId,
         input.name,
+        input.description ?? null,
         input.model,
         input.system,
         input.runtime,
@@ -100,6 +103,7 @@ export class PgAgentStore implements AgentStore {
     };
 
     if (input.name !== undefined) addSet("name", input.name);
+    if (input.description !== undefined) addSet("description", input.description);
     if (input.model !== undefined) addSet("model", input.model);
     if (input.system !== undefined) addSet("system", input.system);
     if (input.runtime !== undefined) addSet("runtime", input.runtime);

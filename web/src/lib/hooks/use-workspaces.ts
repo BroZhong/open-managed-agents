@@ -43,3 +43,21 @@ export function useCreateWorkspace() {
     },
   });
 }
+
+/**
+ * Rename a Workspace (POST /v1/workspaces/:id). Invalidates the ["workspaces"]
+ * list on success so the sidebar's "workspaces" group refreshes.
+ */
+export function useUpdateWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      apiFetch<Workspace>(`/v1/workspaces/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    },
+  });
+}

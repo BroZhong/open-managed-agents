@@ -16,6 +16,7 @@ export class InMemoryAgentStore implements AgentStore {
       id: `agent_${this.nextId++}`,
       tenantId: input.tenantId,
       name: input.name,
+      description: input.description,
       model: input.model,
       system: input.system,
       runtime: input.runtime,
@@ -54,6 +55,7 @@ export class InMemoryAgentStore implements AgentStore {
     const agent = this.agents.find((a) => a.id === id);
     if (!agent) return null;
     if (input.name !== undefined) agent.name = input.name;
+    if (input.description !== undefined) agent.description = input.description;
     if (input.model !== undefined) agent.model = input.model;
     if (input.system !== undefined) agent.system = input.system;
     if (input.runtime !== undefined) agent.runtime = input.runtime;

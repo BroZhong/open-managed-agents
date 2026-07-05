@@ -145,6 +145,16 @@ export default function AgentDetailPage() {
                   </span>
                 </dd>
               </div>
+              {agent.description && (
+                <div className="sm:col-span-2">
+                  <dt className="text-sm font-medium text-neutral-500">
+                    Description
+                  </dt>
+                  <dd className="mt-1 whitespace-pre-wrap text-sm text-neutral-900">
+                    {agent.description}
+                  </dd>
+                </div>
+              )}
               <div className="sm:col-span-2">
                 <dt className="text-sm font-medium text-neutral-500">
                   System Prompt

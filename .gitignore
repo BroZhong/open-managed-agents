@@ -3,6 +3,9 @@ dist/
 *.tsbuildinfo
 .env
 .env.*
+# but do track .env.example templates (checked-in docs for local config)
+!.env.example
+!**/.env.example
 .apifox/
 .playwright-mcp/
 .claude/worktrees/

@@ -1,3 +1,34 @@
+# OMA Web Console
+
+The web console for Open Managed Agents (React + TypeScript + Vite).
+
+## Local development
+
+```bash
+pnpm install
+pnpm dev            # dev server on http://localhost:5173
+```
+
+### Pointing at a backend (local or remote)
+
+The console talks to the OMA API server via `VITE_API_URL` (default
+`http://localhost:3000`). To debug the local frontend against a **remote /
+online** backend without touching tracked files:
+
+```bash
+cp .env.example .env.local          # .env.local is git-ignored
+# edit .env.local:
+#   VITE_API_URL=https://your-oma-host.example.com
+pnpm dev                            # restart to pick up the change
+```
+
+Vite loads `.env.local` at a higher priority than the committed `.env`, so it
+overrides the default endpoint for your machine only. Restart the dev server
+after editing — Vite inlines env vars at startup. See `.env.example` for the
+full list of supported variables.
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

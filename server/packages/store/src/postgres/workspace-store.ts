@@ -3,6 +3,7 @@ import type { Pool } from "./connection.js";
 import type {
   WorkspaceStore,
   WorkspaceStoreCreateInput,
+  WorkspaceStoreUpdateInput,
 } from "../interfaces/workspace-store.js";
 import type { Workspace } from "../types.js";
 
@@ -65,5 +66,18 @@ export class PgWorkspaceStore implements WorkspaceStore {
       [tenantId],
     );
     return rows.map(rowToWorkspace);
+  }
+
+  async update(
+    tenantId: string,
+    id: string,
+    input: WorkspaceStoreUpdateInput,
+  ): Promise<Workspace | null> {
+    if (input.name === undefined) return this.getById(tenantId, id);
+    const { rows } = await this.pool.query<WorkspaceRow>(
+      `UPDATE workspaces SET name = $3 WHERE tenant_id = $1 AND id = $2 RETURNING *`,
+      [tenantId, id, input.name],
+    );
+    return rows[0] ? rowToWorkspace(rows[0]) : null;
   }
 }
