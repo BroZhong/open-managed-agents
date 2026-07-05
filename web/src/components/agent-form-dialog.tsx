@@ -115,10 +115,13 @@ export function AgentFormDialog({
       system: system.trim() || defaultSystem,
       runtime,
       // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
-      // There is no opt-out in the UI; always send enabled: true.
+      // There is no opt-out in the UI; always send enabled: true. We do NOT
+      // send an `image`: for the E2B backend `image` is the sandbox template
+      // ID, and omitting it lets the Host default to SANDBOX_TEMPLATE
+      // (`code-interpreter`, the SandboxSet from #52). Sending a container-image
+      // string here would be used as a non-existent template → create 400s.
       sandbox: {
         enabled: true,
-        image: "open-managed-agents/sandbox:latest",
       },
     };
 

@@ -97,7 +97,7 @@ export class E2BSandboxClient implements SandboxClient {
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
-    const template = opts.image ?? this.defaultTemplate;
+    const template = resolveTemplate(opts.image, this.defaultTemplate);
     const sandbox = await this.createSandbox(template, {
       apiKey: this.apiKey,
       domain: this.domain,
@@ -186,6 +186,27 @@ export class E2BSandboxClient implements SandboxClient {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the E2B template (SandboxSet name) for a create call.
+ *
+ * For the E2B backend `image` is a bare template *name* — NOT a container
+ * image reference. Older Agents (and the pre-#54 UI) persisted a container
+ * image string like `open-managed-agents/sandbox:latest` in `sandbox.image`;
+ * passing that as a template would 400 with "Template or Checkpoint not found".
+ * So we only honour a value that looks like a bare template name and otherwise
+ * fall back to the default template.
+ */
+export function resolveTemplate(
+  image: string | undefined,
+  defaultTemplate: string,
+): string {
+  if (!image) return defaultTemplate;
+  // A registry path (`/`) or a tag (`:`) marks a container-image reference,
+  // which is not a valid E2B template name — ignore it and use the default.
+  if (image.includes("/") || image.includes(":")) return defaultTemplate;
+  return image;
+}
 
 /**
  * Run a command via the e2b SDK, bridging its `onStdout`/`onStderr` callbacks

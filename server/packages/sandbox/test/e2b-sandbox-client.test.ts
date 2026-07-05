@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   E2BSandboxClient,
   parseFindOutput,
+  resolveTemplate,
   type CreateSandboxFn,
   type E2BSandbox,
 } from "../src/e2b-sandbox-client.js";
@@ -155,6 +156,14 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].template).toBe("my-custom-set");
   });
 
+  it("create ignores a container-image-style image and uses the default template", async () => {
+    // Legacy Agents persisted sandbox.image as a container ref, which is not a
+    // valid E2B template name — the client must fall back to defaultTemplate.
+    const { client, factoryCalls } = makeClient();
+    await client.create({ image: "open-managed-agents/sandbox:latest" });
+    expect(factoryCalls[0].template).toBe("code-interpreter");
+  });
+
   it("create runs mkdir -p /workspace once ready", async () => {
     const { client, sandboxes } = makeClient();
     await client.create();
@@ -272,5 +281,23 @@ describe("parseFindOutput", () => {
       { path: "/a", size: 10, mtimeMs: 1700000 },
       { path: "/z", size: 5, mtimeMs: 1700000 },
     ]);
+  });
+});
+
+describe("resolveTemplate", () => {
+  it("uses the default when no image is given", () => {
+    expect(resolveTemplate(undefined, "code-interpreter")).toBe("code-interpreter");
+  });
+
+  it("honours a bare template name", () => {
+    expect(resolveTemplate("my-set", "code-interpreter")).toBe("my-set");
+  });
+
+  it("falls back to default for a container-image ref (registry path or tag)", () => {
+    expect(resolveTemplate("open-managed-agents/sandbox:latest", "code-interpreter")).toBe(
+      "code-interpreter",
+    );
+    expect(resolveTemplate("nginx:1.25", "code-interpreter")).toBe("code-interpreter");
+    expect(resolveTemplate("repo/image", "code-interpreter")).toBe("code-interpreter");
   });
 });
