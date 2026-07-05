@@ -143,7 +143,10 @@ class InMemorySessionStore implements SessionStore {
     return session;
   }
 
+  setTitleCalls: Array<{ id: string; title: string }> = [];
+
   async setTitle(id: string, title: string): Promise<Session | null> {
+    this.setTitleCalls.push({ id, title });
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return null;
     session.title = title;
@@ -578,6 +581,136 @@ describe("POST /v1/sessions/:id/events", () => {
   });
 });
 
+describe("POST /v1/sessions/:id/events — title snapshot (#70)", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  async function send(app: ReturnType<typeof createTestApp>["app"], id: string, data: unknown) {
+    return app.request(`/v1/sessions/${id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: [{ type: "user.message", data }] }),
+    });
+  }
+
+  it("sets the title from the first message's first text block (content shape)", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await send(app, session.id, { content: [{ type: "text", text: "Help me write a poem" }] });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBe("Help me write a poem");
+  });
+
+  it("sets the title from the flat { text } shape too", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await send(app, session.id, { text: "你好你是谁" });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBe("你好你是谁");
+  });
+
+  it("does not overwrite the title on a later message (set only once)", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await send(app, session.id, { content: [{ type: "text", text: "First message" }] });
+    await send(app, session.id, { content: [{ type: "text", text: "Second message" }] });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBe("First message");
+    expect(sessionStore.setTitleCalls).toHaveLength(1);
+  });
+
+  it("a previously untitled session gets a title on its next first-eligible message", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    // First message has no text block (not eligible) → no title yet.
+    await send(app, session.id, { content: [{ type: "image", url: "x" }] });
+    expect((await sessionStore.getById(session.id))?.title).toBeUndefined();
+
+    // Next message carries text → title is derived now.
+    await send(app, session.id, { content: [{ type: "text", text: "Now I have text" }] });
+    expect((await sessionStore.getById(session.id))?.title).toBe("Now I have text");
+    expect(sessionStore.setTitleCalls).toHaveLength(1);
+  });
+
+  it("truncates a long title to ~60 chars with an ellipsis", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await send(app, session.id, { content: [{ type: "text", text: "x".repeat(100) }] });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBe("x".repeat(60) + "…");
+  });
+
+  it("collapses whitespace when deriving the title", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await send(app, session.id, {
+      content: [{ type: "text", text: "  Hello\n\n   world  " }],
+    });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBe("Hello world");
+  });
+
+  it("does not set a title when the first block has no text", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await send(app, session.id, { content: [{ type: "text", text: "   " }] });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBeUndefined();
+    expect(sessionStore.setTitleCalls).toHaveLength(0);
+  });
+
+  it("titles from the first message when a batch carries several", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          { type: "user.message", data: { content: [{ type: "text", text: "Batch first" }] } },
+          { type: "user.message", data: { content: [{ type: "text", text: "Batch second" }] } },
+        ],
+      }),
+    });
+
+    const stored = await sessionStore.getById(session.id);
+    expect(stored?.title).toBe("Batch first");
+    expect(sessionStore.setTitleCalls).toHaveLength(1);
+  });
+
+  it("a setTitle store failure does not block message send", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    sessionStore.setTitle = async () => {
+      throw new Error("db down");
+    };
+
+    const res = await send(app, session.id, {
+      content: [{ type: "text", text: "still sends" }],
+    });
+
+    expect(res.status).toBe(202);
+    // The message was still enqueued despite the title failure.
+    expect(await pendingEventStore.count(session.id)).toBe(1);
+  });
+});
+
 describe("GET /v1/sessions/:id/events", () => {
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
@@ -845,6 +978,70 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     expect(types.some((t) => t.endsWith("_chunk"))).toBe(false);
     const fullMsg = frames[1].data as { content: Array<{ text: string }> };
     expect(fullMsg.content[0].text).toBe("Hello!");
+  });
+
+  it("live persisted-event frame carries id:<seq> and the same data shape as replay (#71)", async () => {
+    const { app, agentStore, sessionStore, eventLogStore, eventStreamHub, turnStreamStore } =
+      createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    // A turn already ran and is persisted to PG (the client will replay these).
+    await eventLogStore.append(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "Hi" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    await eventLogStore.append(session.id, {
+      type: "session.status_idle",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+    await turnStreamStore.reclaim("turn_1");
+
+    // Client reconnects from the last replayed seq (2) — no active turn.
+    const res = await app.request(
+      `/v1/sessions/${session.id}/events?include=chunks`,
+      { headers: { accept: "text/event-stream", "last-event-id": "2" } },
+    );
+    expect(res.status).toBe(200);
+
+    // Simulate turn 2: the router promotes a new user.message, flips to running,
+    // then emits a full agent.message — all persisted (so all carry a seq) and
+    // published live on the same hub the SSE stream is subscribed to.
+    await new Promise((r) => setTimeout(r, 20));
+    for (const [type, data] of [
+      ["user.message", { content: [{ type: "text", text: "again" }] }],
+      ["session.status_running", {}],
+      ["agent.message", { type: "agent.message", content: [{ type: "text", text: "ok" }] }],
+      ["session.status_idle", {}],
+    ] as const) {
+      const stored = await eventLogStore.append(session.id, {
+        type,
+        data,
+        sessionThreadId: "sthr_primary",
+      });
+      eventStreamHub.publish(session.id, { type, seq: stored.seq, data });
+    }
+
+    const frames = await readSSEFrames(res, 4, 400);
+    const types = frames.map((f) => f.event);
+    expect(types).toEqual([
+      "user.message",
+      "session.status_running",
+      "agent.message",
+      "session.status_idle",
+    ]);
+
+    // Every live persisted-event frame carries a real id:<seq> — never seq 0 —
+    // so the client's seq-keyed dedup and Last-Event-ID resume both work.
+    const ids = frames.map((f) => f.id);
+    expect(ids).toEqual(["3", "4", "5", "6"]);
+    expect(ids.every((id) => id !== undefined && id !== "0")).toBe(true);
+
+    // The status_running frame's data is the same {} shape the replay path emits
+    // (no divergent "one empty, one full" pair).
+    const running = frames[1];
+    expect(running.data).toEqual({});
   });
 
   it("does not backfill deltas for an idle active turn (turn already ended)", async () => {

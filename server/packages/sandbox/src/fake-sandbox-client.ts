@@ -16,6 +16,13 @@ interface FakeSandbox {
   id: string;
   files: Map<string, FakeFile>;
   destroyed: boolean;
+  /**
+   * Simulates the gateway reclaiming a sandbox after its lifetime: the handle
+   * is still known here but no longer live. Ops against it fail as they would
+   * against a real reclaimed sandbox, and {@link isAlive} reports false — this
+   * is the seam tests use to exercise the executor's liveness-rebuild path.
+   */
+  reclaimed: boolean;
   createOpts: SandboxCreateOptions;
 }
 
@@ -78,7 +85,21 @@ export class FakeSandboxClient implements SandboxClient {
 
   /** Inspect the options a sandbox was created with, e.g. injected env (test helper). */
   createOptsOf(id: string): SandboxCreateOptions {
-    return this.require(id).createOpts;
+    const sandbox = this.sandboxes.get(id);
+    if (!sandbox) throw new Error(`No sandbox ${id}`);
+    return sandbox.createOpts;
+  }
+
+  /**
+   * Simulate the gateway reclaiming a live sandbox after its lifetime (test
+   * helper): the handle stays known but every op against it fails and
+   * {@link isAlive} reports false, exactly like a real reclaimed sandbox. This
+   * is how tests drive the executor's liveness-rebuild path.
+   */
+  reclaim(id: string): void {
+    const sandbox = this.sandboxes.get(id);
+    if (!sandbox) throw new Error(`No sandbox ${id}`);
+    sandbox.reclaimed = true;
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
@@ -87,6 +108,7 @@ export class FakeSandboxClient implements SandboxClient {
       id,
       files: new Map(),
       destroyed: false,
+      reclaimed: false,
       createOpts: opts,
     });
     this.created.push(id);
@@ -136,6 +158,11 @@ export class FakeSandboxClient implements SandboxClient {
     return entries;
   }
 
+  async isAlive(id: string): Promise<boolean> {
+    const sandbox = this.sandboxes.get(id);
+    return sandbox != null && !sandbox.destroyed && !sandbox.reclaimed;
+  }
+
   async destroy(id: string): Promise<void> {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox || sandbox.destroyed) return;
@@ -170,6 +197,7 @@ export class FakeSandboxClient implements SandboxClient {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox) throw new Error(`No sandbox ${id}`);
     if (sandbox.destroyed) throw new Error(`Sandbox ${id} is destroyed`);
+    if (sandbox.reclaimed) throw new Error(`Sandbox ${id} was reclaimed`);
     return sandbox;
   }
 }

@@ -4,6 +4,7 @@ import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ContentBlock } from "@open-managed-agents/adapter-core";
 import type { TenantContext } from "../types.js";
+import { deriveTitleFromContent } from "../lib/derive-title.js";
 
 type Env = {
   Variables: {
@@ -20,21 +21,13 @@ export interface MessageRouteDeps {
 }
 
 /**
- * Derive a Session title from the incoming message: the first text block,
- * trimmed, whitespace-collapsed, truncated to ~60 chars (with … if cut).
- * Returns null when there is no non-empty text block.
+ * NOTE (issue #70): `POST /v1/sessions/:id/messages` is a legacy "send message
+ * and stream the response back on the same request" route that no current
+ * client uses — the frontend sends via `POST /v1/sessions/:id/events`. Its
+ * title-snapshot logic is kept here for parity but now shares the single
+ * derivation helper (`deriveTitleFromContent`) with the `/events` path so the
+ * two routes can never silently diverge.
  */
-function deriveTitle(content: ContentBlock[]): string | null {
-  const firstText = content.find(
-    (b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
-  );
-  if (!firstText) return null;
-  const normalized = firstText.text.replace(/\s+/g, " ").trim();
-  if (normalized === "") return null;
-  const MAX = 60;
-  return normalized.length > MAX ? normalized.slice(0, MAX) + "…" : normalized;
-}
-
 export function messageRoutes(deps: MessageRouteDeps) {
   const router = new Hono<Env>();
 
@@ -74,7 +67,7 @@ export function messageRoutes(deps: MessageRouteDeps) {
     // messages never overwrite it). Best-effort: a store failure must not break
     // message send.
     if (!session.title) {
-      const derived = deriveTitle(content);
+      const derived = deriveTitleFromContent(content);
       if (derived) {
         try {
           await deps.sessionStore.setTitle(sessionId, derived);

@@ -62,9 +62,26 @@ export class S3SkillArtifactStore implements SkillArtifactStore {
     return files;
   }
 
+  async delete(tenantId: string, skillId: string, path: string): Promise<void> {
+    await this.client.deleteObject(this.key(tenantId, skillId, path));
+  }
+
+  async move(tenantId: string, skillId: string, fromPath: string, toPath: string): Promise<void> {
+    const body = await this.get(tenantId, skillId, fromPath);
+    if (!body) return;
+    await this.put(tenantId, skillId, toPath, body);
+    await this.delete(tenantId, skillId, fromPath);
+  }
+
   async deleteTree(tenantId: string, skillId: string): Promise<void> {
     for (const path of await this.list(tenantId, skillId)) {
       await this.client.deleteObject(this.key(tenantId, skillId, path));
+    }
+  }
+
+  async copyTree(tenantId: string, fromSkillId: string, toSkillId: string): Promise<void> {
+    for (const file of await this.getAll(tenantId, fromSkillId)) {
+      await this.put(tenantId, toSkillId, file.path, file.body);
     }
   }
 }

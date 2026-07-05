@@ -5,6 +5,7 @@ import { alignedChunkData } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
+import { deriveTitleFromEventData } from "../lib/derive-title.js";
 
 type Env = {
   Variables: {
@@ -57,6 +58,12 @@ export function eventRoutes(deps: EventRouteDeps) {
     }
 
     let hasPendingTrigger = false;
+    // Snapshot a title from the FIRST user.message in this batch, but only if the
+    // Session has no title yet — so later messages never overwrite it (#70). We
+    // track it locally too, so a batch carrying multiple messages still titles
+    // from the first one. This is the path real clients take (the frontend sends
+    // messages via /events, not /messages).
+    let titleAlreadyHandled = Boolean(session.title);
 
     for (const event of body.events) {
       const { type, data } = event;
@@ -70,6 +77,21 @@ export function eventRoutes(deps: EventRouteDeps) {
           deps.sessionRouter.interrupt(sessionId);
         }
         return c.json({ accepted: true, interrupted: true }, 202);
+      }
+
+      // Derive + store the Session title from the first user.message's text
+      // (once, never overwritten). Best-effort: a store failure must never block
+      // message send, so it is swallowed.
+      if (type === "user.message" && !titleAlreadyHandled) {
+        const derived = deriveTitleFromEventData(data);
+        if (derived) {
+          titleAlreadyHandled = true;
+          try {
+            await deps.sessionStore.setTitle(sessionId, derived);
+          } catch {
+            // ignore — titling is non-essential
+          }
+        }
       }
 
       const isPending = type === "user.message" ||

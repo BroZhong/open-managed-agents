@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import type { Pool } from "./connection.js";
 import type {
   Skill,
+  SkillOwnerType,
   SkillStore,
   SkillStoreCreateInput,
   SkillStoreListOpts,
@@ -14,6 +15,9 @@ interface SkillRow {
   tenant_id: string;
   name: string;
   description: string;
+  owner_type: string;
+  owner_id: string;
+  source_skill_id: string | null;
   updated_at: Date;
 }
 
@@ -23,6 +27,9 @@ function rowToSkill(row: SkillRow): Skill {
     tenantId: row.tenant_id,
     name: row.name,
     description: row.description,
+    ownerType: (row.owner_type as SkillOwnerType) ?? "library",
+    ownerId: row.owner_id,
+    sourceSkillId: row.source_skill_id ?? null,
     updatedAt: new Date(row.updated_at),
   };
 }
@@ -33,11 +40,14 @@ export class PgSkillStore implements SkillStore {
   async create(input: SkillStoreCreateInput): Promise<Skill> {
     const now = new Date();
     const id = `skill_${nanoid()}`;
+    const ownerType: SkillOwnerType = input.ownerType ?? "library";
+    // A Library Skill is owned by its tenant; a fork carries an explicit ownerId.
+    const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
     const { rows } = await this.pool.query<SkillRow>(
-      `INSERT INTO skills (skill_id, tenant_id, name, description, updated_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, source_skill_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [id, input.tenantId, input.name, input.description, now],
+      [id, input.tenantId, input.name, input.description, ownerType, ownerId, input.sourceSkillId ?? null, now],
     );
     return rowToSkill(rows[0]);
   }
@@ -54,7 +64,8 @@ export class PgSkillStore implements SkillStore {
     const limit = opts?.limit ?? 50;
     const cursor = opts?.cursor;
     const params: unknown[] = [tenantId];
-    let where = `tenant_id = $1`;
+    // The Library lists only Library Skills; Agent forks are read via listByOwner.
+    let where = `tenant_id = $1 AND owner_type = 'library'`;
     if (cursor) {
       params.push(cursor);
       where += ` AND skill_id > $${params.length}`;
@@ -67,6 +78,18 @@ export class PgSkillStore implements SkillStore {
     const hasMore = rows.length > limit;
     const data = rows.slice(0, limit).map(rowToSkill);
     return { data, hasMore };
+  }
+
+  async listByOwner(
+    tenantId: string,
+    ownerType: SkillOwnerType,
+    ownerId: string,
+  ): Promise<Skill[]> {
+    const { rows } = await this.pool.query<SkillRow>(
+      `SELECT * FROM skills WHERE tenant_id = $1 AND owner_type = $2 AND owner_id = $3 ORDER BY skill_id ASC`,
+      [tenantId, ownerType, ownerId],
+    );
+    return rows.map(rowToSkill);
   }
 
   async update(id: string, input: SkillStoreUpdateInput): Promise<Skill | null> {

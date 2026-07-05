@@ -44,20 +44,39 @@ CREATE TABLE IF NOT EXISTS ${s}.agent_files (
   PRIMARY KEY (tenant_id, agent_id, filename)
 );
 
--- Skills are a tenant-scoped Library of reusable, instruction-only capabilities
--- (a directory with a SKILL.md). Metadata lives here; file bodies live in S3
--- under <tenantId>/skills/<skillId>/… (isolated from Workspace prefixes).
--- Equipping a Skill onto an Agent is by reference (Agent.skills holds skillIds);
--- there is no join table.
+-- Skills are reusable, instruction-only capabilities (a directory with a
+-- SKILL.md). Metadata lives here; file bodies live in S3 under
+-- <tenantId>/skills/<skillId>/… (isolated from Workspace prefixes).
+--
+-- Every Skill has an owner (ADR-0004):
+--   owner_type='library'  → a Library Skill, owned by the tenant (owner_id =
+--                           tenant_id). Listed in the Skill Library.
+--   owner_type='agent'    → an Agent Skill (a Skill Fork), owned by one Agent
+--                           (owner_id = agentId). Produced when a Library Skill
+--                           is equipped; records source_skill_id = the Library
+--                           Skill it was forked from. Independent thereafter.
+-- Agent.skills holds Agent Skill (fork) ids, never Library Skill ids.
 CREATE TABLE IF NOT EXISTS ${s}.skills (
-  skill_id     TEXT NOT NULL,
-  tenant_id    TEXT NOT NULL,
-  name         TEXT NOT NULL,
-  description  TEXT NOT NULL,
-  updated_at   TIMESTAMPTZ NOT NULL,
+  skill_id        TEXT NOT NULL,
+  tenant_id       TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  description     TEXT NOT NULL,
+  owner_type      TEXT NOT NULL DEFAULT 'library',
+  owner_id        TEXT NOT NULL DEFAULT '',
+  source_skill_id TEXT,
+  updated_at      TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (tenant_id, skill_id)
 );
 CREATE INDEX IF NOT EXISTS skills_tenant_id_idx ON ${s}.skills (tenant_id, skill_id);
+CREATE INDEX IF NOT EXISTS skills_owner_idx ON ${s}.skills (tenant_id, owner_type, owner_id);
+
+-- Migration for skills predating ADR-0004 (owner columns added above via
+-- CREATE TABLE for fresh installs; ALTER for existing tables). Backfill:
+-- every pre-existing Skill was a Library Skill owned by its tenant.
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_type      TEXT NOT NULL DEFAULT 'library';
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_id        TEXT NOT NULL DEFAULT '';
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS source_skill_id TEXT;
+UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND owner_id = '';
 
 -- Workspaces are tenant-owned; the S3-authoritative home of a Session's
 -- artifacts. A user-supplied id is used as-is, else auto-generated. The

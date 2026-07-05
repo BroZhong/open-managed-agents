@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { TextFileEditor } from "@/components/text-file-editor";
 import {
   AGENT_FILE_NAMES,
   type AgentFileName,
@@ -44,13 +44,6 @@ export function AgentFilesEditor({ agentId }: { agentId: string }) {
 function FileTab({ agentId, filename }: { agentId: string; filename: AgentFileName }) {
   const { data, isLoading } = useAgentFile(agentId, filename);
   const save = useSaveAgentFile(agentId);
-  const [content, setContent] = useState("");
-  const [dirty, setDirty] = useState(false);
-
-  // Reset the editor whenever the loaded file changes (tab switch / refetch).
-  useEffect(() => {
-    if (data && !dirty) setContent(data.content);
-  }, [data, dirty]);
 
   const placeholder =
     filename === "MEMORY"
@@ -58,39 +51,17 @@ function FileTab({ agentId, filename }: { agentId: string; filename: AgentFileNa
       : `Markdown for the Agent's ${filename.toLowerCase()}…`;
 
   return (
-    <div className="space-y-3">
-      <textarea
-        value={content}
-        disabled={isLoading}
-        placeholder={placeholder}
-        onChange={(e) => {
-          setContent(e.target.value);
-          setDirty(true);
-        }}
-        className="flex min-h-[240px] w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 font-mono text-sm leading-relaxed transition-colors placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-border)]"
-      />
-      <div className="flex items-center gap-3">
-        <Button
-          size="sm"
-          disabled={!dirty || save.isPending}
-          onClick={() =>
-            save.mutate(
-              { filename, content },
-              { onSuccess: () => setDirty(false) },
-            )
-          }
-        >
-          {save.isPending ? "Saving…" : "Save"}
-        </Button>
-        {save.isError && (
-          <span className="text-xs text-[var(--color-danger)]">
-            {(save.error as Error).message}
-          </span>
-        )}
-        {!dirty && data?.updatedAt && (
-          <span className="text-xs text-neutral-400">Saved</span>
-        )}
-      </div>
-    </div>
+    <TextFileEditor
+      resetKey={filename}
+      initialContent={data?.content}
+      loading={isLoading}
+      saving={save.isPending}
+      error={save.isError ? (save.error as Error).message : undefined}
+      saved={Boolean(data?.updatedAt)}
+      placeholder={placeholder}
+      onSave={(content, onSuccess) =>
+        save.mutate({ filename, content }, { onSuccess })
+      }
+    />
   );
 }

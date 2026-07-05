@@ -10,38 +10,11 @@ import {
   useUpdateAgent,
   type Agent,
 } from "@/lib/hooks/use-agents";
-
-const RUNTIME_MODELS: Record<string, { label: string; value: string }[]> = {
-  "claude-code": [
-    { label: "Default", value: "default" },
-    { label: "Claude Opus 4.7 (1M)", value: "global.anthropic.claude-opus-4-7" },
-    { label: "Claude Opus 4.6 (1M)", value: "global.anthropic.claude-opus-4-6-v1[1m]" },
-    { label: "Claude Opus 4.6", value: "global.anthropic.claude-opus-4-6-v1" },
-    { label: "Claude Sonnet 4.6 (1M)", value: "global.anthropic.claude-sonnet-4-6" },
-    { label: "Claude Sonnet 4.5", value: "global.anthropic.claude-sonnet-4-5-20250929-v1:0" },
-    { label: "Claude Opus 4.5", value: "global.anthropic.claude-opus-4-5-20251101-v1:0" },
-    { label: "Claude Haiku 4.5", value: "global.anthropic.claude-haiku-4-5-20251001-v1:0" },
-  ],
-  codex: [
-    { label: "Default", value: "default" },
-    { label: "GPT 5.5", value: "gpt-5.5" },
-    { label: "GPT 5.4", value: "gpt-5.4" },
-    { label: "GPT 5.4 Mini", value: "gpt-5.4-mini" },
-    { label: "GPT 5.3 Codex", value: "gpt-5.3-codex" },
-    { label: "GPT 5.2", value: "gpt-5.2" },
-    { label: "o3", value: "o3" },
-  ],
-  "pi-agent": [
-    { label: "Default", value: "default" },
-    { label: "Gemini 2.5 Pro", value: "google/gemini-2.5-pro" },
-    { label: "Gemini 2.5 Flash", value: "google/gemini-2.5-flash" },
-    { label: "Gemini 3 Pro Preview", value: "google/gemini-3-pro-preview" },
-    { label: "Gemini 3 Flash Preview", value: "google/gemini-3-flash-preview" },
-    { label: "Claude Sonnet 4.6 (Bedrock)", value: "amazon-bedrock/anthropic.claude-sonnet-4-6" },
-    { label: "Claude Opus 4.7 (Bedrock)", value: "amazon-bedrock/anthropic.claude-opus-4-7" },
-    { label: "GPT 5.4 (Codex)", value: "openai-codex/gpt-5.4" },
-  ],
-};
+import {
+  LOCKED_RUNTIME,
+  LOCKED_MODEL,
+  LOCKED_MODEL_LABEL,
+} from "@/lib/agent-runtime";
 
 interface AgentFormDialogProps {
   open: boolean;
@@ -59,9 +32,16 @@ export function AgentFormDialog({
   const isEdit = !!agent;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [model, setModel] = useState("");
   const [system, setSystem] = useState("");
-  const [runtime, setRuntime] = useState("claude-code");
+
+  // Runtime and model are locked for the current deployment (issue #69):
+  // only the pi-agent runtime and a single model are supported, so they are
+  // fixed constants rather than form state — for both new and existing Agents.
+  // An Agent created with a different runtime/model is displayed and re-saved
+  // as the locked values, so the form never renders an option that no longer
+  // exists (which would break the disabled select).
+  const runtime = LOCKED_RUNTIME;
+  const model = LOCKED_MODEL;
 
   const createMutation = useCreateAgent();
   const updateMutation = useUpdateAgent();
@@ -71,42 +51,19 @@ export function AgentFormDialog({
       if (agent) {
         setName(agent.name);
         setDescription(agent.description ?? "");
-        setModel(agent.model);
         setSystem(agent.system);
-        setRuntime(agent.runtime);
       } else {
         setName("");
         setDescription("");
-        setModel("");
         setSystem("");
-        setRuntime("claude-code");
       }
     }
   }, [open, agent]);
 
-  function handleRuntimeChange(newRuntime: string) {
-    setRuntime(newRuntime);
-    const models = RUNTIME_MODELS[newRuntime];
-    if (models && models.length > 0) {
-      setModel(models[0].value);
-    } else {
-      setModel("");
-    }
-  }
-
-  useEffect(() => {
-    if (open && !isEdit && !model) {
-      const models = RUNTIME_MODELS[runtime];
-      if (models && models.length > 0) {
-        setModel(models[0].value);
-      }
-    }
-  }, [open, isEdit, runtime, model]);
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!name.trim() || !model.trim()) {
+    if (!name.trim()) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -117,7 +74,7 @@ export function AgentFormDialog({
       // Human-readable, informational only — sent as "" to clear rather than
       // omitted, so editing can remove a previously-set description.
       description: description.trim(),
-      model: model.trim(),
+      model,
       system: system.trim() || defaultSystem,
       runtime,
       // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
@@ -160,7 +117,6 @@ export function AgentFormDialog({
   }
 
   const isPending = createMutation.isPending || updateMutation.isPending;
-  const availableModels = RUNTIME_MODELS[runtime] ?? [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -200,27 +156,28 @@ export function AgentFormDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+          {/*
+            Runtime and model are locked to the only combination the current
+            deployment supports (issue #69). They render as disabled selects so
+            the form shows what will be saved without offering other choices.
+          */}
           <Select
             id="agent-runtime"
             label="Runtime"
             value={runtime}
-            onChange={(e) => handleRuntimeChange(e.target.value)}
+            onChange={() => {}}
+            disabled
           >
-            <option value="claude-code">claude-code</option>
-            <option value="codex">codex</option>
-            <option value="pi-agent">pi-agent</option>
+            <option value={LOCKED_RUNTIME}>{LOCKED_RUNTIME}</option>
           </Select>
           <Select
             id="agent-model"
             label="Model"
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={() => {}}
+            disabled
           >
-            {availableModels.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
+            <option value={LOCKED_MODEL}>{LOCKED_MODEL_LABEL}</option>
           </Select>
           <Textarea
             id="agent-system"

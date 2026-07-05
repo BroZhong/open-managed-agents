@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
-import { Trash2, Upload, BookOpen } from "lucide-react";
+import { Trash2, Upload, BookOpen, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { SkillFilesEditor } from "@/components/skill-files-editor";
 import {
   collectDroppedEntries,
   collectInputFiles,
@@ -14,9 +15,9 @@ import {
 
 /**
  * The tenant Skill Library: drag a folder (or pick one) to upload reusable,
- * instruction-only Skills, then browse and delete them. Skills are equipped
- * onto Agents elsewhere (by reference). Self-contained so it can sit on the
- * entry page alongside the Agents list.
+ * instruction-only Skills, then browse, preview/edit their files, and delete
+ * them. Skills are equipped (forked) onto Agents elsewhere. Self-contained so
+ * it can sit on the entry page alongside the Agents list.
  */
 export function SkillLibrary() {
   const { data: skills, isLoading } = useSkills();
@@ -24,6 +25,7 @@ export function SkillLibrary() {
   const del = useDeleteSkill();
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function submit(files: DroppedFile[]) {
@@ -93,27 +95,53 @@ export function SkillLibrary() {
         {skills?.length === 0 && !isLoading && (
           <p className="text-sm text-neutral-400">No Skills yet.</p>
         )}
-        {skills?.map((skill) => (
-          <div
-            key={skill.id}
-            className="flex items-start justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-[var(--color-fg)]">{skill.name}</p>
-              {skill.description && (
-                <p className="truncate text-xs text-neutral-500">{skill.description}</p>
+        {skills?.map((skill) => {
+          const isOpen = expanded === skill.id;
+          return (
+            <div
+              key={skill.id}
+              className="rounded-lg border border-[var(--color-border)] bg-white"
+            >
+              <div className="flex items-start justify-between gap-3 p-3">
+                <button
+                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                  onClick={() => setExpanded(isOpen ? null : skill.id)}
+                >
+                  <span className="mt-0.5 shrink-0 text-neutral-400">
+                    {isOpen ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-[var(--color-fg)]">
+                      {skill.name}
+                    </span>
+                    {skill.description && (
+                      <span className="block truncate text-xs text-neutral-500">
+                        {skill.description}
+                      </span>
+                    )}
+                  </span>
+                </button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label={`Delete ${skill.name}`}
+                  onClick={() => del.mutate(skill.id)}
+                >
+                  <Trash2 className="h-4 w-4 text-neutral-400" />
+                </Button>
+              </div>
+              {isOpen && (
+                <div className="border-t border-[var(--color-border)] p-3">
+                  <SkillFilesEditor skillId={skill.id} />
+                </div>
               )}
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={`Delete ${skill.name}`}
-              onClick={() => del.mutate(skill.id)}
-            >
-              <Trash2 className="h-4 w-4 text-neutral-400" />
-            </Button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

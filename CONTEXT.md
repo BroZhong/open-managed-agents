@@ -25,16 +25,20 @@ A named markdown document that shapes an **Agent**'s identity or instructions (e
 _Avoid_: prompt file, persona file, SOUL (as a category name)
 
 **Skill**:
-A self-contained, reusable capability packaged as a directory containing a `SKILL.md`. Skills live in a tenant-scoped **Skill Library** and are first-class: one Skill can be equipped by many **Agents**, and one Agent can equip many Skills (many-to-many). An Agent references the Skills it has equipped by identity, not by copy. When a Session runs, the Host materializes that Agent's equipped Skills into a resource location the runtime loads natively; a Skill is not a Session artifact and does not live in a Workspace.
+A self-contained, reusable capability packaged as a directory containing a `SKILL.md`. Every Skill has an **owner**: a **Library Skill** is owned by the tenant and lives in the **Skill Library**; an **Agent Skill** is owned by one Agent and exists only as that Agent's private copy (a **Skill Fork**). When a Session runs, the Host materializes that Agent's equipped Agent Skills into a resource location the runtime loads natively; a Skill is not a Session artifact and does not live in a Workspace.
 _Avoid_: plugin, tool (a Skill may bundle tools, but is not itself a tool)
 
 **Skill Library**:
-The tenant-scoped collection of all **Skills** a tenant has, independent of any **Agent**. Skills are added to the Library once (by uploading a folder — one folder is one Skill if it holds a `SKILL.md`, or many Skills if its subfolders each hold one) and then equipped onto Agents as desired. The Library is managed from the same entry page that lists Agents; equipping happens on an individual Agent's page.
+The tenant-scoped collection of all **Library Skills** a tenant has, independent of any **Agent**. Skills are added to the Library once (by uploading a folder — one folder is one Skill if it holds a `SKILL.md`, or many Skills if its subfolders each hold one), previewed and edited there, and then equipped onto Agents as desired. The Library is managed from the same entry page that lists Agents; equipping happens on an individual Agent's page. A Library Skill can be equipped by many Agents; each equip produces an independent **Skill Fork**.
 _Avoid_: marketplace, catalog, registry
 
 **Equip** (a Skill onto an Agent):
-To reference a **Skill** from the **Skill Library** on an **Agent** so the Agent's Sessions load it. Equipping does not copy the Skill; unequipping removes only the reference.
-_Avoid_: install, add, attach
+To fork a **Library Skill** onto an **Agent**: the Host snapshots the Library Skill's files into a new **Agent Skill** (a **Skill Fork**) that the Agent's Sessions load. Equipping copies the Skill at that moment; later Library edits do not propagate to the fork. Unequipping removes the Agent's fork, not the Library Skill.
+_Avoid_: install, add, attach, link (equip is a copy, not a reference)
+
+**Skill Fork**:
+The Agent-owned copy produced when a **Library Skill** is equipped onto an **Agent**. The fork has its own id and records the `source_skill_id` it was forked from. From then on the two are independent: editing the Library Skill never changes the fork, and editing the fork on the Agent's page never changes the Library Skill. This is why an Agent can preview and edit its equipped Skills freely, and why deleting a Library Skill leaves already-equipped Agents unaffected.
+_Avoid_: link, alias, reference (a fork is a copy, not a pointer)
 
 **User**:
 A human who signs in to the web console with a username and password. Registration requires a valid invite code. Each User is paired one-to-one with a **Tenant** created at registration time; a User has exactly one Tenant and a Tenant has exactly one User. A User's login produces a session token that resolves to that same **Tenant**, so everything the User sees (Agents, Sessions, Skills, API keys) is scoped to their Tenant.

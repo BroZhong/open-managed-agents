@@ -8,6 +8,7 @@ import type { ApiKeyStore, TenantContext } from "./types.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { agentRoutes } from "./routes/agents.js";
 import { agentFileRoutes } from "./routes/agent-files.js";
+import { agentSkillRoutes } from "./routes/agent-skills.js";
 import { skillRoutes } from "./routes/skills.js";
 import { apiKeyRoutes } from "./routes/api-keys.js";
 import { authRoutes } from "./routes/auth.js";
@@ -74,6 +75,11 @@ export function createApp(deps: AppDeps) {
   // Mount Skill Library routes (tenant-scoped reusable Skills)
   if (deps.skillStore && deps.skillArtifactStore) {
     app.route("", skillRoutes(deps.skillStore, deps.skillArtifactStore));
+  }
+
+  // Mount per-Agent Skill routes (equip = fork; unequip = delete fork; ADR-0004)
+  if (deps.agentStore && deps.skillStore && deps.skillArtifactStore) {
+    app.route("", agentSkillRoutes(deps.agentStore, deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount API key CRUD routes

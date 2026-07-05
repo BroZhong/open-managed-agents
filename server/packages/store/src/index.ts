@@ -28,6 +28,7 @@ export type {
 
 export type {
   Skill,
+  SkillOwnerType,
   SkillSummary,
   SkillStore,
   SkillStoreCreateInput,

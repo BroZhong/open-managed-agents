@@ -82,6 +82,15 @@ export interface SandboxClient {
   /** List files under an absolute directory (recursively). */
   list(id: string, dir: string): Promise<SandboxFileEntry[]>;
 
+  /**
+   * True when the sandbox `id` is still live and able to accept ops. Because
+   * sandboxes are reclaimed by the gateway after their lifetime (ADR-0002 §4),
+   * a memoized handle can go stale between turns; the executor calls this before
+   * a tool op and rebuilds when it returns false. An unknown id (never created,
+   * already destroyed) is not alive.
+   */
+  isAlive(id: string): Promise<boolean>;
+
   /** Tear the sandbox down. Idempotent — destroying twice is a no-op. */
   destroy(id: string): Promise<void>;
 }

@@ -143,26 +143,36 @@ export function useSessionEvents(sessionId: string) {
           let eventType = "";
           const dataLines: string[] = [];
 
+          // Parse SSE fields per spec: "field: value" or "field:value" (the
+          // single optional leading space is stripped either way).
           const lines = frame.split("\n");
           for (const line of lines) {
-            if (line.startsWith("id: ")) {
-              eventId = line.slice(4);
-            } else if (line.startsWith("event: ")) {
-              eventType = line.slice(7);
-            } else if (line.startsWith("data: ")) {
-              dataLines.push(line.slice(6));
-            } else if (line.startsWith("data:")) {
-              dataLines.push(line.slice(5));
-            }
+            const stripField = (field: string): string | undefined => {
+              if (!line.startsWith(field + ":")) return undefined;
+              const rest = line.slice(field.length + 1);
+              return rest.startsWith(" ") ? rest.slice(1) : rest;
+            };
+            const id = stripField("id");
+            const evt = stripField("event");
+            const data = stripField("data");
+            if (id !== undefined) eventId = id;
+            else if (evt !== undefined) eventType = evt;
+            else if (data !== undefined) dataLines.push(data);
           }
 
           if (dataLines.length === 0) continue;
+
+          // Every persisted event on this stream carries id:<seq> (#71). A frame
+          // without an id is not a resumable persisted event — dropping it (vs.
+          // forcing seq 0) avoids a phantom duplicate keyed at 0 and keeps the
+          // Last-Event-ID resume anchored to a real seq.
+          if (eventId === "") continue;
 
           const dataStr = dataLines.join("\n");
           try {
             const parsed = JSON.parse(dataStr);
             const event: SessionEvent = {
-              seq: eventId ? parseInt(eventId, 10) : 0,
+              seq: parseInt(eventId, 10),
               type: eventType || parsed.type || "",
               data: parsed.data ?? parsed,
               ts: parsed.ts || new Date().toISOString(),

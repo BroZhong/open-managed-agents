@@ -13,6 +13,16 @@ import { contentHash, type WorkspaceSyncResult } from "./workspace-sync.js";
 
 const DEFAULT_WORKSPACE_DIR = "/workspace";
 
+/**
+ * Default sandbox lifetime (issue #68). The e2b gateway reclaims a sandbox
+ * after this window of inactivity; the gateway's own default is short enough
+ * that a sandbox is often gone before the next turn's tool call. We pass an
+ * explicit, generous lifetime on create so a sandbox survives normal
+ * inter-turn think time. A rebuild + S3 re-hydrate still self-heals a reclaim
+ * beyond this window, so this is a comfort margin, not a correctness boundary.
+ */
+const DEFAULT_SANDBOX_LIFETIME_SECONDS = 60 * 60; // 1 hour
+
 export interface SandboxToolExecutorOptions {
   /** Low-level sandbox port (e2b in prod, fake in tests). */
   sandboxClient: SandboxClient;
@@ -168,15 +178,50 @@ export class SandboxToolExecutor implements ToolExecutor {
 
   // ─── internals ────────────────────────────────────────────────────────────
 
-  /** Create-and-hydrate exactly once, memoized across concurrent callers. */
-  private ensure(): Promise<string> {
-    if (this.ensuring) return this.ensuring;
+  /**
+   * Resolve a live, hydrated sandbox for a tool op — creating one on first use
+   * and transparently rebuilding one that the gateway has reclaimed (issue #68).
+   *
+   * The create+hydrate is memoized in {@link ensuring} so concurrent first
+   * callers share a single create. But a memoized handle can go **stale**: the
+   * gateway reclaims a sandbox after its lifetime, so between turns the sandbox
+   * behind `sandboxId` may be gone. Before reusing a memoized sandbox we verify
+   * liveness; if it is dead we discard all sandbox-scoped state (id, memoized
+   * promise, hydrate baseline, S3 hash map) and fall through to a fresh
+   * create+hydrate from the S3 Workspace — so the caller always gets a usable
+   * `/workspace` with prior artifacts, instead of a SandboxNotFoundError.
+   */
+  private async ensure(): Promise<string> {
+    if (this.ensuring) {
+      const id = await this.ensuring;
+      if (await this.sandboxClient.isAlive(id)) return id;
+      // The memoized sandbox was reclaimed by the gateway — drop its state and
+      // rebuild below. destroy() is idempotent, so cleaning up a gone sandbox
+      // is harmless.
+      await this.resetSandboxState(id);
+    }
     this.ensuring = this.createAndHydrate();
     return this.ensuring;
   }
 
+  /**
+   * Forget a dead sandbox: clear the memoized create, its id, and the in-memory
+   * hydrate baseline + S3 hash state, then best-effort destroy it. Leaves the
+   * executor ready to create a fresh sandbox on the next {@link ensure}.
+   */
+  private async resetSandboxState(id: string): Promise<void> {
+    this.ensuring = undefined;
+    this.sandboxId = undefined;
+    this.hydrateBaseline = [];
+    this.s3State.clear();
+    await this.sandboxClient.destroy(id);
+  }
+
   private async createAndHydrate(): Promise<string> {
     const handle = await this.sandboxClient.create({
+      // A generous explicit lifetime so the sandbox survives normal inter-turn
+      // think time (issue #68); an explicit createOptions.timeoutSeconds wins.
+      timeoutSeconds: DEFAULT_SANDBOX_LIFETIME_SECONDS,
       ...this.createOptions,
       metadata: {
         ...(this.createOptions.metadata ?? {}),
@@ -239,6 +284,12 @@ export class SandboxToolExecutor implements ToolExecutor {
     };
     if (!this.sandboxId) return empty;
     const id = this.sandboxId;
+
+    // A sandbox reclaimed by the gateway (issue #68) holds no state to sync —
+    // and probing it would throw SandboxNotFoundError, surfacing a spurious
+    // workspace_sync_error. Treat a dead sandbox as an empty (no-op) sync; the
+    // next tool op rebuilds + re-hydrates from S3, the source of truth.
+    if (!(await this.sandboxClient.isAlive(id))) return empty;
 
     // 1. Full recursive scan of /workspace → workspace-relative paths.
     const entries = await this.sandboxClient.list(id, this.workspaceDir);

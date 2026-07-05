@@ -14,6 +14,9 @@ type Env = {
  * Skill Library routes: a tenant-scoped Library of reusable, instruction-only
  * Skills (a directory with a SKILL.md). Metadata lives in `skillStore`; file
  * bodies live in S3 under `<tenantId>/skills/<skillId>/…` via `skillArtifacts`.
+ * Listing returns only Library Skills; equipping (which forks a Library Skill
+ * onto an Agent, ADR-0004) lives on the Agent routes. The `:id/files/*`
+ * endpoints edit any Skill the tenant owns — a Library Skill or an Agent fork.
  *
  * Upload wire shape for POST /v1/skills — `multipart/form-data`:
  *   - `paths`: a JSON array of root-relative file paths (string[]).
@@ -139,7 +142,88 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
     return c.json({ type: "skill_deleted", id: existing.id });
   });
 
+  // --- Skill directory file operations (issue #73) ------------------------
+  // These endpoints work uniformly for a Library Skill or an Agent's fork —
+  // both are resolved by id and gated by tenant ownership, so editing a fork
+  // (on the Agent page) never touches the Library Skill and vice versa.
+
+  // GET /v1/skills/:id/files — file tree (paths only)
+  router.get("/v1/skills/:id/files", async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const files = await skillArtifacts.list(skill.tenantId, skill.id);
+    return c.json({ data: files, has_more: false });
+  });
+
+  // GET /v1/skills/:id/files/content?path=… — read one file's text
+  router.get("/v1/skills/:id/files/content", async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const path = safePath(c.req.query("path"));
+    if (!path) return c.json({ error: "path is required" }, 400);
+    const bytes = await skillArtifacts.get(skill.tenantId, skill.id, path);
+    if (!bytes) return c.json({ error: "Not found" }, 404);
+    return c.json({ path, content: new TextDecoder().decode(bytes) });
+  });
+
+  // PUT /v1/skills/:id/files/content — write (create or overwrite) one file
+  //   body: { path: string, content: string }
+  router.put("/v1/skills/:id/files/content", async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const body = await c.req.json().catch(() => null);
+    const path = safePath(body?.path);
+    if (!path) return c.json({ error: "path is required" }, 400);
+    if (typeof body.content !== "string") {
+      return c.json({ error: "content is required" }, 400);
+    }
+    await skillArtifacts.put(skill.tenantId, skill.id, path, body.content);
+    await skillStore.update(skill.id, {}); // bump updatedAt
+    return c.json({ path, content: body.content });
+  });
+
+  // DELETE /v1/skills/:id/files/content?path=… — delete one file
+  router.delete("/v1/skills/:id/files/content", async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const path = safePath(c.req.query("path"));
+    if (!path) return c.json({ error: "path is required" }, 400);
+    await skillArtifacts.delete(skill.tenantId, skill.id, path);
+    await skillStore.update(skill.id, {});
+    return c.json({ type: "skill_file_deleted", id: skill.id, path });
+  });
+
+  // POST /v1/skills/:id/files/rename — rename/move one file within the Skill
+  //   body: { from: string, to: string }
+  router.post("/v1/skills/:id/files/rename", async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const body = await c.req.json().catch(() => null);
+    const from = safePath(body?.from);
+    const to = safePath(body?.to);
+    if (!from || !to) return c.json({ error: "from and to are required" }, 400);
+    const src = await skillArtifacts.get(skill.tenantId, skill.id, from);
+    if (!src) return c.json({ error: "Not found" }, 404);
+    await skillArtifacts.move(skill.tenantId, skill.id, from, to);
+    await skillStore.update(skill.id, {});
+    return c.json({ type: "skill_file_renamed", id: skill.id, from, to });
+  });
+
   return router;
+}
+
+/**
+ * Validate a Skill-relative file path from the client. Rejects empty,
+ * absolute, and traversal (`.`/`..`) paths so a request can never escape the
+ * Skill's own directory. Returns the normalized path, or null if invalid.
+ */
+function safePath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.replace(/^\/+/, "").trim();
+  if (!trimmed) return null;
+  const segments = trimmed.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) return null;
+  return trimmed;
 }
 
 /** Resolve the Skill by :id and confirm it belongs to the caller's tenant. */

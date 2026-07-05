@@ -31,6 +31,8 @@ export interface E2BSandbox {
     read(path: string, opts?: { format?: "text" }): Promise<string>;
     write(path: string, data: string): Promise<unknown>;
   };
+  /** True while the gateway still has this sandbox running (not reclaimed). */
+  isRunning(): Promise<boolean>;
   kill(): Promise<void>;
 }
 
@@ -155,6 +157,17 @@ export class E2BSandboxClient implements SandboxClient {
       `find ${shellQuote(dir)} -type f -printf '%T@ %s %p\\n' 2>/dev/null || true`,
     );
     return parseFindOutput(res.stdout);
+  }
+
+  async isAlive(id: string): Promise<boolean> {
+    const sandbox = this.sandboxes.get(id);
+    if (!sandbox) return false; // never created here, or already destroyed.
+    try {
+      return await sandbox.isRunning();
+    } catch {
+      // A transport/not-found error means the gateway no longer has it live.
+      return false;
+    }
   }
 
   async destroy(id: string): Promise<void> {

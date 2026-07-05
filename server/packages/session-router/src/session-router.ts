@@ -617,11 +617,16 @@ export class SessionRouter {
   }
 
   /**
-   * Materialize the Agent's equipped Skills (`agentConfig.skills` = skillIds)
-   * from S3 into a fresh Host-side temp directory — one subdirectory per Skill,
-   * each a valid skill root (SKILL.md at its top) — and return their absolute
-   * paths plus an idempotent cleanup. Returns no paths (and a no-op cleanup)
-   * when the Skill stores are absent or the Agent has no equipped Skills.
+   * Materialize the Agent's equipped Skills into a fresh Host-side temp
+   * directory — one subdirectory per Skill, each a valid skill root (SKILL.md at
+   * its top) — and return their absolute paths plus an idempotent cleanup.
+   * Returns no paths (and a no-op cleanup) when the Skill stores are absent or
+   * the Agent has no equipped Skills.
+   *
+   * Per ADR-0004 `agentConfig.skills` holds the ids of the Agent's own Skill
+   * Forks (`ownerType='agent'`, owned by this Agent), which always exist while
+   * equipped — so a fork is never invisible at runtime the way a dangling
+   * Library reference used to be. We still guard on ownership defensively.
    */
   private async materializeSkills(
     agentConfig: Agent,
@@ -643,9 +648,17 @@ export class SessionRouter {
     try {
       const paths: string[] = [];
       for (const skillId of skillIds) {
-        // Only materialize Skills the Agent's tenant actually owns.
+        // Only materialize the Agent's own forks (owned by this Agent, in this
+        // tenant). Anything else (missing, cross-tenant, or a stale Library id
+        // from pre-fork data) is skipped rather than trusted.
         const skill = await this.skillStore.getById(skillId);
-        if (!skill || skill.tenantId !== agentConfig.tenantId) continue;
+        if (
+          !skill ||
+          skill.tenantId !== agentConfig.tenantId ||
+          (skill.ownerType === "agent" && skill.ownerId !== agentConfig.id)
+        ) {
+          continue;
+        }
         const files = await this.skillArtifactStore.getAll(agentConfig.tenantId, skillId);
         if (files.length === 0) continue;
         const skillDir = join(root, skillId);

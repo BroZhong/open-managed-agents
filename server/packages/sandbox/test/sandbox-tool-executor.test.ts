@@ -189,4 +189,92 @@ describe("SandboxToolExecutor", () => {
       /escapes workspace/,
     );
   });
+
+  // ─── #68: long-lived sandbox + liveness rebuild ───────────────────────────
+
+  it("passes an explicit, generous lifetime on create (issue #68)", async () => {
+    const { executor, sandboxClient } = makeExecutor();
+
+    await executor.writeFile("a.txt", "hi");
+
+    const id = sandboxClient.created[0];
+    const opts = sandboxClient.createOptsOf(id);
+    expect(opts.timeoutSeconds).toBeGreaterThanOrEqual(60 * 60);
+  });
+
+  it("an explicit createOptions.timeoutSeconds overrides the default lifetime", async () => {
+    const artifactStore = new InMemoryArtifactStore();
+    const sandboxClient = new FakeSandboxClient();
+    const executor = new SandboxToolExecutor({
+      sandboxClient,
+      artifactStore,
+      tenantId: "tenant_1",
+      workspaceId: "ws_1",
+      createOptions: { timeoutSeconds: 42 },
+    });
+
+    await executor.writeFile("a.txt", "hi");
+
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.createOptsOf(id).timeoutSeconds).toBe(42);
+  });
+
+  it("rebuilds and re-hydrates from S3 when the sandbox was reclaimed", async () => {
+    const { executor, sandboxClient } = makeExecutor({
+      seed: [["main.py", "print('hi')"]],
+    });
+
+    // Turn 1: first tool use creates + hydrates sandbox #1.
+    expect(await executor.readFile("main.py")).toBe("print('hi')");
+    const first = sandboxClient.created[0];
+    expect(sandboxClient.created).toHaveLength(1);
+
+    // The gateway reclaims the sandbox between turns (issue #68).
+    sandboxClient.reclaim(first);
+    expect(await sandboxClient.isAlive(first)).toBe(false);
+
+    // Turn 2: the next tool op must NOT throw SandboxNotFoundError. The executor
+    // detects the dead sandbox, builds a fresh one, and re-hydrates it from S3.
+    expect(await executor.readFile("main.py")).toBe("print('hi')");
+    expect(sandboxClient.created).toHaveLength(2);
+    const second = sandboxClient.created[1];
+    expect(second).not.toBe(first);
+
+    // The rebuilt sandbox has /workspace hydrated from S3 (prior artifacts).
+    expect(sandboxClient.filesOf(second).get("/workspace/main.py")?.content).toBe(
+      "print('hi')",
+    );
+    // The dead sandbox was best-effort destroyed.
+    expect(sandboxClient.destroyed).toContain(first);
+  });
+
+  it("a rebuilt sandbox picks up files added to S3 since the first hydrate", async () => {
+    const { executor, sandboxClient, artifactStore } = makeExecutor({
+      seed: [["a.txt", "A"]],
+    });
+
+    await executor.readFile("a.txt"); // create + hydrate #1
+    const first = sandboxClient.created[0];
+
+    // A concurrent session adds a file to the S3 Workspace, then #1 is reclaimed.
+    artifactStore.seed("tenant_1", "ws_1", "b.txt", "B");
+    sandboxClient.reclaim(first);
+
+    // The rebuild re-hydrates from S3, so the new file is present.
+    expect(await executor.readFile("b.txt")).toBe("B");
+    expect([...executor.baseline].sort()).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("sync is a no-op (no throw) when the sandbox was reclaimed", async () => {
+    const { executor, sandboxClient } = makeExecutor({ seed: [["f", "1"]] });
+
+    await executor.readFile("f"); // create + hydrate
+    const id = sandboxClient.created[0];
+    sandboxClient.reclaim(id);
+
+    // Must not throw SandboxNotFoundError → no workspace_sync_error surfaces.
+    const result = await executor.sync();
+    expect(result.changed).toEqual([]);
+    expect(result.deleted).toEqual([]);
+  });
 });

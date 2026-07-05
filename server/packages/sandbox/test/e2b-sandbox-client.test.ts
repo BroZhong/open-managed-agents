@@ -30,6 +30,9 @@ class FakeSandbox implements E2BSandbox {
   readonly writes: Array<{ path: string; data: string }> = [];
   readonly reads = new Map<string, string>();
   killed = false;
+  running = true;
+  /** When set, isRunning throws (simulates a not-found/transport error). */
+  isRunningThrows = false;
   private runHandler?: (
     cmd: string,
   ) =>
@@ -74,6 +77,11 @@ class FakeSandbox implements E2BSandbox {
       return { path };
     },
   };
+
+  async isRunning(): Promise<boolean> {
+    if (this.isRunningThrows) throw new Error("sandbox not found");
+    return this.running;
+  }
 
   async kill(): Promise<void> {
     this.killed = true;
@@ -249,6 +257,29 @@ describe("E2BSandboxClient", () => {
     const findCall = sandboxes[0].runCalls.find((c) => c.cmd.includes("find"));
     expect(findCall!.cmd).toContain("'/workspace'");
     expect(findCall!.cmd).toContain("-type f");
+  });
+
+  it("isAlive reflects the sandbox isRunning state", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    expect(await client.isAlive(id)).toBe(true);
+    sandboxes[0].running = false;
+    expect(await client.isAlive(id)).toBe(false);
+  });
+
+  it("isAlive returns false for an unknown/destroyed id", async () => {
+    const { client } = makeClient();
+    expect(await client.isAlive("never-created")).toBe(false);
+    const { id } = await client.create();
+    await client.destroy(id);
+    expect(await client.isAlive(id)).toBe(false);
+  });
+
+  it("isAlive treats an isRunning transport error as not alive", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].isRunningThrows = true;
+    expect(await client.isAlive(id)).toBe(false);
   });
 
   it("destroy kills the sandbox and is idempotent", async () => {

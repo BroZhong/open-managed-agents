@@ -33,10 +33,29 @@ export class InMemorySkillArtifactStore implements SkillArtifactStore {
       .map(([k, body]) => ({ path: k.slice(p.length), body }));
   }
 
+  async delete(tenantId: string, skillId: string, path: string): Promise<void> {
+    this.files.delete(`${this.prefix(tenantId, skillId)}${path}`);
+  }
+
+  async move(tenantId: string, skillId: string, fromPath: string, toPath: string): Promise<void> {
+    const body = this.files.get(`${this.prefix(tenantId, skillId)}${fromPath}`);
+    if (!body) return;
+    this.files.set(`${this.prefix(tenantId, skillId)}${toPath}`, body);
+    this.files.delete(`${this.prefix(tenantId, skillId)}${fromPath}`);
+  }
+
   async deleteTree(tenantId: string, skillId: string): Promise<void> {
     const p = this.prefix(tenantId, skillId);
     for (const k of [...this.files.keys()]) {
       if (k.startsWith(p)) this.files.delete(k);
+    }
+  }
+
+  async copyTree(tenantId: string, fromSkillId: string, toSkillId: string): Promise<void> {
+    const from = this.prefix(tenantId, fromSkillId);
+    const to = this.prefix(tenantId, toSkillId);
+    for (const [k, body] of [...this.files.entries()]) {
+      if (k.startsWith(from)) this.files.set(`${to}${k.slice(from.length)}`, body);
     }
   }
 }
