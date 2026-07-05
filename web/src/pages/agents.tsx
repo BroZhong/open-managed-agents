@@ -5,7 +5,6 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
-import { SkillLibrary } from "@/components/skill-library";
 import { useAgents } from "@/lib/hooks/use-agents";
 import { cn } from "@/lib/utils";
 
@@ -29,8 +28,7 @@ export default function AgentsPage() {
         </Button>
       </PageHeader>
 
-      {/* Layout 甲: Agents as the primary subject, Skill Library alongside. */}
-      <div className="grid grid-cols-1 gap-6 p-6 lg:grid-cols-[1fr_320px]">
+      <div className="p-6">
         <div>
           {isLoading ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -44,7 +42,7 @@ export default function AgentsPage() {
               <p>No agents yet. Create your first agent to get started.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {agents.map((agent) => (
                 <button
                   key={agent.id}
@@ -62,6 +60,11 @@ export default function AgentsPage() {
                       <p className="truncate text-xs text-neutral-500">{agent.model}</p>
                     </div>
                   </div>
+                  {agent.description && (
+                    <p className="line-clamp-2 text-xs text-neutral-500">
+                      {agent.description}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <span
                       className={cn(
@@ -82,10 +85,6 @@ export default function AgentsPage() {
             </div>
           )}
         </div>
-
-        <aside className="lg:border-l lg:border-[var(--color-border)] lg:pl-6">
-          <SkillLibrary />
-        </aside>
       </div>
 
       <AgentFormDialog open={createOpen} onOpenChange={setCreateOpen} />

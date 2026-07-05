@@ -5,6 +5,12 @@ export interface Agent {
   id: string;
   tenantId: string;
   name: string;
+  /**
+   * Optional human-readable description shown in the console (cards, detail) to
+   * tell Agents apart. Informational only — never injected into the model
+   * context / prompt.
+   */
+  description?: string;
   model: string;
   system: string;
   runtime: string;
@@ -20,6 +26,7 @@ export interface Agent {
 
 export interface AgentMutationBody {
   name: string;
+  description?: string;
   model: string;
   system: string;
   runtime: string;

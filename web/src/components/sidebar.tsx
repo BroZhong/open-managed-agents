@@ -1,8 +1,9 @@
-import { useState, useEffect, createContext, useContext } from "react"
+import { useState, useEffect, useRef, createContext, useContext } from "react"
 import { useLocation, useParams, useNavigate, Link } from "react-router"
 import {
   LayoutDashboard,
   Bot,
+  BookOpen,
   Key,
   PanelLeftClose,
   PanelLeftOpen,
@@ -11,9 +12,9 @@ import {
   ChevronDown,
   ChevronRight,
   Plus,
-  Settings,
   FolderClosed,
   MessagesSquare,
+  MoreHorizontal,
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -30,6 +31,7 @@ import {
 import {
   useWorkspaces,
   useCreateWorkspace,
+  useUpdateWorkspace,
   type Workspace,
 } from "@/lib/hooks/use-workspaces"
 import { StatusBadge } from "@/components/status-badge"
@@ -51,6 +53,7 @@ export function useSidebarState() {
 const navItems = [
   { label: "Overview", icon: LayoutDashboard, path: "/" },
   { label: "Agents", icon: Bot, path: "/agents" },
+  { label: "Skills", icon: BookOpen, path: "/skills" },
   { label: "API Keys", icon: Key, path: "/api-keys" },
 ]
 
@@ -331,32 +334,10 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
         <span className="truncate">{agent?.name ?? "Agent"}</span>
       </Link>
 
-      {/* agent — opens the Agent's config detail (files, skills, model). */}
-      <Link
-        to={`/agents/${agentId}`}
-        className={cn(
-          "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-          location.pathname === `/agents/${agentId}`
-            ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
-            : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]",
-        )}
-      >
-        <Settings className="h-[18px] w-[18px] shrink-0" />
-        <span>agent</span>
-      </Link>
-
-      {/* + New chat — a loose session bound to a fresh anonymous workspace. */}
-      <button
-        type="button"
-        onClick={newChat}
-        disabled={createSession.isPending}
-        className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent-muted)] disabled:opacity-50"
-      >
-        <Plus className="h-[18px] w-[18px] shrink-0" />
-        <span>{createSession.isPending ? "Starting…" : "New chat"}</span>
-      </button>
-
-      {/* workspaces — named Workspaces this Agent uses (collapsible). */}
+      {/* workspaces — named Workspaces this Agent uses (collapsible).
+          Note: the Agent config link is the header above; there is no separate
+          `agent` settings row (it duplicated the header). `New chat` lives in
+          the CHATS section header `+`, not as a top-level button. */}
       <div className="pt-2">
         <div className="flex items-center pr-1">
           <button
@@ -409,40 +390,25 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           </form>
         )}
         {workspacesOpen && (
-          <div className="space-y-0.5">
+          <div className="space-y-0.5 pl-2">
             {usedWorkspaces.length === 0 && (
               <p className="px-2.5 py-1 text-xs text-neutral-400">None</p>
             )}
-            {usedWorkspaces.map((w) => {
-              const wsOpen = openWorkspaces[w.id] ?? false
-              const wsSessions = sessionsByWorkspace.get(w.id) ?? []
-              return (
-                <div key={w.id}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setOpenWorkspaces((prev) => ({ ...prev, [w.id]: !wsOpen }))
-                    }
-                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]"
-                  >
-                    {wsOpen ? (
-                      <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                    )}
-                    <FolderClosed className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{w.name}</span>
-                  </button>
-                  {wsOpen && (
-                    <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
-                      {wsSessions.map((s) => (
-                        <SessionLink key={s.id} session={s} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+            {usedWorkspaces.map((w) => (
+              <WorkspaceRow
+                key={w.id}
+                workspace={w}
+                agentId={agentId}
+                sessions={sessionsByWorkspace.get(w.id) ?? []}
+                open={openWorkspaces[w.id] ?? false}
+                onToggle={() =>
+                  setOpenWorkspaces((prev) => ({ ...prev, [w.id]: !(prev[w.id] ?? false) }))
+                }
+                onExpand={() =>
+                  setOpenWorkspaces((prev) => ({ ...prev, [w.id]: true }))
+                }
+              />
+            ))}
           </div>
         )}
       </div>
@@ -465,13 +431,177 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
             </button>
           </Tooltip>
         </div>
-        {looseChats.length === 0 && (
-          <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
-        )}
-        {looseChats.map((s) => (
-          <SessionLink key={s.id} session={s} />
-        ))}
+        <div className="space-y-0.5 pl-2">
+          {looseChats.length === 0 && (
+            <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
+          )}
+          {looseChats.map((s) => (
+            <SessionLink key={s.id} session={s} />
+          ))}
+        </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * A single named-Workspace row in the sidebar: an expand toggle + folder name,
+ * a hover `…` menu (Rename / New chat here), and — when expanded — the
+ * Workspace's Sessions nested beneath it. Rename edits in place; "New chat
+ * here" creates a Session bound to this Workspace and navigates into it.
+ */
+function WorkspaceRow({
+  workspace,
+  agentId,
+  sessions,
+  open,
+  onToggle,
+  onExpand,
+}: {
+  workspace: Workspace
+  agentId: string
+  sessions: Session[]
+  open: boolean
+  onToggle: () => void
+  onExpand: () => void
+}) {
+  const navigate = useNavigate()
+  const createSession = useCreateSession()
+  const updateWorkspace = useUpdateWorkspace()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [name, setName] = useState(workspace.name ?? "")
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close the `…` menu on any outside click.
+  useEffect(() => {
+    if (!menuOpen) return
+    function onDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [menuOpen])
+
+  function newChatHere() {
+    setMenuOpen(false)
+    onExpand()
+    createSession.mutate(
+      { agentId, workspaceId: workspace.id },
+      {
+        onSuccess: (session) => navigate(`/sessions/${session.id}`),
+        onError: (err) => toast.error(err.message || "Failed to start chat"),
+      },
+    )
+  }
+
+  function submitRename() {
+    const next = name.trim()
+    if (!next || next === workspace.name) {
+      setRenaming(false)
+      setName(workspace.name ?? "")
+      return
+    }
+    updateWorkspace.mutate(
+      { id: workspace.id, name: next },
+      {
+        onSuccess: () => setRenaming(false),
+        onError: (err) => {
+          toast.error(err.message || "Failed to rename workspace")
+          setName(workspace.name ?? "")
+          setRenaming(false)
+        },
+      },
+    )
+  }
+
+  if (renaming) {
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          submitRename()
+        }}
+        className="px-2.5 py-1"
+      >
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={submitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setName(workspace.name ?? "")
+              setRenaming(false)
+            }
+          }}
+          disabled={updateWorkspace.isPending}
+          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-xs text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
+        />
+      </form>
+    )
+  }
+
+  return (
+    <div>
+      <div className="group flex items-center rounded-lg text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5"
+        >
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <FolderClosed className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{workspace.name}</span>
+        </button>
+        <div ref={menuRef} className="relative">
+          <button
+            type="button"
+            aria-label="Workspace actions"
+            onClick={() => setMenuOpen((o) => !o)}
+            className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 opacity-0 transition-opacity hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] group-hover:opacity-100 data-[open=true]:opacity-100"
+            data-open={menuOpen}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-6 z-30 w-36 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] py-1 shadow-md">
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false)
+                  setName(workspace.name ?? "")
+                  setRenaming(true)
+                }}
+                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)]"
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                onClick={newChatHere}
+                disabled={createSession.isPending}
+                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+              >
+                {createSession.isPending ? "Starting…" : "New chat here"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {open && (
+        <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
+          {sessions.map((s) => (
+            <SessionLink key={s.id} session={s} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

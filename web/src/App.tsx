@@ -6,6 +6,7 @@ import OverviewPage from "@/pages/overview";
 import SessionDetailPage from "@/pages/session-detail";
 import AgentsPage from "@/pages/agents";
 import AgentDetailPage from "@/pages/agent-detail";
+import SkillsPage from "@/pages/skills";
 import ApiKeysPage from "@/pages/api-keys";
 import type { ReactNode } from "react";
 
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/agents/:id" element={<AgentDetailPage />} />
+        <Route path="/skills" element={<SkillsPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
       </Route>
     </Routes>

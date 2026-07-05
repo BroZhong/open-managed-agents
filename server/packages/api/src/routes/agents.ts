@@ -20,10 +20,13 @@ export function agentRoutes(agentStore: AgentStore) {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    const { name, model, system, runtime, tools, mcpServers, skills, sandbox } = body;
+    const { name, description, model, system, runtime, tools, mcpServers, skills, sandbox } = body;
 
     if (!name || typeof name !== "string") {
       return c.json({ error: "name is required" }, 400);
+    }
+    if (description !== undefined && typeof description !== "string") {
+      return c.json({ error: "description must be a string" }, 400);
     }
     if (!model || typeof model !== "string") {
       return c.json({ error: "model is required" }, 400);
@@ -54,6 +57,7 @@ export function agentRoutes(agentStore: AgentStore) {
     const agent = await agentStore.create({
       tenantId: tenant.tenantId,
       name,
+      description,
       model,
       system,
       runtime: runtime as Runtime,
@@ -144,8 +148,13 @@ export function agentRoutes(agentStore: AgentStore) {
       }
     }
 
+    if (body.description !== undefined && typeof body.description !== "string") {
+      return c.json({ error: "description must be a string" }, 400);
+    }
+
     const updateInput: Record<string, unknown> = {};
     if (body.name !== undefined) updateInput.name = body.name;
+    if (body.description !== undefined) updateInput.description = body.description;
     if (body.model !== undefined) updateInput.model = body.model;
     if (body.system !== undefined) updateInput.system = body.system;
     if (body.runtime !== undefined) updateInput.runtime = body.runtime;

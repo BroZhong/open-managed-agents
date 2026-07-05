@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
   id           TEXT PRIMARY KEY,
   tenant_id    TEXT NOT NULL,
   name         TEXT NOT NULL,
+  description  TEXT,
   model        TEXT NOT NULL,
   system       TEXT NOT NULL,
   runtime      TEXT NOT NULL,

@@ -20,6 +20,7 @@ class InMemoryAgentStore implements AgentStore {
       id: `agent_${this.nextId++}`,
       tenantId: input.tenantId,
       name: input.name,
+      description: input.description,
       model: input.model,
       system: input.system,
       runtime: input.runtime,
@@ -65,6 +66,7 @@ class InMemoryAgentStore implements AgentStore {
     if (!agent) return null;
 
     if (input.name !== undefined) agent.name = input.name;
+    if (input.description !== undefined) agent.description = input.description;
     if (input.model !== undefined) agent.model = input.model;
     if (input.system !== undefined) agent.system = input.system;
     if (input.runtime !== undefined) agent.runtime = input.runtime;
@@ -129,6 +131,43 @@ describe("POST /v1/agents", () => {
     expect(body.system).toBe("You are helpful");
     expect(body.runtime).toBe("claude-code");
     expect(body.tenantId).toBe("dev");
+  });
+
+  it("creates an agent with an optional description", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "My Agent",
+        description: "Handles short-drama scripts",
+        model: "claude-3",
+        system: "You are helpful",
+        runtime: "claude-code",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.description).toBe("Handles short-drama scripts");
+  });
+
+  it("returns 400 when description is not a string", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "My Agent",
+        description: 42,
+        model: "claude-3",
+        system: "You are helpful",
+        runtime: "claude-code",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("description must be a string");
   });
 
   it("returns 400 when name is missing", async () => {
@@ -475,6 +514,52 @@ describe("POST /v1/agents/:id (update)", () => {
     expect(body.name).toBe("Updated Agent");
     expect(body.model).toBe("claude-3");
     expect(body.runtime).toBe("claude-code");
+  });
+
+  it("updates the description (and can clear it with an empty string)", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      description: "Initial blurb",
+      model: "claude-3",
+      system: "You are helpful",
+      runtime: "claude-code",
+    });
+
+    const set = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "New blurb" }),
+    });
+    expect(set.status).toBe(200);
+    expect((await set.json()).description).toBe("New blurb");
+
+    const cleared = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "" }),
+    });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json()).description).toBe("");
+  });
+
+  it("returns 400 when update description is not a string", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "You are helpful",
+      runtime: "claude-code",
+    });
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: 42 }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("description must be a string");
   });
 
   it("updates runtime field", async () => {
