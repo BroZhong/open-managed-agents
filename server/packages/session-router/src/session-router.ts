@@ -228,6 +228,7 @@ export class SessionRouter {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
       image: agentConfig.sandbox?.image,
+      env: agentConfig.sandbox?.env,
     };
   }
 
