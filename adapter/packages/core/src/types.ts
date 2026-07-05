@@ -146,6 +146,17 @@ export type SpanEvent =
 export interface AgentMessageEvent extends BaseEvent {
   type: "agent.message";
   content: ContentBlock[];
+  /**
+   * Origin model metadata for this assistant turn (ADR-0003). Optional so
+   * existing producers/persisted events remain valid; when a runtime knows
+   * which model produced the message it records the provider/api/model here so
+   * a later per-turn history rebuild can keep tool-call ids byte-stable for
+   * same-model turns and normalize only across a model switch. Absent for
+   * legacy events — the worst case is a safe cross-model normalization pass.
+   */
+  provider?: string;
+  api?: string;
+  model?: string;
 }
 
 export interface AgentThinkingEvent extends BaseEvent {

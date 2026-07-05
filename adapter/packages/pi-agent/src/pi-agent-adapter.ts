@@ -13,12 +13,13 @@ import type {
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+import type { Message } from "@earendil-works/pi-ai";
 import {
-  buildPromptWithHistory,
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
+import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
 
@@ -56,7 +57,20 @@ export interface PiResourceLoaderOptions {
 /** Everything the adapter needs to spin up a Pi session for one run(). */
 export interface SessionFactoryArgs {
   input: AdapterInput;
+  /**
+   * The current turn's user prompt text ONLY. Prior turns are no longer
+   * flattened into this string (ADR-0003) — they are rebuilt as structured
+   * {@link SessionFactoryArgs.historyMessages} and seeded into the session.
+   */
   prompt: string;
+  /**
+   * Structured conversation history rebuilt from `input.history` via
+   * {@link eventLogToAgentMessages} (ADR-0003). The real SDK path seeds these
+   * into an in-memory `SessionManager` (via `appendMessage`) before
+   * `createAgentSession`, so prior text / tool calls / tool results are in the
+   * model's context on the first `prompt()`. Empty for the first turn.
+   */
+  historyMessages: Message[];
   /** Resolved from `input.agent.model`; opaque Pi Model. */
   model: unknown;
   /** True when a per-run() ToolExecutor was injected. */
@@ -119,11 +133,16 @@ export class PiAgentAdapter implements Adapter {
 
     let session: PiSessionLike | undefined;
     try {
-      const rawPrompt = input.message.content
+      const prompt = input.message.content
         .filter((b) => b.type === "text")
         .map((b) => (b as { type: "text"; text: string }).text)
         .join("");
-      const prompt = buildPromptWithHistory(rawPrompt, input.history);
+
+      // Rebuild structured history from the event log (ADR-0003). Prior turns —
+      // text, tool calls, and tool results — are replayed into the session so
+      // they survive into the model's context via the Pi provider layer, rather
+      // than being flattened into the prompt string. Empty on the first turn.
+      const historyMessages = eventLogToAgentMessages(input.history);
 
       const model = resolveModel(this.model ?? input.agent.model);
       const hasToolExecutor = input.toolExecutor !== undefined;
@@ -132,6 +151,7 @@ export class PiAgentAdapter implements Adapter {
       session = await this.createSession({
         input,
         prompt,
+        historyMessages,
         model,
         hasToolExecutor,
         resourceLoaderOptions,
@@ -221,9 +241,20 @@ export class PiAgentAdapter implements Adapter {
     });
     await resourceLoader.reload();
 
+    // Seed the rebuilt structured history into an in-memory SessionManager
+    // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
+    // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
+    // at construction, loading this history into the LLM context before the
+    // first `prompt()`. `persist = false`, so nothing is written to disk — the
+    // event log stays the sole authoritative store.
+    const sessionManager = SessionManager.inMemory();
+    for (const message of args.historyMessages) {
+      sessionManager.appendMessage(message);
+    }
+
     const { session } = await createAgentSession({
       model: args.model as never,
-      sessionManager: SessionManager.inMemory(),
+      sessionManager,
       resourceLoader,
       ...(customTools
         ? { customTools, noTools: "builtin" as const }

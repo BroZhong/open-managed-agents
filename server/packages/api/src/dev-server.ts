@@ -383,6 +383,7 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     toolExecutorFactory,
+    agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,
     skillArtifactStore,

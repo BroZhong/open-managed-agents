@@ -18,9 +18,10 @@ import {
 export class PiEventTranslator {
   private spanStarted = false;
   private currentModel = "";
+  private currentProvider = "";
+  private currentApi = "";
   private textAccumulator = "";
   private thinkingAccumulator = "";
-  private toolUseIds = new Map<string, string>();
 
   processEvent(event: AgentSessionEvent): SessionEvent[] {
     const events: SessionEvent[] = [];
@@ -33,8 +34,14 @@ export class PiEventTranslator {
             const msg = event.message as {
               model?: string;
               provider?: string;
+              api?: string;
             };
             this.currentModel = msg.model || msg.provider || "unknown";
+            // Capture the origin model metadata so `agent.message` can carry it
+            // (ADR-0003): a later per-turn history rebuild uses provider/api/model
+            // to keep tool-call ids byte-stable for same-model turns.
+            this.currentProvider = msg.provider ?? "";
+            this.currentApi = msg.api ?? "";
             events.push({
               id: generateEventId(),
               timestamp: generateTimestamp(),
@@ -83,6 +90,13 @@ export class PiEventTranslator {
               timestamp: generateTimestamp(),
               type: "agent.message",
               content: [{ type: "text", text: this.textAccumulator }],
+              ...(this.currentProvider ? { provider: this.currentProvider } : {}),
+              ...(this.currentApi ? { api: this.currentApi } : {}),
+              // The raw origin model id (not the `model || provider` fallback
+              // used for the span event) so it round-trips into history.
+              ...(this.currentModel && this.currentModel !== "unknown"
+                ? { model: this.currentModel }
+                : {}),
             } as SessionEvent);
             break;
 
@@ -162,10 +176,8 @@ export class PiEventTranslator {
             } as SessionEvent);
             const toolCall = ame.toolCall;
             if (toolCall) {
-              const toolEventId = generateEventId();
-              this.toolUseIds.set(toolCall.id, toolEventId);
               events.push({
-                id: toolEventId,
+                id: generateEventId(),
                 timestamp: generateTimestamp(),
                 type: "agent.tool_use",
                 toolUseId: toolCall.id,
@@ -184,12 +196,15 @@ export class PiEventTranslator {
       }
 
       case "tool_execution_end": {
-        const parentId = this.toolUseIds.get(event.toolCallId) ?? event.toolCallId;
+        // Pair on the provider's tool-call id (ADR-0003): the same id the
+        // matching `agent.tool_use` carries in its `toolUseId`. This makes the
+        // event log self-describing — `toolCall.id` ↔ `toolResult.toolCallId`
+        // survives a history rebuild — and lets consumers link result→use by id.
         events.push({
           id: generateEventId(),
           timestamp: generateTimestamp(),
           type: "agent.tool_result",
-          toolUseId: parentId,
+          toolUseId: event.toolCallId,
           content: [
             {
               type: "text",

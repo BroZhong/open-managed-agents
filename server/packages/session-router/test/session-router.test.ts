@@ -694,4 +694,124 @@ describe("SessionRouter", () => {
       await run;
     });
   });
+
+  // ─── #59: existing conversations follow the Agent's current model ──────────
+  describe("handleNewEvent - live model resolution (#59)", () => {
+    // Captures the model the adapter was invoked with for each run.
+    function createModelCapturingAdapter(models: string[]): Adapter {
+      return {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          models.push(input.agent.model);
+          yield {
+            id: "evt_1",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "ok" }],
+          };
+        },
+      };
+    }
+
+    // Minimal AgentStore whose current model is mutable, so a test can change
+    // the Agent's model between turns.
+    function createFakeAgentStore(initial: Agent) {
+      let current: Agent = initial;
+      const store = {
+        async getById(id: string): Promise<Agent | null> {
+          return id === current.id ? current : null;
+        },
+        // Unused by the router; present to satisfy the interface shape.
+        async create() {
+          throw new Error("not implemented");
+        },
+        async list() {
+          throw new Error("not implemented");
+        },
+        async update() {
+          throw new Error("not implemented");
+        },
+        async delete() {
+          throw new Error("not implemented");
+        },
+        setModel(model: string) {
+          current = { ...current, model };
+        },
+      };
+      return store;
+    }
+
+    async function runOneTurn(
+      router: SessionRouter,
+      sessionStore: InMemorySessionStore,
+      pendingEventStore: InMemoryPendingEventStore,
+      sessionId: string,
+      agent: Agent,
+    ) {
+      await pendingEventStore.enqueue(sessionId, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "hi" }] },
+        sessionThreadId: "sthr_primary",
+      });
+      await router.handleNewEvent(sessionId, agent);
+      // The router transitions the session to idle when the pending queue
+      // empties; ensure it before the next turn drains.
+      await sessionStore.updateStatus(sessionId, "idle");
+    }
+
+    it("resolves the model from the Agent's current config, not the session snapshot", async () => {
+      const models: string[] = [];
+      const adapter = createModelCapturingAdapter(models);
+      const eventLogStore = new InMemoryEventLogStore();
+      const pendingEventStore = new InMemoryPendingEventStore();
+      const sessionStore = new InMemorySessionStore();
+      const eventStreamHub = new InProcessEventStreamHub();
+      const agentStore = createFakeAgentStore({ ...testAgent });
+
+      const router = new SessionRouter({
+        eventLogStore,
+        pendingEventStore,
+        sessionStore,
+        eventStreamHub,
+        resolveAdapter: () => adapter,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        agentStore: agentStore as any,
+      });
+
+      // Session snapshots the Agent (model "claude-3") at creation.
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: { ...testAgent },
+        workspaceId: "ws_test",
+      });
+
+      // First turn runs on the snapshot model.
+      await runOneTurn(router, sessionStore, pendingEventStore, session.id, session.agent);
+      expect(models[0]).toBe("claude-3");
+
+      // Change the Agent's model. The Session still carries the old snapshot.
+      agentStore.setModel("claude-opus-4-8");
+      expect(session.agent.model).toBe("claude-3");
+
+      // Next turn on the SAME existing session must use the new live model.
+      await runOneTurn(router, sessionStore, pendingEventStore, session.id, session.agent);
+      expect(models[1]).toBe("claude-opus-4-8");
+    });
+
+    it("falls back to the snapshot model when no agent store is configured", async () => {
+      const models: string[] = [];
+      const adapter = createModelCapturingAdapter(models);
+      const { pendingEventStore, sessionStore, router } = createTestDeps(adapter);
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: { ...testAgent },
+        workspaceId: "ws_test",
+      });
+
+      await runOneTurn(router, sessionStore, pendingEventStore, session.id, session.agent);
+      expect(models[0]).toBe("claude-3");
+    });
+  });
 });

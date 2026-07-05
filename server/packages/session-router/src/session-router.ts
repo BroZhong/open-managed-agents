@@ -8,6 +8,7 @@ import type {
   StoredEvent,
   Agent,
   AgentFileStore,
+  AgentStore,
   SkillStore,
   SkillArtifactStore,
 } from "@oma-server/store";
@@ -76,6 +77,15 @@ export interface SessionRouterDeps {
    */
   agentFileStore?: AgentFileStore;
   /**
+   * The tenant's Agent config store. When present, the router resolves the
+   * running Agent's **current model** per turn (issue #59 / ADR-0003 §3),
+   * rather than using the model snapshotted onto the Session at creation. This
+   * makes an Agent model change take effect on existing conversations. Only the
+   * model is resolved live; all other Session-snapshot semantics are unchanged.
+   * Absent ⇒ the snapshot model is used (prior behavior).
+   */
+  agentStore?: AgentStore;
+  /**
    * Tenant Skill Library metadata + S3 bodies. When both are present, the
    * router materializes the Agent's *equipped* Skills (`agent.skills`) into a
    * Host-side temp directory per turn, passes them as `skillPaths`, and cleans
@@ -101,6 +111,7 @@ export class SessionRouter {
   private readonly resolveAdapter: (runtime: string) => Adapter;
   private readonly toolExecutorFactory?: ToolExecutorFactory;
   private readonly agentFileStore?: AgentFileStore;
+  private readonly agentStore?: AgentStore;
   private readonly skillStore?: SkillStore;
   private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
@@ -121,6 +132,7 @@ export class SessionRouter {
     this.resolveAdapter = deps.resolveAdapter;
     this.toolExecutorFactory = deps.toolExecutorFactory;
     this.agentFileStore = deps.agentFileStore;
+    this.agentStore = deps.agentStore;
     this.skillStore = deps.skillStore;
     this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
@@ -372,6 +384,14 @@ export class SessionRouter {
       const appendSystemPrompt = await this.assembleAgentFiles(agentConfig);
       const skills = await this.materializeSkills(agentConfig);
 
+      // Resolve the model live from the Agent's *current* config (issue #59 /
+      // ADR-0003 §3), not the model snapshotted onto the Session at creation.
+      // Only the model is resolved live; all other agentConfig fields keep the
+      // snapshot. Because a fresh in-memory Pi session is rebuilt per turn and
+      // prior assistant messages carry their own origin provider/api/model, the
+      // provider layer normalizes tool-call ids correctly across a model switch.
+      const model = await this.resolveCurrentModel(agentConfig);
+
       const adapterInput = this.buildAdapterInput(
         sessionId,
         turnId,
@@ -381,6 +401,7 @@ export class SessionRouter {
         toolExecutor,
         appendSystemPrompt,
         skills.paths,
+        model,
       );
 
       // The Adapter is a pure translator: it runs directly and routes any tool
@@ -507,6 +528,18 @@ export class SessionRouter {
     // terminateSession → disposeExecutor.
   }
 
+  /**
+   * The model to run this turn on. Resolved from the Agent's **current** config
+   * (via {@link agentStore}) so a model change takes effect on existing
+   * conversations (issue #59). Falls back to the Session-snapshot model when no
+   * agent store is configured or the Agent has since been deleted.
+   */
+  private async resolveCurrentModel(agentConfig: Agent): Promise<string> {
+    if (!this.agentStore) return agentConfig.model;
+    const current = await this.agentStore.getById(agentConfig.id);
+    return current?.model ?? agentConfig.model;
+  }
+
   private buildAdapterInput(
     sessionId: string,
     turnId: string,
@@ -516,6 +549,7 @@ export class SessionRouter {
     toolExecutor?: ToolExecutor,
     appendSystemPrompt?: string[],
     skillPaths?: string[],
+    model: string = agentConfig.model,
   ): AdapterInput {
     const eventData = promotedEvent.data as Record<string, unknown> | undefined;
     let content: ContentBlock[];
@@ -543,7 +577,7 @@ export class SessionRouter {
       turnId,
       message,
       agent: {
-        model: agentConfig.model,
+        model,
         system: agentConfig.system,
         tools: agentConfig.tools,
         mcpServers: agentConfig.mcpServers,

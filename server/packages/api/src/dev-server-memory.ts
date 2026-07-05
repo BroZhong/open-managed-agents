@@ -348,6 +348,7 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
+    agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,
     skillArtifactStore: stores.skillArtifactStore,
