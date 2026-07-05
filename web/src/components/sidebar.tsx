@@ -27,7 +27,11 @@ import {
   useCreateSession,
   type Session,
 } from "@/lib/hooks/use-sessions"
-import { useWorkspaces, type Workspace } from "@/lib/hooks/use-workspaces"
+import {
+  useWorkspaces,
+  useCreateWorkspace,
+  type Workspace,
+} from "@/lib/hooks/use-workspaces"
 import { StatusBadge } from "@/components/status-badge"
 
 const STORAGE_KEY = "oma_sidebar_collapsed"
@@ -234,9 +238,13 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
   const { data: sessions } = useAgentSessions(agentId)
   const { data: workspaces } = useWorkspaces()
   const createSession = useCreateSession()
+  const createWorkspace = useCreateWorkspace()
 
   const [workspacesOpen, setWorkspacesOpen] = useState(true)
   const [openWorkspaces, setOpenWorkspaces] = useState<Record<string, boolean>>({})
+  // Inline "new named Workspace" input, toggled by the WORKSPACES header `+`.
+  const [newWorkspaceName, setNewWorkspaceName] = useState<string | null>(null)
+  const creatingWorkspace = createWorkspace.isPending || createSession.isPending
 
   if (collapsed) {
     return (
@@ -273,6 +281,28 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
     createSession.mutate(agentId, {
       onSuccess: (session) => navigate(`/sessions/${session.id}`),
       onError: (err) => toast.error(err.message || "Failed to start chat"),
+    })
+  }
+
+  // Create a named Workspace, then a Session bound to it, then navigate in.
+  function submitNewWorkspace() {
+    const name = newWorkspaceName?.trim()
+    if (!name || creatingWorkspace) return
+    createWorkspace.mutate(name, {
+      onSuccess: (workspace) => {
+        setWorkspacesOpen(true)
+        createSession.mutate(
+          { agentId, workspaceId: workspace.id },
+          {
+            onSuccess: (session) => {
+              setNewWorkspaceName(null)
+              navigate(`/sessions/${session.id}`)
+            },
+            onError: (err) => toast.error(err.message || "Failed to start chat"),
+          },
+        )
+      },
+      onError: (err) => toast.error(err.message || "Failed to create workspace"),
     })
   }
 
@@ -328,18 +358,56 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
 
       {/* workspaces — named Workspaces this Agent uses (collapsible). */}
       <div className="pt-2">
-        <button
-          type="button"
-          onClick={() => setWorkspacesOpen((o) => !o)}
-          className="flex w-full items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400 hover:text-[var(--color-fg-muted)]"
-        >
-          {workspacesOpen ? (
-            <ChevronDown className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5" />
-          )}
-          <span>workspaces</span>
-        </button>
+        <div className="flex items-center pr-1">
+          <button
+            type="button"
+            onClick={() => setWorkspacesOpen((o) => !o)}
+            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400 hover:text-[var(--color-fg-muted)]"
+          >
+            {workspacesOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            <span>workspaces</span>
+          </button>
+          <Tooltip content="New workspace">
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspacesOpen(true)
+                setNewWorkspaceName((v) => (v === null ? "" : v))
+              }}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+        {workspacesOpen && newWorkspaceName !== null && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              submitNewWorkspace()
+            }}
+            className="px-2.5 py-1"
+          >
+            <input
+              autoFocus
+              value={newWorkspaceName}
+              onChange={(e) => setNewWorkspaceName(e.target.value)}
+              onBlur={() => {
+                if (!newWorkspaceName.trim() && !creatingWorkspace) setNewWorkspaceName(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setNewWorkspaceName(null)
+              }}
+              disabled={creatingWorkspace}
+              placeholder="Workspace name…"
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-xs text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
+            />
+          </form>
+        )}
         {workspacesOpen && (
           <div className="space-y-0.5">
             {usedWorkspaces.length === 0 && (
@@ -381,10 +449,22 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
 
       {/* chats — flat list of loose (anonymous-workspace) sessions. */}
       <div className="pt-2">
-        <p className="flex items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
-          <MessagesSquare className="h-3.5 w-3.5" />
-          chats
-        </p>
+        <div className="flex items-center pr-1">
+          <p className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+            <MessagesSquare className="h-3.5 w-3.5" />
+            chats
+          </p>
+          <Tooltip content="New chat">
+            <button
+              type="button"
+              onClick={newChat}
+              disabled={createSession.isPending}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
         {looseChats.length === 0 && (
           <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
         )}

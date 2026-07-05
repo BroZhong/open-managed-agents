@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
 /**
@@ -23,5 +23,23 @@ export function useWorkspaces() {
     queryKey: ["workspaces"],
     queryFn: () =>
       apiFetch<WorkspacesResponse>("/v1/workspaces").then((r) => r.data),
+  });
+}
+
+/**
+ * Create a named Workspace (POST /v1/workspaces, added in #55). Invalidates the
+ * ["workspaces"] list on success so the sidebar's "workspaces" group refreshes.
+ */
+export function useCreateWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      apiFetch<Workspace>("/v1/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    },
   });
 }

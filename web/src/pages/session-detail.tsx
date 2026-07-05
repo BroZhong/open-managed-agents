@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FolderOpen, PanelRight, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +23,7 @@ export default function SessionDetailPage() {
   const { events, status, isConnected, fileChange } = useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
 
   // Remove optimistic events once real ones arrive via SSE
@@ -127,6 +128,22 @@ export default function SessionDetailPage() {
             </span>
           )}
         </div>
+        {activeTab === "conversation" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto"
+            onClick={() => setWorkspaceOpen((v) => !v)}
+            title={workspaceOpen ? "Hide workspace" : "Show workspace"}
+            aria-pressed={workspaceOpen}
+          >
+            {workspaceOpen ? (
+              <PanelRightClose className="h-4 w-4" />
+            ) : (
+              <PanelRight className="h-4 w-4" />
+            )}
+          </Button>
+        )}
       </div>
 
       {/* Tab bar */}
@@ -153,12 +170,36 @@ export default function SessionDetailPage() {
 
       {/* Content */}
       {activeTab === "conversation" ? (
-        <>
-          <div className="flex-1 overflow-hidden">
-            <ConversationView events={displayEvents} sessionStatus={status} />
+        <div className="flex min-h-0 flex-1">
+          {/* Conversation column */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex-1 overflow-hidden">
+              <ConversationView events={displayEvents} sessionStatus={status} />
+            </div>
+            <MessageInput onSend={handleSend} disabled={inputDisabled} pendingMessages={status === "running" ? unconfirmedEvents : []} />
           </div>
-          <MessageInput onSend={handleSend} disabled={inputDisabled} pendingMessages={status === "running" ? unconfirmedEvents : []} />
-        </>
+          {/* Slide-out Workspace panel */}
+          <div
+            className={cn(
+              "flex-shrink-0 overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-bg)] transition-all duration-200 ease-in-out",
+              workspaceOpen ? "w-[28rem]" : "w-0",
+            )}
+          >
+            {workspaceOpen && (
+              <div className="flex h-full w-[28rem] flex-col">
+                <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5">
+                  <FolderOpen className="h-4 w-4 text-[var(--color-fg-muted)]" />
+                  <span className="text-sm font-medium text-[var(--color-fg)]">
+                    Workspace
+                  </span>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <WorkspacePanel sessionId={id} refreshKey={fileChange.nonce} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       ) : activeTab === "timeline" ? (
         <div className="flex-1 overflow-hidden">
           <TimelineView events={events} />

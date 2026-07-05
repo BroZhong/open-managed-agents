@@ -35,6 +35,10 @@ export function MessageInput({ onSend, disabled = false, pendingMessages = [] }:
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // Ignore Enter while an IME is composing (Chinese/Japanese/Korean):
+    // pressing Enter to confirm a candidate must never send. keyCode 229 is a
+    // belt-and-suspenders guard for browsers that don't set isComposing.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();

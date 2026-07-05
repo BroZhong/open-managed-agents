@@ -47,14 +47,30 @@ export function useSession(id: string) {
   });
 }
 
+/**
+ * Variables for {@link useCreateSession}. Either pass a bare agent id (starts a
+ * loose chat in a fresh anonymous Workspace) or an object binding the Session to
+ * a specific Workspace. `workspaceId`/`workspaceName` map to the server's
+ * `workspace_id`/`workspace_name` fields on `POST /v1/sessions`.
+ */
+export type CreateSessionVariables =
+  | string
+  | { agentId: string; workspaceId?: string; workspaceName?: string };
+
 export function useCreateSession() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (agentId: string) =>
-      apiFetch<Session>("/v1/sessions", {
+    mutationFn: (vars: CreateSessionVariables) => {
+      const { agentId, workspaceId, workspaceName } =
+        typeof vars === "string" ? { agentId: vars, workspaceId: undefined, workspaceName: undefined } : vars;
+      const body: Record<string, string> = { agent: agentId };
+      if (workspaceId) body.workspace_id = workspaceId;
+      if (workspaceName) body.workspace_name = workspaceName;
+      return apiFetch<Session>("/v1/sessions", {
         method: "POST",
-        body: JSON.stringify({ agent: agentId }),
-      }),
+        body: JSON.stringify(body),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
