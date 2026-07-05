@@ -26,7 +26,7 @@ import {
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -37,6 +37,16 @@ if (proxyUrl) {
   setGlobalDispatcher(new ProxyAgent(proxyUrl));
   console.log(`Global fetch proxy enabled → ${proxyUrl}`);
 }
+
+// S3 (Supabase Storage) lives on the internal VPC and must NOT traverse the
+// egress proxy — the proxy is for external LLM calls only and closes internal
+// connections. Give the S3 stores a direct-dispatcher fetch that bypasses the
+// global proxy dispatcher. When no proxy is set this is just plain fetch.
+const directDispatcher = new UndiciAgent();
+const directFetch: typeof fetch = proxyUrl
+  ? ((input, init) =>
+      fetch(input, { ...(init ?? {}), dispatcher: directDispatcher } as RequestInit)) as typeof fetch
+  : fetch;
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -321,6 +331,7 @@ async function main() {
       endpoint: s3Endpoint,
       serviceKey: s3ServiceKey,
       bucket: process.env.S3_BUCKET || "workspace",
+      fetch: directFetch,
     });
     console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
   } else {
@@ -335,6 +346,7 @@ async function main() {
       endpoint: s3Endpoint,
       serviceKey: s3ServiceKey,
       bucket: process.env.S3_BUCKET || "workspace",
+      fetch: directFetch,
     });
   }
 
