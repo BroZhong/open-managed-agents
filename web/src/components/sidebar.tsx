@@ -1,10 +1,22 @@
 import { useState, useEffect, createContext, useContext } from "react"
-import { useLocation, Link } from "react-router"
-import { MessageSquare, Bot, Key, PanelLeftClose, PanelLeftOpen, LogOut } from "lucide-react"
+import { useLocation, useParams, Link } from "react-router"
+import {
+  MessageSquare,
+  Bot,
+  Key,
+  PanelLeftClose,
+  PanelLeftOpen,
+  LogOut,
+  ChevronLeft,
+  Plus,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Tooltip } from "@/components/ui/tooltip"
+import { useAgent } from "@/lib/hooks/use-agents"
+import { useSession, useAgentSessions } from "@/lib/hooks/use-sessions"
+import { StatusBadge } from "@/components/status-badge"
 
 const STORAGE_KEY = "oma_sidebar_collapsed"
 
@@ -37,12 +49,29 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Resolve the Agent whose context the sidebar should show, from the route:
+ * `/agents/:id` directly, or `/sessions/:id` via the session's `agentId`.
+ * Returns null in the global context (Agents list, API keys, …).
+ */
+function useActiveAgentId(): string | null {
+  const location = useLocation()
+  const params = useParams()
+  const onAgent = location.pathname.startsWith("/agents/") && !!params.id
+  const onSession = location.pathname.startsWith("/sessions/") && !!params.id
+  const { data: session } = useSession(onSession ? (params.id as string) : "")
+  if (onAgent) return params.id as string
+  if (onSession && session) return session.agentId
+  return null
+}
+
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(() => {
     return localStorage.getItem(STORAGE_KEY) === "true"
   })
   const location = useLocation()
   const { logout } = useAuth()
+  const activeAgentId = useActiveAgentId()
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(collapsed))
@@ -64,40 +93,45 @@ export function Sidebar() {
         </span>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-0.5 px-2 py-2">
-        {navItems.map((item) => {
-          const isActive =
-            location.pathname === item.path ||
-            location.pathname.startsWith(item.path + "/")
-          const Icon = item.icon
+      {/* Navigation — swaps between the global context (Agents list, …) and
+          the in-Agent context (the current Agent + its Sessions). */}
+      <nav className="flex-1 overflow-y-auto space-y-0.5 px-2 py-2">
+        {activeAgentId ? (
+          <AgentContextNav agentId={activeAgentId} collapsed={collapsed} />
+        ) : (
+          navItems.map((item) => {
+            const isActive =
+              location.pathname === item.path ||
+              location.pathname.startsWith(item.path + "/")
+            const Icon = item.icon
 
-          const linkContent = (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
-                  : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
-              )}
-            >
-              <Icon className="h-[18px] w-[18px] shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </Link>
-          )
-
-          if (collapsed) {
-            return (
-              <Tooltip key={item.path} content={item.label}>
-                {linkContent}
-              </Tooltip>
+            const linkContent = (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+                    : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
+                )}
+              >
+                <Icon className="h-[18px] w-[18px] shrink-0" />
+                {!collapsed && <span>{item.label}</span>}
+              </Link>
             )
-          }
 
-          return linkContent
-        })}
+            if (collapsed) {
+              return (
+                <Tooltip key={item.path} content={item.label}>
+                  {linkContent}
+                </Tooltip>
+              )
+            }
+
+            return linkContent
+          })
+        )}
       </nav>
 
       {/* Bottom area */}
@@ -147,5 +181,88 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+  )
+}
+
+/**
+ * In-Agent sidebar context: a "back to all Agents" switcher, the current
+ * Agent's name, "New Session", and this Agent's Session list. Renders in place
+ * of the global nav whenever the route is scoped to an Agent.
+ */
+function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: boolean }) {
+  const location = useLocation()
+  const { data: agent } = useAgent(agentId)
+  const { data: sessions } = useAgentSessions(agentId)
+
+  if (collapsed) {
+    return (
+      <Tooltip content="All Agents">
+        <Link
+          to="/agents"
+          className="flex items-center justify-center rounded-lg px-2.5 py-2 text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]"
+        >
+          <ChevronLeft className="h-[18px] w-[18px]" />
+        </Link>
+      </Tooltip>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <Link
+        to="/agents"
+        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-medium text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        All Agents
+      </Link>
+
+      <Link
+        to={`/agents/${agentId}`}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-semibold transition-colors",
+          location.pathname === `/agents/${agentId}`
+            ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+            : "text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)]",
+        )}
+      >
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+          <Bot className="h-4 w-4" />
+        </span>
+        <span className="truncate">{agent?.name ?? "Agent"}</span>
+      </Link>
+
+      <Link
+        to={`/agents/${agentId}`}
+        className="flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium text-[var(--color-accent)] hover:bg-[var(--color-accent-muted)]"
+      >
+        <Plus className="h-[18px] w-[18px] shrink-0" />
+        <span>New Session</span>
+      </Link>
+
+      <div className="pt-2">
+        <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+          Sessions
+        </p>
+        {sessions?.length === 0 && (
+          <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
+        )}
+        {sessions?.map((s) => (
+          <Link
+            key={s.id}
+            to={`/sessions/${s.id}`}
+            className={cn(
+              "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
+              location.pathname === `/sessions/${s.id}`
+                ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+                : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]",
+            )}
+          >
+            <span className="truncate font-mono">{s.id}</span>
+            <StatusBadge status={s.status} />
+          </Link>
+        ))}
+      </div>
+    </div>
   )
 }

@@ -42,8 +42,9 @@ export function agentFileRoutes(agentFileStore: AgentFileStore, agentStore: Agen
     const owned = await ownedAgent(c);
     if (!owned) return c.json({ error: "Not found" }, 404);
 
+    // Agent Files are a small fixed set — returned in full, never paginated.
     const files = await agentFileStore.list(owned.tenantId, owned.agentId);
-    return c.json({ data: files, has_more: false, next_cursor: null });
+    return c.json({ data: files, has_more: false });
   });
 
   // GET /v1/agents/:id/files/:filename — read one File's content

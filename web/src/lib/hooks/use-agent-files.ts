@@ -14,7 +14,7 @@ export interface AgentFile {
 interface AgentFileListResponse {
   data: { filename: string; updatedAt: string }[];
   has_more: boolean;
-  next_cursor: string | null;
+  next_cursor?: string | null;
 }
 
 export function useAgentFile(agentId: string, filename: string) {
