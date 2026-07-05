@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   tenant_id      TEXT NOT NULL,
   agent_id       TEXT NOT NULL,
   status         TEXT NOT NULL,
+  title          TEXT,
   agent          JSONB NOT NULL,
   workspace_id   TEXT NOT NULL,
   created_at     TIMESTAMPTZ NOT NULL,

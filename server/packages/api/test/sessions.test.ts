@@ -132,6 +132,14 @@ class InMemorySessionStore implements SessionStore {
     return session;
   }
 
+  async setTitle(id: string, title: string): Promise<Session | null> {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return null;
+    session.title = title;
+    session.updatedAt = new Date();
+    return session;
+  }
+
   async terminate(id: string): Promise<Session | null> {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return null;

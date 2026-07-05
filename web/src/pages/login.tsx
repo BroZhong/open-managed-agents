@@ -29,7 +29,7 @@ export default function LoginPage() {
       }
 
       login(apiKey);
-      navigate("/sessions");
+      navigate("/");
     } catch {
       setError("Cannot reach server");
     } finally {

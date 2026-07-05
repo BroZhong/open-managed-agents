@@ -5,6 +5,10 @@ export interface Session {
   id: string;
   agentId: string;
   status: "idle" | "running" | "terminated";
+  /** Snapshot of the user's first message; the console shows `title ?? id`. */
+  title?: string;
+  /** The Workspace this Session is bound to (used to group by workspace). */
+  workspaceId: string;
   agent: { id: string; name: string; model: string; runtime: string };
   createdAt: string;
   updatedAt: string;

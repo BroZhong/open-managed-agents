@@ -3,7 +3,6 @@ import { useAuth } from "@/lib/auth";
 import LoginPage from "@/pages/login";
 import { AppLayout } from "@/components/app-layout";
 import OverviewPage from "@/pages/overview";
-import SessionsPage from "@/pages/sessions";
 import SessionDetailPage from "@/pages/session-detail";
 import AgentsPage from "@/pages/agents";
 import AgentDetailPage from "@/pages/agent-detail";
@@ -33,7 +32,7 @@ export default function App() {
       >
         <Route index element={<OverviewPage />} />
         <Route path="/overview" element={<Navigate to="/" replace />} />
-        <Route path="/sessions" element={<SessionsPage />} />
+        {/* Sessions are only reached through an Agent — no global list route. */}
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/agents/:id" element={<AgentDetailPage />} />

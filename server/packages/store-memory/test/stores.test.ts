@@ -79,6 +79,22 @@ describe("createMemoryStores", () => {
       expect(terminated?.terminatedAt).toBeDefined();
       expect(terminated?.workspaceId).toBe(ws.id);
     });
+
+    it("has no title until one is set, then setTitle persists it", async () => {
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const ws = await stores.workspaceStore.create({ tenantId: "t1" });
+      const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
+      expect(session.title).toBeUndefined();
+
+      const titled = await stores.sessionStore.setTitle(session.id, "Hello there");
+      expect(titled?.title).toBe("Hello there");
+      const found = await stores.sessionStore.getById(session.id);
+      expect(found?.title).toBe("Hello there");
+    });
+
+    it("setTitle returns null for a non-existent session", async () => {
+      expect(await stores.sessionStore.setTitle("sess_missing", "x")).toBeNull();
+    });
   });
 
   describe("WorkspaceStore", () => {

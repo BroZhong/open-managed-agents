@@ -101,7 +101,9 @@ export default function SessionDetailPage() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate("/sessions")}
+          onClick={() =>
+            navigate(session ? `/agents/${session.agentId}` : "/agents")
+          }
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
