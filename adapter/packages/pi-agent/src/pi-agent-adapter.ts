@@ -1,12 +1,15 @@
 import {
   createAgentSession,
   DefaultResourceLoader,
+  formatSkillsForPrompt,
   getAgentDir,
+  loadSkills,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
   AgentSessionEvent,
   PromptOptions,
+  Skill,
 } from "@earendil-works/pi-coding-agent";
 import type {
   Adapter,
@@ -100,6 +103,29 @@ export function buildResourceLoaderOptions(
     additionalSkillPaths: agent.skillPaths ?? [],
     noContextFiles: true,
   };
+}
+
+/**
+ * Build the `<available_skills>` system-prompt section for the equipped Skills.
+ *
+ * Pi's own system-prompt builder only emits this section when a builtin tool
+ * named `read` is present. This adapter runs with `noTools: "builtin"` and
+ * custom Host-executor tools (`read_file`, `exec`, …), so that gate is never
+ * satisfied and the model is never told its equipped Skills exist — even though
+ * the Host materialized them. We therefore assemble the section ourselves from
+ * the loaded Skills and append it to the Host-owned system prompt, rewriting
+ * Pi's "read tool" wording to our `read_file` tool so the model uses the tool
+ * that actually exists.
+ *
+ * Returns `""` when there are no model-invocable Skills.
+ */
+export function buildSkillsPromptSection(skills: Skill[]): string {
+  const section = formatSkillsForPrompt(skills);
+  if (!section) return "";
+  // Pi's template says "Use the read tool to load a skill's file"; our builtin
+  // `read` tool is replaced by the custom `read_file` tool. Point the model at
+  // the tool it actually has.
+  return section.replace(/\bthe read tool\b/g, "the read_file tool");
 }
 
 export interface PiAgentAdapterOptions {
@@ -228,15 +254,45 @@ export class PiAgentAdapter implements Adapter {
       ? buildCustomTools(args.input.toolExecutor)
       : undefined;
 
+    const agentDir = getAgentDir();
+    const cwd = process.cwd();
+    const skillPaths = args.resourceLoaderOptions.additionalSkillPaths;
+
+    // Pi only injects the `<available_skills>` prompt section when a builtin
+    // `read` tool exists; with custom tools + `noTools: "builtin"` that gate
+    // never fires, so the equipped Skills would be invisible to the model even
+    // though the Host materialized them. When we run custom tools, assemble the
+    // section ourselves from the equipped Skill dirs and fold it into the
+    // Host-owned appendSystemPrompt, then pass `noSkills` so Pi does not also
+    // try (and skip) its own gated injection (see buildSkillsPromptSection).
+    let appendSystemPrompt = args.resourceLoaderOptions.appendSystemPrompt;
+    const injectSkillsIntoPrompt = Boolean(customTools) && skillPaths.length > 0;
+    if (injectSkillsIntoPrompt) {
+      const { skills } = loadSkills({
+        cwd,
+        agentDir,
+        skillPaths,
+        includeDefaults: false,
+      });
+      const skillsSection = buildSkillsPromptSection(skills);
+      if (skillsSection) {
+        appendSystemPrompt = [...appendSystemPrompt, skillsSection];
+      }
+    }
+
     // Inject the Host-assembled instructions + equipped Skills per run() via a
     // DefaultResourceLoader (ADR-0002: the Host owns *what* to inject; the
     // Adapter only points the runtime at it). `noContextFiles` keeps Pi from
     // auto-discovering cwd files — instructions come solely from the Host.
     const resourceLoader = new DefaultResourceLoader({
-      cwd: process.cwd(),
-      agentDir: getAgentDir(),
-      appendSystemPrompt: args.resourceLoaderOptions.appendSystemPrompt,
-      additionalSkillPaths: args.resourceLoaderOptions.additionalSkillPaths,
+      cwd,
+      agentDir,
+      appendSystemPrompt,
+      // When we inject the skills section ourselves (custom-tool path), skip
+      // Pi's own skill loading so the section is not duplicated / re-gated.
+      ...(injectSkillsIntoPrompt
+        ? { noSkills: true }
+        : { additionalSkillPaths: skillPaths }),
       noContextFiles: args.resourceLoaderOptions.noContextFiles,
     });
     await resourceLoader.reload();
