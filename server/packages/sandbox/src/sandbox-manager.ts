@@ -502,9 +502,31 @@ class SandboxSessionImpl implements SandboxSession {
     };
   }
 
-  /** Resolve a workspace-relative path to an absolute sandbox path. */
-  private resolve(rel: string): string {
-    const clean = normalizeRel(rel);
+  /**
+   * Resolve a tool path to an absolute sandbox path, following the
+   * sandbox-as-tool convention shared by E2B, opensandbox, and Anthropic's code
+   * execution tool: the sandbox is the trust boundary, so paths are taken at
+   * face value — no path-level escape guarding.
+   *
+   * An **absolute** path (leading `/`) is passed through untouched. Callers that
+   * speak absolute paths have already chosen their target, which may be
+   * *outside* `workspaceDir` — e.g. a Read-only Projection at `/skills/<id>`.
+   * The Pi adapter's tools (#80) run with `cwd = /workspace` and hand the
+   * executor a Pi-resolved absolute path, so a workspace file arrives as
+   * `/workspace/foo` and a projected Skill as `/skills/<id>/SKILL.md`; re-basing
+   * either under `workspaceDir` would send reads to `/workspace/skills/…` and
+   * make projected Skills unreadable (the invisible-Skill bug).
+   *
+   * A **relative** path is joined under `workspaceDir` — the workspace is simply
+   * the default root for relative access (E2B's persisted workdir plays the same
+   * role). This is a convenience default, not a security boundary: `..` is not
+   * rejected, because the sandbox — not this string rewrite — is the isolation
+   * boundary, and an escaping path only ever reaches other files inside the same
+   * disposable sandbox.
+   */
+  private resolve(path: string): string {
+    if (path.startsWith("/")) return path;
+    const clean = normalizeRel(path);
     return clean ? `${this.workspaceDir}/${clean}` : this.workspaceDir;
   }
 
@@ -518,11 +540,12 @@ class SandboxSessionImpl implements SandboxSession {
 
 /** Strip leading `./` and `/`, and reject `..` traversal out of the workspace. */
 function normalizeRel(path: string): string {
+  // Tidy a relative path for joining under workspaceDir: drop a leading `./`
+  // or `/`, and squash empty / `.` segments. No `..` guarding — the sandbox is
+  // the trust boundary (see resolve()), so a `..` only reaches another file
+  // inside the same disposable sandbox and is left for the OS to resolve.
   const trimmed = path.replace(/^\.\//, "").replace(/^\/+/, "");
   const segments = trimmed.split("/").filter((s) => s !== "" && s !== ".");
-  if (segments.some((s) => s === "..")) {
-    throw new Error(`path escapes workspace: ${path}`);
-  }
   return segments.join("/");
 }
 

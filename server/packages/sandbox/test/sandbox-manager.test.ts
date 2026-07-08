@@ -109,6 +109,34 @@ describe("SandboxManager / SandboxSession", () => {
     expect(provision.projected).toHaveLength(1);
   });
 
+  it("reads a projected Skill through the session primitives (absolute path is NOT re-based under workspace)", async () => {
+    // Regression: the Pi adapter's tools run with cwd=/workspace and hand the
+    // executor a Pi-resolved ABSOLUTE path — a workspace file as `/workspace/x`
+    // and a projected Skill as `/skills/<id>/SKILL.md`. If readFile/list re-base
+    // every path under workspaceDir, a projected Skill read becomes
+    // `/workspace/skills/…` and is unreadable (the invisible-Skill bug found in
+    // the HK E2E). Absolute paths must pass through untouched.
+    const { manager, provision } = makeManager({
+      seed: [["main.py", "print('hi')"]],
+    });
+    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
+    provision.seed(coord, { "SKILL.md": "# skill body" });
+
+    const session = manager.open(
+      specFor({ projections: [{ targetPath: "/skills/skl_1", source: coord }] }),
+    );
+
+    // The projected Skill is readable at its real absolute path.
+    expect(await session.readFile("/skills/skl_1/SKILL.md")).toBe("# skill body");
+    // Listing the projection root (outside the workspace) surfaces its files.
+    const skillEntries = await session.list("/skills/skl_1");
+    expect(skillEntries.map((e) => e.path)).toContain("/skills/skl_1/SKILL.md");
+
+    // A workspace file still resolves under workspaceDir via BOTH forms.
+    expect(await session.readFile("main.py")).toBe("print('hi')");
+    expect(await session.readFile("/workspace/main.py")).toBe("print('hi')");
+  });
+
   // ─── invariant §2: two opens → two independent sessions ───────────────────
 
   it("two opens yield two independent sessions (binding in object identity)", async () => {
@@ -370,10 +398,16 @@ describe("SandboxManager / SandboxSession", () => {
 
   // ─── path handling ─────────────────────────────────────────────────────────
 
-  it("rejects paths that escape the workspace", async () => {
+  it("does NOT guard against `..` — the sandbox is the trust boundary, not this path rewrite", async () => {
+    // Sandbox-as-tool convention (E2B / opensandbox / Anthropic code exec): the
+    // disposable sandbox is the isolation boundary, so paths are taken at face
+    // value. A `..` is passed through to the sandbox (which resolves it against
+    // the same throwaway container) — it is NOT rejected at this layer with an
+    // "escapes workspace" error. Here it simply hits a non-existent file, and
+    // the error that surfaces is the sandbox's own not-found, not a path guard.
     const { manager } = makeManager();
     const session = manager.open(specFor());
-    await expect(session.readFile("../etc/passwd")).rejects.toThrow(
+    await expect(session.readFile("../etc/passwd")).rejects.not.toThrow(
       /escapes workspace/,
     );
   });
