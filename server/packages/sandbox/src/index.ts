@@ -26,19 +26,40 @@ export {
 } from "./fake-sandbox-client.js";
 
 export {
-  SandboxToolExecutor,
-  type SandboxToolExecutorOptions,
-} from "./sandbox-tool-executor.js";
-
-export {
   contentHash,
   syncHasChanges,
   type WorkspaceSyncResult,
 } from "./workspace-sync.js";
 
 export {
-  SandboxToolExecutorFactory,
-  type SandboxToolExecutorFactoryOptions,
-  type ToolExecutorFactory,
-  type WorkspaceBinding,
-} from "./sandbox-tool-executor-factory.js";
+  S3WorkspacePersistence,
+  FakeWorkspacePersistence,
+  type WorkspacePersistence,
+  type HydrateTarget,
+  type HydrationSession,
+  type SandboxFsAccess,
+  type SandboxFsEntry,
+  type SyncResult,
+} from "./workspace-persistence.js";
+
+export {
+  S3ProvisionSource,
+  FakeProvisionSource,
+  isInsideWorkspace,
+  assertProjectionOutsideWorkspace,
+  type ProvisionSource,
+  type ProvisionCoordinate,
+  type ReadonlyProjection,
+  type ProjectionTarget,
+  type S3ProvisionRef,
+} from "./provision-source.js";
+
+export {
+  DefaultSandboxManager,
+  SandboxSessionClosed,
+  type SandboxManager,
+  type SandboxSession,
+  type SandboxManagerDeps,
+  type SandboxDescriptor,
+  type EnvSpec,
+} from "./sandbox-manager.js";

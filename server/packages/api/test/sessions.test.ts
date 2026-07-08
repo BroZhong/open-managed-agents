@@ -13,8 +13,8 @@ import type {
   SessionStoreListOpts,
   SessionStatus,
   PaginatedResult,
-  WorkspaceStore,
-  WorkspaceStoreCreateInput,
+  WorkspaceMetadataStore,
+  WorkspaceMetadataStoreCreateInput,
   Workspace,
 } from "@oma-server/store";
 
@@ -150,17 +150,17 @@ class InMemorySessionStore implements SessionStore {
   }
 }
 
-// In-memory WorkspaceStore for testing
-class InMemoryWorkspaceStore implements WorkspaceStore {
+// In-memory WorkspaceMetadataStore for testing
+class InMemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
   private workspaces = new Map<string, Workspace>();
   private nextId = 1;
-  public createCalls: WorkspaceStoreCreateInput[] = [];
+  public createCalls: WorkspaceMetadataStoreCreateInput[] = [];
 
   private key(tenantId: string, id: string): string {
     return `${tenantId} ${id}`;
   }
 
-  async create(input: WorkspaceStoreCreateInput): Promise<Workspace> {
+  async create(input: WorkspaceMetadataStoreCreateInput): Promise<Workspace> {
     this.createCalls.push(input);
     const id = input.id ?? `ws_${this.nextId++}`;
     const key = this.key(input.tenantId, id);
@@ -195,7 +195,7 @@ function createTestApp() {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
   const sessionStore = new InMemorySessionStore();
-  const workspaceStore = new InMemoryWorkspaceStore();
+  const workspaceStore = new InMemoryWorkspaceMetadataStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
     agentStore,

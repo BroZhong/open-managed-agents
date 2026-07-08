@@ -97,7 +97,7 @@ describe("createMemoryStores", () => {
     });
   });
 
-  describe("WorkspaceStore", () => {
+  describe("WorkspaceMetadataStore", () => {
     it("auto-creates a workspace when no id is supplied", async () => {
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       expect(ws.id).toMatch(/^ws_/);

@@ -1,10 +1,10 @@
 import { nanoid } from "nanoid";
 import type { Pool } from "./connection.js";
 import type {
-  WorkspaceStore,
-  WorkspaceStoreCreateInput,
-  WorkspaceStoreUpdateInput,
-} from "../interfaces/workspace-store.js";
+  WorkspaceMetadataStore,
+  WorkspaceMetadataStoreCreateInput,
+  WorkspaceMetadataStoreUpdateInput,
+} from "../interfaces/workspace-metadata-store.js";
 import type { Workspace } from "../types.js";
 
 interface WorkspaceRow {
@@ -30,10 +30,10 @@ function rowToWorkspace(row: WorkspaceRow): Workspace {
  * (ON CONFLICT DO NOTHING + read-back) so the same Workspace can be bound by
  * many Sessions concurrently. See ADR-0002 §4.
  */
-export class PgWorkspaceStore implements WorkspaceStore {
+export class PgWorkspaceMetadataStore implements WorkspaceMetadataStore {
   constructor(private readonly pool: Pool) {}
 
-  async create(input: WorkspaceStoreCreateInput): Promise<Workspace> {
+  async create(input: WorkspaceMetadataStoreCreateInput): Promise<Workspace> {
     const now = new Date();
     const id = input.id ?? `ws_${nanoid()}`;
     const { rows } = await this.pool.query<WorkspaceRow>(
@@ -47,7 +47,7 @@ export class PgWorkspaceStore implements WorkspaceStore {
 
     const existing = await this.getById(input.tenantId, id);
     if (!existing) {
-      throw new Error(`PgWorkspaceStore.create: workspace ${id} missing after upsert`);
+      throw new Error(`PgWorkspaceMetadataStore.create: workspace ${id} missing after upsert`);
     }
     return existing;
   }
@@ -71,7 +71,7 @@ export class PgWorkspaceStore implements WorkspaceStore {
   async update(
     tenantId: string,
     id: string,
-    input: WorkspaceStoreUpdateInput,
+    input: WorkspaceMetadataStoreUpdateInput,
   ): Promise<Workspace | null> {
     if (input.name === undefined) return this.getById(tenantId, id);
     const { rows } = await this.pool.query<WorkspaceRow>(

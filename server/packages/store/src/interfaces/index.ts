@@ -4,10 +4,10 @@ export type { EventLogStore, EventLogStoreAppendInput, EventLogStoreGetEventsOpt
 export type { PendingEventStore, PendingEvent, PendingEventEnqueueInput } from "./pending-event-store.js";
 export type { ApiKeyStore, ApiKeyCreateResult } from "./api-key-store.js";
 export type {
-  WorkspaceStore,
-  WorkspaceStoreCreateInput,
-  WorkspaceStoreUpdateInput,
-} from "./workspace-store.js";
+  WorkspaceMetadataStore,
+  WorkspaceMetadataStoreCreateInput,
+  WorkspaceMetadataStoreUpdateInput,
+} from "./workspace-metadata-store.js";
 export type {
   ArtifactStore,
   Artifact,

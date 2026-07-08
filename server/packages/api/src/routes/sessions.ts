@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AgentStore, SessionStore, WorkspaceStore } from "@oma-server/store";
+import type { AgentStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 
@@ -12,7 +12,7 @@ type Env = {
 export interface SessionRouteDeps {
   sessionStore: SessionStore;
   agentStore: AgentStore;
-  workspaceStore: WorkspaceStore;
+  workspaceStore: WorkspaceMetadataStore;
   sessionRouter?: SessionRouter;
 }
 

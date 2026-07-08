@@ -3,7 +3,9 @@ import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import {
   FakeSandboxClient,
-  SandboxToolExecutorFactory,
+  FakeWorkspacePersistence,
+  FakeProvisionSource,
+  DefaultSandboxManager,
 } from "@oma-server/sandbox";
 import type {
   EventLogStore,
@@ -20,10 +22,13 @@ import type {
   StoredEvent,
   PaginatedResult,
   Agent,
-  Artifact,
-  ArtifactContent,
-  ArtifactPutInput,
-  ArtifactStore,
+  Skill,
+  SkillStore,
+  SkillStoreCreateInput,
+  SkillStoreUpdateInput,
+  SkillOwnerType,
+  SkillArtifactStore,
+  SkillFile,
 } from "@oma-server/store";
 import type {
   Adapter,
@@ -174,41 +179,106 @@ class InMemorySessionStore implements SessionStore {
   }
 }
 
-// ─── In-memory ArtifactStore (stand-in S3 Workspace) ────────────────────────
+// ─── Minimal in-memory Skill stores (metadata + non-empty check) ─────────────
+//
+// The router's projection selection reads Skill metadata (existence, tenant,
+// ownership) via SkillStore and confirms non-empty via SkillArtifactStore.list.
+// The Skill CONTENT flows S3→sandbox through the FakeProvisionSource (seeded
+// separately), so these stores only need to answer the include/skip decision.
 
-class InMemoryArtifactStore implements ArtifactStore {
-  private readonly objects = new Map<string, Uint8Array>();
-  private key(t: string, w: string, p: string) {
-    return `${t}/${w}/${p}`;
+class TinySkillStore implements SkillStore {
+  private skills: Skill[] = [];
+  private nextId = 1;
+
+  async create(input: SkillStoreCreateInput): Promise<Skill> {
+    const ownerType: SkillOwnerType = input.ownerType ?? "library";
+    const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
+    const skill: Skill = {
+      id: `skl_${this.nextId++}`,
+      tenantId: input.tenantId,
+      name: input.name,
+      description: input.description,
+      ownerType,
+      ownerId,
+      sourceSkillId: input.sourceSkillId ?? null,
+      updatedAt: new Date(),
+    };
+    this.skills.push(skill);
+    return skill;
   }
-  seed(t: string, w: string, p: string, content: string) {
-    this.objects.set(this.key(t, w, p), new TextEncoder().encode(content));
+  async getById(id: string): Promise<Skill | null> {
+    return this.skills.find((s) => s.id === id) ?? null;
   }
-  async list(t: string, w: string, prefix = ""): Promise<Artifact[]> {
-    const wsPrefix = `${t}/${w}/`;
-    const out: Artifact[] = [];
-    for (const [k, v] of this.objects) {
-      if (!k.startsWith(wsPrefix)) continue;
-      const rel = k.slice(wsPrefix.length);
-      if (prefix && !rel.startsWith(prefix)) continue;
-      out.push({ path: rel, size: v.byteLength });
+  async list(tenantId: string): Promise<PaginatedResult<Skill>> {
+    const data = this.skills.filter(
+      (s) => s.tenantId === tenantId && s.ownerType === "library",
+    );
+    return { data, hasMore: false };
+  }
+  async listByOwner(
+    tenantId: string,
+    ownerType: SkillOwnerType,
+    ownerId: string,
+  ): Promise<Skill[]> {
+    return this.skills.filter(
+      (s) => s.tenantId === tenantId && s.ownerType === ownerType && s.ownerId === ownerId,
+    );
+  }
+  async update(id: string, input: SkillStoreUpdateInput): Promise<Skill | null> {
+    const skill = this.skills.find((s) => s.id === id);
+    if (!skill) return null;
+    if (input.name !== undefined) skill.name = input.name;
+    if (input.description !== undefined) skill.description = input.description;
+    return skill;
+  }
+  async delete(id: string): Promise<boolean> {
+    const before = this.skills.length;
+    this.skills = this.skills.filter((s) => s.id !== id);
+    return this.skills.length < before;
+  }
+}
+
+class TinySkillArtifactStore implements SkillArtifactStore {
+  private readonly files = new Map<string, Uint8Array>();
+  private key(t: string, s: string, p: string) {
+    return `${t}/${s}/${p}`;
+  }
+  async put(t: string, s: string, p: string, body: Uint8Array | string): Promise<void> {
+    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+    this.files.set(this.key(t, s, p), bytes);
+  }
+  async list(t: string, s: string): Promise<string[]> {
+    const prefix = `${t}/${s}/`;
+    const out: string[] = [];
+    for (const k of this.files.keys()) if (k.startsWith(prefix)) out.push(k.slice(prefix.length));
+    return out;
+  }
+  async get(t: string, s: string, p: string): Promise<Uint8Array | null> {
+    return this.files.get(this.key(t, s, p)) ?? null;
+  }
+  async getAll(t: string, s: string): Promise<SkillFile[]> {
+    const prefix = `${t}/${s}/`;
+    const out: SkillFile[] = [];
+    for (const [k, body] of this.files) {
+      if (k.startsWith(prefix)) out.push({ path: k.slice(prefix.length), body });
     }
     return out;
   }
-  async get(t: string, w: string, p: string): Promise<ArtifactContent | null> {
-    const body = this.objects.get(this.key(t, w, p));
-    return body ? { path: p, body } : null;
+  async delete(t: string, s: string, p: string): Promise<void> {
+    this.files.delete(this.key(t, s, p));
   }
-  async put(input: ArtifactPutInput): Promise<Artifact> {
-    const body =
-      typeof input.body === "string"
-        ? new TextEncoder().encode(input.body)
-        : input.body;
-    this.objects.set(this.key(input.tenantId, input.workspaceId, input.path), body);
-    return { path: input.path, size: body.byteLength };
+  async move(t: string, s: string, from: string, to: string): Promise<void> {
+    const b = this.files.get(this.key(t, s, from));
+    if (!b) return;
+    this.files.set(this.key(t, s, to), b);
+    this.files.delete(this.key(t, s, from));
   }
-  async delete(t: string, w: string, p: string): Promise<boolean> {
-    return this.objects.delete(this.key(t, w, p));
+  async deleteTree(t: string, s: string): Promise<void> {
+    const prefix = `${t}/${s}/`;
+    for (const k of [...this.files.keys()]) if (k.startsWith(prefix)) this.files.delete(k);
+  }
+  async copyTree(t: string, from: string, to: string): Promise<void> {
+    for (const f of await this.getAll(t, from)) await this.put(t, to, f.path, f.body);
   }
 }
 
@@ -250,8 +320,8 @@ function toolReadingAdapter(path: string): Adapter {
 
 /**
  * Tool-using adapter that WRITES a file through the injected executor, so the
- * subsequent Host sync produces a real change. The adapter itself emits only a
- * plain tool-result message — never a workspace/artifact event.
+ * subsequent Host checkpoint produces a real change. The adapter itself emits
+ * only a plain tool-result message — never a workspace/artifact event.
  */
 function toolWritingAdapter(path: string, content: string): Adapter {
   return {
@@ -309,23 +379,39 @@ const legacyAgent: Agent = {
   updatedAt: new Date(),
 };
 
+/**
+ * Wire the REAL {@link DefaultSandboxManager} with the three fakes
+ * (FakeSandboxClient + FakeWorkspacePersistence + FakeProvisionSource under
+ * kind "s3"), so the router↔manager↔session↔persistence↔projection seams are
+ * genuinely exercised end to end (issue #78 — the integration slice).
+ */
 function createDeps(opts: {
   adapter: Adapter;
   sandboxClient?: FakeSandboxClient;
-  artifactStore?: InMemoryArtifactStore;
-  withFactory?: boolean;
+  persistence?: FakeWorkspacePersistence;
+  provisionSource?: FakeProvisionSource;
+  skillStore?: SkillStore;
+  skillArtifactStore?: SkillArtifactStore;
+  withManager?: boolean;
 }) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
   const sessionStore = new InMemorySessionStore();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
-  const artifactStore = opts.artifactStore ?? new InMemoryArtifactStore();
+  const persistence = opts.persistence ?? new FakeWorkspacePersistence();
+  const provisionSource = opts.provisionSource ?? new FakeProvisionSource();
 
-  const toolExecutorFactory =
-    opts.withFactory === false
+  const sandboxManager =
+    opts.withManager === false
       ? undefined
-      : new SandboxToolExecutorFactory({ sandboxClient, artifactStore });
+      : new DefaultSandboxManager({
+          sandboxClient,
+          persistence,
+          // Register the fake under kind "s3" so the router's { kind: "s3" }
+          // projection coordinates dispatch to it (proving kind-based dispatch).
+          provisionSources: { s3: provisionSource },
+        });
 
   const router = new SessionRouter({
     eventLogStore,
@@ -333,7 +419,9 @@ function createDeps(opts: {
     sessionStore,
     eventStreamHub,
     resolveAdapter: () => opts.adapter,
-    toolExecutorFactory,
+    sandboxManager,
+    skillStore: opts.skillStore,
+    skillArtifactStore: opts.skillArtifactStore,
   });
 
   return {
@@ -342,7 +430,8 @@ function createDeps(opts: {
     sessionStore,
     eventStreamHub,
     sandboxClient,
-    artifactStore,
+    persistence,
+    provisionSource,
     router,
   };
 }
@@ -359,9 +448,9 @@ async function enqueue(
   });
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ─── SandboxSession injection (#42, now via SandboxManager #77/#78) ──────────
 
-describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => {
+describe("SessionRouter — SandboxManager-backed session injection", () => {
   it("a pure-chat turn creates NO sandbox (lazy)", async () => {
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: chatAdapter,
@@ -381,11 +470,11 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
   });
 
   it("the first file/code tool call creates a sandbox lazily", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      artifactStore,
+      persistence,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -401,11 +490,11 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
   });
 
   it("injects the Agent's sandbox.env into the created sandbox", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      artifactStore,
+      persistence,
     });
     const envAgent: Agent = {
       ...sandboxedAgent,
@@ -429,13 +518,13 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
     });
   });
 
-  it("hydrates the sandbox from the S3 Workspace and a tool call reads a hydrated file", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "notes.md", "hydrated-content");
+  it("hydrates the sandbox from the Workspace and a tool call reads a hydrated file", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "notes.md", "hydrated-content");
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
       createDeps({
         adapter: toolReadingAdapter("notes.md"),
-        artifactStore,
+        persistence,
       });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -462,11 +551,11 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
   });
 
   it("destroys the sandbox at session end (terminateSession)", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "f.txt", "x");
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "f.txt", "x");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("f.txt"),
-      artifactStore,
+      persistence,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -487,11 +576,11 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
   });
 
   it("reuses one sandbox across turns and destroys it once at session end", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "f.txt", "x");
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "f.txt", "x");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("f.txt"),
-      artifactStore,
+      persistence,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -511,7 +600,7 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
     expect(sandboxClient.destroyed).toHaveLength(1);
   });
 
-  it("does not inject an executor for a non-sandboxed agent when a factory IS present", async () => {
+  it("does not inject an executor for a non-sandboxed agent when a manager IS present", async () => {
     let sawExecutor = true;
     const probeAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
@@ -524,7 +613,7 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
         };
       },
     };
-    // Factory present, but the agent explicitly opts out of the sandbox.
+    // Manager present, but the agent explicitly opts out of the sandbox.
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: probeAdapter,
     });
@@ -543,10 +632,10 @@ describe("SessionRouter — sandbox-backed ToolExecutor injection (#42)", () => 
   });
 });
 
-// ─── Fail-loud: mandatory sandbox with no provisionable executor (#54) ───────
+// ─── Fail-loud: mandatory sandbox with no provisionable manager (#54) ────────
 
 describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
-  it("emits session.error(sandbox_unavailable) and does NOT run the adapter when sandboxed but no factory", async () => {
+  it("emits session.error(sandbox_unavailable) and does NOT run the adapter when sandboxed but no manager", async () => {
     let adapterInvoked = false;
     const probeAdapter: Adapter = {
       async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
@@ -561,7 +650,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
     };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
       adapter: probeAdapter,
-      withFactory: false,
+      withManager: false,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -592,7 +681,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
     expect(final?.status).toBe("idle");
   });
 
-  it("treats a legacy agent with NO sandbox field as sandboxed (fail-loud without a factory)", async () => {
+  it("treats a legacy agent with NO sandbox field as sandboxed (fail-loud without a manager)", async () => {
     let adapterInvoked = false;
     const probeAdapter: Adapter = {
       async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
@@ -607,7 +696,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
     };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
       adapter: probeAdapter,
-      withFactory: false,
+      withManager: false,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -630,13 +719,13 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
     ).toBe(true);
   });
 
-  it("runs normally with an injected executor when sandboxed AND a factory is present", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "hello.txt", "world");
+  it("runs normally with an injected session when sandboxed AND a manager is present", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
       createDeps({
         adapter: toolReadingAdapter("hello.txt"),
-        artifactStore,
+        persistence,
       });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -648,7 +737,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
 
     await router.handleNewEvent(session.id, sandboxedAgent);
 
-    // The adapter ran with an injected executor (a sandbox was created) and
+    // The adapter ran with an injected session (a sandbox was created) and
     // there is no fail-loud session.error.
     expect(sandboxClient.created).toHaveLength(1);
     const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
@@ -666,13 +755,13 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   });
 
   it("isolates concurrent sessions in distinct sandboxes (no cross-session bleed)", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_a", "who.txt", "session-A");
-    artifactStore.seed("tenant_1", "ws_b", "who.txt", "session-B");
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_a", "who.txt", "session-A");
+    persistence.seed("tenant_1", "ws_b", "who.txt", "session-B");
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
       createDeps({
         adapter: toolReadingAdapter("who.txt"),
-        artifactStore,
+        persistence,
       });
 
     const a = await sessionStore.create({
@@ -708,7 +797,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   });
 });
 
-// ─── Host-emitted workspace.file_change on sync (#43) ───────────────────────
+// ─── Host-emitted workspace.file_change on checkpoint (#43/#78) ──────────────
 
 /** Collect all SSE frame event types seen on a session's live stream. */
 async function collectEventTypes(sub: {
@@ -725,8 +814,8 @@ async function collectEventTypes(sub: {
   return types;
 }
 
-describe("SessionRouter — Host emits workspace.file_change on sync (#43)", () => {
-  it("emits workspace.file_change on sync completion; the Adapter emits none", async () => {
+describe("SessionRouter — Host emits workspace.file_change on checkpoint (#43)", () => {
+  it("emits workspace.file_change on checkpoint; the Adapter emits none", async () => {
     const { router, sessionStore, pendingEventStore, eventLogStore, eventStreamHub } =
       createDeps({ adapter: toolWritingAdapter("created.txt", "hi") });
     const session = await sessionStore.create({
@@ -765,7 +854,7 @@ describe("SessionRouter — Host emits workspace.file_change on sync (#43)", () 
     expect(liveTypes).toContain("workspace.file_change");
   });
 
-  it("a pure-chat turn emits NO workspace.file_change (sync no-op)", async () => {
+  it("a pure-chat turn emits NO workspace.file_change (checkpoint no-op)", async () => {
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
       adapter: chatAdapter,
     });
@@ -783,11 +872,11 @@ describe("SessionRouter — Host emits workspace.file_change on sync (#43)", () 
   });
 
   it("propagates a delete: a hydrated file removed via bash emits it in deleted[]", async () => {
-    const artifactStore = new InMemoryArtifactStore();
-    artifactStore.seed("tenant_1", "ws_1", "doomed.txt", "x");
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "doomed.txt", "x");
 
     // Fake sandbox whose exec understands `rm <abs-path>` by mutating its map,
-    // so the file is removed by shell (not a tool) before the Host's sync.
+    // so the file is removed by shell (not a tool) before the Host's checkpoint.
     const sandboxClient = new FakeSandboxClient({
       execHandler: (command, files) => {
         if (command[0] === "rm" && command[1]) {
@@ -818,7 +907,7 @@ describe("SessionRouter — Host emits workspace.file_change on sync (#43)", () 
 
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
       adapter: removingAdapter,
-      artifactStore,
+      persistence,
       sandboxClient,
     });
     const session = await sessionStore.create({
@@ -835,5 +924,134 @@ describe("SessionRouter — Host emits workspace.file_change on sync (#43)", () 
     const fileChanges = data.filter((e) => e.type === "workspace.file_change");
     expect(fileChanges).toHaveLength(1);
     expect(fileChanges[0].data).toMatchObject({ deleted: ["doomed.txt"] });
+  });
+});
+
+// ─── Integration slice (#78): the seams wired via the REAL manager + fakes ───
+
+describe("SessionRouter — end-to-end integration (#78)", () => {
+  it("state persists across turns: a file written in turn 1 is present in turn 2", async () => {
+    // Turn 1 writes a file through the session; the turn-end checkpoint persists
+    // it to the fake persistence. Turn 2 reuses the same long-lived session and
+    // reads it back — proving cross-turn persistence via checkpoint.
+    const persistence = new FakeWorkspacePersistence();
+    const readOrWrite: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const ex = input.toolExecutor!;
+        const isWrite = input.message.content.some(
+          (b) => b.type === "text" && b.text === "write",
+        );
+        let text: string;
+        if (isWrite) {
+          await ex.writeFile("carry.txt", "persisted-across-turns");
+          text = "wrote";
+        } else {
+          text = await ex.readFile("carry.txt");
+        }
+        yield {
+          id: "e",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text }],
+        };
+      },
+    };
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
+      createDeps({ adapter: readOrWrite, persistence });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: "agent_sbx",
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "write");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    // The checkpoint persisted it to the medium.
+    expect(persistence.contentOf("tenant_1", "ws_1", "carry.txt")).toBe(
+      "persisted-across-turns",
+    );
+
+    await enqueue(pendingEventStore, session.id, "read");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    // One long-lived sandbox across both turns; turn 2 read the turn-1 file.
+    expect(sandboxClient.created).toHaveLength(1);
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    const messages = data.filter((e) => e.type === "agent.message");
+    const last = messages[messages.length - 1];
+    expect((last.data as { content: Array<{ text: string }> }).content[0].text).toBe(
+      "persisted-across-turns",
+    );
+  });
+
+  it("the model can read an equipped Skill from inside the sandbox (/skills/<id>/SKILL.md)", async () => {
+    // Seed the FakeProvisionSource with a Skill's SKILL.md, equip it on the
+    // agent, run a turn, and assert the session can read it at /skills/<id> —
+    // proving Skills-as-projection works end to end (ADR-0005 §4).
+    const skillStore = new TinySkillStore();
+    const skillArtifactStore = new TinySkillArtifactStore();
+    const skill = await skillStore.create({
+      tenantId: "tenant_1",
+      name: "greeter",
+      description: "greets",
+      ownerType: "agent",
+      ownerId: "agent_sbx",
+    });
+    const SKILL_BODY = "---\nname: greeter\n---\nsay hi";
+    // The router's non-empty check reads the artifact store; the CONTENT is
+    // projected S3→sandbox by the FakeProvisionSource, so seed both.
+    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", SKILL_BODY);
+    const provisionSource = new FakeProvisionSource();
+    provisionSource.seed(
+      { kind: "s3", ref: { tenantId: "tenant_1", skillId: skill.id } },
+      { "SKILL.md": SKILL_BODY },
+    );
+
+    let readBody = "<unread>";
+    const skillReadingAdapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        // The adapter is pointed at the in-sandbox /skills/<id> root and reads
+        // SKILL.md from there, exactly as Pi's sandbox-mapped read would.
+        const root = input.agent.skillPaths?.[0];
+        // Projections mount outside /workspace, so read via an absolute-path
+        // exec (cat) — the FakeSandboxClient's built-in cat reads any abs path.
+        for await (const chunk of input.toolExecutor!.exec(["cat", `${root}/SKILL.md`])) {
+          if (chunk.stream === "stdout") readBody = chunk.text;
+        }
+        yield {
+          id: "e",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: readBody }],
+        };
+      },
+    };
+
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: skillReadingAdapter,
+      provisionSource,
+      skillStore,
+      skillArtifactStore,
+    });
+    const agent: Agent = { ...sandboxedAgent, skills: [skill.id] };
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: agent.id,
+      agent,
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "load the skill");
+    await router.handleNewEvent(session.id, agent);
+
+    // The projection landed at /skills/<id>/SKILL.md and was readable inside the
+    // sandbox with the seeded content.
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.filesOf(id).get(`/skills/${skill.id}/SKILL.md`)?.content).toBe(
+      SKILL_BODY,
+    );
+    expect(readBody).toBe(SKILL_BODY);
   });
 });

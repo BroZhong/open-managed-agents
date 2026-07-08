@@ -4,7 +4,7 @@ import type { SkillStore } from "../interfaces/skill-store.js";
 import type { EventLogStore } from "../interfaces/event-log-store.js";
 import type { PendingEventStore } from "../interfaces/pending-event-store.js";
 import type { SessionStore } from "../interfaces/session-store.js";
-import type { WorkspaceStore } from "../interfaces/workspace-store.js";
+import type { WorkspaceMetadataStore } from "../interfaces/workspace-metadata-store.js";
 import type { UserStore } from "../interfaces/user-store.js";
 import type { Pool } from "./connection.js";
 import { DEFAULT_SCHEMA } from "./connection.js";
@@ -16,7 +16,7 @@ import { PgApiKeyStore } from "./api-key-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
 import { PgSessionStore } from "./session-store.js";
-import { PgWorkspaceStore } from "./workspace-store.js";
+import { PgWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 import { PgUserStore } from "./user-store.js";
 
 export { createPgPool, pgConfigFromEnv, DEFAULT_SCHEMA } from "./connection.js";
@@ -30,7 +30,7 @@ export { PgEventLogStore } from "./event-log-store.js";
 export { PgPendingEventStore } from "./pending-event-store.js";
 export { PgApiKeyStore } from "./api-key-store.js";
 export { PgUserStore } from "./user-store.js";
-export { PgWorkspaceStore } from "./workspace-store.js";
+export { PgWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 
 export interface PgStores {
   agentStore: AgentStore;
@@ -46,7 +46,7 @@ export interface PgStores {
    */
   apiKeyStore: PgApiKeyStore;
   userStore: UserStore;
-  workspaceStore: WorkspaceStore;
+  workspaceStore: WorkspaceMetadataStore;
 }
 
 export interface CreatePgStoresOpts {
@@ -70,6 +70,6 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     pendingEventStore: new PgPendingEventStore(pool),
     apiKeyStore: new PgApiKeyStore(pool),
     userStore: new PgUserStore(pool),
-    workspaceStore: new PgWorkspaceStore(pool),
+    workspaceStore: new PgWorkspaceMetadataStore(pool),
   };
 }

@@ -96,18 +96,28 @@ function toolDrivingFactory(calls: ScriptedCall[]) {
           } as never as AgentSessionEvent);
 
           const tool = byName.get(call.name);
+          // Pi's native tools (which our factories build) throw on failure and
+          // let Pi mark the result as an error; on success they return an
+          // AgentToolResult. Mirror that here: a thrown error becomes an error
+          // result carrying the message, matching how the real SDK renders it.
           let result: unknown = "no such tool";
           let isError = true;
           if (tool) {
-            const r = await tool.execute(
-              call.id,
-              call.args as never,
-              undefined,
-              undefined,
-              {} as never,
-            );
-            result = r;
-            isError = Boolean((r.details as { isError?: boolean })?.isError);
+            try {
+              result = await tool.execute(
+                call.id,
+                call.args as never,
+                undefined,
+                undefined,
+                {} as never,
+              );
+              isError = false;
+            } catch (e: unknown) {
+              result = {
+                content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
+              };
+              isError = true;
+            }
           }
 
           listener?.({
@@ -151,8 +161,8 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
     try {
       const adapter = new PiAgentAdapter({
         _sessionFactory: toolDrivingFactory([
-          { id: "tc_write", name: "write_file", args: { path: "note.txt", content: "seam-ok" } },
-          { id: "tc_read", name: "read_file", args: { path: "note.txt" } },
+          { id: "tc_write", name: "write", args: { path: "note.txt", content: "seam-ok" } },
+          { id: "tc_read", name: "read", args: { path: "note.txt" } },
         ]),
       });
       const events = await collect(
@@ -183,7 +193,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
     try {
       const adapter = new PiAgentAdapter({
         _sessionFactory: toolDrivingFactory([
-          { id: "tc_sh", name: "exec", args: { command: "printf hi-from-exec" } },
+          { id: "tc_sh", name: "bash", args: { command: "printf hi-from-exec" } },
         ]),
       });
       const events = await collect(adapter.run(makeInput("run", executor)));
@@ -202,7 +212,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
     try {
       const adapter = new PiAgentAdapter({
         _sessionFactory: toolDrivingFactory([
-          { id: "tc_miss", name: "read_file", args: { path: "does-not-exist.txt" } },
+          { id: "tc_miss", name: "read", args: { path: "does-not-exist.txt" } },
         ]),
       });
       const events = await collect(
@@ -281,7 +291,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
         return toolDrivingFactory([
           {
             id: `tc_${tag}`,
-            name: "write_file",
+            name: "write",
             args: { path: "shared-name.txt", content: `payload-${tag}` },
           },
         ])(args);

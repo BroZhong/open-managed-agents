@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { PgSessionStore } from "../src/postgres/session-store.js";
-import { PgWorkspaceStore } from "../src/postgres/workspace-store.js";
+import { PgWorkspaceMetadataStore } from "../src/postgres/workspace-metadata-store.js";
 import type { Agent } from "../src/types.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
@@ -18,7 +18,7 @@ const mockAgent: Agent = {
 describe("PgSessionStore", () => {
   let harness: PgTestHarness;
   let store: PgSessionStore;
-  let workspaces: PgWorkspaceStore;
+  let workspaces: PgWorkspaceMetadataStore;
 
   beforeAll(async () => {
     harness = await createPgTestHarness();
@@ -31,7 +31,7 @@ describe("PgSessionStore", () => {
   beforeEach(async () => {
     await harness.reset();
     store = new PgSessionStore(harness.pool);
-    workspaces = new PgWorkspaceStore(harness.pool);
+    workspaces = new PgWorkspaceMetadataStore(harness.pool);
   });
 
   async function newWorkspace(tenantId = "tenant1"): Promise<string> {

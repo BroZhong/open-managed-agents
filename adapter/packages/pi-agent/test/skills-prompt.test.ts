@@ -25,12 +25,11 @@ describe("buildSkillsPromptSection (skills invisible-at-runtime fix)", () => {
     expect(section).toContain("/tmp/oma-skills-x/skill_abc/SKILL.md");
   });
 
-  it("points the model at the read_file tool, not Pi's builtin read tool", () => {
+  it("points the model at the read tool that our native factory exposes", () => {
     const section = buildSkillsPromptSection([skill()]);
-    // Our custom-tool runtime exposes `read_file`, not `read`; the wording must
-    // reference the tool that actually exists so the model can load the skill.
-    expect(section).toContain("the read_file tool");
-    expect(section).not.toMatch(/\bthe read tool\b/);
+    // Our custom tools use Pi's native factories, so the read tool is named
+    // `read` — matching Pi's own "Use the read tool" wording verbatim.
+    expect(section).toContain("the read tool");
   });
 
   it("excludes skills flagged disableModelInvocation", () => {

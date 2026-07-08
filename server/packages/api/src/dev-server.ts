@@ -13,8 +13,13 @@ import type { TurnStreamStore } from "@oma-server/redis";
 import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import { E2BSandboxClient, SandboxToolExecutorFactory } from "@oma-server/sandbox";
-import type { ToolExecutorFactory } from "@oma-server/sandbox";
+import {
+  E2BSandboxClient,
+  DefaultSandboxManager,
+  S3WorkspacePersistence,
+  S3ProvisionSource,
+} from "@oma-server/sandbox";
+import type { SandboxManager } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
 import type {
   Adapter,
@@ -353,25 +358,31 @@ async function main() {
   // Create a dev seed key for local testing (persisted in PG).
   const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
 
-  // Sandbox-backed ToolExecutor factory (ADR-0002 §4): e2b-SDK sandboxes,
-  // hydrated from the S3 Workspace. Requires the artifact store (nothing to
-  // hydrate from without it) plus E2B_DOMAIN + E2B_API_KEY. Enable with
-  // SANDBOX_ENABLED=true. (Full wiring/fail-loud is #54's job.)
-  let toolExecutorFactory: ToolExecutorFactory | undefined;
-  if (artifactStore && process.env.SANDBOX_ENABLED === "true") {
+  // Sandbox lifecycle owner (ADR-0005 §1/§2, design doc §5): a
+  // DefaultSandboxManager wired with the three seams — an e2b-SDK
+  // SandboxClient, S3WorkspacePersistence for the two-way Workspace (hydrate
+  // from / sync back to S3), and S3ProvisionSource registered under kind "s3"
+  // for read-only Skill projections (content flows S3→sandbox, never through
+  // the Host; ADR-0005 §3/§4). Requires the artifact store (nothing to hydrate
+  // from without it), the Skill artifact store (nothing to project without it),
+  // plus E2B_DOMAIN + E2B_API_KEY. Enable with SANDBOX_ENABLED=true. A sandboxed
+  // Agent with no manager fails loud (#54).
+  let sandboxManager: SandboxManager | undefined;
+  if (artifactStore && skillArtifactStore && process.env.SANDBOX_ENABLED === "true") {
     const sandboxClient = new E2BSandboxClient({
       domain: process.env.E2B_DOMAIN ?? "",
       apiKey: process.env.E2B_API_KEY ?? "",
       defaultTemplate: process.env.SANDBOX_TEMPLATE,
     });
-    toolExecutorFactory = new SandboxToolExecutorFactory({
+    sandboxManager = new DefaultSandboxManager({
       sandboxClient,
-      artifactStore,
+      persistence: new S3WorkspacePersistence(artifactStore),
+      provisionSources: { s3: new S3ProvisionSource(skillArtifactStore) },
     });
-    console.log("Sandbox ToolExecutor enabled (e2b SDK, hydrate from S3)");
+    console.log("SandboxManager enabled (e2b SDK, hydrate from S3, Skills projected from S3)");
   } else {
     console.log(
-      "Sandbox ToolExecutor disabled — set SANDBOX_ENABLED=true (+ S3) to enable",
+      "SandboxManager disabled — set SANDBOX_ENABLED=true (+ S3) to enable",
     );
   }
 
@@ -382,7 +393,7 @@ async function main() {
     eventStreamHub,
     turnStreamStore,
     resolveAdapter,
-    toolExecutorFactory,
+    sandboxManager,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

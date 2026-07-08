@@ -1,6 +1,6 @@
 import type { Workspace } from "../types.js";
 
-export interface WorkspaceStoreCreateInput {
+export interface WorkspaceMetadataStoreCreateInput {
   tenantId: string;
   /**
    * Optional user-supplied Workspace ID. Used as-is when provided; otherwise a
@@ -10,17 +10,17 @@ export interface WorkspaceStoreCreateInput {
   /**
    * Optional human-friendly name. Only applied when the Workspace is newly
    * created; on idempotent re-create (existing id) it is NOT overwritten (see
-   * `create`). Rename an existing Workspace via {@link WorkspaceStore.update}.
+   * `create`). Rename an existing Workspace via {@link WorkspaceMetadataStore.update}.
    */
   name?: string;
 }
 
-export interface WorkspaceStoreUpdateInput {
+export interface WorkspaceMetadataStoreUpdateInput {
   /** New human-friendly name. */
   name?: string;
 }
 
-export interface WorkspaceStore {
+export interface WorkspaceMetadataStore {
   /**
    * Create a Workspace, or return the existing one if a Workspace with the
    * given (tenant-scoped) id already exists. This makes binding to a
@@ -31,7 +31,7 @@ export interface WorkspaceStore {
    * so when a Workspace with (tenant, id) already exists it is returned as-is —
    * a `name` passed on a colliding create does NOT overwrite the stored name.
    */
-  create(input: WorkspaceStoreCreateInput): Promise<Workspace>;
+  create(input: WorkspaceMetadataStoreCreateInput): Promise<Workspace>;
   getById(tenantId: string, id: string): Promise<Workspace | null>;
   /**
    * Update a Workspace's mutable fields (currently just `name`). Returns the
@@ -41,7 +41,7 @@ export interface WorkspaceStore {
   update(
     tenantId: string,
     id: string,
-    input: WorkspaceStoreUpdateInput,
+    input: WorkspaceMetadataStoreUpdateInput,
   ): Promise<Workspace | null>;
   /**
    * List a tenant's Workspaces ordered by `createdAt` ascending. Returns a

@@ -10,7 +10,7 @@
  *
  * This port is deliberately small (`create/exec/readFile/writeFile/list/
  * destroy`) so it can be backed by e2b in production and by a fake in tests,
- * and so the {@link SandboxToolExecutor} above it never learns which backend it
+ * and so the {@link SandboxManager} above it never learns which backend it
  * is talking to.
  */
 
