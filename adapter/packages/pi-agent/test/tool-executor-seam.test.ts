@@ -150,6 +150,7 @@ function toolDrivingFactory(calls: ScriptedCall[]) {
           willRetry: false,
         } as AgentSessionEvent);
       },
+      abort() {},
       dispose() {},
     };
   };
@@ -222,8 +223,13 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
       expect(result.isError).toBe(true);
-      // The run still completed cleanly.
-      expect(events[events.length - 1].type).toBe("session.status_idle");
+      // The run still completed cleanly: an executor error becomes an error
+      // tool_result, not a session.error, and the adapter emits no lifecycle
+      // events (the Host router owns those — issue #83).
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain("session.error");
+      expect(types).not.toContain("session.status_idle");
+      expect(types).not.toContain("session.status_running");
     } finally {
       await dispose();
     }
@@ -247,6 +253,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
           async prompt() {
             listener?.({ type: "agent_end", messages: [], willRetry: false } as AgentSessionEvent);
           },
+          abort() {},
           dispose() {},
         };
       },

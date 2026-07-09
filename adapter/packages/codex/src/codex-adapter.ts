@@ -43,12 +43,9 @@ export class CodexAdapter implements Adapter {
   }
 
   async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    yield {
-      id: generateEventId(),
-      timestamp: generateTimestamp(),
-      type: "session.status_running",
-    } as SessionEvent;
-
+    // Lifecycle events (session.status_running / session.status_idle) are owned
+    // solely by the Host router, which persists exactly one of each per turn
+    // (issue #83). The adapter yields only real content/errors.
     try {
       const rawPrompt = input.message.content
         .filter((b) => b.type === "text")
@@ -61,11 +58,8 @@ export class CodexAdapter implements Adapter {
         ? this.eventSource(prompt, { model: this.model ?? input.agent.model })
         : this.spawnCodex(prompt, input);
 
-      let hasError = false;
-
       for await (const event of source) {
         if (event.type === "turn.failed" || event.type === "error") {
-          hasError = true;
           const translatedEvents = translator.processEvent(event);
           for (const e of translatedEvents) yield e;
 
@@ -85,14 +79,8 @@ export class CodexAdapter implements Adapter {
         const translatedEvents = translator.processEvent(event);
         for (const e of translatedEvents) yield e;
       }
-
-      if (!hasError) {
-        yield {
-          id: generateEventId(),
-          timestamp: generateTimestamp(),
-          type: "session.status_idle",
-        } as SessionEvent;
-      }
+      // No session.status_idle yield — the Host router owns the single idle
+      // emission for the turn (issue #83).
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       yield {

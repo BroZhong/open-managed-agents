@@ -15,6 +15,7 @@ interface RunCall {
     cwd?: string;
     envs?: Record<string, string>;
     timeoutMs?: number;
+    signal?: AbortSignal;
     onStdout?: (data: string) => void | Promise<void>;
     onStderr?: (data: string) => void | Promise<void>;
   };
@@ -223,6 +224,30 @@ describe("E2BSandboxClient", () => {
     const call = sandboxes[0].runCalls.at(-1)!;
     expect(call.opts?.envs).toEqual({ A: "1" });
     expect(call.opts?.timeoutMs).toBe(5_000);
+  });
+
+  it("exec maps timeoutSeconds: 40 to timeoutMs: 40000 (#81)", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    await collect(client.exec(id, ["ls"], { timeoutSeconds: 40 }));
+    expect(sandboxes[0].runCalls.at(-1)!.opts?.timeoutMs).toBe(40_000);
+  });
+
+  it("exec maps timeoutSeconds: 0 (disabled) to timeoutMs: 0 — e2b treats 0 as no timeout (#81)", async () => {
+    // `0` is the disable-timeout convention (mirrors e2b SDK `timeoutMs: 0`).
+    // It must reach the SDK as `timeoutMs: 0`, NOT be dropped as falsy.
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    await collect(client.exec(id, ["ls"], { timeoutSeconds: 0 }));
+    expect(sandboxes[0].runCalls.at(-1)!.opts?.timeoutMs).toBe(0);
+  });
+
+  it("exec forwards the AbortSignal into commands.run by identity (#84)", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const controller = new AbortController();
+    await collect(client.exec(id, ["ls"], { signal: controller.signal }));
+    expect(sandboxes[0].runCalls.at(-1)!.opts?.signal).toBe(controller.signal);
   });
 
   it("readFile reads via files.read", async () => {

@@ -63,6 +63,7 @@ function fakeFactory(
           willRetry: false,
         } as AgentSessionEvent);
       },
+      abort() {},
       dispose() {},
     };
   };
@@ -108,16 +109,14 @@ describe("PiAgentAdapter (SDK)", () => {
       assistantEnd(100, 5),
     ];
 
-    it("first event is session.status_running", async () => {
+    it("emits NO session lifecycle events — the Host router owns them (issue #83)", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
-      expect(events[0].type).toBe("session.status_running");
-    });
-
-    it("last event is session.status_idle", async () => {
-      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
-      expect(events[events.length - 1].type).toBe("session.status_idle");
+      const types = events.map((e) => e.type);
+      // The adapter must not double-emit lifecycle events: the router persists
+      // exactly one running/idle per turn. The adapter yields content only.
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
     });
 
     it("emits span.model_request_start and span.model_request_end", async () => {
@@ -392,6 +391,7 @@ describe("PiAgentAdapter (SDK)", () => {
           prompt: async () => {
             throw new Error("no API key configured");
           },
+          abort: () => {},
           dispose: () => {},
         }),
       });
@@ -413,6 +413,107 @@ describe("PiAgentAdapter (SDK)", () => {
       const events = await collectEvents(adapter.run(makeInput("fail")));
       expect(events.length).toBeGreaterThan(0);
       expect(events[events.length - 1].type).toBe("session.error");
+    });
+  });
+
+  describe("abort signal (issue #84)", () => {
+    it("aborting input.signal calls the session's native abort() and lets run() complete", async () => {
+      // A hung turn: prompt() never settles until abort() is called (a tool exec
+      // that never returns is the real cause). Aborting the controller must reach
+      // the session's native abort(), which settles prompt() → closes the queue →
+      // the for-await ends → run() completes. Without the fix run() would hang.
+      let abortCalled = false;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (): Promise<PiSessionLike> => {
+          let settlePrompt: (() => void) | undefined;
+          let listener: ((e: AgentSessionEvent) => void) | undefined;
+          return {
+            subscribe(l) {
+              listener = l;
+              return () => {
+                listener = undefined;
+              };
+            },
+            // Never resolves on its own — only when abort() fires.
+            prompt() {
+              return new Promise<void>((resolve) => {
+                settlePrompt = resolve;
+              });
+            },
+            abort() {
+              abortCalled = true;
+              // Pi's abort settles the turn: emit agent_end (closes the queue),
+              // then resolve prompt().
+              listener?.({
+                type: "agent_end",
+                messages: [],
+                willRetry: false,
+              } as AgentSessionEvent);
+              settlePrompt?.();
+            },
+            dispose() {},
+          };
+        },
+      });
+
+      const controller = new AbortController();
+      const input = makeInput("hang");
+      input.signal = controller.signal;
+
+      const events: SessionEvent[] = [];
+      const runPromise = (async () => {
+        for await (const e of adapter.run(input)) events.push(e);
+      })();
+
+      // Let the turn wedge, then interrupt.
+      await new Promise((r) => setTimeout(r, 10));
+      controller.abort();
+
+      await runPromise; // must resolve — proves the hang was broken.
+      expect(abortCalled).toBe(true);
+      // The adapter no longer emits lifecycle events (issue #83); run()
+      // completing is itself the proof the hang was broken.
+      const abortTypes = events.map((e) => e.type);
+      expect(abortTypes).not.toContain("session.status_idle");
+    });
+
+    it("a signal already aborted before run() aborts the session immediately", async () => {
+      let abortCalled = false;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (): Promise<PiSessionLike> => {
+          let listener: ((e: AgentSessionEvent) => void) | undefined;
+          return {
+            subscribe(l) {
+              listener = l;
+              return () => {
+                listener = undefined;
+              };
+            },
+            prompt() {
+              return new Promise<void>(() => {
+                /* never settles on its own */
+              });
+            },
+            abort() {
+              abortCalled = true;
+              listener?.({
+                type: "agent_end",
+                messages: [],
+                willRetry: false,
+              } as AgentSessionEvent);
+            },
+            dispose() {},
+          };
+        },
+      });
+
+      const controller = new AbortController();
+      controller.abort(); // already aborted before the run starts
+      const input = makeInput("go");
+      input.signal = controller.signal;
+
+      await collectEvents(adapter.run(input));
+      expect(abortCalled).toBe(true);
     });
   });
 

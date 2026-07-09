@@ -105,7 +105,17 @@ function bashOperations(executor: ToolExecutor): BashOperations {
     async exec(command, cwd, options) {
       for await (const chunk of executor.exec(["/bin/sh", "-c", command], {
         cwd: toRelative(cwd),
-        timeoutSeconds: options.timeout !== undefined ? options.timeout / 1000 : undefined,
+        // Pi's bash `timeout` is already in SECONDS ("Timeout in seconds") — the
+        // executor's `timeoutSeconds` is the same unit, so it passes straight
+        // through (the old `/1000` turned 40s into 0.04s → deadline_exceeded,
+        // issue #81). When the model omits `timeout`, Pi's contract is "no
+        // default timeout"; we encode that as `timeoutSeconds: 0` (= disabled,
+        // mirroring the e2b SDK's `timeoutMs: 0`), NOT `undefined` — undefined
+        // would fall through to a backend default.
+        timeoutSeconds: options.timeout ?? 0,
+        // Thread the turn's native abort signal down so a hung exec is
+        // cancellable end-to-end (issue #84).
+        signal: options.signal,
       })) {
         options.onData(Buffer.from(chunk.text));
       }

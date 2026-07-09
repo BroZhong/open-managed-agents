@@ -19,6 +19,8 @@ import { buildCustomTools } from "../src/custom-tools.js";
 class MemExecutor implements ToolExecutor {
   readonly files = new Map<string, string>();
   readonly calls: string[] = [];
+  /** The `opts` object of the most recent `exec` call, for timeout/signal assertions. */
+  lastExecOpts?: ExecOptions;
 
   seed(path: string, content: string): this {
     this.files.set(path, content);
@@ -27,6 +29,7 @@ class MemExecutor implements ToolExecutor {
 
   async *exec(command: string[], opts?: ExecOptions): AsyncIterable<ExecOutputChunk> {
     this.calls.push(`exec ${command.join(" ")} @${opts?.cwd ?? "."}`);
+    this.lastExecOpts = opts;
     yield { stream: "stdout", text: `ran: ${command[command.length - 1]}` };
   }
 
@@ -74,11 +77,12 @@ function toolByName(tools: ToolDefinition[], name: string): ToolDefinition {
 async function run(
   tool: ToolDefinition,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<string> {
   const result = await tool.execute(
     "tc",
     args as never,
-    undefined,
+    signal as never,
     undefined,
     {} as never,
   );
@@ -131,6 +135,36 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const out = await run(toolByName(tools, "bash"), { command: "echo hi" });
     expect(out).toContain("ran: echo hi");
     expect(ex.calls).toContain("exec /bin/sh -c echo hi @.");
+  });
+
+  it("bash forwards Pi's timeout (SECONDS) straight through — not divided by 1000 (#81)", async () => {
+    // Pi's bash schema defines `timeout` in SECONDS. The old code did
+    // `options.timeout / 1000`, turning 40s into 0.04s and killing the command
+    // in ~44ms ([deadline_exceeded]). The executor must receive 40, not 0.04.
+    const ex = new MemExecutor();
+    const tools = buildCustomTools(ex);
+    await run(toolByName(tools, "bash"), { command: "sleep 1", timeout: 40 });
+    expect(ex.lastExecOpts?.timeoutSeconds).toBe(40);
+  });
+
+  it("bash with no model timeout disables the timeout via timeoutSeconds: 0 (#81)", async () => {
+    // Pi's bash schema documents "no default timeout" when omitted. We encode
+    // that as `timeoutSeconds: 0` (= disabled, mirroring e2b `timeoutMs: 0`),
+    // NOT `undefined` (which would fall through to a backend default).
+    const ex = new MemExecutor();
+    const tools = buildCustomTools(ex);
+    await run(toolByName(tools, "bash"), { command: "echo hi" });
+    expect(ex.lastExecOpts?.timeoutSeconds).toBe(0);
+  });
+
+  it("bash forwards Pi's AbortSignal into the executor (#84)", async () => {
+    // The turn's native abort signal reaches the tool's execute() and must be
+    // threaded into the executor so a hung exec can be cancelled.
+    const ex = new MemExecutor();
+    const tools = buildCustomTools(ex);
+    const controller = new AbortController();
+    await run(toolByName(tools, "bash"), { command: "echo hi" }, controller.signal);
+    expect(ex.lastExecOpts?.signal).toBe(controller.signal);
   });
 
   it("ls lists a directory's immediate children via the executor", async () => {

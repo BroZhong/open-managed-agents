@@ -26,10 +26,21 @@ export interface ExecOutputChunk {
 export interface ExecOptions {
   /** Working directory for the command, relative to the executor root. */
   cwd?: string;
-  /** Kill the command after this many seconds. */
+  /**
+   * Kill the command after this many seconds. `0` means **disable the timeout**
+   * (run with no deadline — mirrors the e2b SDK's `timeoutMs: 0`); this is
+   * distinct from `undefined`, which lets the backend apply its own default
+   * (issue #81).
+   */
   timeoutSeconds?: number;
   /** Extra environment variables to layer onto the command. */
   env?: Record<string, string>;
+  /**
+   * The turn's abort signal (issue #84). Passed straight through to the backend
+   * so a hung command is cancelled when the router aborts the turn — a pure
+   * passthrough of the runtime's native cancel, not a separate watchdog.
+   */
+  signal?: AbortSignal;
 }
 
 /** An entry returned by `list`. */

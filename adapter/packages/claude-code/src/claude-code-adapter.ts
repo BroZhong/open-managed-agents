@@ -43,15 +43,11 @@ export class ClaudeCodeAdapter implements Adapter {
   }
 
   async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    // 1. Yield session.status_running
-    yield {
-      id: generateEventId(),
-      timestamp: generateTimestamp(),
-      type: "session.status_running",
-    };
-
+    // Lifecycle events (session.status_running / session.status_idle) are owned
+    // solely by the Host router, which persists exactly one of each per turn
+    // (issue #83). The adapter yields only real content/errors.
     try {
-      // 2. Convert input.history -> session file
+      // Convert input.history -> session file
       await eventsToSessionFile(input.history, input.sessionId, this.workDir);
 
       // 3. Build query options
@@ -103,13 +99,8 @@ export class ClaudeCodeAdapter implements Adapter {
         for (const event of finalEvents) {
           yield event;
         }
-
-        // 5. On success: yield session.status_idle
-        yield {
-          id: generateEventId(),
-          timestamp: generateTimestamp(),
-          type: "session.status_idle",
-        };
+        // No session.status_idle yield — the Host router owns the single idle
+        // emission for the turn (issue #83).
       } finally {
         // Clear timeout
         if (timeoutId !== undefined) {

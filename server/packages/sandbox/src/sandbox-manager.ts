@@ -284,8 +284,11 @@ class SandboxSessionImpl implements SandboxSession {
     const cwd = this.resolve(opts?.cwd ?? ".");
     yield* this.sandboxClient.exec(id, command, {
       cwd,
+      // `timeoutSeconds` (incl. the `0` = disabled convention, issue #81) and
+      // the turn's abort `signal` (issue #84) flow through untouched.
       timeoutSeconds: opts?.timeoutSeconds,
       env: opts?.env,
+      signal: opts?.signal,
     });
   }
 

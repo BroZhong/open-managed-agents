@@ -416,8 +416,14 @@ export class SessionRouter {
         continue;
       }
 
-      // Build adapter input (include history for multi-turn)
-      const { data: priorEvents } = await this.eventLogStore.getEvents(sessionId);
+      // Build adapter input (include history for multi-turn). Read the COMPLETE
+      // event history via pagination (issue #82): getEvents defaults to
+      // limit 50 / seq ASC, so a single unpaginated call fed the adapter only
+      // the OLDEST 50 events — dropping recent turns and potentially leaving a
+      // dangling agent.tool_use whose tool_result lived beyond seq 50, which the
+      // model API rejects. Loop on `hasMore` using the last seq seen as
+      // `afterSeq` so history never silently truncates as a session grows.
+      const priorEvents = await this.readAllEvents(sessionId);
 
       // Select the Agent's valid equipped-Skill ids up front — the async store
       // validation feeds BOTH the EnvSpec projections (via `sandboxFor`) and the
@@ -458,6 +464,10 @@ export class SessionRouter {
         appendSystemPrompt,
         skillPaths,
         model,
+        // Thread the per-turn abort signal so the adapter can wire it to its
+        // runtime's native cancel (issue #84) — a user interrupt then unwedges a
+        // hung turn instead of locking the session forever.
+        signal,
       );
 
       // The Adapter is a pure translator: it runs directly and routes any tool
@@ -590,6 +600,28 @@ export class SessionRouter {
     return current?.model ?? agentConfig.model;
   }
 
+  /**
+   * Read a session's ENTIRE event log by paginating on `hasMore` (issue #82).
+   * `getEvents` defaults to `limit: 50` / `seq ASC`; a single call therefore
+   * returns only the oldest page. We walk forward with `afterSeq` = the last
+   * seq seen until the store reports no more, so the adapter always receives the
+   * full, gap-free history rather than a truncated prefix. Ordering is preserved
+   * (each page is seq-ascending and pages are appended in order).
+   */
+  private async readAllEvents(sessionId: string): Promise<StoredEvent[]> {
+    const all: StoredEvent[] = [];
+    let afterSeq = 0;
+    for (;;) {
+      const { data, hasMore } = await this.eventLogStore.getEvents(sessionId, {
+        afterSeq,
+      });
+      all.push(...data);
+      if (!hasMore || data.length === 0) break;
+      afterSeq = data[data.length - 1]!.seq;
+    }
+    return all;
+  }
+
   private buildAdapterInput(
     sessionId: string,
     turnId: string,
@@ -600,6 +632,7 @@ export class SessionRouter {
     appendSystemPrompt?: string[],
     skillPaths?: string[],
     model: string = agentConfig.model,
+    signal?: AbortSignal,
   ): AdapterInput {
     const eventData = promotedEvent.data as Record<string, unknown> | undefined;
     let content: ContentBlock[];
@@ -645,6 +678,9 @@ export class SessionRouter {
       history,
       // Per-call injection: the single seam between the pure Adapter and infra.
       toolExecutor,
+      // The turn's abort signal (issue #84): the adapter wires it to its
+      // runtime's native cancel so a user interrupt can end a hung turn.
+      signal,
     };
   }
 

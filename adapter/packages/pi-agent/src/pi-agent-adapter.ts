@@ -35,6 +35,14 @@ import { PiEventTranslator } from "./translator.js";
 export interface PiSessionLike {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: PromptOptions): Promise<void>;
+  /**
+   * Pi's native "Abort current operation and wait for agent to become idle"
+   * (issue #84). We call it when `input.signal` fires so a user interrupt can
+   * unwedge a turn whose tool exec never returns: aborting settles `prompt()`,
+   * which closes the EventQueue and lets the `for await` end naturally. This is
+   * a pure reuse of Pi's own cancel — no timeout/watchdog is introduced.
+   */
+  abort(): Promise<void> | void;
   dispose(): void;
 }
 
@@ -147,12 +155,10 @@ export class PiAgentAdapter implements Adapter {
   }
 
   async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    yield {
-      id: generateEventId(),
-      timestamp: generateTimestamp(),
-      type: "session.status_running",
-    } as SessionEvent;
-
+    // The router is the sole owner of session.status_running/idle (issue #83):
+    // it knows the whole drain-wave boundary, while this adapter sees only one
+    // turn. Emitting them here too doubled every turn's lifecycle events. The
+    // adapter now yields only real content/errors.
     let session: PiSessionLike | undefined;
     try {
       const prompt = input.message.content
@@ -193,6 +199,29 @@ export class PiAgentAdapter implements Adapter {
         }
       });
 
+      // Wire the router's per-turn abort signal to Pi's native cancel (issue
+      // #84). Without this, a hung turn (a tool exec that never returns, so
+      // prompt() never settles and no further event arrives) locks the session
+      // forever — the drain loop only re-checks `aborted` when the next event
+      // comes. Calling `session.abort()` settles prompt(), which closes the
+      // EventQueue above, so the `for await` ends naturally. We reuse Pi's own
+      // cancel rather than inventing a watchdog. Wired AFTER subscribe() so an
+      // abort's resulting agent_end reaches the queue. If the signal already
+      // fired, abort immediately; otherwise register a one-shot listener removed
+      // in the finally so a completed turn leaves nothing attached.
+      const signal = input.signal;
+      const activeSession = session;
+      const onAbort = () => {
+        void activeSession.abort();
+      };
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      }
+
       try {
         // Fire the turn. prompt() resolves once the turn is accepted; output
         // arrives via the subscription. A rejection here (bad model, no auth,
@@ -214,13 +243,8 @@ export class PiAgentAdapter implements Adapter {
         }
       } finally {
         unsubscribe();
+        if (signal) signal.removeEventListener("abort", onAbort);
       }
-
-      yield {
-        id: generateEventId(),
-        timestamp: generateTimestamp(),
-        type: "session.status_idle",
-      } as SessionEvent;
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       yield {

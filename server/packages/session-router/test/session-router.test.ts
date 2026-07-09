@@ -349,6 +349,46 @@ describe("SessionRouter", () => {
     });
   });
 
+  describe("handleNewEvent - lifecycle events are router-owned (issue #83)", () => {
+    it("persists EXACTLY ONE session.status_running and ONE session.status_idle per turn", async () => {
+      // The router is the sole owner of lifecycle events: it emits one running
+      // at turn start and one idle when the queue drains. Adapters yield only
+      // content/errors. Before #83, adapters ALSO yielded running/idle, which
+      // the router persisted as ordinary events → two of each per turn. This
+      // fake adapter yields content only (matching the post-fix adapters), so
+      // the log must contain exactly one of each lifecycle event.
+      const adapter = createMockAdapter([
+        {
+          id: "evt_msg",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "hi" }],
+        },
+      ]);
+      const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps(adapter);
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "hello" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await router.handleNewEvent(session.id, testAgent);
+
+      const allEvents = await eventLogStore.getEvents(session.id, { limit: 1000 });
+      const types = allEvents.data.map((e) => e.type);
+      expect(types.filter((t) => t === "session.status_running")).toHaveLength(1);
+      expect(types.filter((t) => t === "session.status_idle")).toHaveLength(1);
+    });
+  });
+
   describe("handleNewEvent - pending drain with multiple messages", () => {
     it("drains multiple pending messages in sequence", async () => {
       let callCount = 0;

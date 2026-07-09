@@ -85,6 +85,15 @@ export interface AdapterInput {
    * underlying agent runtime provides on its own.
    */
   toolExecutor?: ToolExecutor;
+  /**
+   * The router's per-turn abort signal (issue #84). The Adapter wires it to its
+   * runtime's **native** cancel (e.g. Pi's `AgentSession.abort()`) so that a
+   * user interrupt can unwedge a hung turn whose tool exec never returns — the
+   * turn otherwise blocks forever because the event stream never emits the next
+   * event to re-check the flag. Pure passthrough of the runtime's own cancel; no
+   * timeout/watchdog is introduced. Absent ⇒ no native cancel is wired.
+   */
+  signal?: AbortSignal;
 }
 
 // ─── Base event ──────────────────────────────────────────────────────────────

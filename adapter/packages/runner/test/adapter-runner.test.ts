@@ -54,16 +54,18 @@ describe("adapter-runner", () => {
         expect(event.id).toMatch(/^sevt_/);
       }
 
-      // Verify expected event type sequence from MockAdapter
+      // Verify expected event type sequence from MockAdapter. Lifecycle events
+      // (session.status_running / session.status_idle) are owned solely by the
+      // Host router now (issue #83), so the adapter no longer emits them.
       const types = events.map((e: { type: string }) => e.type);
-      expect(types[0]).toBe("session.status_running");
-      expect(types[1]).toBe("span.model_request_start");
+      expect(types[0]).toBe("span.model_request_start");
       expect(types).toContain("agent.message_stream_start");
       expect(types).toContain("agent.message_chunk");
       expect(types).toContain("agent.message_stream_end");
       expect(types).toContain("agent.message");
       expect(types).toContain("span.model_request_end");
-      expect(types[types.length - 1]).toBe("session.status_idle");
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
     } finally {
       await rm(tmpDir, { recursive: true });
     }
