@@ -14,12 +14,11 @@ export interface MockAdapterOptions {
 }
 
 function buildDefaultEvents(): SessionEvent[] {
+  // No session.status_running / session.status_idle here — those lifecycle
+  // events are owned solely by the Host router, which persists exactly one of
+  // each per turn (issue #83). An adapter that also yielded them would double
+  // the count in the event log.
   return [
-    {
-      id: generateEventId(),
-      timestamp: generateTimestamp(),
-      type: "session.status_running",
-    },
     {
       id: generateEventId(),
       timestamp: generateTimestamp(),
@@ -65,11 +64,6 @@ function buildDefaultEvents(): SessionEvent[] {
       timestamp: generateTimestamp(),
       type: "span.model_request_end",
       usage: { inputTokens: 10, outputTokens: 5 },
-    },
-    {
-      id: generateEventId(),
-      timestamp: generateTimestamp(),
-      type: "session.status_idle",
     },
   ];
 }

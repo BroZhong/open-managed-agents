@@ -1,0 +1,58 @@
+# Warm pool for the `code-interpreter-vfscli` E2B template on the brozhong ACS
+# HK cluster. This is the custom image (see code-interpreter-vfscli/Dockerfile):
+# the stock ACS code-interpreter base + vfs-cli + a user-writable /workspace
+# (#85) + python on a plain PATH.
+#
+# The SandboxSet name IS the E2B templateID. Agents opt in with
+# `sandbox.image: "code-interpreter-vfscli"`; the default `code-interpreter`
+# pool (sandboxset-code-interpreter.yaml) is left untouched.
+#
+# Only two things are meant to be tuned here:
+#   - spec.replicas      → warm-pool size
+#   - the container image tag
+#
+# ⚠️ Private ACR pull: the CRD has no dedicated imagePullSecrets field, but the
+# pod template passes it through — hence template.spec.imagePullSecrets below.
+# The `oma-acr` secret must exist in the sandbox-system namespace (copy it from
+# oma-infra if absent). The image is pulled via the VPC (password-less) ACR
+# address to avoid egress + auth over the public endpoint.
+#
+# Apply (idempotent):
+#   kubectl apply -f deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml
+#   kubectl get sbs -n sandbox-system code-interpreter-vfscli
+apiVersion: agents.kruise.io/v1alpha1
+kind: SandboxSet
+metadata:
+  name: code-interpreter-vfscli
+  namespace: sandbox-system
+spec:
+  replicas: 1
+  # csi injects the NAS/OSS mounts; agent-runtime injects the e2b envd daemon.
+  runtimes:
+    - name: csi
+    - name: agent-runtime
+  template:
+    metadata:
+      # Required for ECI / serverless scheduling on this cluster — without these
+      # the pod stays Pending with no ECI node assigned.
+      labels:
+        alibabacloud.com/acs: "true"
+        alibabacloud.com/compute-class: agent-sandbox
+        alibabacloud.com/compute-qos: default
+    spec:
+      automountServiceAccountToken: false
+      # Pull the private custom image from the HK personal ACR. Use the VPC
+      # (password-less) mirror address in-cluster; the secret is the fallback.
+      imagePullSecrets:
+        - name: oma-acr
+      containers:
+        - name: sandbox
+          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox:code-interpreter-vfscli-0.3.0
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 30Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi

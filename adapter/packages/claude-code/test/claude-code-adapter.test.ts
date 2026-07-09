@@ -148,7 +148,7 @@ describe("ClaudeCodeAdapter", () => {
   }
 
   describe("simple text turn", () => {
-    it("first event is session.status_running, last is session.status_idle", async () => {
+    it("emits NO session lifecycle events — the Host router owns them (issue #83)", async () => {
       const workDir = await createTmpDir();
       const adapter = new ClaudeCodeAdapter({
         apiKey: "test-key",
@@ -157,9 +157,10 @@ describe("ClaudeCodeAdapter", () => {
       });
 
       const events = await collectEvents(adapter.run(makeInput()));
+      const types = events.map((e) => e.type);
 
-      expect(events[0]!.type).toBe("session.status_running");
-      expect(events[events.length - 1]!.type).toBe("session.status_idle");
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
     });
 
     it("contains span pair (start and end)", async () => {
@@ -278,7 +279,7 @@ describe("ClaudeCodeAdapter", () => {
       expect((lastEvent as any).error.code).toBe("timeout");
     });
 
-    it("first event is session.status_running even on timeout", async () => {
+    it("emits no lifecycle events even on timeout — router owns them (issue #83)", async () => {
       const workDir = await createTmpDir();
       const adapter = new ClaudeCodeAdapter({
         apiKey: "test-key",
@@ -291,12 +292,14 @@ describe("ClaudeCodeAdapter", () => {
       });
 
       const events = await collectEvents(adapter.run(input));
-      expect(events[0]!.type).toBe("session.status_running");
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
     });
   });
 
   describe("SDK error", () => {
-    it("first event is session.status_running, last is session.error", async () => {
+    it("last event is session.error and no lifecycle events are emitted (issue #83)", async () => {
       const workDir = await createTmpDir();
       const adapter = new ClaudeCodeAdapter({
         apiKey: "test-key",
@@ -305,8 +308,10 @@ describe("ClaudeCodeAdapter", () => {
       });
 
       const events = await collectEvents(adapter.run(makeInput()));
+      const types = events.map((e) => e.type);
 
-      expect(events[0]!.type).toBe("session.status_running");
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
       expect(events[events.length - 1]!.type).toBe("session.error");
     });
 

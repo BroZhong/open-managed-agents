@@ -111,8 +111,11 @@ describe("session-router: Agent Files → appendSystemPrompt", () => {
   });
 });
 
-describe("session-router: equipped Skills → skillPaths", () => {
-  it("materializes an Agent's equipped Skills into temp dirs and passes them", async () => {
+describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<id>)", () => {
+  it("passes each valid equipped Skill as an in-sandbox /skills/<id> path", async () => {
+    // Skills are no longer materialized to a Host temp dir — they are projected
+    // into the sandbox at /skills/<id> (ADR-0005 §4), and `skillPaths` carries
+    // those in-sandbox roots so Pi's sandbox-mapped read tool can load them.
     const skillStore = new InMemorySkillStore();
     const skillArtifactStore = new InMemorySkillArtifactStore();
     const skill = await skillStore.create({
@@ -125,8 +128,24 @@ describe("session-router: equipped Skills → skillPaths", () => {
     const agent: Agent = { ...AGENT, skills: [skill.id] };
     const input = await runOneTurn({ skillStore, skillArtifactStore, agent });
 
-    expect(input?.agent.skillPaths).toHaveLength(1);
-    expect(input?.agent.skillPaths?.[0]).toContain(skill.id);
+    expect(input?.agent.skillPaths).toEqual([`/skills/${skill.id}`]);
+  });
+
+  it("skips a Skill with zero files (never becomes a skillPath)", async () => {
+    // The zero-files skip preserved from materializeSkills: a Skill whose store
+    // has no files must not produce a projection / skillPath.
+    const skillStore = new InMemorySkillStore();
+    const skillArtifactStore = new InMemorySkillArtifactStore();
+    const empty = await skillStore.create({
+      tenantId: "tenant_1",
+      name: "empty",
+      description: "no files",
+    });
+
+    const agent: Agent = { ...AGENT, skills: [empty.id] };
+    const input = await runOneTurn({ skillStore, skillArtifactStore, agent });
+
+    expect(input?.agent.skillPaths).toBeUndefined();
   });
 
   it("no equipped Skills ⇒ skillPaths undefined", async () => {

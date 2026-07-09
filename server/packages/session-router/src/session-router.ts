@@ -1,14 +1,11 @@
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import type {
   EventLogStore,
   PendingEventStore,
-  PendingEvent,
   StoredEvent,
   Agent,
   AgentFileStore,
   AgentStore,
+  Session,
   SkillStore,
   SkillArtifactStore,
 } from "@oma-server/store";
@@ -16,9 +13,10 @@ import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type {
-  ToolExecutorFactory,
-  WorkspaceBinding,
-  WorkspaceSyncResult,
+  EnvSpec,
+  SandboxManager,
+  SandboxSession,
+  SyncResult,
 } from "@oma-server/sandbox";
 import { syncHasChanges } from "@oma-server/sandbox";
 import type {
@@ -30,17 +28,6 @@ import type {
   UserMessage,
 } from "@open-managed-agents/adapter-core";
 import { isStreamEvent } from "@open-managed-agents/adapter-core";
-
-/**
- * A per-session tool executor that syncs its Workspace back to S3 at
- * tool-execution points and must be torn down when the session ends.
- * `SandboxToolExecutor` satisfies this; the router only needs the
- * `ToolExecutor` surface plus `sync` + `dispose`.
- */
-type DisposableToolExecutor = ToolExecutor & {
-  sync(): Promise<WorkspaceSyncResult>;
-  dispose(): Promise<void>;
-};
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -62,13 +49,20 @@ export interface SessionRouterDeps {
   eventStreamHub: EventStreamHub;
   resolveAdapter: (runtime: string) => Adapter;
   /**
-   * Produces a sandbox-backed {@link ToolExecutor} bound to a session's
-   * Workspace (ADR-0002 §4). When present and the agent is sandboxed, the
-   * router injects the executor per `run()` call and disposes it — destroying
-   * the sandbox — at session end. Absent ⇒ adapters run with no injected
-   * executor (their own tool execution, no sandbox).
+   * The single owner of sandbox lifecycle (ADR-0005 §1, design doc §2/§6).
+   * When present and the agent is sandboxed, the router `open`s exactly one
+   * {@link SandboxSession} per Session (cheap — lazy, no sandbox is started
+   * until the first tool call), injects it as the per-run {@link ToolExecutor},
+   * `checkpoint`s it at each turn end, and `dispose`s it — destroying the
+   * sandbox — at session end. Absent ⇒ a sandboxed agent fails loud (see
+   * {@link isSandboxedButUnprovisionable}); an opted-out agent runs with no
+   * injected executor (its own tool execution, no sandbox).
+   *
+   * Replaces the old `toolExecutorFactory` + per-session executor Map: the
+   * SandboxSession owns its own lifecycle and self-heal, so the router keeps
+   * only a lookup Map (`sessions`) and never a lifecycle registry.
    */
-  toolExecutorFactory?: ToolExecutorFactory;
+  sandboxManager?: SandboxManager;
   /**
    * Per-Agent editable Files (IDENTITY/SOUL/USER/MEMORY). When present, the
    * router assembles the running Agent's Files into `appendSystemPrompt` in a
@@ -87,9 +81,19 @@ export interface SessionRouterDeps {
   agentStore?: AgentStore;
   /**
    * Tenant Skill Library metadata + S3 bodies. When both are present, the
-   * router materializes the Agent's *equipped* Skills (`agent.skills`) into a
-   * Host-side temp directory per turn, passes them as `skillPaths`, and cleans
-   * them up at turn end (issue #49). Absent ⇒ no Skills materialized.
+   * router selects the Agent's *equipped* Skills that are valid (exist, in this
+   * tenant, owned by this Agent when `ownerType==='agent'`, and non-empty) and
+   * declares each as a **Read-only Projection** into the sandbox at
+   * `/skills/<id>` (ADR-0005 §4). The Skill *content* flows S3→sandbox inside
+   * the SandboxManager (via `S3ProvisionSource`) — never through the Host — so
+   * the router consults `skillArtifactStore` only to confirm a Skill is
+   * non-empty (mirroring the old `materializeSkills`' zero-files skip), not to
+   * read bodies. Absent ⇒ no Skills projected.
+   *
+   * WHY the sandbox and not a Host temp dir (ADR-0005 §4): the Pi adapter runs
+   * `noTools: "builtin"` + custom tools, so Pi's prompt tells the model to
+   * `read` a Skill's file — and that read is sandbox-mapped. A Skill left on the
+   * Host would therefore be unreadable; it MUST be projected into the sandbox.
    */
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
@@ -101,6 +105,16 @@ export interface SessionRouterDeps {
    * persisted to PostgreSQL. When absent, deltas are live-only (hub chunks).
    */
   turnStreamStore?: TurnStreamStore;
+  /**
+   * Deployment-wide default sandbox environment variables, merged into every
+   * sandboxed Agent's `EnvSpec.env` (the Agent's own `sandbox.env` wins per key).
+   * Used to inject a shared secret a bundled CLI needs — e.g. `VFS_TOKEN` for the
+   * `vfs-cli` baked into the custom sandbox image — without requiring every Agent
+   * to carry the token in its own config. Sourced from server config (a K8s
+   * Secret → env), so the token never lives in code or in the Agent record.
+   * Absent ⇒ only the Agent's own `sandbox.env` is used (prior behavior).
+   */
+  defaultSandboxEnv?: Record<string, string>;
 }
 
 export class SessionRouter {
@@ -109,20 +123,25 @@ export class SessionRouter {
   private readonly sessionStore: SessionStore;
   private readonly eventStreamHub: EventStreamHub;
   private readonly resolveAdapter: (runtime: string) => Adapter;
-  private readonly toolExecutorFactory?: ToolExecutorFactory;
+  private readonly sandboxManager?: SandboxManager;
   private readonly agentFileStore?: AgentFileStore;
   private readonly agentStore?: AgentStore;
   private readonly skillStore?: SkillStore;
   private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
+  private readonly defaultSandboxEnv?: Record<string, string>;
   private readonly activeSessions = new Map<string, AbortController>();
   /**
-   * One executor per session, reused across turns so the sandbox (created
-   * lazily on first tool use) persists for the session's life and is destroyed
-   * only at session end. Never a shared mutable registry across sessions —
-   * each entry is a distinct executor bound to that session's Workspace.
+   * One {@link SandboxSession} per session, reused across turns. This is a
+   * **lookup** map, NOT a lifecycle registry: the SandboxSession owns its own
+   * lifecycle (lazy create on first primitive, transparent self-heal after a
+   * gateway reclaim, sync-before-destroy on dispose). The router only remembers
+   * *which* session belongs to a sessionId so the same long-lived binding is
+   * reused turn after turn and disposed exactly once at session end. Each entry
+   * is a distinct session bound to that Session's EnvSpec — never shared across
+   * Sessions.
    */
-  private readonly sessionExecutors = new Map<string, DisposableToolExecutor>();
+  private readonly sessions = new Map<string, SandboxSession>();
 
   constructor(deps: SessionRouterDeps) {
     this.eventLogStore = deps.eventLogStore;
@@ -130,12 +149,13 @@ export class SessionRouter {
     this.sessionStore = deps.sessionStore;
     this.eventStreamHub = deps.eventStreamHub;
     this.resolveAdapter = deps.resolveAdapter;
-    this.toolExecutorFactory = deps.toolExecutorFactory;
+    this.sandboxManager = deps.sandboxManager;
     this.agentFileStore = deps.agentFileStore;
     this.agentStore = deps.agentStore;
     this.skillStore = deps.skillStore;
     this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
+    this.defaultSandboxEnv = deps.defaultSandboxEnv;
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
@@ -163,19 +183,28 @@ export class SessionRouter {
 
   /**
    * Terminate a session: stop the active turn and destroy its sandbox (if one
-   * was ever created). Disposing the executor tears the sandbox down; a
-   * pure-chat session that never created one disposes to a no-op.
+   * was ever created). `SandboxSession.dispose` syncs the last turn's files THEN
+   * tears the sandbox down (ADR-0005 §5, design doc §3), returning the final
+   * delta; a pure-chat session that never created a sandbox disposes to an empty
+   * no-op. We drop the lookup entry first so a concurrent turn can't reuse a
+   * disposing session, then emit any final file-change so the tree reflects the
+   * last turn's writes.
    */
   async terminateSession(sessionId: string): Promise<void> {
     this.interrupt(sessionId);
-    await this.disposeExecutor(sessionId);
+    const session = this.sessions.get(sessionId);
+    this.sessions.delete(sessionId);
+    if (session) {
+      const result = await session.dispose();
+      if (syncHasChanges(result)) this.emitFileChange(sessionId, result);
+    }
   }
 
   /**
    * Sandbox is mandatory (issue #54): an Agent is sandboxed unless it *explicitly*
    * opts out with `sandbox.enabled === false`. A missing `sandbox` field therefore
    * means sandboxed — a legacy Agent with no sandbox config runs in a sandbox and
-   * will fail loud if no executor can be provisioned, which is the intended
+   * will fail loud if no manager can be provisioned, which is the intended
    * mandatory behavior. Only an explicit `enabled: false` is treated as opted-out.
    */
   private isSandboxed(agentConfig: Agent): boolean {
@@ -183,97 +212,93 @@ export class SessionRouter {
   }
 
   /**
-   * Get (or lazily construct) this session's sandbox-backed executor. The
-   * executor object itself does not create a sandbox — that happens lazily on
-   * its first filesystem/code call — so obtaining it here is cheap and does
-   * not spin anything up for a pure-chat turn.
-   */
-  /**
    * The fail-loud condition (issue #54): the Agent is sandboxed (mandatory by
-   * default) but no {@link ToolExecutorFactory} was configured, so no sandbox
-   * executor can be provisioned. Running the turn anyway would let the adapter
-   * fall back to built-in fs/bash tools writing to the server pod filesystem —
-   * the exact bug this guard prevents. When true the router emits a
-   * `session.error` and skips the adapter instead of running unsandboxed.
+   * default) but no {@link SandboxManager} was configured, so no sandbox can be
+   * provisioned. Running the turn anyway would let the adapter fall back to
+   * built-in fs/bash tools writing to the server pod filesystem — the exact bug
+   * this guard prevents. When true the router emits a `session.error` and skips
+   * the adapter instead of running unsandboxed.
    */
   private isSandboxedButUnprovisionable(agentConfig: Agent): boolean {
-    return this.isSandboxed(agentConfig) && !this.toolExecutorFactory;
+    return this.isSandboxed(agentConfig) && !this.sandboxManager;
   }
 
-  private async getExecutorForSession(
-    sessionId: string,
-    agentConfig: Agent,
-  ): Promise<DisposableToolExecutor | undefined> {
-    if (!this.toolExecutorFactory || !this.isSandboxed(agentConfig)) {
-      return undefined;
-    }
-    const existing = this.sessionExecutors.get(sessionId);
-    if (existing) return existing;
-
-    const binding = await this.resolveWorkspaceBinding(sessionId, agentConfig);
-    const executor = this.toolExecutorFactory.create(binding) as DisposableToolExecutor;
-    this.sessionExecutors.set(sessionId, executor);
-    return executor;
-  }
-
-  private async resolveWorkspaceBinding(
-    sessionId: string,
-    agentConfig: Agent,
-  ): Promise<WorkspaceBinding> {
-    const session = await this.sessionStore.getById(sessionId);
-    if (!session) {
-      throw new Error(`Cannot bind executor: session ${sessionId} not found`);
-    }
+  /**
+   * Compute the complete recipe the SandboxManager needs for this Session
+   * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
+   * Agent's image/env, and each validated equipped Skill as a Read-only
+   * Projection at `/skills/<id>` (outside `/workspace`, so the workspace sync
+   * never writes it back — the invariant the manager fail-loud asserts).
+   *
+   * `equippedSkillIds` is precomputed by the caller (it needs async store
+   * lookups for ownership + non-empty validation), so `specFor` stays a pure
+   * value builder. The projection `source` is the weak-typed coordinate the
+   * `S3ProvisionSource` (registered under `kind: "s3"` in the manager's deps)
+   * reads: `{ tenantId, skillId }` maps straight onto
+   * `SkillArtifactStore.getAll` inside the manager (see `S3ProvisionRef`).
+   *
+   * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
+   * with the Agent's own `sandbox.env` — the Agent wins per key, so an Agent can
+   * override or extend the shared defaults but the defaults (e.g. `VFS_TOKEN`)
+   * apply automatically when the Agent sets none.
+   */
+  private specFor(
+    session: Session,
+    agent: Agent,
+    equippedSkillIds: string[],
+  ): EnvSpec {
+    const mergedEnv = { ...this.defaultSandboxEnv, ...agent.sandbox?.env };
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
-      image: agentConfig.sandbox?.image,
-      env: agentConfig.sandbox?.env,
+      image: agent.sandbox?.image,
+      env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
+      projections: equippedSkillIds.map((id) => ({
+        targetPath: `/skills/${id}`,
+        source: { kind: "s3", ref: { tenantId: session.tenantId, skillId: id } },
+      })),
     };
   }
 
-  private async disposeExecutor(sessionId: string): Promise<void> {
-    const executor = this.sessionExecutors.get(sessionId);
-    if (!executor) return;
-    this.sessionExecutors.delete(sessionId);
-    await executor.dispose();
+  /**
+   * Get (or lazily open) this session's {@link SandboxSession} (design doc §6).
+   * `open` is **cheap** — it starts no sandbox; the first filesystem/code
+   * primitive triggers create+hydrate+project — so obtaining it here spins
+   * nothing up for a pure-chat turn. The session is remembered in {@link sessions}
+   * and reused across turns; it is disposed only at session end.
+   *
+   * Returns undefined when there is no manager or the agent opted out of the
+   * sandbox — in both cases the adapter runs with no injected executor.
+   */
+  private sandboxFor(
+    sessionId: string,
+    session: Session,
+    agent: Agent,
+    equippedSkillIds: string[],
+  ): SandboxSession | undefined {
+    if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
+    let sandbox = this.sessions.get(sessionId);
+    if (!sandbox) {
+      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkillIds));
+      this.sessions.set(sessionId, sandbox);
+    }
+    return sandbox; // lazy: no sandbox actually started yet.
   }
 
   /**
-   * Run the executor's Workspace sync and, on completion, emit a
-   * `workspace.file_change` event on the session's stream (ADR-0002 §4–§5).
-   * The Host is the sole emitter of this event — the Adapter reports tool
-   * results only and never emits a workspace/artifact event. The event is
-   * persisted to the event log (so reconnecting clients replay it) and
-   * published live for the SSE stream's file-tree updates.
-   *
-   * Nothing is emitted when the sync was a no-op (no sandbox / no changes),
-   * so a pure-chat turn produces no file-change noise.
+   * Append + publish a `workspace.file_change` for a non-empty sync delta
+   * (ADR-0002 §4–§5, ADR-0005 §5). The Host is the sole emitter of this event —
+   * the SandboxManager/SandboxSession only *returns* a {@link SyncResult}; the
+   * Adapter reports tool results only and never emits a workspace/artifact
+   * event. The event is persisted to the event log (so reconnecting clients
+   * replay it) and published live for the SSE stream's file-tree updates. The
+   * caller guards with {@link syncHasChanges}, so this is only reached when there
+   * is a change to broadcast — a pure-chat turn produces no file-change noise.
    */
-  private async syncWorkspace(
+  private async emitFileChange(
     sessionId: string,
-    executor: DisposableToolExecutor,
+    result: SyncResult,
   ): Promise<void> {
-    let result: WorkspaceSyncResult;
-    try {
-      result = await executor.sync();
-    } catch (err) {
-      // A sync failure must not fail the turn; surface it as a session error.
-      const errorEvent = await this.eventLogStore.append(sessionId, {
-        type: "session.error",
-        data: { error: { message: String(err), code: "workspace_sync_error" } },
-        sessionThreadId: "sthr_primary",
-      });
-      this.eventStreamHub.publish(sessionId, {
-        type: "session.error",
-        seq: errorEvent.seq,
-        data: { error: { message: String(err), code: "workspace_sync_error" } },
-      });
-      return;
-    }
-
-    if (!syncHasChanges(result)) return;
-
     const data = {
       workspaceId: result.workspaceId,
       changed: result.changed,
@@ -289,6 +314,44 @@ export class SessionRouter {
       seq: stored.seq,
       data,
     });
+  }
+
+  /**
+   * Run the session's turn-end checkpoint sync and, when it produced changes,
+   * emit the `workspace.file_change` event (ADR-0005 §5). Owned by the
+   * SandboxSession (scan + content-hash push + baseline-diff deletion, inside
+   * the injected `WorkspacePersistence`); the Host only broadcasts the delta.
+   *
+   * A checkpoint of a session that never created a sandbox (pure chat) or whose
+   * sandbox was reclaimed returns an empty result and never throws (design doc
+   * §3). A *genuine* medium failure DOES throw — we lift the old `syncWorkspace`
+   * try/catch that turns such a failure into a `session.error`
+   * (`workspace_sync_error`) rather than failing the turn.
+   */
+  private async checkpointWorkspace(
+    sessionId: string,
+    sandbox: SandboxSession,
+  ): Promise<void> {
+    let result: SyncResult;
+    try {
+      result = await sandbox.checkpoint();
+    } catch (err) {
+      // A sync failure must not fail the turn; surface it as a session error.
+      const error = { message: String(err), code: "workspace_sync_error" };
+      const errorEvent = await this.eventLogStore.append(sessionId, {
+        type: "session.error",
+        data: { error },
+        sessionThreadId: "sthr_primary",
+      });
+      this.eventStreamHub.publish(sessionId, {
+        type: "session.error",
+        seq: errorEvent.seq,
+        data: { error },
+      });
+      return;
+    }
+
+    if (syncHasChanges(result)) await this.emitFileChange(sessionId, result);
   }
 
   private async drainLoop(
@@ -341,14 +404,14 @@ export class SessionRouter {
         data: {},
       });
 
-      // Fail-loud (issue #54): a sandboxed Agent with no provisionable executor
+      // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
       // must NOT run — otherwise the adapter falls back to built-in fs/bash tools
       // that write to the server pod filesystem. Emit a session.error, mark the
       // turn handled (it was already dequeued), and skip the adapter for this turn.
       if (this.isSandboxedButUnprovisionable(agentConfig)) {
         const error = {
           message:
-            "Agent is sandboxed but no sandbox executor is available (SANDBOX_ENABLED / E2B config missing)",
+            "Agent is sandboxed but no sandbox manager is available (SANDBOX_ENABLED / E2B config missing)",
           code: "sandbox_unavailable",
         };
         const errorEvent = await this.eventLogStore.append(sessionId, {
@@ -371,19 +434,35 @@ export class SessionRouter {
         continue;
       }
 
-      // Build adapter input (include history for multi-turn)
-      const { data: priorEvents } = await this.eventLogStore.getEvents(sessionId);
+      // Build adapter input (include history for multi-turn). Read the COMPLETE
+      // event history via pagination (issue #82): getEvents defaults to
+      // limit 50 / seq ASC, so a single unpaginated call fed the adapter only
+      // the OLDEST 50 events — dropping recent turns and potentially leaving a
+      // dangling agent.tool_use whose tool_result lived beyond seq 50, which the
+      // model API rejects. Loop on `hasMore` using the last seq seen as
+      // `afterSeq` so history never silently truncates as a session grows.
+      const priorEvents = await this.readAllEvents(sessionId);
 
-      // Bind the per-session sandbox-backed executor (lazy — no sandbox yet).
-      // A pure-chat turn never touches it, so nothing is created.
-      const toolExecutor = await this.getExecutorForSession(sessionId, agentConfig);
+      // Select the Agent's valid equipped-Skill ids up front — the async store
+      // validation feeds BOTH the EnvSpec projections (via `sandboxFor`) and the
+      // in-sandbox `skillPaths` handed to the adapter, so the two never diverge.
+      const equippedSkillIds = await this.equippedSkillIds(agentConfig);
 
-      // Assemble the Agent's Files into appendSystemPrompt (fixed order,
-      // missing skipped) and materialize its equipped Skills to a temp dir.
-      // Both are per-turn Host injections (ADR-0002); Skills are cleaned up at
-      // turn end regardless of how the turn ends.
+      // Bind the per-session SandboxSession (lazy — no sandbox yet). A pure-chat
+      // turn never touches it, so nothing is created. Needs the Session record
+      // for its tenant/workspace binding.
+      const session = await this.sessionStore.getById(sessionId);
+      if (!session) {
+        throw new Error(`Cannot run turn: session ${sessionId} not found`);
+      }
+      const sandbox = this.sandboxFor(sessionId, session, agentConfig, equippedSkillIds);
+
+      // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
+      // skipped). Skills are no longer materialized to a Host temp dir — they are
+      // projected into the sandbox by the SandboxManager (ADR-0005 §4); the
+      // adapter is pointed at their in-sandbox `/skills/<id>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(agentConfig);
-      const skills = await this.materializeSkills(agentConfig);
+      const skillPaths = equippedSkillIds.map((id) => `/skills/${id}`);
 
       // Resolve the model live from the Agent's *current* config (issue #59 /
       // ADR-0003 §3), not the model snapshotted onto the Session at creation.
@@ -399,16 +478,20 @@ export class SessionRouter {
         promotedEvent,
         agentConfig,
         priorEvents,
-        toolExecutor,
+        sandbox,
         appendSystemPrompt,
-        skills.paths,
+        skillPaths,
         model,
+        // Thread the per-turn abort signal so the adapter can wire it to its
+        // runtime's native cancel (issue #84) — a user interrupt then unwedges a
+        // hung turn instead of locking the session forever.
+        signal,
       );
 
       // The Adapter is a pure translator: it runs directly and routes any tool
-      // calls through the injected per-run executor (ADR-0002 §1–2). There is
-      // no separate sandbox orchestrator — the sandbox lives behind the
-      // executor and is invisible to the router and the adapter alike.
+      // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
+      // There is no separate sandbox orchestrator — the sandbox lives behind the
+      // session and is invisible to the router and the adapter alike.
       const adapter = this.resolveAdapter(agentConfig.runtime);
       const events = adapter.run(adapterInput);
 
@@ -469,8 +552,6 @@ export class SessionRouter {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(turnId);
           }
-          // Materialized Skills are per-turn; drop them even on interrupt.
-          await skills.cleanup();
           break;
         }
         const errorEvent = await this.eventLogStore.append(sessionId, {
@@ -485,17 +566,13 @@ export class SessionRouter {
         });
       }
 
-      // Sync the Workspace back to S3 at this tool-execution point (turn end).
-      // Owned by the executor (scan + content-hash push + baseline-diff
-      // deletion); the Host emits the resulting file-change event. Pure-chat
-      // turns never created a sandbox, so this is a cheap no-op.
-      if (toolExecutor) {
-        await this.syncWorkspace(sessionId, toolExecutor);
+      // Turn-end lifecycle checkpoint (ADR-0005 §5): sync the sandbox Workspace
+      // back through the persistence seam and emit the resulting file-change
+      // event. Owned by the SandboxSession; a pure-chat turn never created a
+      // sandbox, so this is a cheap empty no-op.
+      if (sandbox) {
+        await this.checkpointWorkspace(sessionId, sandbox);
       }
-
-      // Materialized Skills are per-turn scratch — remove the temp dir now that
-      // the adapter run has finished (idempotent with the abort-path cleanup).
-      await skills.cleanup();
 
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
@@ -526,7 +603,7 @@ export class SessionRouter {
 
     // The session's sandbox (if any was created) is intentionally kept across
     // turns and destroyed only when the session is explicitly terminated, via
-    // terminateSession → disposeExecutor.
+    // terminateSession → SandboxSession.dispose.
   }
 
   /**
@@ -541,6 +618,28 @@ export class SessionRouter {
     return current?.model ?? agentConfig.model;
   }
 
+  /**
+   * Read a session's ENTIRE event log by paginating on `hasMore` (issue #82).
+   * `getEvents` defaults to `limit: 50` / `seq ASC`; a single call therefore
+   * returns only the oldest page. We walk forward with `afterSeq` = the last
+   * seq seen until the store reports no more, so the adapter always receives the
+   * full, gap-free history rather than a truncated prefix. Ordering is preserved
+   * (each page is seq-ascending and pages are appended in order).
+   */
+  private async readAllEvents(sessionId: string): Promise<StoredEvent[]> {
+    const all: StoredEvent[] = [];
+    let afterSeq = 0;
+    for (;;) {
+      const { data, hasMore } = await this.eventLogStore.getEvents(sessionId, {
+        afterSeq,
+      });
+      all.push(...data);
+      if (!hasMore || data.length === 0) break;
+      afterSeq = data[data.length - 1]!.seq;
+    }
+    return all;
+  }
+
   private buildAdapterInput(
     sessionId: string,
     turnId: string,
@@ -551,6 +650,7 @@ export class SessionRouter {
     appendSystemPrompt?: string[],
     skillPaths?: string[],
     model: string = agentConfig.model,
+    signal?: AbortSignal,
   ): AdapterInput {
     const eventData = promotedEvent.data as Record<string, unknown> | undefined;
     let content: ContentBlock[];
@@ -583,9 +683,11 @@ export class SessionRouter {
         tools: agentConfig.tools,
         mcpServers: agentConfig.mcpServers,
         skills: agentConfig.skills,
-        // Per-call Host injections (ADR-0002): assembled Agent Files and
-        // materialized equipped-Skill directories. Undefined when their stores
-        // are absent, preserving prior behavior.
+        // Per-call Host injections (ADR-0002): assembled Agent Files and the
+        // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<id>`
+        // paths *inside the sandbox* (ADR-0005 §4) — the adapter points Pi's
+        // sandbox-mapped read tool at them (SKILL.md at `/skills/<id>/SKILL.md`).
+        // Undefined when their stores are absent, preserving prior behavior.
         appendSystemPrompt: appendSystemPrompt && appendSystemPrompt.length > 0
           ? appendSystemPrompt
           : undefined,
@@ -594,6 +696,9 @@ export class SessionRouter {
       history,
       // Per-call injection: the single seam between the pure Adapter and infra.
       toolExecutor,
+      // The turn's abort signal (issue #84): the adapter wires it to its
+      // runtime's native cancel so a user interrupt can end a hung turn.
+      signal,
     };
   }
 
@@ -617,62 +722,50 @@ export class SessionRouter {
   }
 
   /**
-   * Materialize the Agent's equipped Skills into a fresh Host-side temp
-   * directory — one subdirectory per Skill, each a valid skill root (SKILL.md at
-   * its top) — and return their absolute paths plus an idempotent cleanup.
-   * Returns no paths (and a no-op cleanup) when the Skill stores are absent or
-   * the Agent has no equipped Skills.
+   * Select the ids of the Agent's equipped Skills that should be projected into
+   * the sandbox as Read-only Projections at `/skills/<id>` (ADR-0005 §4). This
+   * is the *validation* half of the old `materializeSkills`, minus the Host
+   * temp-dir write: it decides WHICH Skill ids become projections; the *content*
+   * flows S3→sandbox inside the SandboxManager (`S3ProvisionSource`), never
+   * through the Host.
    *
-   * Per ADR-0004 `agentConfig.skills` holds the ids of the Agent's own Skill
-   * Forks (`ownerType='agent'`, owned by this Agent), which always exist while
-   * equipped — so a fork is never invisible at runtime the way a dangling
-   * Library reference used to be. We still guard on ownership defensively.
+   * Preserved behavior, id-for-id, from `materializeSkills`:
+   *  - No Skill stores or no equipped Skills ⇒ no ids (no projections).
+   *  - A Skill is skipped unless it exists, is in this tenant, and — for
+   *    `ownerType==='agent'` — is owned by this Agent. Per ADR-0004
+   *    `agent.skills` holds the Agent's own Skill Fork ids, which always exist
+   *    while equipped; we still guard on ownership defensively.
+   *  - A Skill with **zero files** is skipped (the old zero-files skip). We
+   *    confirm non-empty with `skillArtifactStore.list` (paths only) rather than
+   *    `getAll` (bodies) — the bodies are the manager's job now, so the router
+   *    reads only enough to make the include/skip decision.
    */
-  private async materializeSkills(
-    agentConfig: Agent,
-  ): Promise<{ paths: string[]; cleanup: () => Promise<void> }> {
-    const noop = { paths: [] as string[], cleanup: async () => {} };
+  private async equippedSkillIds(agentConfig: Agent): Promise<string[]> {
     const skillIds = agentConfig.skills ?? [];
     if (!this.skillStore || !this.skillArtifactStore || skillIds.length === 0) {
-      return noop;
+      return [];
     }
 
-    const root = await mkdtemp(join(tmpdir(), "oma-skills-"));
-    let cleaned = false;
-    const cleanup = async () => {
-      if (cleaned) return;
-      cleaned = true;
-      await rm(root, { recursive: true, force: true });
-    };
-
-    try {
-      const paths: string[] = [];
-      for (const skillId of skillIds) {
-        // Only materialize the Agent's own forks (owned by this Agent, in this
-        // tenant). Anything else (missing, cross-tenant, or a stale Library id
-        // from pre-fork data) is skipped rather than trusted.
-        const skill = await this.skillStore.getById(skillId);
-        if (
-          !skill ||
-          skill.tenantId !== agentConfig.tenantId ||
-          (skill.ownerType === "agent" && skill.ownerId !== agentConfig.id)
-        ) {
-          continue;
-        }
-        const files = await this.skillArtifactStore.getAll(agentConfig.tenantId, skillId);
-        if (files.length === 0) continue;
-        const skillDir = join(root, skillId);
-        for (const file of files) {
-          const dest = join(skillDir, file.path);
-          await mkdir(dirname(dest), { recursive: true });
-          await writeFile(dest, file.body);
-        }
-        paths.push(skillDir);
+    const valid: string[] = [];
+    for (const skillId of skillIds) {
+      // Only project the Agent's own forks (owned by this Agent, in this
+      // tenant). Anything else (missing, cross-tenant, or a stale Library id
+      // from pre-fork data) is skipped rather than trusted.
+      const skill = await this.skillStore.getById(skillId);
+      if (
+        !skill ||
+        skill.tenantId !== agentConfig.tenantId ||
+        (skill.ownerType === "agent" && skill.ownerId !== agentConfig.id)
+      ) {
+        continue;
       }
-      return { paths, cleanup };
-    } catch (err) {
-      await cleanup();
-      throw err;
+      // Confirm the Skill is non-empty (zero-files skip, preserved from
+      // materializeSkills). `list` reads only paths — the bytes are projected
+      // S3→sandbox by the manager, so the router never touches Skill content.
+      const files = await this.skillArtifactStore.list(agentConfig.tenantId, skillId);
+      if (files.length === 0) continue;
+      valid.push(skillId);
     }
+    return valid;
   }
 }

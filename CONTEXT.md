@@ -48,6 +48,33 @@ _Avoid_: account, member, person
 The isolation boundary that owns everything in the system — **Agents**, **Sessions**, **Skills**, **API keys**. Historically a Tenant was an implicit identifier with no record of its own. It is now created together with a **User** at registration (one-to-one). A request reaches a Tenant through one of two credentials that both resolve to the same `tenantId`: an **API key** (`x-api-key`, for machines) or a **User**'s session token (`Authorization: Bearer`, for humans). API keys a User creates while signed in belong to that User's Tenant.
 _Avoid_: org, organization, workspace, account
 
+## Sandbox provisioning
+
+**Sandbox Manager**:
+The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, describe — shared by both the Sandbox-as-Tool mode and the future Agent-in-the-Sandbox mode. It reads an **Environment Spec** to know what to build and orchestrates hydration and sync at the lifecycle's edges, but knows nothing about who is using the sandbox or which storage medium backs it.
+_Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
+
+**Environment Spec**:
+The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and any **Read-only Projections**. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
+_Avoid_: config, sandbox config, environment, EnvVars
+
+**Workspace Store**:
+The medium-agnostic home of a **Workspace**'s persistent state, responsible for the two-way hydrate/sync of the sandbox's writable workspace area. Hydrate restores state into a fresh sandbox; sync writes the sandbox's current state back. Today S3 is its only implementation; a persistent volume, an image snapshot, or an in-sandbox sidecar would each be another. The changing storage medium is the one thing sealed behind its interface.
+_Code_: named `WorkspacePersistence` in code — the name `WorkspaceStore` is already taken by an unrelated metadata store of **Workspace** records in `@oma-server/store`.
+_Avoid_: S3 backend, bucket adapter, artifact store, persistence layer (naming the medium defeats its purpose)
+
+**Read-only Projection**:
+External content projected into a sandbox path *outside* the workspace and never synced back — equipped Skills, a checked-out code repository, a preloaded dataset. One-way, downward only. Distinguished from a **Workspace** by a single axis: it is never written back. Its target path must lie outside the workspace so the sync scan never mistakes it for a user-created artifact.
+_Avoid_: mount, read-only mount, static files, assets
+
+**Provision Source**:
+Where a **Read-only Projection**'s content comes from, sealed behind one interface so the projection mechanism is indifferent to it. S3 is today's only source (Skills and code both project from S3 by coordinate, never routed through the Host); a git clone or a tarball fetch would each be another.
+_Avoid_: loader, fetcher, downloader
+
+**Baseline**:
+The snapshot of workspace paths captured when a sandbox instance hydrates — "the world as I saw it on entry." Sync deletes from the **Workspace Store** only paths in this baseline that have since gone missing, so a concurrent **Session**'s newly added files are never deleted. It is per-sandbox-instance (refreshed on every hydrate, including a rebuild) and is a private concept of the **Workspace Store** — the medium defines it, and another medium may have no baseline at all.
+_Avoid_: manifest, index, file list, snapshot
+
 ## Example Dialogue
 
 Developer: "Should this Agent run directly in the API service?"

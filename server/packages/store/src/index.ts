@@ -70,10 +70,10 @@ export type {
 } from "./interfaces/user-store.js";
 
 export type {
-  WorkspaceStore,
-  WorkspaceStoreCreateInput,
-  WorkspaceStoreUpdateInput,
-} from "./interfaces/workspace-store.js";
+  WorkspaceMetadataStore,
+  WorkspaceMetadataStoreCreateInput,
+  WorkspaceMetadataStoreUpdateInput,
+} from "./interfaces/workspace-metadata-store.js";
 
 export type {
   ArtifactStore,
@@ -103,7 +103,7 @@ export {
   PgPendingEventStore,
   PgApiKeyStore,
   PgUserStore,
-  PgWorkspaceStore,
+  PgWorkspaceMetadataStore,
 } from "./postgres/index.js";
 
 export type {

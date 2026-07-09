@@ -39,7 +39,6 @@ describe("MockAdapter", () => {
 
       const types = events.map((e) => e.type);
       expect(types).toEqual([
-        "session.status_running",
         "span.model_request_start",
         "agent.message_stream_start",
         "agent.message_chunk",
@@ -48,16 +47,18 @@ describe("MockAdapter", () => {
         "agent.message_stream_end",
         "agent.message",
         "span.model_request_end",
-        "session.status_idle",
       ]);
     });
 
-    it("starts with session.status_running and ends with session.status_idle", async () => {
+    it("emits NO session lifecycle events — the Host router owns them (issue #83)", async () => {
       const adapter = new MockAdapter();
       const events = await collectEvents(adapter.run(INPUT));
+      const types = events.map((e) => e.type);
 
-      expect(events[0]!.type).toBe("session.status_running");
-      expect(events[events.length - 1]!.type).toBe("session.status_idle");
+      // Lifecycle events are the router's sole responsibility; an adapter that
+      // also yielded them would double the count in the event log.
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
     });
 
     it("includes at least one span pair", async () => {

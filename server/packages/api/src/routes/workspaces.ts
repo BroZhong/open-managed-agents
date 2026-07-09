@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { WorkspaceStore } from "@oma-server/store";
+import type { WorkspaceMetadataStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 
 type Env = {
@@ -14,7 +14,7 @@ type Env = {
  * Session's artifacts. Here a Workspace is a first-class, nameable, tenant-owned
  * file collection that a Session can mount at creation.
  */
-export function workspaceEntityRoutes(workspaceStore: WorkspaceStore) {
+export function workspaceEntityRoutes(workspaceStore: WorkspaceMetadataStore) {
   const router = new Hono<Env>();
 
   // POST /v1/workspaces — Create (or idempotently return) a Workspace.

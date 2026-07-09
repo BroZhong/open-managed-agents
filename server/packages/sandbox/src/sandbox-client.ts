@@ -10,7 +10,7 @@
  *
  * This port is deliberately small (`create/exec/readFile/writeFile/list/
  * destroy`) so it can be backed by e2b in production and by a fake in tests,
- * and so the {@link SandboxToolExecutor} above it never learns which backend it
+ * and so the {@link SandboxManager} above it never learns which backend it
  * is talking to.
  */
 
@@ -24,10 +24,19 @@ export interface SandboxExecChunk {
 export interface SandboxExecOptions {
   /** Working directory for the command (absolute path inside the sandbox). */
   cwd?: string;
-  /** Kill the command after this many seconds. */
+  /**
+   * Kill the command after this many seconds. `0` means **disable the timeout**
+   * (mirrors the e2b SDK's `timeoutMs: 0`), distinct from `undefined` = backend
+   * default (issue #81).
+   */
   timeoutSeconds?: number;
   /** Extra environment variables layered onto the command. */
   env?: Record<string, string>;
+  /**
+   * The turn's abort signal (issue #84). Forwarded into the e2b command run so a
+   * hung command is cancelled when the router aborts the turn.
+   */
+  signal?: AbortSignal;
 }
 
 /** A file entry returned by {@link SandboxClient.list}. */

@@ -22,6 +22,12 @@ export interface E2BSandbox {
         cwd?: string;
         envs?: Record<string, string>;
         timeoutMs?: number;
+        /**
+         * Abort the in-flight command (issue #84). The e2b SDK's
+         * `CommandStartOpts` extends `Pick<ConnectionOpts, 'signal'>`, so `run`
+         * accepts an `AbortSignal`; aborting it cancels the underlying request.
+         */
+        signal?: AbortSignal;
         onStdout?: (data: string) => void | Promise<void>;
         onStderr?: (data: string) => void | Promise<void>;
       },
@@ -52,7 +58,12 @@ export type CreateSandboxFn = (
 ) => Promise<E2BSandbox>;
 
 const DEFAULT_TEMPLATE = "code-interpreter";
-const DEFAULT_WORKSPACE_DIR = "/workspace";
+// E2B's recommended user directory — the exec `user`'s own home, so it exists
+// and is writable without a chown. Mkdir'ing the old root-owned `/workspace` as
+// the non-privileged user failed silently (issue #85); `/home/user` sidesteps
+// that entirely. This is the create-time existence guard only; the effective
+// cwd is chosen by SandboxManager (EnvSpec.workspaceDir), which defaults here.
+const DEFAULT_WORKSPACE_DIR = "/home/user";
 
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.brozhong.com"); SDK resolves api.<domain>. */
@@ -105,6 +116,9 @@ export class E2BSandboxClient implements SandboxClient {
       domain: this.domain,
       ...(opts.metadata ? { metadata: opts.metadata } : {}),
       ...(opts.env ? { envs: opts.env } : {}),
+      // `!= null` so an explicit `0` maps to `timeoutMs: 0` (e2b's disable
+      // convention) rather than being dropped as falsy; `undefined` omits it and
+      // e2b applies its own default lifetime (issue #81).
       ...(opts.timeoutSeconds != null
         ? { timeoutMs: opts.timeoutSeconds * 1000 }
         : {}),
@@ -130,9 +144,16 @@ export class E2BSandboxClient implements SandboxClient {
     yield* streamRun(sandbox, cmd, {
       ...(opts?.cwd ? { cwd: opts.cwd } : {}),
       ...(opts?.env ? { envs: opts.env } : {}),
+      // `!= null` (not truthiness) so `timeoutSeconds: 0` — the disable-timeout
+      // convention (issue #81) — reaches the SDK as `timeoutMs: 0`, which e2b
+      // treats as "no timeout". Dropping it as falsy would silently re-enable
+      // the backend default. `undefined` omits the field → backend default.
       ...(opts?.timeoutSeconds != null
         ? { timeoutMs: opts.timeoutSeconds * 1000 }
         : {}),
+      // Forward the turn's abort signal so a hung command is cancelled when the
+      // router aborts the turn (issue #84).
+      ...(opts?.signal ? { signal: opts.signal } : {}),
     });
   }
 
@@ -230,7 +251,12 @@ export function resolveTemplate(
 async function* streamRun(
   sandbox: E2BSandbox,
   cmd: string,
-  opts: { cwd?: string; envs?: Record<string, string>; timeoutMs?: number },
+  opts: {
+    cwd?: string;
+    envs?: Record<string, string>;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  },
 ): AsyncIterable<SandboxExecChunk> {
   const queue: SandboxExecChunk[] = [];
   let resolveNext: (() => void) | undefined;

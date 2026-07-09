@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { PgWorkspaceStore } from "../src/postgres/workspace-store.js";
+import { PgWorkspaceMetadataStore } from "../src/postgres/workspace-metadata-store.js";
 import { PgSessionStore } from "../src/postgres/session-store.js";
 import type { Agent } from "../src/types.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
@@ -15,9 +15,9 @@ const mockAgent: Agent = {
   updatedAt: new Date("2024-01-01"),
 };
 
-describe("PgWorkspaceStore", () => {
+describe("PgWorkspaceMetadataStore", () => {
   let harness: PgTestHarness;
-  let store: PgWorkspaceStore;
+  let store: PgWorkspaceMetadataStore;
 
   beforeAll(async () => {
     harness = await createPgTestHarness();
@@ -29,7 +29,7 @@ describe("PgWorkspaceStore", () => {
 
   beforeEach(async () => {
     await harness.reset();
-    store = new PgWorkspaceStore(harness.pool);
+    store = new PgWorkspaceMetadataStore(harness.pool);
   });
 
   it("auto-creates a Workspace with ws_ prefix when no id is supplied", async () => {

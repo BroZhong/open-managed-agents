@@ -54,16 +54,12 @@ describe("CodexAdapter", () => {
       },
     ];
 
-    it("first event is session.status_running", async () => {
+    it("emits NO session lifecycle events — the Host router owns them (issue #83)", async () => {
       const adapter = new CodexAdapter({ _eventSource: fakeSource(cliEvents) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
-      expect(events[0].type).toBe("session.status_running");
-    });
-
-    it("last event is session.status_idle", async () => {
-      const adapter = new CodexAdapter({ _eventSource: fakeSource(cliEvents) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
-      expect(events[events.length - 1].type).toBe("session.status_idle");
+      const types = events.map((e) => e.type);
+      expect(types).not.toContain("session.status_running");
+      expect(types).not.toContain("session.status_idle");
     });
 
     it("emits span.model_request_start and span.model_request_end", async () => {
