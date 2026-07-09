@@ -105,6 +105,16 @@ export interface SessionRouterDeps {
    * persisted to PostgreSQL. When absent, deltas are live-only (hub chunks).
    */
   turnStreamStore?: TurnStreamStore;
+  /**
+   * Deployment-wide default sandbox environment variables, merged into every
+   * sandboxed Agent's `EnvSpec.env` (the Agent's own `sandbox.env` wins per key).
+   * Used to inject a shared secret a bundled CLI needs — e.g. `VFS_TOKEN` for the
+   * `vfs-cli` baked into the custom sandbox image — without requiring every Agent
+   * to carry the token in its own config. Sourced from server config (a K8s
+   * Secret → env), so the token never lives in code or in the Agent record.
+   * Absent ⇒ only the Agent's own `sandbox.env` is used (prior behavior).
+   */
+  defaultSandboxEnv?: Record<string, string>;
 }
 
 export class SessionRouter {
@@ -119,6 +129,7 @@ export class SessionRouter {
   private readonly skillStore?: SkillStore;
   private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
+  private readonly defaultSandboxEnv?: Record<string, string>;
   private readonly activeSessions = new Map<string, AbortController>();
   /**
    * One {@link SandboxSession} per session, reused across turns. This is a
@@ -144,6 +155,7 @@ export class SessionRouter {
     this.skillStore = deps.skillStore;
     this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
+    this.defaultSandboxEnv = deps.defaultSandboxEnv;
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
@@ -224,17 +236,23 @@ export class SessionRouter {
    * `S3ProvisionSource` (registered under `kind: "s3"` in the manager's deps)
    * reads: `{ tenantId, skillId }` maps straight onto
    * `SkillArtifactStore.getAll` inside the manager (see `S3ProvisionRef`).
+   *
+   * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
+   * with the Agent's own `sandbox.env` — the Agent wins per key, so an Agent can
+   * override or extend the shared defaults but the defaults (e.g. `VFS_TOKEN`)
+   * apply automatically when the Agent sets none.
    */
   private specFor(
     session: Session,
     agent: Agent,
     equippedSkillIds: string[],
   ): EnvSpec {
+    const mergedEnv = { ...this.defaultSandboxEnv, ...agent.sandbox?.env };
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
       image: agent.sandbox?.image,
-      env: agent.sandbox?.env,
+      env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
       projections: equippedSkillIds.map((id) => ({
         targetPath: `/skills/${id}`,
         source: { kind: "s3", ref: { tenantId: session.tenantId, skillId: id } },

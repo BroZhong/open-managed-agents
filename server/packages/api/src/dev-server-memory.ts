@@ -342,12 +342,22 @@ async function main() {
   // In-memory dev mode has no S3 Workspace to hydrate from, so the
   // sandbox-backed ToolExecutor is intentionally not wired here. Use the full
   // dev server (S3 + SANDBOX_ENABLED=true) to exercise the kruise sandbox.
+  // Deployment-wide default sandbox env (parity with dev-server.ts): a shared
+  // CLI secret (today only VFS_TOKEN) auto-injected into every sandboxed Agent,
+  // sourced from env so it never lives in code or the Agent record.
+  const defaultSandboxEnv: Record<string, string> = {};
+  if (process.env.DEFAULT_SANDBOX_VFS_TOKEN) {
+    defaultSandboxEnv.VFS_TOKEN = process.env.DEFAULT_SANDBOX_VFS_TOKEN;
+  }
+
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
+    defaultSandboxEnv:
+      Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

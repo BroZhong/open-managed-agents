@@ -386,6 +386,16 @@ async function main() {
     );
   }
 
+  // Deployment-wide default sandbox env, sourced from server config (a K8s
+  // Secret → env), so a shared CLI secret is auto-injected into every sandboxed
+  // Agent without living in code or the Agent record. Today the only key is
+  // VFS_TOKEN (for the vfs-cli baked into the custom sandbox image); the Agent's
+  // own sandbox.env still wins per key.
+  const defaultSandboxEnv: Record<string, string> = {};
+  if (process.env.DEFAULT_SANDBOX_VFS_TOKEN) {
+    defaultSandboxEnv.VFS_TOKEN = process.env.DEFAULT_SANDBOX_VFS_TOKEN;
+  }
+
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
     pendingEventStore,
@@ -394,6 +404,8 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     sandboxManager,
+    defaultSandboxEnv:
+      Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

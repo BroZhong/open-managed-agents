@@ -393,6 +393,7 @@ function createDeps(opts: {
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
   withManager?: boolean;
+  defaultSandboxEnv?: Record<string, string>;
 }) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
@@ -422,6 +423,7 @@ function createDeps(opts: {
     sandboxManager,
     skillStore: opts.skillStore,
     skillArtifactStore: opts.skillArtifactStore,
+    defaultSandboxEnv: opts.defaultSandboxEnv,
   });
 
   return {
@@ -515,6 +517,64 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     // The per-Agent env must reach the sandbox's create options.
     expect(sandboxClient.createOptsOf(id).env).toMatchObject({
       VFS_TOKEN: "tok-123",
+    });
+  });
+
+  it("merges defaultSandboxEnv into the sandbox; the Agent's own env wins per key", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      persistence,
+      // Deployment-wide defaults: a shared VFS_TOKEN plus an extra shared key.
+      defaultSandboxEnv: { VFS_TOKEN: "default-tok", SHARED: "yes" },
+    });
+    const envAgent: Agent = {
+      ...sandboxedAgent,
+      // The Agent overrides VFS_TOKEN and adds its own key; SHARED is inherited.
+      sandbox: { enabled: true, image: "ubuntu:22.04", env: { VFS_TOKEN: "agent-tok", OWN: "1" } },
+    };
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: envAgent.id,
+      agent: envAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, envAgent);
+
+    const id = sandboxClient.created[0];
+    const env = sandboxClient.createOptsOf(id).env;
+    expect(env).toMatchObject({
+      VFS_TOKEN: "agent-tok", // Agent wins over the default
+      SHARED: "yes", // inherited from the deployment default
+      OWN: "1", // the Agent's own extra key
+    });
+  });
+
+  it("injects defaultSandboxEnv even when the Agent sets no sandbox.env", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      persistence,
+      defaultSandboxEnv: { VFS_TOKEN: "default-tok" },
+    });
+    // sandboxedAgent has no sandbox.env of its own.
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: sandboxedAgent.id,
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
+      VFS_TOKEN: "default-tok",
     });
   });
 
