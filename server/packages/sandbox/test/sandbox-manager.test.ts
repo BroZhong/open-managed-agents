@@ -39,7 +39,10 @@ function makeManager(opts?: {
 }
 
 function specFor(overrides: Partial<EnvSpec> = {}): EnvSpec {
-  return { tenantId: TENANT, workspaceId: WS, ...overrides };
+  // Pin workspaceDir explicitly so these assertions (which hard-code
+  // `/workspace/…` paths) are independent of the production default, which is
+  // `/home/user` (issue #85). Override per-test as needed.
+  return { tenantId: TENANT, workspaceId: WS, workspaceDir: "/workspace", ...overrides };
 }
 
 async function drainExec(

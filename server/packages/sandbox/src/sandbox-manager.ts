@@ -20,7 +20,11 @@ import type {
   WorkspacePersistence,
 } from "./workspace-persistence.js";
 
-const DEFAULT_WORKSPACE_DIR = "/workspace";
+// E2B's recommended user directory. It is the sandbox `user` account's home, so
+// it is user-owned and writable without any chown gymnastics — unlike a
+// root-owned `/workspace`, which the non-privileged exec user cannot mkdir under
+// (issue #85). Overridable per-EnvSpec via `workspaceDir`.
+const DEFAULT_WORKSPACE_DIR = "/home/user";
 
 /**
  * Default sandbox lifetime (issue #68). The

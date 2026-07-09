@@ -1,0 +1,83 @@
+# Custom code-interpreter sandbox for Nautilus (brozhong HK).
+#
+# FROM the ACS-provided code-interpreter base (Debian 12; already ships
+# python3/pip/curl/node + the jupyter start-up script the e2b `agent-runtime`
+# runtime hooks into). The `agent-runtime` injects the e2b `envd` daemon at run
+# time, so as long as we keep the base's ENTRYPOINT/CMD untouched the E2B
+# protocol keeps working. We layer on only what the stock image lacks:
+#
+#   - a writable workspace   — #85: mkdir'ing /workspace under root-owned / used
+#                              to fail silently (e2b `exec` runs as the
+#                              non-privileged `user`), so `echo x > cwd/f` and
+#                              program writes failed. We default WORKSPACE_DIR to
+#                              E2B's recommended user home /home/user (user-owned
+#                              by construction) and `chown` it, so bash can write.
+#   - a configurable cwd     — WORKSPACE_DIR env; SandboxManager's
+#                              EnvSpec.workspaceDir defaults to the same value
+#                              (/home/user), so re-homing the workspace is a
+#                              one-line change on both sides.
+#   - vfs-cli on PATH        — the Go static binary (linux/amd64), COPYd in
+#                              rather than curl'd (the vfs-cli release CDN is
+#                              slow/unreliable from CN build hosts). VFS_TOKEN is
+#                              NOT baked in — it is a per-Agent secret injected
+#                              at run time via sandbox.env.
+#   - python on a plain PATH — the base keeps python in /opt/venv/bin, which is
+#                              absent from e2b exec's non-login PATH, so bare
+#                              `python`/`pip` come back "command not found".
+#                              We symlink them into /usr/local/bin.
+#
+# Layer ordering is cache-first: the arg/env/apt/symlink layers change almost
+# never and sit at the top; the vfs-cli binary (the thing that actually rev's
+# between builds) is COPYd last, so bumping vfs-cli re-runs only the final two
+# layers, not the whole image.
+#
+# The base image is pulled from a region-local ACR mirror. Override BASE_IMAGE
+# to build from the Shanghai VPC mirror on vfs-dev, or the public tag locally.
+ARG BASE_IMAGE=registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
+FROM ${BASE_IMAGE}
+
+# The non-privileged account e2b `exec` runs commands as. A build ARG (not
+# hardcoded) so a future base that renames the account only needs `--build-arg`.
+ARG SANDBOX_USER=user
+
+# Default workspace: E2B's recommended user directory `/home/user`. This is the
+# `user` account's own home in the E2B base, so it is user-owned and writable by
+# construction — no root-owned parent to fight (the #85 trap was mkdir'ing
+# /workspace under root-owned /). Kept in sync with SandboxManager's
+# DEFAULT_WORKSPACE_DIR (EnvSpec.workspaceDir). Override at build time with
+# `--build-arg WORKSPACE_DIR=…`; the chown below tracks whatever value is set.
+ARG WORKSPACE_DIR=/home/user
+ENV WORKSPACE_DIR=${WORKSPACE_DIR}
+
+# ── Rarely-changing layers first (best cache hit) ────────────────────────────
+
+# Expose python/pip from the venv on a minimal, non-login exec PATH, and ensure
+# the workspace exists and is owned by the account that exec runs as. With the
+# default WORKSPACE_DIR=/home/user this is belt-and-braces (it is already the
+# user's home); the chown still matters when WORKSPACE_DIR is overridden to a
+# path the base leaves root-owned. Both are pure filesystem ops with no external
+# inputs, so this layer is cached until the base image or the ARGs above change.
+RUN ln -sf /opt/venv/bin/python  /usr/local/bin/python  && \
+    ln -sf /opt/venv/bin/python3 /usr/local/bin/python3 && \
+    ln -sf /opt/venv/bin/pip     /usr/local/bin/pip     && \
+    ln -sf /opt/venv/bin/pip3    /usr/local/bin/pip3    && \
+    mkdir -p "${WORKSPACE_DIR}" && \
+    chown -R "${SANDBOX_USER}:${SANDBOX_USER}" "${WORKSPACE_DIR}" && \
+    chmod 0775 "${WORKSPACE_DIR}"
+
+# ── Frequently-changing layer last (vfs-cli binary) ──────────────────────────
+
+# vfs-cli — pre-shipped so the sandbox has it with no runtime download. Place
+# the binary under ./bin/ in the build context (see build.sh). COPYing it last
+# means a vfs-cli bump only invalidates this layer + the sanity check.
+COPY bin/vfs-cli /usr/local/bin/vfs-cli
+RUN chmod +x /usr/local/bin/vfs-cli
+
+# Build-time sanity check: the three things this image exists to provide must
+# all resolve on a plain PATH, and the workspace must be user-writable.
+RUN /usr/local/bin/vfs-cli version >/dev/null && \
+    /usr/local/bin/python3 --version >/dev/null && \
+    su -s /bin/sh "${SANDBOX_USER}" -c "touch ${WORKSPACE_DIR}/.write-probe && rm ${WORKSPACE_DIR}/.write-probe"
+
+# ENTRYPOINT/CMD are inherited unchanged from the base (the jupyter start-up
+# script the e2b agent-runtime expects). Do NOT set them here.

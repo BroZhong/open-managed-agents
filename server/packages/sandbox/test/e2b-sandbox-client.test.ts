@@ -173,14 +173,16 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].template).toBe("code-interpreter");
   });
 
-  it("create runs mkdir -p /workspace once ready", async () => {
+  it("create runs mkdir -p on the default workspace dir once ready", async () => {
     const { client, sandboxes } = makeClient();
     await client.create();
     const sb = sandboxes[0];
-    // argv is shell-quoted per element: 'mkdir' '-p' '/workspace'.
-    expect(sb.runCalls.some((c) => c.cmd === "'mkdir' '-p' '/workspace'")).toBe(
-      true,
-    );
+    // Default is E2B's user home /home/user (issue #85: the old root-owned
+    // /workspace could not be mkdir'd by the non-privileged exec user).
+    // argv is shell-quoted per element: 'mkdir' '-p' '/home/user'.
+    expect(
+      sb.runCalls.some((c) => c.cmd === "'mkdir' '-p' '/home/user'"),
+    ).toBe(true);
   });
 
   it("exec streams stdout and stderr chunks and wraps in cd/argv", async () => {

@@ -536,9 +536,10 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
 
     await router.handleNewEvent(session.id, sandboxedAgent);
 
-    // The hydrated file landed in the sandbox under /workspace.
+    // The hydrated file landed in the sandbox under the default workspace dir
+    // (E2B's user home /home/user — issue #85).
     const id = sandboxClient.created[0];
-    expect(sandboxClient.filesOf(id).get("/workspace/notes.md")?.content).toBe(
+    expect(sandboxClient.filesOf(id).get("/home/user/notes.md")?.content).toBe(
       "hydrated-content",
     );
 
@@ -887,12 +888,13 @@ describe("SessionRouter — Host emits workspace.file_change on checkpoint (#43)
       },
     });
 
-    // Adapter runs `rm /workspace/doomed.txt` through the injected executor.
+    // Adapter runs `rm /home/user/doomed.txt` through the injected executor
+    // (default workspace dir is E2B's user home — issue #85).
     const removingAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
         const executor = input.toolExecutor;
         if (executor) {
-          for await (const _ of executor.exec(["rm", "/workspace/doomed.txt"])) {
+          for await (const _ of executor.exec(["rm", "/home/user/doomed.txt"])) {
             // discard output
           }
         }

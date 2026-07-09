@@ -58,7 +58,12 @@ export type CreateSandboxFn = (
 ) => Promise<E2BSandbox>;
 
 const DEFAULT_TEMPLATE = "code-interpreter";
-const DEFAULT_WORKSPACE_DIR = "/workspace";
+// E2B's recommended user directory — the exec `user`'s own home, so it exists
+// and is writable without a chown. Mkdir'ing the old root-owned `/workspace` as
+// the non-privileged user failed silently (issue #85); `/home/user` sidesteps
+// that entirely. This is the create-time existence guard only; the effective
+// cwd is chosen by SandboxManager (EnvSpec.workspaceDir), which defaults here.
+const DEFAULT_WORKSPACE_DIR = "/home/user";
 
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.brozhong.com"); SDK resolves api.<domain>. */

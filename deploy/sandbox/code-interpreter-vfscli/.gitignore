@@ -1,0 +1,3 @@
+# The vfs-cli binary is a large, versioned build artifact — not source. build.sh
+# fetches/places it into bin/ before `docker build`; it is never committed.
+bin/
