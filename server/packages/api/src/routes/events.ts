@@ -177,17 +177,26 @@ export function eventRoutes(deps: EventRouteDeps) {
               }
             }
 
-            // 1. Completed Events from PostgreSQL (authoritative log).
-            const result = await deps.eventLogStore.getEvents(sessionId, {
-              afterSeq,
-              limit: 1000,
-            });
+            // 1. Completed Events from PostgreSQL (authoritative log). Page
+            //    until hasMore is false so a resume after >1 batch of queued
+            //    events backfills ALL of them — never just the first page.
+            let cursorSeq = afterSeq;
+            let hasMore = true;
+            while (hasMore) {
+              const result = await deps.eventLogStore.getEvents(sessionId, {
+                afterSeq: cursorSeq,
+                limit: 1000,
+              });
 
-            for (const event of result.data) {
-              let frame = `event: ${event.type}\n`;
-              frame += `id: ${event.seq}\n`;
-              frame += `data: ${JSON.stringify(event.data)}\n\n`;
-              controller.enqueue(frame);
+              for (const event of result.data) {
+                let frame = `event: ${event.type}\n`;
+                frame += `id: ${event.seq}\n`;
+                frame += `data: ${JSON.stringify(event.data)}\n\n`;
+                controller.enqueue(frame);
+                cursorSeq = event.seq;
+              }
+
+              hasMore = result.hasMore;
             }
 
             // 2. Active turn's half-emitted deltas from Redis (if a turn is

@@ -1070,4 +1070,68 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     expect(types).toEqual(["agent.message"]);
     expect(types.some((t) => t.endsWith("_chunk"))).toBe(false);
   });
+
+  it("reconnect backfills ALL completed events past the seq, paging beyond one 1000-event batch (#95)", async () => {
+    const { app, agentStore, sessionStore, eventLogStore } = createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    // Seed 2500 completed events — well past the 1000-per-batch page size, so a
+    // single query would silently drop the overflow (the bug this test guards).
+    const TOTAL = 2500;
+    for (let i = 0; i < TOTAL; i++) {
+      await eventLogStore.append(session.id, {
+        type: "agent.message",
+        data: { type: "agent.message", content: [{ type: "text", text: `msg ${i + 1}` }] },
+        sessionThreadId: "sthr_primary",
+      });
+    }
+
+    // Reconnect from the very beginning (seq 0). No active turn, so the backfill
+    // is PG-only and the stream just holds open for live afterwards.
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      headers: { accept: "text/event-stream", "last-event-id": "0" },
+    });
+    expect(res.status).toBe(200);
+
+    // Read all 2500 backfilled frames.
+    const frames = await readSSEFrames(res, TOTAL, 2000);
+
+    // Correct count, contiguous seqs (1..2500), no gaps, no duplicates.
+    expect(frames).toHaveLength(TOTAL);
+    const seqs = frames.map((f) => Number(f.id));
+    expect(seqs).toEqual(Array.from({ length: TOTAL }, (_, i) => i + 1));
+    expect(new Set(seqs).size).toBe(TOTAL);
+    expect(frames.every((f) => f.event === "agent.message")).toBe(true);
+  });
+
+  it("reconnect from a mid seq pages the remaining events, none before the seq (#95)", async () => {
+    const { app, agentStore, sessionStore, eventLogStore } = createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const TOTAL = 2500;
+    for (let i = 0; i < TOTAL; i++) {
+      await eventLogStore.append(session.id, {
+        type: "agent.message",
+        data: { type: "agent.message", content: [{ type: "text", text: `msg ${i + 1}` }] },
+        sessionThreadId: "sthr_primary",
+      });
+    }
+
+    // Resume from a mid value spanning more than one page of remaining events.
+    const AFTER = 900;
+    const remaining = TOTAL - AFTER;
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      headers: { accept: "text/event-stream", "last-event-id": String(AFTER) },
+    });
+    expect(res.status).toBe(200);
+
+    const frames = await readSSEFrames(res, remaining, 2000);
+
+    expect(frames).toHaveLength(remaining);
+    const seqs = frames.map((f) => Number(f.id));
+    // Contiguous 901..2500 — nothing at or before AFTER, no gaps, no dupes.
+    expect(seqs).toEqual(Array.from({ length: remaining }, (_, i) => AFTER + 1 + i));
+    expect(Math.min(...seqs)).toBe(AFTER + 1);
+    expect(new Set(seqs).size).toBe(remaining);
+  });
 });
