@@ -28,6 +28,23 @@ export function useSessionEvents(sessionId: string) {
   const eventsRef = useRef(events);
   eventsRef.current = events;
 
+  // Reconnect anchor: the last seq we've received. Seeded from history on the
+  // first connect, then advanced as each event with a real seq arrives. On a
+  // reconnect we replay it as `Last-Event-ID` so the server's paginated
+  // backfill (#95) fills the gap — no history refetch, no lost events.
+  const lastSeqRef = useRef(0);
+  // Distinguishes a deliberate teardown (unmount / session switch) from an
+  // unexpected drop. The effect cleanup flips this true; the reconnect logic
+  // refuses to reschedule once it's set, so a stale connect can't resurrect a
+  // torn-down stream.
+  const closingRef = useRef(false);
+  // Pending reconnect timer, cleared on cleanup so no ghost reconnect fires
+  // after unmount.
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Current backoff interval (ms): starts at 1s, doubles per failure, caps at
+  // 30s, resets to 1s once a connection is successfully established.
+  const backoffRef = useRef(1000);
+
   const addEvent = useCallback((event: SessionEvent) => {
     // Workspace file-change events are transient signals, not part of the
     // conversation/timeline event list — route them to the refresh channel.
@@ -58,53 +75,18 @@ export function useSessionEvents(sessionId: string) {
   useEffect(() => {
     if (!sessionId) return;
 
+    // Fresh lifecycle for this session: allow reconnects and start backoff low.
+    closingRef.current = false;
+    backoffRef.current = 1000;
+
     const abortController = new AbortController();
     const { signal } = abortController;
 
-    async function connect() {
-      const token = localStorage.getItem(STORAGE_KEY);
-
-      // 1. Fetch historical events (JSON mode)
-      const historyRes = await fetch(
-        `${BASE_URL}/v1/sessions/${sessionId}/events`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-          },
-          signal,
-        },
-      );
-
-      if (!historyRes.ok) {
-        throw new Error(`History fetch failed: ${historyRes.status}`);
-      }
-
-      const historyData = await historyRes.json();
-      const historicalEvents: SessionEvent[] =
-        historyData.data || historyData || [];
-      setEvents(historicalEvents);
-
-      // Derive status from historical events
-      for (let i = historicalEvents.length - 1; i >= 0; i--) {
-        const evt = historicalEvents[i];
-        if (evt.type === "session.status_running") {
-          setStatus("running");
-          break;
-        }
-        if (evt.type === "session.status_idle") {
-          setStatus("idle");
-          break;
-        }
-      }
-
-      // Determine last seq for SSE resume
-      const lastSeq =
-        historicalEvents.length > 0
-          ? historicalEvents[historicalEvents.length - 1].seq
-          : 0;
-
-      // 2. Open SSE connection
+    // Reads the SSE stream to completion, parsing frames and feeding events
+    // into `addEvent`. Shared by both the initial connect and every reconnect,
+    // so the frame-parsing lives in exactly one place. Returns when the stream
+    // ends (`done`); throws on network/HTTP failure or abort.
+    async function pumpSse(token: string | null, lastSeq: number) {
       const sseRes = await fetch(
         `${BASE_URL}/v1/sessions/${sessionId}/events`,
         {
@@ -124,7 +106,10 @@ export function useSessionEvents(sessionId: string) {
       const reader = sseRes.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      // A live stream: mark connected and reset backoff so the next drop
+      // starts its wait fresh from 1s rather than wherever we'd climbed to.
       setIsConnected(true);
+      backoffRef.current = 1000;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -171,12 +156,16 @@ export function useSessionEvents(sessionId: string) {
           const dataStr = dataLines.join("\n");
           try {
             const parsed = JSON.parse(dataStr);
+            const seq = parseInt(eventId, 10);
             const event: SessionEvent = {
-              seq: parseInt(eventId, 10),
+              seq,
               type: eventType || parsed.type || "",
               data: parsed.data ?? parsed,
               ts: parsed.ts || new Date().toISOString(),
             };
+            // Advance the resume anchor as real events arrive so a later
+            // reconnect asks the server for exactly what we've missed.
+            if (Number.isFinite(seq)) lastSeqRef.current = seq;
             addEvent(event);
           } catch {
             // Skip unparseable frames
@@ -185,11 +174,96 @@ export function useSessionEvents(sessionId: string) {
       }
     }
 
-    connect().catch(() => {
+    // Initial connect: load full history (JSON mode) to render past
+    // conversation, seed the resume anchor, then open the live SSE.
+    async function connect() {
+      const token = localStorage.getItem(STORAGE_KEY);
+
+      // 1. Fetch historical events (JSON mode)
+      const historyRes = await fetch(
+        `${BASE_URL}/v1/sessions/${sessionId}/events`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          signal,
+        },
+      );
+
+      if (!historyRes.ok) {
+        throw new Error(`History fetch failed: ${historyRes.status}`);
+      }
+
+      const historyData = await historyRes.json();
+      const historicalEvents: SessionEvent[] =
+        historyData.data || historyData || [];
+      setEvents(historicalEvents);
+
+      // Derive status from historical events
+      for (let i = historicalEvents.length - 1; i >= 0; i--) {
+        const evt = historicalEvents[i];
+        if (evt.type === "session.status_running") {
+          setStatus("running");
+          break;
+        }
+        if (evt.type === "session.status_idle") {
+          setStatus("idle");
+          break;
+        }
+      }
+
+      // Seed the resume anchor from the last historical event.
+      lastSeqRef.current =
+        historicalEvents.length > 0
+          ? historicalEvents[historicalEvents.length - 1].seq
+          : 0;
+
+      // 2. Open SSE connection
+      await pumpSse(token, lastSeqRef.current);
+    }
+
+    // Reconnect path: no history refetch. Reopen SSE directly at the resume
+    // anchor and let the server's paginated backfill fill the gap; addEvent
+    // dedupes by seq, so re-delivered events don't duplicate.
+    async function connectSse() {
+      const token = localStorage.getItem(STORAGE_KEY);
+      await pumpSse(token, lastSeqRef.current);
+    }
+
+    // Both unexpected exits — the read loop finishing (`done`) and a thrown
+    // error — funnel here. A deliberate close (cleanup flipped closingRef) or
+    // an AbortError is not a drop and must not reconnect.
+    function scheduleReconnect(err?: unknown) {
       setIsConnected(false);
-    });
+      if (closingRef.current) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
+
+      // Exponential backoff with ±20% jitter, capped at 30s.
+      const base = backoffRef.current;
+      const jitter = base * 0.2 * (Math.random() * 2 - 1);
+      const delay = base + jitter;
+      backoffRef.current = Math.min(base * 2, 30000);
+
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        if (closingRef.current) return;
+        connectSse().then(scheduleReconnect, scheduleReconnect);
+      }, delay);
+    }
+
+    // A clean `done` (stream ended) resolves; an error rejects. Route both
+    // through scheduleReconnect, which decides whether the exit was deliberate.
+    connect().then(scheduleReconnect, scheduleReconnect);
 
     return () => {
+      // Deliberate teardown: stop reconnecting, kill any pending timer, and
+      // abort the in-flight fetch so no ghost stream survives the switch.
+      closingRef.current = true;
+      if (reconnectTimerRef.current !== null) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       abortController.abort();
       setIsConnected(false);
     };
