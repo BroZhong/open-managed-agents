@@ -164,7 +164,7 @@ function MediaPreview({
   content: FileContent;
   actions: FileActions;
   getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: () => void;
+  onDownload: (readyUrl?: string) => void;
 }) {
   const kind = classifyMedia(content.path, content.contentType);
   const name = content.path.split("/").pop() ?? content.path;
@@ -176,7 +176,7 @@ function MediaPreview({
       <div className="font-mono text-xs text-[var(--color-fg-subtle)]">
         {name} · {formatSize(content.size)} · {content.contentType}
       </div>
-      <Button variant="outline" size="sm" onClick={onDownload}>
+      <Button variant="outline" size="sm" onClick={() => onDownload()}>
         <Download className="h-3.5 w-3.5" /> Download
       </Button>
     </div>
@@ -215,7 +215,7 @@ function ImagePreview({
 }: {
   content: FileContent;
   getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: () => void;
+  onDownload: (readyUrl?: string) => void;
 }) {
   const isLarge = content.size >= LARGE_IMAGE_ADVISORY;
   const [forceLoad, setForceLoad] = useState(!isLarge);
@@ -251,7 +251,7 @@ function ImagePreview({
           <Button variant="outline" size="sm" onClick={() => setForceLoad(true)}>
             Load anyway
           </Button>
-          <Button variant="ghost" size="sm" onClick={onDownload}>
+          <Button variant="ghost" size="sm" onClick={() => onDownload()}>
             <Download className="h-3.5 w-3.5" /> Download instead
           </Button>
         </div>
@@ -264,7 +264,11 @@ function ImagePreview({
       <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-[var(--color-danger)]">
         <FileWarning className="h-5 w-5" />
         Failed to load image.
-        <Button variant="outline" size="sm" onClick={onDownload}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onDownload(url ?? undefined)}
+        >
           <Download className="h-3.5 w-3.5" /> Download instead
         </Button>
       </div>
@@ -304,7 +308,7 @@ function VideoPreview({
 }: {
   content: FileContent;
   getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: () => void;
+  onDownload: (readyUrl?: string) => void;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -344,7 +348,11 @@ function VideoPreview({
       <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-[var(--color-danger)]">
         <FileWarning className="h-5 w-5" />
         Failed to load video.
-        <Button variant="outline" size="sm" onClick={onDownload}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onDownload(url ?? undefined)}
+        >
           <Download className="h-3.5 w-3.5" /> Download instead
         </Button>
       </div>
@@ -387,7 +395,7 @@ function FilePane({
   saved: boolean;
   onSave: (text: string, onSuccess: () => void) => void;
   getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: () => void;
+  onDownload: (readyUrl?: string) => void;
 }) {
   if (loading) {
     return (
@@ -655,20 +663,20 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
     [source],
   );
 
-  const handleDownload = useCallback(async () => {
+  const handleDownload = useCallback(async (readyUrl?: string) => {
     if (!selectedPath) return;
+    // Media preview has already fetched a Blob URL. Reusing it keeps the
+    // anchor click inside the original user gesture; fetching again here would
+    // cross an await boundary and browsers may block the resulting download.
+    if (readyUrl) {
+      triggerDownload(readyUrl, selectedPath);
+      return;
+    }
     try {
       const url = source.previewUrl
         ? await source.previewUrl(selectedPath)
         : null;
-      if (url) {
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = selectedPath.split("/").pop() ?? selectedPath;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
+      if (url) triggerDownload(url, selectedPath);
     } catch {
       // best-effort; the preview pane already surfaces load errors.
     }
@@ -882,7 +890,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
             saved={saved}
             onSave={handleSave}
             getPreviewUrl={getPreviewUrl}
-            onDownload={() => void handleDownload()}
+            onDownload={(readyUrl) => void handleDownload(readyUrl)}
           />
         </div>
       </div>
@@ -895,4 +903,13 @@ function currentDir(path: string | null): string | undefined {
   if (!path) return undefined;
   const idx = path.lastIndexOf("/");
   return idx > 0 ? path.slice(0, idx) : undefined;
+}
+
+function triggerDownload(url: string, path: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = path.split("/").pop() ?? path;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
