@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { ToolExecutor } from "@open-managed-agents/adapter-core";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import { FakeWorkspacePersistence } from "../src/workspace-persistence.js";
+import {
+  FakeWorkspacePersistence,
+  type WorkspacePersistence,
+} from "../src/workspace-persistence.js";
 import { FakeProvisionSource } from "../src/provision-source.js";
 import {
   DefaultSandboxManager,
@@ -104,11 +107,10 @@ describe("SandboxManager / SandboxSession", () => {
     await session.list();
 
     const id = sandboxClient.created[0];
-    const files = sandboxClient.filesOf(id);
     // Workspace hydrated under /workspace ...
-    expect(files.get("/workspace/notes/todo.md")?.content).toBe("buy milk");
+    expect(await sandboxClient.readFile(id, "/workspace/notes/todo.md")).toBe("buy milk");
     // ... and the skill projected OUTSIDE the workspace at /skills.
-    expect(files.get("/skills/skl_1/SKILL.md")?.content).toBe("# skill body");
+    expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe("# skill body");
     expect(provision.projected).toHaveLength(1);
   });
 
@@ -186,7 +188,7 @@ describe("SandboxManager / SandboxSession", () => {
     const second = sandboxClient.created[1];
     expect(second).not.toBe(first);
     // Re-hydrated: workspace file present in the fresh sandbox.
-    expect(sandboxClient.filesOf(second).get("/workspace/main.py")?.content).toBe(
+    expect(await sandboxClient.readFile(second, "/workspace/main.py")).toBe(
       "print('hi')",
     );
     // Re-projected: /skills present in the fresh sandbox, and project ran twice.
@@ -286,6 +288,119 @@ describe("SandboxManager / SandboxSession", () => {
     const result = await session.checkpoint();
     expect(result.changed).toEqual([]);
     expect(result.deleted).toEqual([]);
+  });
+
+  // ─── turn-boundary downward refresh ─────────────────────────────
+
+  it("refresh on a cold session is a no-op and never creates a sandbox", async () => {
+    const { manager, sandboxClient } = makeManager();
+    const session = manager.open(specFor());
+
+    await session.refresh();
+
+    expect(sandboxClient.created).toEqual([]);
+    expect(sandboxClient.destroyed).toEqual([]);
+  });
+
+  it("refresh reconciles Workspace and reprojects Skills in the same live sandbox", async () => {
+    const { manager, sandboxClient, persistence, provision } = makeManager({
+      seed: [
+        ["edit.txt", "before"],
+        ["deleted.txt", "remove me"],
+      ],
+    });
+    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
+    provision.seed(coord, {
+      "SKILL.md": "old skill",
+      "obsolete.md": "remove me",
+    });
+    const session = manager.open(
+      specFor({ projections: [{ targetPath: "/skills/skl_1", source: coord }] }),
+    );
+    expect(await session.readFile("edit.txt")).toBe("before");
+    const id = sandboxClient.created[0];
+
+    // Simulate idle-time Host edits to both authoritative domains.
+    persistence.seed(TENANT, WS, "edit.txt", "from web");
+    persistence.seed(TENANT, WS, "added.txt", "new from web");
+    persistence.delete(TENANT, WS, "deleted.txt");
+    provision.seed(coord, { "SKILL.md": "new skill" });
+
+    await session.refresh();
+
+    expect(sandboxClient.created).toEqual([id]);
+    expect(sandboxClient.destroyed).toEqual([]);
+    expect(await sandboxClient.readFile(id, "/workspace/edit.txt")).toBe("from web");
+    expect(await sandboxClient.readFile(id, "/workspace/added.txt")).toBe("new from web");
+    await expect(
+      sandboxClient.readFile(id, "/workspace/deleted.txt"),
+    ).rejects.toThrow();
+    expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe(
+      "new skill",
+    );
+    await expect(
+      sandboxClient.readFile(id, "/skills/skl_1/obsolete.md"),
+    ).rejects.toThrow();
+    expect(provision.projected).toHaveLength(2);
+  });
+
+  it("refresh replaces the equipped projection set without rebuilding", async () => {
+    const { manager, sandboxClient, provision } = makeManager();
+    const oldCoord = { kind: "s3", ref: { skillId: "old" } };
+    const newCoord = { kind: "s3", ref: { skillId: "new" } };
+    provision.seed(oldCoord, { "SKILL.md": "old" });
+    provision.seed(newCoord, { "SKILL.md": "new" });
+    const session = manager.open(
+      specFor({ projections: [{ targetPath: "/skills/old", source: oldCoord }] }),
+    );
+    expect(await session.readFile("/skills/old/SKILL.md")).toBe("old");
+    const id = sandboxClient.created[0];
+
+    await session.refresh([
+      { targetPath: "/skills/new", source: newCoord },
+    ]);
+
+    expect(sandboxClient.created).toEqual([id]);
+    expect(sandboxClient.destroyed).toEqual([]);
+    await expect(session.readFile("/skills/old/SKILL.md")).rejects.toThrow();
+    expect(await session.readFile("/skills/new/SKILL.md")).toBe("new");
+  });
+
+  it("retries a failed checkpoint before downward refresh preserves sandbox-only bytes", async () => {
+    const sandboxClient = new FakeSandboxClient();
+    const backing = new FakeWorkspacePersistence();
+    let failNextSync = true;
+    const persistence: WorkspacePersistence = {
+      hydrate: (target) => backing.hydrate(target),
+      refresh: (hydration, target) => backing.refresh(hydration, target),
+      async sync(hydration, target) {
+        if (failNextSync) {
+          failNextSync = false;
+          throw new Error("temporary medium failure");
+        }
+        return backing.sync(hydration, target);
+      },
+    };
+    const manager = new DefaultSandboxManager({
+      sandboxClient,
+      persistence,
+      provisionSources: {},
+    });
+    const session = manager.open(specFor());
+    await session.list();
+    const id = sandboxClient.created[0];
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
+    ]);
+    await sandboxClient.writeFileBytes(id, "/workspace/result.png", png);
+
+    await expect(session.checkpoint()).rejects.toThrow("temporary medium failure");
+    expect(backing.bytesOf(TENANT, WS, "result.png")).toBeUndefined();
+
+    await session.refresh();
+
+    expect(backing.bytesOf(TENANT, WS, "result.png")).toEqual(png);
+    expect(await sandboxClient.readFileBytes(id, "/workspace/result.png")).toEqual(png);
   });
 
   // ─── invariant §5/§8: dispose sync-before-destroy, idempotent, closes ─────

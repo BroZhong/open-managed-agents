@@ -28,8 +28,9 @@ interface RunCall {
 class FakeSandbox implements E2BSandbox {
   readonly sandboxId: string;
   readonly runCalls: RunCall[] = [];
-  readonly writes: Array<{ path: string; data: string }> = [];
-  readonly reads = new Map<string, string>();
+  readonly writes: Array<{ path: string; data: string | ArrayBuffer }> = [];
+  readonly removes: string[] = [];
+  readonly reads = new Map<string, string | Uint8Array>();
   killed = false;
   running = true;
   /** When set, isRunning throws (simulates a not-found/transport error). */
@@ -67,17 +68,32 @@ class FakeSandbox implements E2BSandbox {
   };
 
   files = {
-    read: async (path: string): Promise<string> => {
+    read: async (path: string, opts?: { format?: "text" | "bytes" }): Promise<string | Uint8Array> => {
       const body = this.reads.get(path);
       if (body === undefined) throw new Error(`no such file ${path}`);
-      return body;
+      if (opts?.format === "bytes") {
+        return typeof body === "string" ? new TextEncoder().encode(body) : body;
+      }
+      return typeof body === "string" ? body : new TextDecoder().decode(body);
     },
-    write: async (path: string, data: string): Promise<unknown> => {
+    write: async (path: string, data: string | ArrayBuffer): Promise<unknown> => {
       this.writes.push({ path, data });
-      this.reads.set(path, data);
+      this.reads.set(
+        path,
+        typeof data === "string" ? data : new Uint8Array(data),
+      );
       return { path };
     },
-  };
+    remove: async (path: string): Promise<void> => {
+      this.removes.push(path);
+      const base = path.replace(/\/+$/, "");
+      for (const candidate of [...this.reads.keys()]) {
+        if (candidate === base || candidate.startsWith(`${base}/`)) {
+          this.reads.delete(candidate);
+        }
+      }
+    },
+  } as E2BSandbox["files"];
 
   async isRunning(): Promise<boolean> {
     if (this.isRunningThrows) throw new Error("sandbox not found");
@@ -267,6 +283,32 @@ describe("E2BSandboxClient", () => {
       path: "/workspace/dir/b.txt",
       data: "payload",
     });
+  });
+
+  it("reads and writes exact bytes through the E2B bytes format", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+    sandboxes[0].reads.set("/workspace/image.png", bytes);
+
+    expect(await client.readFileBytes(id, "/workspace/image.png")).toEqual(bytes);
+    await client.writeFileBytes(id, "/workspace/copy.png", bytes);
+
+    const written = sandboxes[0].writes.find(
+      (entry) => entry.path === "/workspace/copy.png",
+    );
+    expect(new Uint8Array(written!.data as ArrayBuffer)).toEqual(bytes);
+  });
+
+  it("removes a file or directory through the E2B filesystem API", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].reads.set("/skills/a/SKILL.md", "body");
+
+    await client.remove(id, "/skills/a");
+
+    expect(sandboxes[0].removes).toEqual(["/skills/a"]);
+    expect(sandboxes[0].reads.has("/skills/a/SKILL.md")).toBe(false);
   });
 
   it("list runs find and parses recursive entries", async () => {

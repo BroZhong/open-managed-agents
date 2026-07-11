@@ -11,6 +11,26 @@ describe("RedisTurnStreamStore", () => {
     store = new RedisTurnStreamStore(redis);
   });
 
+  it("CAS does not let a stale turn overwrite or clear a newer active turn", async () => {
+    await store.setActiveTurn("s", { turnId: "turn_1_a2", status: "running" });
+
+    expect(await store.compareAndSetActiveTurn(
+      "s",
+      "turn_1_a1",
+      { turnId: "turn_1_a1", status: "idle" },
+    )).toBe(false);
+    expect(await store.compareAndSetActiveTurn("s", "turn_1_a1", null)).toBe(false);
+    expect(await store.getActiveTurn("s")).toEqual({
+      turnId: "turn_1_a2",
+      status: "running",
+    });
+    expect(await store.compareAndSetActiveTurn(
+      "s",
+      "turn_1_a2",
+      { turnId: "turn_1_a2", status: "idle" },
+    )).toBe(true);
+  });
+
   describe("delta streams", () => {
     it("appends deltas to the per-turn stream and reads them back with turnId + blockIndex", async () => {
       await store.appendDelta({

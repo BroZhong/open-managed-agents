@@ -11,6 +11,36 @@ export class FakeRedis implements RedisLike {
   private lists = new Map<string, string[]>();
   private seq = 0;
 
+  async eval(script: string, numberOfKeys: number, ...keysAndArgs: string[]): Promise<unknown> {
+    if (numberOfKeys !== 1 || !script.includes("oma:active-turn-cas")) {
+      throw new Error("FakeRedis received an unsupported Lua script");
+    }
+    const [key, expected, nextTurnId, nextStatus] = keysAndArgs;
+    const current = this.hashes.get(key)?.turnId ?? "";
+    if (current !== expected) return 0;
+    if (!nextTurnId) this.hashes.delete(key);
+    else this.hashes.set(key, { turnId: nextTurnId, status: nextStatus });
+    return 1;
+  }
+
+  // ─── Cursor scan ──────────────────────────────────────────────────────────
+  async scan(
+    _cursor: string | number,
+    _patternToken: "MATCH",
+    pattern: string,
+    _countToken: "COUNT",
+    _count: string | number,
+  ): Promise<[string, string[]]> {
+    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    const matcher = new RegExp(`^${escaped}$`);
+    const keys = new Set([
+      ...this.streams.keys(),
+      ...this.hashes.keys(),
+      ...this.lists.keys(),
+    ]);
+    return ["0", [...keys].filter((key) => matcher.test(key)).sort()];
+  }
+
   // ─── Streams ───────────────────────────────────────────────────────────────
   async xadd(key: string, id: string, ...fieldsAndValues: string[]): Promise<string | null> {
     const stream = this.streams.get(key) ?? [];
@@ -74,6 +104,30 @@ export class FakeRedis implements RedisLike {
     const list = this.lists.get(key) ?? [];
     const i = index < 0 ? list.length + index : index;
     return list[i] ?? null;
+  }
+
+  async lrem(key: string, count: number, value: string): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    const max = count === 0 ? Number.POSITIVE_INFINITY : Math.abs(count);
+    let removed = 0;
+    if (count >= 0) {
+      for (let i = 0; i < list.length && removed < max;) {
+        if (list[i] === value) {
+          list.splice(i, 1);
+          removed++;
+        } else {
+          i++;
+        }
+      }
+    } else {
+      for (let i = list.length - 1; i >= 0 && removed < max; i--) {
+        if (list[i] === value) {
+          list.splice(i, 1);
+          removed++;
+        }
+      }
+    }
+    return removed;
   }
 
   async llen(key: string): Promise<number> {

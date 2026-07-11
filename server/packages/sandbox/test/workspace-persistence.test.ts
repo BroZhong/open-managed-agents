@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import {
   FakeWorkspacePersistence,
+  S3WorkspacePersistence,
   type HydrateTarget,
   type SandboxFsAccess,
 } from "../src/workspace-persistence.js";
+import type { ArtifactPutInput, ArtifactStore } from "@oma-server/store";
 
 const TENANT = "tenant_1";
 const WS = "ws_1";
@@ -23,10 +25,16 @@ function fsAccessFor(
 ): SandboxFsAccess {
   return {
     writeFile: (path, content) => client.writeFile(id, path, content),
+    writeFileBytes: (path, content) => client.writeFileBytes(id, path, content),
     readFile: (path) => {
       spy?.reads.push(path);
       return client.readFile(id, path);
     },
+    readFileBytes: (path) => {
+      spy?.reads.push(path);
+      return client.readFileBytes(id, path);
+    },
+    remove: (path) => client.remove(id, path),
     list: (dir) => client.list(id, dir),
   };
 }
@@ -168,5 +176,112 @@ describe("FakeWorkspacePersistence (WorkspacePersistence seam)", () => {
     const second = await persistence.sync(session, targetFor(fs));
     expect(second.changed).toEqual([]);
     expect(second.deleted).toEqual([]);
+  });
+
+  it("refresh reconciles the live sandbox downward from authoritative storage", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed(TENANT, WS, "edit.txt", "before");
+    persistence.seed(TENANT, WS, "deleted.txt", "remove me");
+
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+    await client.writeFile(id, "/workspace/local-only.txt", "stale sandbox state");
+
+    // Simulate idle-time Workspace edits made through the Host/S3 APIs.
+    persistence.seed(TENANT, WS, "edit.txt", "from web");
+    persistence.seed(TENANT, WS, "added.txt", "new from web");
+    persistence.delete(TENANT, WS, "deleted.txt");
+
+    await persistence.refresh(session, targetFor(fs));
+
+    expect(await client.readFile(id, "/workspace/edit.txt")).toBe("from web");
+    expect(await client.readFile(id, "/workspace/added.txt")).toBe("new from web");
+    await expect(client.readFile(id, "/workspace/deleted.txt")).rejects.toThrow();
+    await expect(client.readFile(id, "/workspace/local-only.txt")).rejects.toThrow();
+
+    // Refresh also advances the baseline: deleting the web-added file in the
+    // next turn must delete it from authoritative storage on sync.
+    client.filesOf(id).delete("/workspace/added.txt");
+    const result = await persistence.sync(session, targetFor(fs));
+    expect(result.deleted).toEqual(["added.txt"]);
+    expect(persistence.contentOf(TENANT, WS, "added.txt")).toBeUndefined();
+  });
+
+  it("sync advances its baseline so a newly-created file can be deleted next turn", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+
+    await client.writeFile(id, "/workspace/transient.txt", "turn one");
+    expect((await persistence.sync(session, targetFor(fs))).changed).toEqual([
+      "transient.txt",
+    ]);
+
+    client.filesOf(id).delete("/workspace/transient.txt");
+    const second = await persistence.sync(session, targetFor(fs));
+    expect(second.deleted).toEqual(["transient.txt"]);
+    expect(persistence.contentOf(TENANT, WS, "transient.txt")).toBeUndefined();
+  });
+});
+
+describe("S3WorkspacePersistence binary safety", () => {
+  it("hydrates invalid UTF-8 bytes into the sandbox unchanged", async () => {
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
+    ]);
+    const store: ArtifactStore = {
+      list: async () => [{ path: "image.png", size: png.byteLength }],
+      get: async () => ({
+        path: "image.png",
+        body: png,
+        contentType: "image/png",
+      }),
+      exists: async () => true,
+      put: async () => {
+        throw new Error("not expected");
+      },
+      delete: async () => false,
+    };
+    const persistence = new S3WorkspacePersistence(store);
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+
+    await persistence.hydrate(targetFor(fs));
+
+    expect(await client.readFileBytes(id, "/workspace/image.png")).toEqual(png);
+  });
+
+  it("syncs PNG bytes without UTF-8 replacement-character corruption", async () => {
+    const puts: ArtifactPutInput[] = [];
+    const store: ArtifactStore = {
+      list: async () => [],
+      get: async () => null,
+      exists: async () => false,
+      put: async (input) => {
+        puts.push(input);
+        const size =
+          typeof input.body === "string"
+            ? Buffer.byteLength(input.body)
+            : input.body.byteLength;
+        return { path: input.path, size };
+      },
+      delete: async () => false,
+    };
+    const persistence = new S3WorkspacePersistence(store);
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
+    ]);
+
+    await client.writeFileBytes(id, "/workspace/image.png", png);
+    await persistence.sync(session, targetFor(fs));
+
+    expect(puts).toHaveLength(1);
+    expect(puts[0].body).toEqual(png);
+    expect(puts[0].contentType).toBe("image/png");
   });
 });

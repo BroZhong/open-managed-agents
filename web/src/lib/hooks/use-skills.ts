@@ -99,69 +99,6 @@ export function useUnequipSkill(agentId: string) {
   });
 }
 
-// --- Skill directory files (issue #73) ------------------------------------
-
-/** List a Skill's file paths (works for a Library Skill or an Agent's fork). */
-export function useSkillFiles(skillId: string) {
-  return useQuery({
-    queryKey: ["skills", skillId, "files"],
-    queryFn: () =>
-      apiFetch<{ data: string[] }>(`/v1/skills/${skillId}/files`).then((r) => r.data),
-    enabled: !!skillId,
-  });
-}
-
-/** Read one Skill file's text content. */
-export function useSkillFile(skillId: string, path: string | null) {
-  return useQuery({
-    queryKey: ["skills", skillId, "files", path],
-    queryFn: () =>
-      apiFetch<{ path: string; content: string }>(
-        `/v1/skills/${skillId}/files/content?path=${encodeURIComponent(path!)}`,
-      ),
-    enabled: !!skillId && !!path,
-  });
-}
-
-export function useSaveSkillFile(skillId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ path, content }: { path: string; content: string }) =>
-      apiFetch<{ path: string; content: string }>(`/v1/skills/${skillId}/files/content`, {
-        method: "PUT",
-        body: JSON.stringify({ path, content }),
-      }),
-    onSuccess: (_d, v) => {
-      queryClient.invalidateQueries({ queryKey: ["skills", skillId, "files"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", skillId, "files", v.path] });
-    },
-  });
-}
-
-export function useDeleteSkillFile(skillId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (path: string) =>
-      apiFetch<{ type: string }>(
-        `/v1/skills/${skillId}/files/content?path=${encodeURIComponent(path)}`,
-        { method: "DELETE" },
-      ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["skills", skillId, "files"] }),
-  });
-}
-
-export function useRenameSkillFile(skillId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ from, to }: { from: string; to: string }) =>
-      apiFetch<{ type: string }>(`/v1/skills/${skillId}/files/rename`, {
-        method: "POST",
-        body: JSON.stringify({ from, to }),
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["skills", skillId, "files"] }),
-  });
-}
-
 /**
  * Client-side mirror of the server's single/multi-Skill detection, for instant
  * drop feedback (the server re-validates authoritatively). Returns an error

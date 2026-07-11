@@ -241,6 +241,7 @@ function AgentSessionList({ agentId }: { agentId: string }) {
         <Link
           key={s.id}
           to={`/sessions/${s.id}`}
+          state={{ agentId: s.agentId }}
           className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3 transition-colors hover:bg-[var(--color-bg-muted)]"
         >
           <div className="min-w-0">

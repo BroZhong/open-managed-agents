@@ -11,7 +11,17 @@ import {
   type SupabaseStorageOptions,
 } from "./supabase-storage.js";
 
-export type S3ArtifactStoreOptions = SupabaseStorageOptions;
+export interface S3ArtifactStoreOptions extends SupabaseStorageOptions {
+  /**
+   * Publicly-reachable Storage base (the instance's `public_url` + `/storage/v1`,
+   * e.g. `http://47.252.145.10:80/storage/v1`), onto which a relative signedURL
+   * is prefixed to form an absolute, browser-reachable GET URL. The client signs
+   * on the internal `endpoint`; this base is where the browser downloads. Absent
+   * → `createSignedReadUrl` is unavailable (signing without a reachable base is
+   * useless). Wired from `STORAGE_PUBLIC_BASE`. See ADR-0006 §1, research #88 §3/§5.
+   */
+  publicBase?: string;
+}
 
 /**
  * S3-authoritative artifact storage backed by Supabase Storage.
@@ -24,9 +34,11 @@ export type S3ArtifactStoreOptions = SupabaseStorageOptions;
  */
 export class S3ArtifactStore implements ArtifactStore {
   private readonly client: SupabaseStorageClient;
+  private readonly publicBase?: string;
 
   constructor(opts: S3ArtifactStoreOptions) {
     this.client = new SupabaseStorageClient(opts, "S3ArtifactStore");
+    this.publicBase = opts.publicBase?.replace(/\/+$/, "") || undefined;
   }
 
   /** `<tenantId>/<workspaceId>` — the isolation boundary for a workspace. */
@@ -65,6 +77,10 @@ export class S3ArtifactStore implements ArtifactStore {
     return { path: normalizePath(path), body: obj.body, contentType: obj.contentType };
   }
 
+  async exists(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
+    return this.client.objectExists(this.key(tenantId, workspaceId, path));
+  }
+
   async put(input: ArtifactPutInput): Promise<Artifact> {
     const body = toBytes(input.body);
     await this.client.putObject(
@@ -77,5 +93,31 @@ export class S3ArtifactStore implements ArtifactStore {
 
   async delete(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
     return this.client.deleteObject(this.key(tenantId, workspaceId, path));
+  }
+
+  /**
+   * Sign a short-lived, read-only GET URL for `<tenantId>/<workspaceId>/<path>`.
+   * The client signs on the internal endpoint (bucket stays private); we then
+   * prefix the relative signedURL with the configured public base to form an
+   * absolute, browser-reachable URL. Read-only — never signs writes (ADR-0006 §1/§2).
+   * Throws if no public base is configured (signing without a reachable base is
+   * useless — the caller should treat this as "presigned reads not available").
+   */
+  async createSignedReadUrl(
+    tenantId: string,
+    workspaceId: string,
+    path: string,
+    expiresInSec: number,
+  ): Promise<string> {
+    if (!this.publicBase) {
+      throw new Error(
+        "S3ArtifactStore: publicBase not configured (set STORAGE_PUBLIC_BASE) — cannot sign a reachable URL",
+      );
+    }
+    const signedURL = await this.client.createSignedUrl(
+      this.key(tenantId, workspaceId, path),
+      expiresInSec,
+    );
+    return this.publicBase + signedURL;
   }
 }

@@ -8,7 +8,7 @@ import type {
 } from "./sandbox-client.js";
 
 interface FakeFile {
-  content: string;
+  content: string | Uint8Array;
   mtimeMs: number;
 }
 
@@ -148,12 +148,46 @@ export class FakeSandboxClient implements SandboxClient {
     const sandbox = this.require(id);
     const file = sandbox.files.get(path);
     if (!file) throw new Error(`readFile: no such file ${path}`);
-    return file.content;
+    return typeof file.content === "string"
+      ? file.content
+      : new TextDecoder().decode(file.content);
+  }
+
+  async readFileBytes(id: string, path: string): Promise<Uint8Array> {
+    const sandbox = this.require(id);
+    const file = sandbox.files.get(path);
+    if (!file) throw new Error(`readFileBytes: no such file ${path}`);
+    return typeof file.content === "string"
+      ? new TextEncoder().encode(file.content)
+      : new Uint8Array(file.content);
   }
 
   async writeFile(id: string, path: string, content: string): Promise<void> {
     const sandbox = this.require(id);
     sandbox.files.set(path, { content, mtimeMs: this.nextMtime() });
+  }
+
+  async writeFileBytes(
+    id: string,
+    path: string,
+    content: Uint8Array,
+  ): Promise<void> {
+    const sandbox = this.require(id);
+    sandbox.files.set(path, {
+      content: new Uint8Array(content),
+      mtimeMs: this.nextMtime(),
+    });
+  }
+
+  async remove(id: string, path: string): Promise<void> {
+    const sandbox = this.require(id);
+    const base = path.replace(/\/+$/, "") || "/";
+    const prefix = base === "/" ? "/" : `${base}/`;
+    for (const filePath of [...sandbox.files.keys()]) {
+      if (filePath === base || filePath.startsWith(prefix)) {
+        sandbox.files.delete(filePath);
+      }
+    }
   }
 
   async list(id: string, dir: string): Promise<SandboxFileEntry[]> {
@@ -164,7 +198,10 @@ export class FakeSandboxClient implements SandboxClient {
       if (path === dir || path.startsWith(prefix)) {
         entries.push({
           path,
-          size: Buffer.byteLength(file.content, "utf8"),
+          size:
+            typeof file.content === "string"
+              ? Buffer.byteLength(file.content, "utf8")
+              : file.content.byteLength,
           mtimeMs: file.mtimeMs,
         });
       }
@@ -194,7 +231,13 @@ export class FakeSandboxClient implements SandboxClient {
       for (const path of args) {
         const file = files.get(path);
         if (file) {
-          yield { stream: "stdout", text: file.content };
+          yield {
+            stream: "stdout",
+            text:
+              typeof file.content === "string"
+                ? file.content
+                : new TextDecoder().decode(file.content),
+          };
         } else {
           yield { stream: "stderr", text: `cat: ${path}: No such file\n` };
         }

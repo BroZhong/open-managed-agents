@@ -7,10 +7,8 @@ import {
   createRedisClient,
   redisConfigFromEnv,
   RedisTurnStreamStore,
-  RedisPendingEventStore,
 } from "@oma-server/redis";
 import type { TurnStreamStore } from "@oma-server/redis";
-import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import {
@@ -30,8 +28,10 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
+import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -257,21 +257,10 @@ class DevCodexAdapter implements Adapter {
 
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
-class DevMockAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const text = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-    yield {
-      id: generateEventId(), timestamp: generateTimestamp(),
-      type: "agent.message", content: [{ type: "text", text: `[mock echo] ${text}` }],
-    } as SessionEvent;
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-  }
-}
+// The packaged mock emits model spans and three text chunks, while lifecycle
+// events remain solely owned by SessionRouter (the former inline echo doubled
+// running/idle and could not exercise Redis/SSE delta delivery).
+const mockAdapter = new MockAdapter({ delayMs: 75 });
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
@@ -286,8 +275,8 @@ function resolveAdapter(runtime: string): Adapter {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
     case "pi-agent": return piAgentAdapter;
-    case "mock": return new DevMockAdapter();
-    default: return new DevMockAdapter();
+    case "mock": return mockAdapter;
+    default: return mockAdapter;
   }
 }
 
@@ -306,21 +295,20 @@ async function main() {
     `Connected to PostgreSQL (${pgConfig.connectionString ?? `${pgConfig.host ?? "127.0.0.1"}:${pgConfig.port ?? 5432}`}, schema=${schema})`,
   );
 
-  // ─── Redis (transient traffic: pending queue + per-turn delta streams) ────
-  // When Redis is reachable, the pending-input queue and per-turn delta streams
-  // + active-turn map live in Redis (ADR-0002 §3). When it is not, fall back to
-  // the PostgreSQL pending queue and live-only deltas (no reconnect backfill).
+  // ─── Redis (transient per-turn deltas only) ────────────────────────────────
+  // Accepted pending input is always authoritative in PostgreSQL: a Redis
+  // restart must never erase a message for which the API already returned 202.
+  // Redis retains only reconstructable/live turn traffic (deltas + active map).
   const redis = createRedisClient(redisConfigFromEnv());
   let turnStreamStore: TurnStreamStore | undefined;
-  let pendingEventStore: PendingEventStore = stores.pendingEventStore;
+  const pendingEventStore = stores.pendingEventStore;
   try {
     await redis.connect();
     turnStreamStore = new RedisTurnStreamStore(redis);
-    pendingEventStore = new RedisPendingEventStore(redis);
-    console.log("Connected to Redis (pending queue + delta streams + active-turn map)");
+    console.log("Connected to Redis (delta streams + active-turn map; pending input stays in PostgreSQL)");
   } catch (err) {
     console.log(
-      `Redis not reachable (${String(err)}) — falling back to PostgreSQL pending queue, live-only deltas`,
+      `Redis not reachable (${String(err)}) — pending input remains in PostgreSQL, deltas are live-only`,
     );
   }
 
@@ -337,6 +325,10 @@ async function main() {
       serviceKey: s3ServiceKey,
       bucket: process.env.S3_BUCKET || "workspace",
       fetch: directFetch,
+      // Public, browser-reachable Storage base for presigned media GETs
+      // (ADR-0006 §1). The client still signs on the internal `endpoint`; this is
+      // only the download base. Absent → preview-url route returns 501.
+      publicBase: process.env.STORAGE_PUBLIC_BASE,
     });
     console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
   } else {
@@ -412,6 +404,20 @@ async function main() {
     skillArtifactStore,
   });
 
+  // Recover input that was accepted (202) before a previous Host process died.
+  // This runs before the HTTP listener opens, so startup recovery and new
+  // requests cannot race to create two local drainers for one Session.
+  const pendingRecovery = await sessionRouter.recoverPendingEvents(({ sessionId, error }) => {
+    console.error(`Background pending recovery failed for ${sessionId}:`, error);
+  });
+  console.log(
+    `Pending recovery: ${pendingRecovery.recovered.length} recovered, ` +
+    `${pendingRecovery.discarded.length} discarded, ${pendingRecovery.failed.length} failed`,
+  );
+  for (const failure of pendingRecovery.failed) {
+    console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
+  }
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -430,7 +436,7 @@ async function main() {
     sessionRouter,
   });
 
-  serve({ fetch: app.fetch, port: PORT }, (info) => {
+  const httpServer = serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`\nServer listening on http://localhost:${info.port}`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
     console.log(`Adapters: claude-code, codex, pi-agent`);
@@ -438,11 +444,29 @@ async function main() {
     console.log(`\nTry: curl http://localhost:${info.port}/health`);
   });
 
-  process.on("SIGINT", async () => {
-    await pool.end().catch(() => {});
-    redis.disconnect();
-    process.exit(0);
+  const shutdown = createGracefulShutdown({
+    server: httpServer,
+    waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
+    timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
+    closeResources: async () => {
+      try {
+        await pool.end();
+      } finally {
+        redis.disconnect();
+      }
+    },
   });
+  const handleSignal = (signal: NodeJS.Signals) => {
+    void shutdown(signal).then(
+      () => process.exit(0),
+      (error) => {
+        console.error("Graceful shutdown failed:", error);
+        process.exit(1);
+      },
+    );
+  };
+  process.on("SIGTERM", handleSignal);
+  process.on("SIGINT", handleSignal);
 }
 
 main().catch((err) => {

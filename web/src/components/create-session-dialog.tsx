@@ -48,7 +48,9 @@ export function CreateSessionDialog({
       onSuccess: (session) => {
         toast.success("Session created");
         onOpenChange(false);
-        navigate(`/sessions/${session.id}`);
+        navigate(`/sessions/${session.id}`, {
+          state: { agentId: session.agentId },
+        });
       },
       onError: (err) => {
         toast.error(err.message || "Failed to create session");

@@ -5,6 +5,19 @@ export interface SessionEvent {
   ts: string;
 }
 
+/** A transient output increment for the active Turn; never durable history. */
+export interface OutputBlockRef {
+  turnId: string;
+  blockIndex: number;
+}
+
+export interface SessionDelta extends OutputBlockRef {
+  type: string;
+  data: unknown;
+  ts: string;
+  deltaId?: string;
+}
+
 /** A single file in a session's Workspace, as listed by the Host proxy. */
 export interface WorkspaceFile {
   path: string;
@@ -92,7 +105,7 @@ export interface AgentToolUseInputStreamStartEvent extends SessionEvent {
 
 export interface AgentToolUseInputChunkEvent extends SessionEvent {
   type: "agent.tool_use_input_chunk";
-  data: { toolUseId: string; text: string };
+  data: { toolUseId: string; delta: string };
 }
 
 export interface AgentMcpToolUseEvent extends SessionEvent {

@@ -175,6 +175,14 @@ export interface SandboxSession {
   list(globOrDir?: string): Promise<FileListEntry[]>;
 
   /**
+   * Safe turn-boundary downward refresh. If a sandbox is already live, replace
+   * its Workspace with the authoritative medium snapshot and re-project Skills
+   * in place. A cold or reclaimed session is a no-op; this never creates or
+   * destroys a sandbox.
+   */
+  refresh(projections?: readonly ReadonlyProjection[]): Promise<void>;
+
+  /**
    * Turn-end lifecycle checkpoint sync. Returns the delta so the Router can emit
    * `workspace.file_change`. A session that never created a sandbox (pure chat)
    * OR one whose sandbox was reclaimed → **empty** SyncResult, **never throws**,
@@ -248,13 +256,20 @@ class SandboxSessionImpl implements SandboxSession {
   private readonly workspaceDir: string;
   private readonly image?: string;
   private readonly env?: Record<string, string>;
-  private readonly projections: readonly ReadonlyProjection[];
+  private projections: readonly ReadonlyProjection[];
   private readonly lifetimeSeconds: number;
 
   /** Resolves once the sandbox exists + is hydrated + projected; shared by all callers. */
   private ensuring?: Promise<string>;
   private sandboxId?: string;
   private hydration?: HydrationSession;
+  /**
+   * A checkpoint reached the medium but did not complete. The live sandbox may
+   * therefore contain the only copy of files produced by the previous Turn.
+   * Until that copy has been synced successfully, a downward refresh must never
+   * treat the medium as complete and delete sandbox-only paths.
+   */
+  private workspaceSyncDirty = false;
   /** Set by {@link dispose}; a closed session refuses every primitive. */
   private closed = false;
 
@@ -321,6 +336,48 @@ class SandboxSessionImpl implements SandboxSession {
         mtimeMs: e.mtimeMs,
       }))
       .filter((e) => !pattern || matchGlob(pattern, e.path));
+  }
+
+  async refresh(projections: readonly ReadonlyProjection[] = this.projections): Promise<void> {
+    if (this.closed) throw new SandboxSessionClosed();
+    for (const projection of projections) {
+      assertProjectionOutsideWorkspace(projection.targetPath, this.workspaceDir);
+    }
+    const previousProjections = this.projections;
+    // Update the recipe even while cold/reclaimed so the next lazy create or
+    // self-heal projects the Agent's current equipped-Skill set.
+    this.projections = projections;
+
+    // Never create a sandbox merely to refresh. Await an already-started create
+    // so we do not race its hydrate/project, but do nothing for a cold session.
+    if (!this.sandboxId && !this.ensuring) return;
+    if (this.ensuring) await this.ensuring;
+
+    const id = this.sandboxId;
+    const hydration = this.hydration;
+    if (!id || !hydration) return;
+    // A reclaimed sandbox will rebuild from authoritative state on its next
+    // primitive; refreshing it here must not destroy/recreate anything.
+    if (!(await this.sandboxClient.isAlive(id))) return;
+
+    const target = this.targetFor(id);
+    if (this.workspaceSyncDirty) {
+      // A previous checkpoint failed, so the sandbox may be ahead of the
+      // authoritative medium. Retry that upward sync before reconciling
+      // downward; if it still fails, syncLive throws and the sandbox is left
+      // untouched for another retry. The recovered delta is intentionally not
+      // returned from refresh(): the UI's idle-event refetch is the backstop.
+      await this.syncLive(hydration, target);
+    }
+    await this.persistence.refresh(hydration, target);
+    const targets = new Set([
+      ...previousProjections.map((projection) => projection.targetPath),
+      ...projections.map((projection) => projection.targetPath),
+    ]);
+    for (const targetPath of targets) {
+      await this.sandboxClient.remove(id, targetPath);
+    }
+    await this.projectAll(id);
   }
 
   /**
@@ -392,7 +449,26 @@ class SandboxSessionImpl implements SandboxSession {
     // A reclaimed sandbox holds no state to sync; probing it would throw. Treat
     // it as an empty no-op — the next primitive rebuilds from the Workspace.
     if (!(await this.sandboxClient.isAlive(id))) return empty;
-    return this.persistence.sync(this.hydration, this.targetFor(id));
+    return this.syncLive(this.hydration, this.targetFor(id));
+  }
+
+  /**
+   * Sync one known-live sandbox and remember whether its local Workspace is the
+   * only complete copy. A successful retry clears the guard; a medium failure
+   * keeps it set so the next refresh cannot destructively reconcile downward.
+   */
+  private async syncLive(
+    hydration: HydrationSession,
+    target: HydrateTarget,
+  ): Promise<SyncResult> {
+    try {
+      const result = await this.persistence.sync(hydration, target);
+      this.workspaceSyncDirty = false;
+      return result;
+    } catch (error) {
+      this.workspaceSyncDirty = true;
+      throw error;
+    }
   }
 
   /**
@@ -458,6 +534,12 @@ class SandboxSessionImpl implements SandboxSession {
     // 1. Hydrate the two-way Workspace area; keep only the opaque session.
     this.hydration = await this.persistence.hydrate(this.targetFor(handle.id));
     // 2. Project every read-only projection (one-way, outside workspaceDir).
+    await this.projectAll(handle.id);
+    return handle.id;
+  }
+
+  /** Project all configured read-only sources into a live sandbox. */
+  private async projectAll(id: string): Promise<void> {
     for (const projection of this.projections) {
       const source = this.provisionSources[projection.source.kind];
       if (!source) {
@@ -465,14 +547,13 @@ class SandboxSessionImpl implements SandboxSession {
           `No ProvisionSource registered for kind "${projection.source.kind}" ` +
             `(projection target "${projection.targetPath}"); registered kinds: ` +
             `${Object.keys(this.provisionSources).join(", ") || "(none)"}.`,
-        );
+          );
       }
       await source.project(
         projection.source,
-        this.projectionTargetFor(handle.id, projection.targetPath),
+        this.projectionTargetFor(id, projection.targetPath),
       );
     }
-    return handle.id;
   }
 
   /** The hydrate/sync target for a given sandbox id: Workspace coords + fs. */
@@ -505,6 +586,10 @@ class SandboxSessionImpl implements SandboxSession {
       writeFile: (path, content) =>
         this.sandboxClient.writeFile(id, path, content),
       readFile: (path) => this.sandboxClient.readFile(id, path),
+      writeFileBytes: (path, content) =>
+        this.sandboxClient.writeFileBytes(id, path, content),
+      readFileBytes: (path) => this.sandboxClient.readFileBytes(id, path),
+      remove: (path) => this.sandboxClient.remove(id, path),
       list: (dir) => this.sandboxClient.list(id, dir),
     };
   }

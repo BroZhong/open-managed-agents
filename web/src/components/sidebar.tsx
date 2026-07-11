@@ -80,8 +80,14 @@ function useActiveAgentId(): string | null {
   const onAgent = location.pathname.startsWith("/agents/") && !!params.id
   const onSession = location.pathname.startsWith("/sessions/") && !!params.id
   const { data: session } = useSession(onSession ? (params.id as string) : "")
+  const navigationAgentId =
+    location.state &&
+    typeof location.state === "object" &&
+    typeof (location.state as { agentId?: unknown }).agentId === "string"
+      ? (location.state as { agentId: string }).agentId
+      : null
   if (onAgent) return params.id as string
-  if (onSession && session) return session.agentId
+  if (onSession) return session?.agentId ?? navigationAgentId
   return null
 }
 
@@ -212,6 +218,7 @@ function SessionLink({ session }: { session: Session }) {
   return (
     <Link
       to={`/sessions/${session.id}`}
+      state={{ agentId: session.agentId }}
       className={cn(
         "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
         active
@@ -282,7 +289,10 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
 
   function newChat() {
     createSession.mutate(agentId, {
-      onSuccess: (session) => navigate(`/sessions/${session.id}`),
+      onSuccess: (session) =>
+        navigate(`/sessions/${session.id}`, {
+          state: { agentId: session.agentId },
+        }),
       onError: (err) => toast.error(err.message || "Failed to start chat"),
     })
   }
@@ -299,7 +309,9 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           {
             onSuccess: (session) => {
               setNewWorkspaceName(null)
-              navigate(`/sessions/${session.id}`)
+              navigate(`/sessions/${session.id}`, {
+                state: { agentId: session.agentId },
+              })
             },
             onError: (err) => toast.error(err.message || "Failed to start chat"),
           },
@@ -491,7 +503,10 @@ function WorkspaceRow({
     createSession.mutate(
       { agentId, workspaceId: workspace.id },
       {
-        onSuccess: (session) => navigate(`/sessions/${session.id}`),
+        onSuccess: (session) =>
+          navigate(`/sessions/${session.id}`, {
+            state: { agentId: session.agentId },
+          }),
         onError: (err) => toast.error(err.message || "Failed to start chat"),
       },
     )

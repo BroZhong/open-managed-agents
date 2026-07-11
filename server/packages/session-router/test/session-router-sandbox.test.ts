@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
+import { InMemoryAgentStore } from "@oma-server/store-memory";
 import {
   FakeSandboxClient,
   FakeWorkspacePersistence,
@@ -22,6 +23,7 @@ import type {
   StoredEvent,
   PaginatedResult,
   Agent,
+  AgentStore,
   Skill,
   SkillStore,
   SkillStoreCreateInput,
@@ -109,6 +111,23 @@ class InMemoryPendingEventStore implements PendingEventStore {
   async peek(sessionId: string): Promise<PendingEvent | null> {
     const queue = this.queues.get(sessionId) ?? [];
     return queue[0] ?? null;
+  }
+
+  async ack(sessionId: string, eventId: string): Promise<boolean> {
+    const queue = this.queues.get(sessionId) ?? [];
+    if (queue[0]?.id !== eventId) return false;
+    queue.shift();
+    return true;
+  }
+
+  async listPendingSessionIds(): Promise<string[]> {
+    return [...this.queues.entries()]
+      .filter(([, queue]) => queue.length > 0)
+      .map(([sessionId]) => sessionId);
+  }
+
+  async clear(sessionId: string): Promise<void> {
+    this.queues.delete(sessionId);
   }
 
   async count(sessionId: string): Promise<number> {
@@ -392,6 +411,7 @@ function createDeps(opts: {
   provisionSource?: FakeProvisionSource;
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
+  agentStore?: AgentStore;
   withManager?: boolean;
   defaultSandboxEnv?: Record<string, string>;
 }) {
@@ -423,6 +443,7 @@ function createDeps(opts: {
     sandboxManager,
     skillStore: opts.skillStore,
     skillArtifactStore: opts.skillArtifactStore,
+    agentStore: opts.agentStore,
     defaultSandboxEnv: opts.defaultSandboxEnv,
   });
 
@@ -599,7 +620,7 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     // The hydrated file landed in the sandbox under the default workspace dir
     // (E2B's user home /home/user — issue #85).
     const id = sandboxClient.created[0];
-    expect(sandboxClient.filesOf(id).get("/home/user/notes.md")?.content).toBe(
+    expect(await sandboxClient.readFile(id, "/home/user/notes.md")).toBe(
       "hydrated-content",
     );
 
@@ -1048,6 +1069,62 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     );
   });
 
+  it("turn 2 sees idle-time Workspace edits from authoritative storage", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "edit.txt", "before");
+    persistence.seed("tenant_1", "ws_1", "deleted.txt", "remove me");
+    const adapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const executor = input.toolExecutor!;
+        const prompt = input.message.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join("");
+        let text = await executor.readFile("edit.txt");
+        if (prompt === "verify") {
+          text += `|${await executor.readFile("added.txt")}`;
+          try {
+            await executor.readFile("deleted.txt");
+            text += "|still-present";
+          } catch {
+            text += "|deleted";
+          }
+        }
+        yield {
+          id: "workspace-refresh",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text }],
+        };
+      },
+    };
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
+      createDeps({ adapter, persistence });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: sandboxedAgent.id,
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "warm");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    persistence.seed("tenant_1", "ws_1", "edit.txt", "from web");
+    persistence.seed("tenant_1", "ws_1", "added.txt", "new from web");
+    persistence.delete("tenant_1", "ws_1", "deleted.txt");
+
+    await enqueue(pendingEventStore, session.id, "verify");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    expect(sandboxClient.created).toHaveLength(1);
+    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
+    const messages = data.filter((event) => event.type === "agent.message");
+    const last = messages.at(-1)!;
+    expect((last.data as { content: Array<{ text: string }> }).content[0].text).toBe(
+      "from web|new from web|deleted",
+    );
+  });
+
   it("the model can read an equipped Skill from inside the sandbox (/skills/<id>/SKILL.md)", async () => {
     // Seed the FakeProvisionSource with a Skill's SKILL.md, equip it on the
     // agent, run a turn, and assert the session can read it at /skills/<id> —
@@ -1072,8 +1149,10 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     );
 
     let readBody = "<unread>";
+    let descriptors: AdapterInput["agent"]["skillDescriptors"];
     const skillReadingAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        descriptors = input.agent.skillDescriptors;
         // The adapter is pointed at the in-sandbox /skills/<id> root and reads
         // SKILL.md from there, exactly as Pi's sandbox-mapped read would.
         const root = input.agent.skillPaths?.[0];
@@ -1115,5 +1194,104 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       SKILL_BODY,
     );
     expect(readBody).toBe(SKILL_BODY);
+
+    // Edit the Skill while the Session stays alive. The next turn must refresh
+    // the same sandbox projection and rebuild prompt metadata from the store.
+    const UPDATED_BODY = "---\nname: greeter-v2\n---\nsay hello";
+    await skillStore.update(skill.id, {
+      name: "greeter-v2",
+      description: "greets better",
+    });
+    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", UPDATED_BODY);
+    provisionSource.seed(
+      { kind: "s3", ref: { tenantId: "tenant_1", skillId: skill.id } },
+      { "SKILL.md": UPDATED_BODY },
+    );
+
+    await enqueue(pendingEventStore, session.id, "load the edited skill");
+    await router.handleNewEvent(session.id, agent);
+
+    expect(sandboxClient.created).toHaveLength(1);
+    expect(readBody).toBe(UPDATED_BODY);
+    expect(descriptors).toEqual([
+      {
+        name: "greeter-v2",
+        description: "greets better",
+        path: `/skills/${skill.id}/SKILL.md`,
+      },
+    ]);
+  });
+
+  it("an existing Session picks up live Agent system and newly equipped Skills", async () => {
+    const agentStore = new InMemoryAgentStore();
+    const liveAgent = await agentStore.create({
+      tenantId: "tenant_1",
+      name: "Live Agent",
+      model: "claude-3",
+      system: "old system",
+      runtime: "pi-agent",
+      skills: [],
+      sandbox: { enabled: true },
+    });
+    const skillStore = new TinySkillStore();
+    const skillArtifactStore = new TinySkillArtifactStore();
+    const skill = await skillStore.create({
+      tenantId: "tenant_1",
+      name: "late-skill",
+      description: "equipped after session creation",
+      ownerType: "agent",
+      ownerId: liveAgent.id,
+    });
+    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "late body");
+    const provisionSource = new FakeProvisionSource();
+    provisionSource.seed(
+      { kind: "s3", ref: { tenantId: "tenant_1", skillId: skill.id } },
+      { "SKILL.md": "late body" },
+    );
+
+    const seen: Array<{ system: string; body?: string }> = [];
+    const adapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const root = input.agent.skillPaths?.[0];
+        let body: string | undefined;
+        if (root) body = await input.toolExecutor!.readFile(`${root}/SKILL.md`);
+        else await input.toolExecutor!.writeFile("warm.txt", "warm");
+        seen.push({ system: input.agent.system, body });
+        yield {
+          id: "live-agent-config",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: body ?? "warm" }],
+        };
+      },
+    };
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter,
+      agentStore,
+      provisionSource,
+      skillStore,
+      skillArtifactStore,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: liveAgent.id,
+      agent: { ...liveAgent },
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "warm");
+    await router.handleNewEvent(session.id, session.agent);
+    await agentStore.update(liveAgent.id, {
+      system: "new system",
+      skills: [skill.id],
+    });
+    await enqueue(pendingEventStore, session.id, "use newly equipped skill");
+    await router.handleNewEvent(session.id, session.agent);
+
+    expect(sandboxClient.created).toHaveLength(1);
+    expect(seen).toEqual([
+      { system: "old system", body: undefined },
+      { system: "new system", body: "late body" },
+    ]);
   });
 });

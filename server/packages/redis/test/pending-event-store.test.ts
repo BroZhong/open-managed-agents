@@ -49,6 +49,43 @@ describe("RedisPendingEventStore", () => {
     expect((await store.dequeue("sess_1"))!.id).toBe(peeked!.id);
   });
 
+  it("ack removes exactly the peeked FIFO head and is idempotent", async () => {
+    const first = await store.enqueue("sess_1", {
+      type: "user.message",
+      data: { content: "first" },
+      sessionThreadId: "sthr_primary",
+    });
+    const second = await store.enqueue("sess_1", {
+      type: "user.message",
+      data: { content: "second" },
+      sessionThreadId: "sthr_primary",
+    });
+
+    expect(await store.ack("sess_1", second.id)).toBe(false);
+    expect((await store.peek("sess_1"))?.id).toBe(first.id);
+    expect(await store.ack("sess_1", first.id)).toBe(true);
+    expect((await store.peek("sess_1"))?.id).toBe(second.id);
+    expect(await store.ack("sess_1", first.id)).toBe(false);
+  });
+
+  it("tracks fenced lease generations for legacy Redis queues", async () => {
+    const event = await store.enqueue("sess_1", {
+      type: "user.message",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+    const first = await store.claim("sess_1", "host_a", 60_000);
+    expect(first?.generation).toBe(1);
+    expect(await store.claim("sess_1", "host_b", 60_000)).toBeNull();
+    expect(await store.ack("sess_1", event.id)).toBe(false);
+    expect(await store.releaseClaim("sess_1", event.id, first!)).toBe(true);
+
+    const second = await store.claim("sess_1", "host_a", 60_000);
+    expect(second?.generation).toBe(2);
+    expect(await store.renewClaim("sess_1", event.id, first!, 60_000)).toBe(false);
+    expect(await store.ack("sess_1", event.id, second!)).toBe(true);
+  });
+
   it("dequeue returns null on empty queue", async () => {
     expect(await store.dequeue("sess_none")).toBeNull();
   });
@@ -69,5 +106,16 @@ describe("RedisPendingEventStore", () => {
     expect(await store.count("sess_2")).toBe(1);
     expect((await store.dequeue("sess_1"))!.data).toEqual({ msg: "a" });
     expect((await store.dequeue("sess_2"))!.data).toEqual({ msg: "b" });
+  });
+
+  it("lists non-empty Session queues once and clears one Session explicitly", async () => {
+    await store.enqueue("sess_2", { type: "m", data: {}, sessionThreadId: "t" });
+    await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
+    await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
+
+    expect(await store.listPendingSessionIds()).toEqual(["sess_1", "sess_2"]);
+    await store.clear("sess_1");
+    expect(await store.count("sess_1")).toBe(0);
+    expect(await store.listPendingSessionIds()).toEqual(["sess_2"]);
   });
 });

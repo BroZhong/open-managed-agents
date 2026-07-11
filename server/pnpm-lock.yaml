@@ -34,6 +34,9 @@ importers:
       '@open-managed-agents/adapter-core':
         specifier: file:../../../adapter/packages/core
         version: file:../adapter/packages/core
+      '@open-managed-agents/adapter-mock':
+        specifier: file:../../../adapter/packages/mock
+        version: file:../adapter/packages/mock
       '@open-managed-agents/adapter-pi-agent':
         specifier: file:../../../adapter/packages/pi-agent
         version: file:../adapter/packages/pi-agent(ws@8.21.0)(zod@4.4.3)
@@ -760,6 +763,9 @@ packages:
 
   '@open-managed-agents/adapter-core@file:../adapter/packages/core':
     resolution: {directory: ../adapter/packages/core, type: directory}
+
+  '@open-managed-agents/adapter-mock@file:../adapter/packages/mock':
+    resolution: {directory: ../adapter/packages/mock, type: directory}
 
   '@open-managed-agents/adapter-pi-agent@file:../adapter/packages/pi-agent':
     resolution: {directory: ../adapter/packages/pi-agent, type: directory}
@@ -2391,6 +2397,10 @@ snapshots:
   '@open-managed-agents/adapter-core@file:../adapter/packages/core':
     dependencies:
       nanoid: 5.1.11
+
+  '@open-managed-agents/adapter-mock@file:../adapter/packages/mock':
+    dependencies:
+      '@open-managed-agents/adapter-core': file:../adapter/packages/core
 
   '@open-managed-agents/adapter-pi-agent@file:../adapter/packages/pi-agent(ws@8.21.0)(zod@4.4.3)':
     dependencies:

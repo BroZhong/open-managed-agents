@@ -108,6 +108,19 @@ export class SupabaseStorageClient {
     };
   }
 
+  /** Check object existence without transferring its body. */
+  async objectExists(key: string): Promise<boolean> {
+    const res = await this.fetchImpl(this.objectUrl(key), {
+      method: "HEAD",
+      headers: this.authHeaders(),
+    });
+    if (res.status === 404 || res.status === 400) return false;
+    if (!res.ok) {
+      throw new Error(`Supabase objectExists failed: ${res.status} ${await safeText(res)}`);
+    }
+    return true;
+  }
+
   /** Delete an object. Returns true if it existed. */
   async deleteObject(key: string): Promise<boolean> {
     const res = await this.fetchImpl(this.objectUrl(key), {
@@ -119,6 +132,22 @@ export class SupabaseStorageClient {
       throw new Error(`Supabase deleteObject failed: ${res.status} ${await safeText(res)}`);
     }
     return true;
+  }
+
+  /**
+   * Sign a short-lived download URL for an already-prefixed key. Returns the
+   * relative signedURL (caller prefixes the public base). Signs on the internal
+   * endpoint; the bucket stays private. Read-only — never signs writes.
+   */
+  async createSignedUrl(key: string, expiresInSec: number): Promise<string> {
+    const res = await this.fetchImpl(`${this.endpoint}/object/sign/${this.bucket}/${key}`, {
+      method: "POST",
+      headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ expiresIn: expiresInSec }),
+    });
+    if (!res.ok) throw new Error(`Supabase sign failed: ${res.status} ${await safeText(res)}`);
+    const { signedURL } = (await res.json()) as { signedURL: string };
+    return signedURL;
   }
 
   /**

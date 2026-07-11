@@ -69,6 +69,26 @@ function fakeFactory(
   };
 }
 
+/** Replay a script that already contains its own agent_end events. */
+function scriptedFactory(script: AgentSessionEvent[]) {
+  return async (): Promise<PiSessionLike> => {
+    let listener: ((e: AgentSessionEvent) => void) | undefined;
+    return {
+      subscribe(l) {
+        listener = l;
+        return () => {
+          listener = undefined;
+        };
+      },
+      async prompt() {
+        for (const e of script) listener?.(e);
+      },
+      abort() {},
+      dispose() {},
+    };
+  };
+}
+
 const assistantStart: AgentSessionEvent = {
   type: "message_start",
   message: { role: "assistant", model: "claude-sonnet-4-5" } as never,
@@ -369,6 +389,162 @@ describe("PiAgentAdapter (SDK)", () => {
   });
 
   describe("error handling", () => {
+    it("keeps consuming events after an agent_end that Pi marks for retry", async () => {
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "temporary provider failure",
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { total: 0 },
+            },
+          },
+        } as never as AgentSessionEvent,
+        {
+          type: "agent_end",
+          messages: [],
+          willRetry: true,
+        } as AgentSessionEvent,
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_delta", contentIndex: 0, delta: "Recovered." }),
+        ame({ type: "text_end", contentIndex: 0, content: "Recovered." }),
+        assistantEnd(20, 3),
+        {
+          type: "agent_end",
+          messages: [],
+          willRetry: false,
+        } as AgentSessionEvent,
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: scriptedFactory(script),
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("retry")));
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message",
+          content: [{ type: "text", text: "Recovered." }],
+        }),
+      );
+      expect(events.filter((event) => event.type === "session.error")).toHaveLength(0);
+    });
+
+    it("keeps consuming after agent_end(false) when prompt() performs overflow recovery", async () => {
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "context window overflow",
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { total: 0 },
+            },
+          },
+        } as never as AgentSessionEvent,
+        {
+          type: "agent_end",
+          messages: [],
+          // Pi's overflow path reports false here, then Session.prompt()
+          // compacts and calls agent.continue() before the promise settles.
+          willRetry: false,
+        } as AgentSessionEvent,
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_delta", contentIndex: 0, delta: "After compaction." }),
+        ame({
+          type: "text_end",
+          contentIndex: 0,
+          content: "After compaction.",
+        }),
+        assistantEnd(20, 3),
+        {
+          type: "agent_end",
+          messages: [],
+          willRetry: false,
+        } as AgentSessionEvent,
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: scriptedFactory(script),
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("overflow")));
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message",
+          content: [{ type: "text", text: "After compaction." }],
+        }),
+      );
+      expect(events.filter((event) => event.type === "session.error")).toHaveLength(0);
+    });
+
+    it("emits one session.error when Pi exhausts retries with a provider error", async () => {
+      const providerFailure = (message: string): AgentSessionEvent =>
+        ({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: message,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { total: 0 },
+            },
+          },
+        }) as never as AgentSessionEvent;
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        providerFailure("temporary provider failure"),
+        {
+          type: "agent_end",
+          messages: [],
+          willRetry: true,
+        } as AgentSessionEvent,
+        assistantStart,
+        providerFailure("provider blocked the final attempt"),
+        {
+          type: "agent_end",
+          messages: [],
+          willRetry: false,
+        } as AgentSessionEvent,
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: scriptedFactory(script),
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const errors = events.filter(
+        (event) => event.type === "session.error",
+      ) as Array<SessionEvent & { error: { message: string; code: string } }>;
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.error).toEqual({
+        message: "provider blocked the final attempt",
+        code: "pi_agent_error",
+      });
+    });
+
     it("emits session.error when the session factory throws", async () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: async () => {
@@ -482,6 +658,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: async (): Promise<PiSessionLike> => {
           let listener: ((e: AgentSessionEvent) => void) | undefined;
+          let aborted = false;
           return {
             subscribe(l) {
               listener = l;
@@ -490,12 +667,17 @@ describe("PiAgentAdapter (SDK)", () => {
               };
             },
             prompt() {
+              // The adapter observes the already-aborted signal before prompt.
+              // Model Pi's prompt settlement after that native abort rather
+              // than relying on agent_end to terminate the adapter queue.
+              if (aborted) return Promise.resolve();
               return new Promise<void>(() => {
                 /* never settles on its own */
               });
             },
             abort() {
               abortCalled = true;
+              aborted = true;
               listener?.({
                 type: "agent_end",
                 messages: [],

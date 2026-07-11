@@ -68,6 +68,14 @@ function makeFakeFetch(initial: Record<string, Uint8Array> = {}) {
       return jsonResponse(all.slice(offset, offset + limit));
     }
 
+    const signMatch = url.match(/\/object\/sign\/([^/]+)\/(.+)$/);
+    if (signMatch && method === "POST") {
+      const key = signMatch[2];
+      return jsonResponse({
+        signedURL: `/object/sign/${signMatch[1]}/${key}?token=fake-jwt`,
+      });
+    }
+
     const objMatch = url.match(/\/object\/(.+)$/);
     if (objMatch) {
       const key = `object/${objMatch[1]}`;
@@ -78,6 +86,9 @@ function makeFakeFetch(initial: Record<string, Uint8Array> = {}) {
           status: 200,
           headers: { "content-type": "application/octet-stream" },
         });
+      }
+      if (method === "HEAD") {
+        return new Response(null, { status: objects.has(key) ? 200 : 404 });
       }
       if (method === "POST") {
         const buf =
@@ -152,6 +163,18 @@ describe("S3ArtifactStore", () => {
     expect(await store.get("t1", "w1", "nope.txt")).toBeNull();
   });
 
+  it("checks existence with HEAD without downloading the object body", async () => {
+    const fake = makeFakeFetch();
+    const store = makeStore(fake);
+    await store.put({ tenantId: "t1", workspaceId: "w1", path: "movie.mp4", body: "bytes" });
+
+    expect(await store.exists("t1", "w1", "movie.mp4")).toBe(true);
+    expect(await store.exists("t1", "w1", "missing.mp4")).toBe(false);
+
+    const objectReads = fake.calls.filter((call) => call.url.includes("/object/workspace/") && ["GET", "HEAD"].includes(call.method));
+    expect(objectReads.map((call) => call.method)).toEqual(["HEAD", "HEAD"]);
+  });
+
   it("lists only objects under the workspace prefix", async () => {
     const fake = makeFakeFetch();
     const store = makeStore(fake);
@@ -223,6 +246,59 @@ describe("S3ArtifactStore", () => {
       const store = makeStore(fake);
       await expect(
         store.get("t1", "w1", "../w2/secret.txt"),
+      ).rejects.toThrow(/Invalid artifact path/);
+    });
+  });
+
+  describe("createSignedReadUrl", () => {
+    it("signs on the internal endpoint under <tenant>/<workspace>/<path> and prefixes the public base", async () => {
+      const fake = makeFakeFetch();
+      const store = new S3ArtifactStore({
+        endpoint: "http://storage.local/storage/v1",
+        serviceKey: "svc-key",
+        bucket: "workspace",
+        fetch: fake.fetchImpl,
+        publicBase: "http://public.example/storage/v1/",
+      });
+
+      const url = await store.createSignedReadUrl("t1", "w1", "dir/clip.mp4", 300);
+
+      // Absolute URL: public base (trailing slash trimmed) + relative signedURL.
+      expect(url).toBe(
+        "http://public.example/storage/v1/object/sign/workspace/t1/w1/dir/clip.mp4?token=fake-jwt",
+      );
+
+      // The sign request went to the INTERNAL endpoint, POST, service-role auth,
+      // for the fully-prefixed key.
+      const signCall = fake.calls.find((c) => c.url.includes("/object/sign/"));
+      expect(signCall).toBeDefined();
+      expect(signCall!.method).toBe("POST");
+      expect(signCall!.url).toBe(
+        "http://storage.local/storage/v1/object/sign/workspace/t1/w1/dir/clip.mp4",
+      );
+      expect(signCall!.headers.Authorization).toBe("Bearer svc-key");
+      expect(JSON.parse(String(signCall!.body))).toEqual({ expiresIn: 300 });
+    });
+
+    it("throws when no public base is configured", async () => {
+      const fake = makeFakeFetch();
+      const store = makeStore(fake); // no publicBase
+      await expect(
+        store.createSignedReadUrl("t1", "w1", "a.png", 300),
+      ).rejects.toThrow(/publicBase not configured/);
+    });
+
+    it("rejects a traversal path before signing", async () => {
+      const fake = makeFakeFetch();
+      const store = new S3ArtifactStore({
+        endpoint: "http://storage.local/storage/v1",
+        serviceKey: "svc-key",
+        bucket: "workspace",
+        fetch: fake.fetchImpl,
+        publicBase: "http://public.example/storage/v1",
+      });
+      await expect(
+        store.createSignedReadUrl("t1", "w1", "../w2/secret.mp4", 300),
       ).rejects.toThrow(/Invalid artifact path/);
     });
   });

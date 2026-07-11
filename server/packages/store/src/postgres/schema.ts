@@ -118,8 +118,13 @@ CREATE TABLE IF NOT EXISTS ${s}.events (
   data               JSONB,
   ts                 TIMESTAMPTZ NOT NULL,
   session_thread_id  TEXT NOT NULL,
+  idempotency_key    TEXT,
   PRIMARY KEY (session_id, seq)
 );
+ALTER TABLE ${s}.events ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS events_session_idempotency_key_uidx
+  ON ${s}.events (session_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   id                 TEXT PRIMARY KEY,
@@ -128,8 +133,14 @@ CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   data               JSONB,
   session_thread_id  TEXT NOT NULL,
   arrived_at         TIMESTAMPTZ NOT NULL,
-  seq                BIGSERIAL
+  seq                BIGSERIAL,
+  claim_owner        TEXT,
+  claim_expires_at   TIMESTAMPTZ,
+  claim_generation   BIGINT NOT NULL DEFAULT 0
 );
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_owner TEXT;
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ;
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS pending_events_session_idx ON ${s}.pending_events (session_id, seq);
 
 CREATE TABLE IF NOT EXISTS ${s}.api_keys (

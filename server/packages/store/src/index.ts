@@ -49,15 +49,22 @@ export type {
 
 export type {
   EventLogStore,
+  EventLogIngressStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
 } from "./interfaces/event-log-store.js";
 
 export type {
   PendingEventStore,
+  PendingEventIngressStore,
   PendingEvent,
   PendingEventEnqueueInput,
+  PendingEventClaim,
+  PendingEventClaimRef,
+  PendingEventFence,
 } from "./interfaces/pending-event-store.js";
+
+export { PendingEventClaimLostError } from "./errors.js";
 
 export type {
   ApiKeyStore,

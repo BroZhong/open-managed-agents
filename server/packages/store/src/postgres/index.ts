@@ -1,8 +1,6 @@
 import type { AgentStore } from "../interfaces/agent-store.js";
 import type { AgentFileStore } from "../interfaces/agent-file-store.js";
 import type { SkillStore } from "../interfaces/skill-store.js";
-import type { EventLogStore } from "../interfaces/event-log-store.js";
-import type { PendingEventStore } from "../interfaces/pending-event-store.js";
 import type { SessionStore } from "../interfaces/session-store.js";
 import type { WorkspaceMetadataStore } from "../interfaces/workspace-metadata-store.js";
 import type { UserStore } from "../interfaces/user-store.js";
@@ -37,8 +35,8 @@ export interface PgStores {
   agentFileStore: AgentFileStore;
   skillStore: SkillStore;
   sessionStore: SessionStore;
-  eventLogStore: EventLogStore;
-  pendingEventStore: PendingEventStore;
+  eventLogStore: PgEventLogStore;
+  pendingEventStore: PgPendingEventStore;
   /**
    * Concrete `PgApiKeyStore` (not just the `ApiKeyStore` interface) so callers
    * can reach `findByKeyHash`, which the API auth middleware needs. Mirrors how

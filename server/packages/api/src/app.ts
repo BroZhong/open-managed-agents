@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -32,13 +32,15 @@ export interface AppDeps {
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
   sessionStore?: SessionStore;
-  eventLogStore?: EventLogStore;
-  pendingEventStore?: PendingEventStore;
+  eventLogStore?: EventLogIngressStore;
+  pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
   turnStreamStore?: TurnStreamStore;
+  /** Override the SSE keepalive cadence in focused tests. */
+  sseHeartbeatIntervalMs?: number;
   sessionRouter?: SessionRouter;
 }
 
@@ -110,6 +112,7 @@ export function createApp(deps: AppDeps) {
       sessionStore: deps.sessionStore,
       eventStreamHub: deps.eventStreamHub,
       turnStreamStore: deps.turnStreamStore,
+      sseHeartbeatIntervalMs: deps.sseHeartbeatIntervalMs,
       sessionRouter: deps.sessionRouter,
     }));
   }
@@ -119,6 +122,7 @@ export function createApp(deps: AppDeps) {
     app.route("", workspaceRoutes({
       sessionStore: deps.sessionStore,
       artifactStore: deps.artifactStore,
+      turnStreamStore: deps.turnStreamStore,
     }));
   }
 

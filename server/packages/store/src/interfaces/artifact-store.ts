@@ -38,8 +38,21 @@ export interface ArtifactStore {
   list(tenantId: string, workspaceId: string, prefix?: string): Promise<Artifact[]>;
   /** Fetch a single artifact's content. Returns null if absent. */
   get(tenantId: string, workspaceId: string, path: string): Promise<ArtifactContent | null>;
+  /** Check whether an artifact exists without fetching its body. */
+  exists(tenantId: string, workspaceId: string, path: string): Promise<boolean>;
   /** Write (create or overwrite) an artifact. */
   put(input: ArtifactPutInput): Promise<Artifact>;
   /** Delete an artifact. Returns true if it existed. */
   delete(tenantId: string, workspaceId: string, path: string): Promise<boolean>;
+  /**
+   * Sign a short-lived, read-only GET URL for a file. Returns an absolute,
+   * publicly-reachable URL. Optional: only backends that support presigned
+   * reads implement it. Never signs writes (ADR-0006).
+   */
+  createSignedReadUrl?(
+    tenantId: string,
+    workspaceId: string,
+    path: string,
+    expiresInSec: number,
+  ): Promise<string>;
 }

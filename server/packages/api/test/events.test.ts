@@ -1,12 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import type {
-  TurnStreamStore,
-  TurnDelta,
-  StoredTurnDelta,
-  ActiveTurn,
-} from "@oma-server/redis";
+import { InMemoryTurnStreamStore } from "@oma-server/redis";
+import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   AgentStore,
@@ -19,10 +15,10 @@ import type {
   SessionStoreCreateInput,
   SessionStoreListOpts,
   SessionStatus,
-  EventLogStore,
+  EventLogIngressStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
-  PendingEventStore,
+  PendingEventIngressStore,
   PendingEvent,
   PendingEventEnqueueInput,
   StoredEvent,
@@ -165,9 +161,13 @@ class InMemorySessionStore implements SessionStore {
 }
 
 // In-memory EventLogStore for testing
-class InMemoryEventLogStore implements EventLogStore {
+class InMemoryEventLogStore implements EventLogIngressStore {
   private events: Map<string, StoredEvent[]> = new Map();
   private seqCounters: Map<string, number> = new Map();
+
+  constructor(
+    private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
+  ) {}
 
   async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
     const currentSeq = this.seqCounters.get(sessionId) ?? 0;
@@ -190,6 +190,14 @@ class InMemoryEventLogStore implements EventLogStore {
     return stored;
   }
 
+  async appendIfSessionActive(
+    sessionId: string,
+    event: Pick<EventLogStoreAppendInput, "type" | "data" | "sessionThreadId">,
+  ): Promise<StoredEvent | null> {
+    if (!await this.isSessionActive(sessionId)) return null;
+    return this.append(sessionId, event);
+  }
+
   async getEvents(
     sessionId: string,
     opts?: EventLogStoreGetEventsOpts,
@@ -208,9 +216,13 @@ class InMemoryEventLogStore implements EventLogStore {
 }
 
 // In-memory PendingEventStore for testing
-class InMemoryPendingEventStore implements PendingEventStore {
+class InMemoryPendingEventStore implements PendingEventIngressStore {
   private queues: Map<string, PendingEvent[]> = new Map();
   private nextId = 1;
+
+  constructor(
+    private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
+  ) {}
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
@@ -227,6 +239,16 @@ class InMemoryPendingEventStore implements PendingEventStore {
     return pending;
   }
 
+  async enqueueBatchIfSessionActive(
+    sessionId: string,
+    events: PendingEventEnqueueInput[],
+  ): Promise<PendingEvent[] | null> {
+    if (!await this.isSessionActive(sessionId)) return null;
+    const inserted: PendingEvent[] = [];
+    for (const event of events) inserted.push(await this.enqueue(sessionId, event));
+    return inserted;
+  }
+
   async dequeue(sessionId: string): Promise<PendingEvent | null> {
     const queue = this.queues.get(sessionId) ?? [];
     if (queue.length === 0) return null;
@@ -238,51 +260,26 @@ class InMemoryPendingEventStore implements PendingEventStore {
     return queue[0] ?? null;
   }
 
+  async ack(sessionId: string, eventId: string): Promise<boolean> {
+    const queue = this.queues.get(sessionId) ?? [];
+    if (queue[0]?.id !== eventId) return false;
+    queue.shift();
+    return true;
+  }
+
+  async listPendingSessionIds(): Promise<string[]> {
+    return [...this.queues.entries()]
+      .filter(([, queue]) => queue.length > 0)
+      .map(([sessionId]) => sessionId);
+  }
+
+  async clear(sessionId: string): Promise<void> {
+    this.queues.delete(sessionId);
+  }
+
   async count(sessionId: string): Promise<number> {
     const queue = this.queues.get(sessionId) ?? [];
     return queue.length;
-  }
-}
-
-// In-memory TurnStreamStore for testing the server-side reconnect merge.
-class InMemoryTurnStreamStore implements TurnStreamStore {
-  streams = new Map<string, StoredTurnDelta[]>();
-  activeTurns = new Map<string, ActiveTurn>();
-  private seq = 0;
-
-  async appendDelta(delta: TurnDelta): Promise<string> {
-    const id = `0-${this.seq++}`;
-    const list = this.streams.get(delta.turnId) ?? [];
-    list.push({ ...delta, id });
-    this.streams.set(delta.turnId, list);
-    return id;
-  }
-
-  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
-    const list = this.streams.get(turnId) ?? [];
-    if (!afterId) return [...list];
-    const idx = list.findIndex((d) => d.id === afterId);
-    return list.slice(idx + 1);
-  }
-
-  async deltaCount(turnId: string): Promise<number> {
-    return this.streams.get(turnId)?.length ?? 0;
-  }
-
-  async reclaim(turnId: string): Promise<void> {
-    this.streams.delete(turnId);
-  }
-
-  async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
-    this.activeTurns.set(sessionId, { ...turn });
-  }
-
-  async getActiveTurn(sessionId: string): Promise<ActiveTurn | null> {
-    return this.activeTurns.get(sessionId) ?? null;
-  }
-
-  async clearActiveTurn(sessionId: string): Promise<void> {
-    this.activeTurns.delete(sessionId);
   }
 }
 
@@ -345,6 +342,33 @@ async function readSSEFrames(res: Response, count: number, timeoutMs = 300): Pro
   return frames;
 }
 
+/** Read raw SSE bytes until `needle` arrives, or return null on timeout/end. */
+async function readSSETextUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  needle: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const decoder = new TextDecoder();
+  const deadline = Date.now() + timeoutMs;
+  let text = "";
+
+  while (Date.now() < deadline) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      reader.read().then((read) => ({ kind: "read" as const, read })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: "timeout" }), deadline - Date.now());
+      }),
+    ]);
+    if (timeout !== undefined) clearTimeout(timeout);
+    if (result.kind === "timeout" || result.read.done) return null;
+    text += decoder.decode(result.read.value, { stream: true });
+    if (text.includes(needle)) return text;
+  }
+
+  return null;
+}
+
 function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   return {
     async findByKeyHash(keyHash) {
@@ -353,18 +377,25 @@ function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   };
 }
 
-function createTestApp() {
+function createTestApp(sessionRouter?: SessionRouter) {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
   const sessionStore = new InMemorySessionStore();
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
+  const eventLogStore = new InMemoryEventLogStore(async (sessionId) => {
+    const current = await sessionStore.getById(sessionId);
+    return Boolean(current && current.status !== "terminated");
+  });
+  const pendingEventStore = new InMemoryPendingEventStore(async (sessionId) => {
+    const current = await sessionStore.getById(sessionId);
+    return Boolean(current && current.status !== "terminated");
+  });
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
     agentStore,
     sessionStore,
     eventLogStore,
     pendingEventStore,
+    sessionRouter,
   });
   return { app, agentStore, sessionStore, eventLogStore, pendingEventStore };
 }
@@ -415,6 +446,83 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(pending!.type).toBe("user.message");
   });
 
+  it("returns 410 for a terminated Session without enqueuing input", async () => {
+    const handleNewEvent = vi.fn(async () => {});
+    const sessionRouter = { handleNewEvent } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+    await sessionStore.terminate(session.id);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "too late" } }],
+      }),
+    });
+
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({ error: "Session is terminated" });
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+    expect(handleNewEvent).not.toHaveBeenCalled();
+  });
+
+  it("atomically rejects input when termination wins after the initial API read", async () => {
+    const handleNewEvent = vi.fn(async () => {});
+    const sessionRouter = { handleNewEvent } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+    const enqueue = pendingEventStore.enqueueBatchIfSessionActive.bind(pendingEventStore);
+    pendingEventStore.enqueueBatchIfSessionActive = vi.fn(async (sessionId, events) => {
+      await sessionStore.terminate(sessionId);
+      return enqueue(sessionId, events);
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "lost race" } }],
+      }),
+    });
+
+    expect(res.status).toBe(410);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+    expect(handleNewEvent).not.toHaveBeenCalled();
+  });
+
+  it("keeps accepted input pending and logs an asynchronous router failure", async () => {
+    const failure = new Error("router failed after accept");
+    const sessionRouter = {
+      handleNewEvent: vi.fn(async () => {
+        throw failure;
+      }),
+    } as unknown as SessionRouter;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    try {
+      const res = await app.request(`/v1/sessions/${session.id}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          events: [{ type: "user.message", data: { text: "retain me" } }],
+        }),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(res.status).toBe(202);
+      expect(await pendingEventStore.count(session.id)).toBe(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        `SessionRouter failed after accepting input for ${session.id}:`,
+        failure,
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("rejects agent.message with 400", async () => {
     const { app, agentStore, sessionStore } = createTestApp();
     const { session } = await createTestSession(agentStore, sessionStore);
@@ -430,6 +538,53 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toBe("Unsupported event type: agent.message");
+  });
+
+  it("validates the whole batch before accepting any prefix", async () => {
+    const handleNewEvent = vi.fn(async () => {});
+    const sessionRouter = { handleNewEvent } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          { type: "user.message", data: { text: "must not persist" } },
+          { type: "agent.message", data: { text: "invalid" } },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+    expect((await sessionStore.getById(session.id))?.title).toBeUndefined();
+    expect(handleNewEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mixed interrupt batch without interrupting or queueing", async () => {
+    const interrupt = vi.fn();
+    const handleNewEvent = vi.fn(async () => {});
+    const sessionRouter = { interrupt, handleNewEvent } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          { type: "user.message", data: { text: "must not stall" } },
+          { type: "user.interrupt", data: {} },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(handleNewEvent).not.toHaveBeenCalled();
   });
 
   it("user.interrupt is not persisted and returns accepted/interrupted", async () => {
@@ -490,6 +645,27 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(events.data).toHaveLength(1);
     expect(events.data[0].type).toBe("user.define_outcome");
     expect(events.data[0].seq).toBe(1);
+  });
+
+  it("atomically rejects a direct event when termination wins after the initial read", async () => {
+    const { app, agentStore, sessionStore, eventLogStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+    const append = eventLogStore.appendIfSessionActive.bind(eventLogStore);
+    eventLogStore.appendIfSessionActive = vi.fn(async (sessionId, event) => {
+      await sessionStore.terminate(sessionId);
+      return append(sessionId, event);
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        events: [{ type: "user.define_outcome", data: { outcome: "too late" } }],
+      }),
+    });
+
+    expect(res.status).toBe(410);
+    expect((await eventLogStore.getEvents(session.id)).data).toHaveLength(0);
   });
 
   it("returns 404 for non-existent session", async () => {
@@ -801,12 +977,18 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     process.env.AUTH_DISABLED = "true";
   });
 
-  function createMergeApp() {
+  function createMergeApp(sseHeartbeatIntervalMs?: number) {
     process.env.AUTH_DISABLED = "true";
     const agentStore = new InMemoryAgentStore();
     const sessionStore = new InMemorySessionStore();
-    const eventLogStore = new InMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
+    const eventLogStore = new InMemoryEventLogStore(async (sessionId) => {
+      const current = await sessionStore.getById(sessionId);
+      return Boolean(current && current.status !== "terminated");
+    });
+    const pendingEventStore = new InMemoryPendingEventStore(async (sessionId) => {
+      const current = await sessionStore.getById(sessionId);
+      return Boolean(current && current.status !== "terminated");
+    });
     const eventStreamHub = new InProcessEventStreamHub();
     const turnStreamStore = new InMemoryTurnStreamStore();
     const app = createApp({
@@ -817,9 +999,50 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
       pendingEventStore,
       eventStreamHub,
       turnStreamStore,
+      sseHeartbeatIntervalMs,
     });
     return { app, agentStore, sessionStore, eventLogStore, pendingEventStore, eventStreamHub, turnStreamStore };
   }
+
+  it("keeps an idle SSE connection alive and still delivers a later durable event", async () => {
+    const { app, agentStore, sessionStore, eventLogStore, eventStreamHub } = createMergeApp(10);
+    const { session } = await createTestSession(agentStore, sessionStore);
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    let heartbeatTimerCleared = false;
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      headers: { accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    try {
+      const heartbeat = await readSSETextUntil(reader, ": keepalive\n\n", 100);
+      expect(heartbeat).toContain("retry: 1000\n\n");
+      expect(heartbeat).toContain(": keepalive\n\n");
+
+      const data = { type: "agent.message", content: [{ type: "text", text: "after idle" }] };
+      const stored = await eventLogStore.append(session.id, {
+        type: "agent.message",
+        data,
+        sessionThreadId: "sthr_primary",
+      });
+      eventStreamHub.publish(session.id, {
+        type: "agent.message",
+        seq: stored.seq,
+        data,
+      });
+
+      const live = await readSSETextUntil(reader, "event: agent.message\n", 100);
+      expect(live).toContain(`id: ${stored.seq}\n`);
+      expect(live).toContain('"after idle"');
+    } finally {
+      await reader.cancel().catch(() => {});
+      heartbeatTimerCleared = clearIntervalSpy.mock.calls.length > 0;
+      clearIntervalSpy.mockRestore();
+    }
+    expect(heartbeatTimerCleared).toBe(true);
+  });
 
   it("reconnect mid-turn: backfills PG completed events, then the half-emitted deltas, then continues live", async () => {
     const { app, agentStore, sessionStore, eventLogStore, eventStreamHub, turnStreamStore } =

@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { PgSessionStore } from "../src/postgres/session-store.js";
 import { PgWorkspaceMetadataStore } from "../src/postgres/workspace-metadata-store.js";
+import { PgPendingEventStore } from "../src/postgres/pending-event-store.js";
+import { PgEventLogStore } from "../src/postgres/event-log-store.js";
+import { PendingEventClaimLostError } from "../src/errors.js";
 import type { Agent } from "../src/types.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
@@ -89,6 +92,91 @@ describe("PgSessionStore", () => {
     const updated = await store.updateStatus(created.id, "running");
     expect(updated).not.toBeNull();
     expect(updated!.status).toBe("running");
+  });
+
+  it("fences turn-owned status updates by pending generation", async () => {
+    const created = await store.create({
+      tenantId: "tenant1",
+      agentId: mockAgent.id,
+      agent: mockAgent,
+      workspaceId: await newWorkspace(),
+    });
+    const pending = new PgPendingEventStore(harness.pool);
+    const input = await pending.enqueue(created.id, {
+      type: "user.message",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+    const first = await pending.claim(created.id, "host_a", 60_000);
+
+    await expect(store.updateStatusIfClaimed(created.id, "running", {
+      eventId: input.id,
+      ...first!,
+    })).resolves.toMatchObject({ status: "running" });
+    await pending.releaseClaim(created.id, input.id, first!);
+    await pending.claim(created.id, "host_b", 60_000);
+
+    await expect(store.updateStatusIfClaimed(created.id, "idle", {
+      eventId: input.id,
+      ...first!,
+    })).rejects.toMatchObject({ code: "pending_event_claim_lost" });
+    expect((await store.getById(created.id))?.status).toBe("running");
+  });
+
+  it("never revives a terminated session even while its pending fence is live", async () => {
+    const created = await store.create({
+      tenantId: "tenant1",
+      agentId: mockAgent.id,
+      agent: mockAgent,
+      workspaceId: await newWorkspace(),
+    });
+    const pending = new PgPendingEventStore(harness.pool);
+    const input = await pending.enqueue(created.id, {
+      type: "user.message",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+    const claim = await pending.claim(created.id, "host_a", 60_000);
+    await store.terminate(created.id);
+
+    await expect(store.updateStatusIfClaimed(created.id, "running", {
+      eventId: input.id,
+      ...claim!,
+    })).resolves.toBeNull();
+    expect((await store.getById(created.id))?.status).toBe("terminated");
+  });
+
+  it("termination atomically removes a remote Host claim and fences all later writes", async () => {
+    const created = await store.create({
+      tenantId: "tenant1",
+      agentId: mockAgent.id,
+      agent: mockAgent,
+      workspaceId: await newWorkspace(),
+    });
+    const pending = new PgPendingEventStore(harness.pool);
+    const input = await pending.enqueue(created.id, {
+      type: "user.message",
+      data: {},
+      sessionThreadId: "sthr_primary",
+    });
+    const claim = await pending.claim(created.id, "remote_host", 60_000);
+    const fence = {
+      eventId: input.id,
+      ownerId: claim!.ownerId,
+      generation: claim!.generation,
+    };
+
+    await store.terminate(created.id);
+
+    expect(await pending.count(created.id)).toBe(0);
+    expect(await pending.renewClaim(created.id, input.id, claim!, 60_000)).toBe(false);
+    expect(await pending.ack(created.id, input.id, claim!)).toBe(false);
+    await expect(new PgEventLogStore(harness.pool).append(created.id, {
+      type: "agent.message",
+      data: {},
+      sessionThreadId: "sthr_primary",
+      pendingFence: fence,
+    })).rejects.toBeInstanceOf(PendingEventClaimLostError);
   });
 
   it("should terminate a session", async () => {

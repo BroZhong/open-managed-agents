@@ -35,7 +35,9 @@ export interface E2BSandbox {
   };
   files: {
     read(path: string, opts?: { format?: "text" }): Promise<string>;
-    write(path: string, data: string): Promise<unknown>;
+    read(path: string, opts: { format: "bytes" }): Promise<Uint8Array>;
+    write(path: string, data: string | ArrayBuffer): Promise<unknown>;
+    remove(path: string): Promise<void>;
   };
   /** True while the gateway still has this sandbox running (not reclaimed). */
   isRunning(): Promise<boolean>;
@@ -162,10 +164,38 @@ export class E2BSandboxClient implements SandboxClient {
     return sandbox.files.read(path, { format: "text" });
   }
 
+  async readFileBytes(id: string, path: string): Promise<Uint8Array> {
+    const sandbox = this.require(id);
+    return sandbox.files.read(path, { format: "bytes" });
+  }
+
   async writeFile(id: string, path: string, content: string): Promise<void> {
     const sandbox = this.require(id);
     // The e2b SDK creates parent directories automatically on write.
     await sandbox.files.write(path, content);
+  }
+
+  async writeFileBytes(
+    id: string,
+    path: string,
+    content: Uint8Array,
+  ): Promise<void> {
+    const sandbox = this.require(id);
+    // Copy into an owned ArrayBuffer: a Uint8Array may be a view with a
+    // non-zero offset, while the SDK accepts the whole ArrayBuffer.
+    const copy = new Uint8Array(content);
+    await sandbox.files.write(path, copy.buffer);
+  }
+
+  async remove(id: string, path: string): Promise<void> {
+    const sandbox = this.require(id);
+    try {
+      await sandbox.files.remove(path);
+    } catch (error) {
+      // Downward reconciliation is idempotent. A concurrent/missing delete is
+      // already the desired state; preserve all other backend failures.
+      if (!isMissingFileError(error)) throw error;
+    }
   }
 
   async list(id: string, dir: string): Promise<SandboxFileEntry[]> {
@@ -322,6 +352,11 @@ function isCommandExitError(e: unknown): boolean {
     "exitCode" in e &&
     typeof (e as { exitCode: unknown }).exitCode === "number"
   );
+}
+
+function isMissingFileError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /not[ -]?found|no such file|404/i.test(message);
 }
 
 /**

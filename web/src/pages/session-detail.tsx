@@ -20,7 +20,7 @@ export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: session, isLoading: sessionLoading } = useSession(id);
-  const { events, status, isConnected, fileChange } = useSessionEvents(id);
+  const { events, activeDeltas, status, isConnected, fileChange } = useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -174,7 +174,11 @@ export default function SessionDetailPage() {
           {/* Conversation column */}
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex-1 overflow-hidden">
-              <ConversationView events={displayEvents} sessionStatus={status} />
+              <ConversationView
+                events={displayEvents}
+                activeDeltas={activeDeltas}
+                sessionStatus={status}
+              />
             </div>
             <MessageInput onSend={handleSend} disabled={inputDisabled} pendingMessages={status === "running" ? unconfirmedEvents : []} />
           </div>
@@ -194,7 +198,11 @@ export default function SessionDetailPage() {
                   </span>
                 </div>
                 <div className="min-h-0 flex-1">
-                  <WorkspacePanel sessionId={id} refreshKey={fileChange.nonce} />
+                  <WorkspacePanel
+                    sessionId={id}
+                    refreshKey={fileChange.nonce}
+                    turnStatus={status === "running" ? "running" : "idle"}
+                  />
                 </div>
               </div>
             )}
@@ -206,7 +214,11 @@ export default function SessionDetailPage() {
         </div>
       ) : (
         <div className="flex-1 overflow-hidden">
-          <WorkspacePanel sessionId={id} refreshKey={fileChange.nonce} />
+          <WorkspacePanel
+            sessionId={id}
+            refreshKey={fileChange.nonce}
+            turnStatus={status === "running" ? "running" : "idle"}
+          />
         </div>
       )}
     </div>

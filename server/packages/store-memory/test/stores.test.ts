@@ -158,6 +158,24 @@ describe("createMemoryStores", () => {
       expect(result.data).toHaveLength(2);
       expect(result.data[0].type).toBe("b");
     });
+
+    it("deduplicates retries by caller idempotency key", async () => {
+      const first = await stores.eventLogStore.append("s1", {
+        type: "user.message",
+        data: { text: "first" },
+        sessionThreadId: "th1",
+        idempotencyKey: "pending:p1",
+      });
+      const retry = await stores.eventLogStore.append("s1", {
+        type: "user.message",
+        data: { text: "different retry body" },
+        sessionThreadId: "th1",
+        idempotencyKey: "pending:p1",
+      });
+
+      expect(retry).toEqual(first);
+      expect((await stores.eventLogStore.getEvents("s1")).data).toHaveLength(1);
+    });
   });
 
   describe("PendingEventStore", () => {
@@ -189,6 +207,76 @@ describe("createMemoryStores", () => {
       expect(peeked?.data).toEqual({ x: 1 });
       expect(await stores.pendingEventStore.count("s1")).toBe(1);
     });
+
+    it("acknowledges only the peeked FIFO head", async () => {
+      const first = await stores.pendingEventStore.enqueue("s1", {
+        type: "a",
+        data: {},
+        sessionThreadId: "th1",
+      });
+      const second = await stores.pendingEventStore.enqueue("s1", {
+        type: "b",
+        data: {},
+        sessionThreadId: "th1",
+      });
+
+      expect(await stores.pendingEventStore.ack("s1", second.id)).toBe(false);
+      expect(await stores.pendingEventStore.ack("s1", first.id)).toBe(true);
+      expect((await stores.pendingEventStore.peek("s1"))?.id).toBe(second.id);
+    });
+
+    it("leases one fenced execution owner and advances generation after release", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", {
+        type: "user.message",
+        data: {},
+        sessionThreadId: "th1",
+      });
+
+      const first = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(first?.generation).toBe(1);
+      expect(await stores.pendingEventStore.claim("s1", "host_b", 60_000)).toBeNull();
+      expect(await stores.pendingEventStore.ack("s1", event.id)).toBe(false);
+      expect(await stores.pendingEventStore.releaseClaim("s1", event.id, first!)).toBe(true);
+
+      const second = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(second?.generation).toBe(2);
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first!, 60_000)).toBe(false);
+      expect(await stores.pendingEventStore.ack("s1", event.id, second!)).toBe(true);
+    });
+
+    it("rejects a durable append from an old pending fence", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", {
+        type: "user.message",
+        data: {},
+        sessionThreadId: "th1",
+      });
+      const first = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      await expect(stores.eventLogStore.append("s1", {
+        type: "session.status_running",
+        data: {},
+        sessionThreadId: "th1",
+        pendingFence: { eventId: event.id, ...first! },
+      })).resolves.toMatchObject({ seq: 1 });
+
+      await stores.pendingEventStore.releaseClaim("s1", event.id, first!);
+      const second = await stores.pendingEventStore.claim("s1", "host_b", 60_000);
+      expect(second?.generation).toBe(2);
+      await expect(stores.eventLogStore.append("s1", {
+        type: "agent.message",
+        data: {},
+        sessionThreadId: "th1",
+        pendingFence: { eventId: event.id, ...first! },
+      })).rejects.toMatchObject({ code: "pending_event_claim_lost" });
+    });
+
+    it("lists and clears retained Session queues", async () => {
+      await stores.pendingEventStore.enqueue("s2", { type: "a", data: {}, sessionThreadId: "th1" });
+      await stores.pendingEventStore.enqueue("s1", { type: "a", data: {}, sessionThreadId: "th1" });
+
+      expect(await stores.pendingEventStore.listPendingSessionIds()).toEqual(["s1", "s2"]);
+      await stores.pendingEventStore.clear("s1");
+      expect(await stores.pendingEventStore.listPendingSessionIds()).toEqual(["s2"]);
+    });
   });
 
   describe("AgentFileStore", () => {
@@ -216,6 +304,43 @@ describe("createMemoryStores", () => {
       expect(await stores.agentFileStore.delete("t1", "a1", "USER")).toBe(true);
       expect(await stores.agentFileStore.get("t1", "a1", "USER")).toBeNull();
       expect(await stores.agentFileStore.delete("t1", "a1", "USER")).toBe(false);
+    });
+  });
+
+  describe("ArtifactStore", () => {
+    it("puts, lists, gets, and deletes under a tenant+workspace prefix", async () => {
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "a.txt", body: "hello" });
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "src/b.js", body: "x=1" });
+
+      const list = await stores.artifactStore.list("t1", "ws1");
+      expect(list.map((a) => a.path).sort()).toEqual(["a.txt", "src/b.js"]);
+      expect(list.find((a) => a.path === "a.txt")?.size).toBe(5);
+
+      const got = await stores.artifactStore.get("t1", "ws1", "a.txt");
+      expect(got?.body && new TextDecoder().decode(got.body)).toBe("hello");
+
+      expect(await stores.artifactStore.delete("t1", "ws1", "a.txt")).toBe(true);
+      expect(await stores.artifactStore.get("t1", "ws1", "a.txt")).toBeNull();
+      expect(await stores.artifactStore.delete("t1", "ws1", "a.txt")).toBe(false);
+    });
+
+    it("isolates by tenant and workspace, and filters by prefix", async () => {
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "mine.txt", body: "1" });
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws2", path: "other.txt", body: "2" });
+      await stores.artifactStore.put({ tenantId: "t2", workspaceId: "ws1", path: "theirs.txt", body: "3" });
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "src/deep.js", body: "4" });
+
+      expect((await stores.artifactStore.list("t1", "ws1")).map((a) => a.path).sort()).toEqual([
+        "mine.txt",
+        "src/deep.js",
+      ]);
+      expect((await stores.artifactStore.list("t1", "ws1", "src/")).map((a) => a.path)).toEqual(["src/deep.js"]);
+      expect(await stores.artifactStore.get("t2", "ws1", "mine.txt")).toBeNull();
+    });
+
+    it("records list calls for test assertions", async () => {
+      await stores.artifactStore.list("t1", "ws1", "src/");
+      expect(stores.artifactStore.listCalls).toEqual([{ tenantId: "t1", workspaceId: "ws1", prefix: "src/" }]);
     });
   });
 
