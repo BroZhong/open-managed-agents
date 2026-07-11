@@ -1,5 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import type { SessionEvent } from "@/lib/types";
+import {
+  initialSessionEventStreamState,
+  parseSessionSseFrame,
+  sessionEventStreamReducer,
+  sessionEventStreamUrl,
+} from "@/lib/session-event-stream";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const STORAGE_KEY = "oma_api_key";
@@ -13,7 +19,10 @@ export interface WorkspaceFileChange {
 }
 
 export function useSessionEvents(sessionId: string) {
-  const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [{ events, activeDeltas }, dispatch] = useReducer(
+    sessionEventStreamReducer,
+    initialSessionEventStreamState,
+  );
   const [status, setStatus] = useState<"idle" | "running">("idle");
   const [isConnected, setIsConnected] = useState(false);
   // Signals the Workspace panel to refresh its tree. Driven by the Host's
@@ -25,9 +34,6 @@ export function useSessionEvents(sessionId: string) {
     changed: [],
     deleted: [],
   });
-  const eventsRef = useRef(events);
-  eventsRef.current = events;
-
   // Reconnect anchor: the last seq we've received. Seeded from history on the
   // first connect, then advanced as each event with a real seq arrives. On a
   // reconnect we replay it as `Last-Event-ID` so the server's paginated
@@ -60,10 +66,7 @@ export function useSessionEvents(sessionId: string) {
       return;
     }
 
-    setEvents((prev) => {
-      if (prev.some((e) => e.seq === event.seq)) return prev;
-      return [...prev, event];
-    });
+    dispatch({ type: "event.received", event });
     if (event.type === "session.status_running") setStatus("running");
     if (event.type === "session.status_idle") {
       setStatus("idle");
@@ -83,14 +86,15 @@ export function useSessionEvents(sessionId: string) {
     const { signal } = abortController;
 
     // Reads the SSE stream to completion, parsing frames and feeding events
-    // into `addEvent`. Shared by both the initial connect and every reconnect,
+    // into durable history or the active Delta projection. Shared by both the
+    // initial connect and every reconnect,
     // so the frame-parsing lives in exactly one place. Returns when the stream
     // ends (`done`); throws on network/HTTP failure or abort.
     async function pumpSse(token: string | null) {
       // Always resume from the current anchor — the single source of truth,
       // seeded from history on first connect and advanced as events arrive.
       const sseRes = await fetch(
-        `${BASE_URL}/v1/sessions/${sessionId}/events`,
+        sessionEventStreamUrl(BASE_URL, sessionId),
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -125,53 +129,17 @@ export function useSessionEvents(sessionId: string) {
 
         for (const frame of frames) {
           if (!frame.trim()) continue;
-
-          let eventId = "";
-          let eventType = "";
-          const dataLines: string[] = [];
-
-          // Parse SSE fields per spec: "field: value" or "field:value" (the
-          // single optional leading space is stripped either way).
-          const lines = frame.split("\n");
-          for (const line of lines) {
-            const stripField = (field: string): string | undefined => {
-              if (!line.startsWith(field + ":")) return undefined;
-              const rest = line.slice(field.length + 1);
-              return rest.startsWith(" ") ? rest.slice(1) : rest;
-            };
-            const id = stripField("id");
-            const evt = stripField("event");
-            const data = stripField("data");
-            if (id !== undefined) eventId = id;
-            else if (evt !== undefined) eventType = evt;
-            else if (data !== undefined) dataLines.push(data);
+          const parsed = parseSessionSseFrame(frame);
+          if (!parsed) continue;
+          if (parsed.kind === "delta") {
+            dispatch({ type: "delta.received", delta: parsed.delta });
+            continue;
           }
 
-          if (dataLines.length === 0) continue;
-
-          // Every persisted event on this stream carries id:<seq> (#71). A frame
-          // without an id is not a resumable persisted event — dropping it (vs.
-          // forcing seq 0) avoids a phantom duplicate keyed at 0 and keeps the
-          // Last-Event-ID resume anchored to a real seq.
-          if (eventId === "") continue;
-
-          const dataStr = dataLines.join("\n");
-          try {
-            const parsed = JSON.parse(dataStr);
-            const seq = parseInt(eventId, 10);
-            const event: SessionEvent = {
-              seq,
-              type: eventType || parsed.type || "",
-              data: parsed.data ?? parsed,
-              ts: parsed.ts || new Date().toISOString(),
-            };
-            // Advance the resume anchor as real events arrive so a later
-            // reconnect asks the server for exactly what we've missed.
-            if (Number.isFinite(seq)) lastSeqRef.current = seq;
-            addEvent(event);
-          } catch {
-            // Skip unparseable frames
-          }
+          // Only durable events advance Last-Event-ID. Deltas have their own
+          // Redis identity and never fabricate a Session sequence number.
+          lastSeqRef.current = parsed.event.seq;
+          addEvent(parsed.event);
         }
       }
     }
@@ -200,7 +168,7 @@ export function useSessionEvents(sessionId: string) {
       const historyData = await historyRes.json();
       const historicalEvents: SessionEvent[] =
         historyData.data || historyData || [];
-      setEvents(historicalEvents);
+      dispatch({ type: "history.loaded", events: historicalEvents });
 
       // Derive status from historical events
       for (let i = historicalEvents.length - 1; i >= 0; i--) {
@@ -271,5 +239,5 @@ export function useSessionEvents(sessionId: string) {
     };
   }, [sessionId, addEvent]);
 
-  return { events, status, isConnected, fileChange };
+  return { events, activeDeltas, status, isConnected, fileChange };
 }

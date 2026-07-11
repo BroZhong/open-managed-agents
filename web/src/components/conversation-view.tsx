@@ -2,294 +2,19 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, ChevronDown } from "lucide-react";
-import type { SessionEvent } from "@/lib/types";
+import type { SessionDelta, SessionEvent } from "@/lib/types";
+import {
+  processEventsToMessages,
+  type DisplayMessage,
+} from "@/lib/conversation-projection";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { ToolCard } from "@/components/tool-card";
-
-interface ToolResultData {
-  content: unknown;
-  isError: boolean;
-}
-
-interface DisplayMessage {
-  id: string;
-  role:
-    | "user"
-    | "assistant"
-    | "assistant_streaming"
-    | "thinking"
-    | "tool_use"
-    | "error";
-  text: string;
-  streaming?: boolean;
-  name?: string;
-  toolUseId?: string;
-  input?: unknown;
-  serverName?: string;
-  result?: ToolResultData;
-  seq: number;
-}
 
 interface Turn {
   id: string;
   userMessage: DisplayMessage | null;
   responses: DisplayMessage[];
   isComplete: boolean;
-}
-
-function processEventsToMessages(events: SessionEvent[]): {
-  messages: DisplayMessage[];
-  isStreaming: boolean;
-} {
-  const messages: DisplayMessage[] = [];
-  let currentStream = "";
-  let streaming = false;
-
-  let thinkingStream = "";
-  let thinkingStreaming = false;
-
-  let toolInputStream = "";
-  let toolInputStreaming = false;
-  let toolInputStreamId = "";
-  let toolInputStreamName = "";
-
-  const toolResultMap = new Map<
-    string,
-    { content: unknown; isError: boolean; seq: number }
-  >();
-  const pairedToolResultSeqs = new Set<number>();
-
-  for (const event of events) {
-    if (event.type === "agent.tool_result") {
-      const data = event.data as {
-        toolUseId: string;
-        content: unknown;
-        isError?: boolean;
-      };
-      toolResultMap.set(data.toolUseId, {
-        content: data.content,
-        isError: data.isError ?? false,
-        seq: event.seq,
-      });
-    }
-  }
-
-  for (const event of events) {
-    switch (event.type) {
-      case "user.message": {
-        const data = event.data as {
-          content: Array<{ type: string; text: string }>;
-        };
-        const text = data.content
-          .filter((c) => c.type === "text")
-          .map((c) => c.text)
-          .join("\n");
-        messages.push({
-          id: `user-${event.seq}`,
-          role: "user",
-          text,
-          seq: event.seq,
-        });
-        break;
-      }
-      case "agent.message": {
-        const data = event.data as {
-          content: Array<{ type: string; text: string }>;
-        };
-        const text = data.content
-          .filter((c) => c.type === "text")
-          .map((c) => c.text)
-          .join("\n");
-        messages.push({
-          id: `assistant-${event.seq}`,
-          role: "assistant",
-          text,
-          seq: event.seq,
-        });
-        streaming = false;
-        currentStream = "";
-        break;
-      }
-      case "agent.message_stream_start":
-        streaming = true;
-        currentStream = "";
-        break;
-      case "agent.message_chunk": {
-        const data = event.data as { text: string };
-        currentStream += data.text;
-        break;
-      }
-
-      case "agent.thinking_stream_start":
-        thinkingStreaming = true;
-        thinkingStream = "";
-        break;
-      case "agent.thinking_chunk": {
-        const data = event.data as { text: string };
-        thinkingStream += data.text;
-        break;
-      }
-      case "agent.thinking": {
-        const data = event.data as { text: string };
-        thinkingStreaming = false;
-        thinkingStream = "";
-        messages.push({
-          id: `thinking-${event.seq}`,
-          role: "thinking",
-          text: data.text,
-          streaming: false,
-          seq: event.seq,
-        });
-        break;
-      }
-
-      case "agent.tool_use_input_stream_start": {
-        const data = event.data as { toolUseId: string; name: string };
-        toolInputStreaming = true;
-        toolInputStream = "";
-        toolInputStreamId = data.toolUseId;
-        toolInputStreamName = data.name;
-        break;
-      }
-      case "agent.tool_use_input_chunk": {
-        const data = event.data as { toolUseId: string; text: string };
-        toolInputStream += data.text;
-        break;
-      }
-
-      case "agent.tool_use": {
-        const data = event.data as {
-          toolUseId: string;
-          name: string;
-          input: unknown;
-        };
-        toolInputStreaming = false;
-        toolInputStream = "";
-        toolInputStreamId = "";
-        toolInputStreamName = "";
-
-        const pairedResult = toolResultMap.get(data.toolUseId);
-        if (pairedResult) {
-          pairedToolResultSeqs.add(pairedResult.seq);
-        }
-
-        messages.push({
-          id: `tool-${event.seq}`,
-          role: "tool_use",
-          text: "",
-          name: data.name,
-          toolUseId: data.toolUseId,
-          input: data.input,
-          result: pairedResult
-            ? { content: pairedResult.content, isError: pairedResult.isError }
-            : undefined,
-          seq: event.seq,
-        });
-        break;
-      }
-      case "agent.mcp_tool_use": {
-        const data = event.data as {
-          toolUseId: string;
-          name: string;
-          input: unknown;
-          serverName: string;
-        };
-        toolInputStreaming = false;
-        toolInputStream = "";
-        toolInputStreamId = "";
-        toolInputStreamName = "";
-
-        const pairedResult = toolResultMap.get(data.toolUseId);
-        if (pairedResult) {
-          pairedToolResultSeqs.add(pairedResult.seq);
-        }
-
-        messages.push({
-          id: `tool-${event.seq}`,
-          role: "tool_use",
-          text: "",
-          name: data.name,
-          toolUseId: data.toolUseId,
-          input: data.input,
-          serverName: data.serverName,
-          result: pairedResult
-            ? { content: pairedResult.content, isError: pairedResult.isError }
-            : undefined,
-          seq: event.seq,
-        });
-        break;
-      }
-
-      case "agent.tool_result": {
-        if (!pairedToolResultSeqs.has(event.seq)) {
-          const data = event.data as {
-            toolUseId: string;
-            content: unknown;
-            isError?: boolean;
-          };
-          messages.push({
-            id: `tool-result-${event.seq}`,
-            role: "tool_use",
-            text: "",
-            name: "Tool Result",
-            toolUseId: data.toolUseId,
-            input: null,
-            result: {
-              content: data.content,
-              isError: data.isError ?? false,
-            },
-            seq: event.seq,
-          });
-        }
-        break;
-      }
-
-      case "session.error": {
-        const data = event.data as { error: { message: string } };
-        messages.push({
-          id: `error-${event.seq}`,
-          role: "error",
-          text: data.error.message,
-          seq: event.seq,
-        });
-        break;
-      }
-    }
-  }
-
-  if (thinkingStreaming && thinkingStream) {
-    messages.push({
-      id: "thinking-streaming",
-      role: "thinking",
-      text: thinkingStream,
-      streaming: true,
-      seq: -1,
-    });
-  }
-
-  if (toolInputStreaming && toolInputStreamId) {
-    messages.push({
-      id: "tool-input-streaming",
-      role: "tool_use",
-      text: "",
-      name: toolInputStreamName,
-      toolUseId: toolInputStreamId,
-      input: toolInputStream,
-      streaming: true,
-      seq: -1,
-    });
-  }
-
-  if (streaming && currentStream) {
-    messages.push({
-      id: "streaming-current",
-      role: "assistant_streaming",
-      text: currentStream,
-      seq: -1,
-    });
-  }
-
-  return { messages, isStreaming: streaming };
 }
 
 function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean): Turn[] {
@@ -339,28 +64,31 @@ function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean
 
 interface ConversationViewProps {
   events: SessionEvent[];
+  activeDeltas?: SessionDelta[];
   sessionStatus: "idle" | "running";
 }
 
 export function ConversationView({
   events,
+  activeDeltas = [],
   sessionStatus,
 }: ConversationViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
-  const prevEventsLenRef = useRef(0);
+  const prevProjectionSizeRef = useRef(0);
 
   const { messages, isStreaming } = useMemo(
-    () => processEventsToMessages(events),
-    [events],
+    () => processEventsToMessages(events, activeDeltas),
+    [events, activeDeltas],
   );
 
   const turns = useMemo(
     () => groupMessagesIntoTurns(messages, isStreaming),
     [messages, isStreaming],
   );
+  const projectionSize = events.length + activeDeltas.length;
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -379,15 +107,15 @@ export function ConversationView({
   }, []);
 
   useEffect(() => {
-    if (events.length > prevEventsLenRef.current) {
+    if (projectionSize > prevProjectionSizeRef.current) {
       if (isAtBottom) {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
       } else {
         setHasNewMessages(true);
       }
     }
-    prevEventsLenRef.current = events.length;
-  }, [events.length, isAtBottom]);
+    prevProjectionSizeRef.current = projectionSize;
+  }, [projectionSize, isAtBottom]);
 
   function scrollToBottom() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

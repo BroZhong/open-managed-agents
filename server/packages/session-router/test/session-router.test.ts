@@ -669,14 +669,99 @@ describe("SessionRouter", () => {
     });
 
     it("aligns deltas and their full event via turnId + blockIndex", async () => {
-      const { turnStreamStore } = await runOneTurn();
+      const { eventLogStore, turnStreamStore, session } = await runOneTurn();
       const deltas = turnStreamStore.appendedDeltas.filter((d) => d.turnId === "turn_1");
-      // All message-block deltas share (turn_1, blockIndex 0), which is the same
-      // pair the full agent.message would carry.
+      // All message-block deltas share (turn_1, blockIndex 0).
       for (const d of deltas) {
         expect(d.turnId).toBe("turn_1");
         expect(d.blockIndex).toBe(0);
       }
+
+      // The corresponding complete event carries the same pair, without
+      // changing its durable sequence identity.
+      const stored = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const message = stored.data.find((event) => event.type === "agent.message")!;
+      expect(message.seq).toBe(3);
+      expect(message.data).toMatchObject({
+        turnId: "turn_1",
+        blockIndex: 0,
+        content: [{ type: "text", text: "Hello" }],
+      });
+    });
+
+    it("aligns each Complete Event to its own block without consuming extra seqs", async () => {
+      const adapter = createMockAdapter([
+        { id: "s0", timestamp: "t", type: "agent.thinking_stream_start" },
+        { id: "s1", timestamp: "t", type: "agent.thinking_chunk", text: "Why" },
+        { id: "s2", timestamp: "t", type: "agent.thinking_stream_end" },
+        { id: "s3", timestamp: "t", type: "agent.thinking", text: "Why" },
+        {
+          id: "s4",
+          timestamp: "t",
+          type: "agent.tool_use_input_stream_start",
+          toolUseId: "tool_1",
+          name: "read",
+        },
+        {
+          id: "s5",
+          timestamp: "t",
+          type: "agent.tool_use_input_chunk",
+          toolUseId: "tool_1",
+          delta: "{}",
+        },
+        {
+          id: "s6",
+          timestamp: "t",
+          type: "agent.tool_use_input_stream_end",
+          toolUseId: "tool_1",
+        },
+        {
+          id: "s7",
+          timestamp: "t",
+          type: "agent.tool_use",
+          toolUseId: "tool_1",
+          name: "read",
+          input: {},
+        },
+        { id: "s8", timestamp: "t", type: "agent.message_stream_start" },
+        { id: "s9", timestamp: "t", type: "agent.message_chunk", text: "Done" },
+        { id: "s10", timestamp: "t", type: "agent.message_stream_end" },
+        {
+          id: "s11",
+          timestamp: "t",
+          type: "agent.message",
+          content: [{ type: "text", text: "Done" }],
+        },
+      ]);
+      const deps = createTestDepsWithTurnStream(adapter);
+      const session = await deps.sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await deps.pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hi" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await deps.router.handleNewEvent(session.id, testAgent);
+
+      const stored = await deps.eventLogStore.getEvents(session.id, { limit: 100 });
+      const completed = stored.data.filter((event) =>
+        ["agent.thinking", "agent.tool_use", "agent.message"].includes(event.type),
+      );
+      expect(completed.map(({ seq, type, data }) => ({
+        seq,
+        type,
+        turnId: (data as { turnId: string }).turnId,
+        blockIndex: (data as { blockIndex: number }).blockIndex,
+      }))).toEqual([
+        { seq: 3, type: "agent.thinking", turnId: "turn_1", blockIndex: 0 },
+        { seq: 4, type: "agent.tool_use", turnId: "turn_1", blockIndex: 1 },
+        { seq: 5, type: "agent.message", turnId: "turn_1", blockIndex: 2 },
+      ]);
     });
 
     it("reclaims the per-turn Redis stream after the turn completes", async () => {

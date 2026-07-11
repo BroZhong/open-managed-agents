@@ -42,6 +42,19 @@ const STREAM_START_TYPES: ReadonlySet<string> = new Set([
   "agent.tool_use_input_stream_start",
 ]);
 
+/** Complete event types that replace each kind of transient stream block. */
+const COMPLETE_TYPES_BY_STREAM_START: Readonly<Record<string, ReadonlySet<string>>> = {
+  "agent.message_stream_start": new Set(["agent.message"]),
+  "agent.thinking_stream_start": new Set(["agent.thinking"]),
+  "agent.tool_use_input_stream_start": new Set(["agent.tool_use", "agent.mcp_tool_use"]),
+};
+
+interface PendingStreamBlock {
+  blockIndex: number;
+  completeTypes: ReadonlySet<string>;
+  toolUseId?: string;
+}
+
 export interface SessionRouterDeps {
   eventLogStore: EventLogStore;
   pendingEventStore: PendingEventStore;
@@ -498,6 +511,7 @@ export class SessionRouter {
       // blockIndex increments on each stream_start, aligning a turn's deltas to
       // the full Event they roll up into (shared turnId + blockIndex).
       let blockIndex = -1;
+      const pendingStreamBlocks: PendingStreamBlock[] = [];
 
       try {
         for await (const event of events) {
@@ -506,6 +520,14 @@ export class SessionRouter {
           if (isStreamEvent(event)) {
             if (STREAM_START_TYPES.has(event.type)) {
               blockIndex++;
+              pendingStreamBlocks.push({
+                blockIndex,
+                completeTypes: COMPLETE_TYPES_BY_STREAM_START[event.type],
+                toolUseId:
+                  event.type === "agent.tool_use_input_stream_start"
+                    ? event.toolUseId
+                    : undefined,
+              });
             }
             const currentBlock = blockIndex < 0 ? 0 : blockIndex;
 
@@ -535,15 +557,30 @@ export class SessionRouter {
               deltaId,
             });
           } else {
+            const pendingBlockIndex = pendingStreamBlocks.findIndex((block) => {
+              if (!block.completeTypes.has(event.type)) return false;
+              if (block.toolUseId === undefined) return true;
+              if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") {
+                return false;
+              }
+              return event.toolUseId === block.toolUseId;
+            });
+            const pendingBlock =
+              pendingBlockIndex === -1
+                ? undefined
+                : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
+            const completeEvent = pendingBlock
+              ? { ...event, turnId, blockIndex: pendingBlock.blockIndex }
+              : event;
             const stored = await this.eventLogStore.append(sessionId, {
-              type: event.type,
-              data: event,
+              type: completeEvent.type,
+              data: completeEvent,
               sessionThreadId: "sthr_primary",
             });
             this.eventStreamHub.publish(sessionId, {
-              type: event.type,
+              type: completeEvent.type,
               seq: stored.seq,
-              data: event,
+              data: completeEvent,
             });
           }
         }

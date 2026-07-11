@@ -20,6 +20,14 @@ _Avoid_: chat, thread, run
 One user message and the Agent execution that responds to it within a **Session**.
 _Avoid_: request, job, invocation
 
+**Delta**:
+A transient increment of an Agent's output emitted while the current **Turn** is running. Deltas form a live projection of that Turn only: they are never part of a Session's durable history, are replaced by the corresponding complete event as it arrives, and are discarded if the Turn ends without one.
+_Avoid_: event, message, token (a Delta may contain text beyond one token)
+
+**Complete Event**:
+A durable, sequenced record of a finalized Agent output block within a **Turn**. A Complete Event replaces the Deltas aligned to the same Turn and output block.
+_Avoid_: Delta, chunk, final message (thinking and tool use may also be Complete Events)
+
 **Agent File**:
 A named markdown document that shapes an **Agent**'s identity or instructions (e.g. SOUL, IDENTITY, MEMORY, USER). Agent Files belong to one Agent and are isolated per Agent — one Agent can never read another's Files. They are Agent-scoped, not Session-scoped: every Session of an Agent sees the same Files. The Host assembles them into the instructions given to the runtime; the runtime never reads them from a Session's Workspace.
 _Avoid_: prompt file, persona file, SOUL (as a category name)
