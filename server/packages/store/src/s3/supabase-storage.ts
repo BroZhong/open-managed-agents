@@ -122,6 +122,22 @@ export class SupabaseStorageClient {
   }
 
   /**
+   * Sign a short-lived download URL for an already-prefixed key. Returns the
+   * relative signedURL (caller prefixes the public base). Signs on the internal
+   * endpoint; the bucket stays private. Read-only — never signs writes.
+   */
+  async createSignedUrl(key: string, expiresInSec: number): Promise<string> {
+    const res = await this.fetchImpl(`${this.endpoint}/object/sign/${this.bucket}/${key}`, {
+      method: "POST",
+      headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ expiresIn: expiresInSec }),
+    });
+    if (!res.ok) throw new Error(`Supabase sign failed: ${res.status} ${await safeText(res)}`);
+    const { signedURL } = (await res.json()) as { signedURL: string };
+    return signedURL;
+  }
+
+  /**
    * Recursively list files under `listPrefix` (Supabase's list is not
    * recursive), invoking `onFile(fullKey)` for each concrete file.
    */

@@ -337,6 +337,10 @@ async function main() {
       serviceKey: s3ServiceKey,
       bucket: process.env.S3_BUCKET || "workspace",
       fetch: directFetch,
+      // Public, browser-reachable Storage base for presigned media GETs
+      // (ADR-0006 §1). The client still signs on the internal `endpoint`; this is
+      // only the download base. Absent → preview-url route returns 501.
+      publicBase: process.env.STORAGE_PUBLIC_BASE,
     });
     console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
   } else {

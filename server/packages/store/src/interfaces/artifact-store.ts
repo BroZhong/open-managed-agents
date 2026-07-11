@@ -42,4 +42,15 @@ export interface ArtifactStore {
   put(input: ArtifactPutInput): Promise<Artifact>;
   /** Delete an artifact. Returns true if it existed. */
   delete(tenantId: string, workspaceId: string, path: string): Promise<boolean>;
+  /**
+   * Sign a short-lived, read-only GET URL for a file. Returns an absolute,
+   * publicly-reachable URL. Optional: only backends that support presigned
+   * reads implement it. Never signs writes (ADR-0006).
+   */
+  createSignedReadUrl?(
+    tenantId: string,
+    workspaceId: string,
+    path: string,
+    expiresInSec: number,
+  ): Promise<string>;
 }

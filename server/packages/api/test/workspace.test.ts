@@ -541,3 +541,148 @@ describe("POST /v1/sessions/:id/workspace/files/upload", () => {
     expect((await res.json()).code).toBe("workspace_locked");
   });
 });
+
+// The production in-memory fake (store-memory) intentionally has no signing —
+// presigned reads are an S3 feature. We extend it locally so the route can be
+// tested against a backend that DOES advertise createSignedReadUrl, mirroring
+// the real S3 store's "internal-sign, public-base" shape (research #88 §3).
+const PUBLIC_BASE = "http://public.example/storage/v1";
+class SigningArtifactStore extends InMemoryArtifactStore {
+  async createSignedReadUrl(
+    tenantId: string,
+    workspaceId: string,
+    path: string,
+    expiresInSec: number,
+  ): Promise<string> {
+    // Shape mirrors the real relative signedURL prefixed with the public base.
+    return `${PUBLIC_BASE}/object/sign/workspace/${tenantId}/${workspaceId}/${path}?token=fake&exp=${expiresInSec}`;
+  }
+}
+
+function createSigningTestApp() {
+  process.env.AUTH_DISABLED = "true";
+  const sessionStore = new InMemorySessionStore();
+  const artifactStore = new SigningArtifactStore();
+  const turnStreamStore = new InMemoryTurnStreamStore();
+  const app = createApp({
+    apiKeyStore: makeApiKeyStore(new Map()),
+    sessionStore,
+    artifactStore,
+    turnStreamStore,
+  });
+  return { app, sessionStore, artifactStore, turnStreamStore };
+}
+
+describe("GET /v1/sessions/:id/workspace/preview-url", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("signs a short-lived read-only GET URL for an existing file", async () => {
+    const { app, sessionStore, artifactStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore, "dev", "ws_1");
+    await artifactStore.put({
+      tenantId: "dev",
+      workspaceId: "ws_1",
+      path: "media/clip.mp4",
+      body: new Uint8Array([1, 2, 3]),
+      contentType: "video/mp4",
+    });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=media/clip.mp4`,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Absolute public base, the /object/sign/ path, a token query, and scoped to
+    // the current tenant + workspace prefix.
+    expect(body.url).toContain(PUBLIC_BASE);
+    expect(body.url).toContain("/object/sign/");
+    expect(body.url).toContain("token=");
+    expect(body.url).toContain("/dev/ws_1/media/clip.mp4");
+    expect(body.expiresIn).toBe(600);
+  });
+
+  it("clamps expiresIn into the allowed range", async () => {
+    const { app, sessionStore, artifactStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
+
+    const tooBig = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png&expiresIn=99999`,
+    );
+    expect((await tooBig.json()).expiresIn).toBe(900);
+
+    const tooSmall = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png&expiresIn=1`,
+    );
+    expect((await tooSmall.json()).expiresIn).toBe(60);
+  });
+
+  it("returns 404 for a non-existent file (never signs an absent key)", async () => {
+    const { app, sessionStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=ghost.png`,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 for a session belonging to another tenant", async () => {
+    const { app, sessionStore, artifactStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore, "other-tenant", "ws_1");
+    await artifactStore.put({ tenantId: "other-tenant", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png`,
+    );
+    // Auth-disabled tenant is "dev"; session belongs to "other-tenant".
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a traversal path with 400", async () => {
+    const { app, sessionStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=../ws_2/secret.png`,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a missing path with 400", async () => {
+    const { app, sessionStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url`,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 501 when the backend does not support presigned reads", async () => {
+    // The default test app uses the plain InMemoryArtifactStore (no signing).
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: "x" });
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png`,
+    );
+    expect(res.status).toBe(501);
+  });
+
+  it("only signs GET — PUT/POST to preview-url do not match the route", async () => {
+    const { app, sessionStore, artifactStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
+
+    const put = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png`,
+      { method: "PUT" },
+    );
+    expect([404, 405]).toContain(put.status);
+
+    const post = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png`,
+      { method: "POST" },
+    );
+    expect([404, 405]).toContain(post.status);
+  });
+});

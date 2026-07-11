@@ -224,6 +224,63 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
     return c.json({ data: written });
   });
 
+  // GET /v1/sessions/:id/workspace/preview-url?path=…&expiresIn=… — sign a
+  // short-lived, read-only GET URL for a media file (ADR-0006 §1). The path is a
+  // query param (not a route segment) so it never collides with the `files/*`
+  // wildcard, which would otherwise swallow `files/<x>/preview-url`. Only signs
+  // GET — writes are never presigned (ADR-0006 §2). The file must exist first, so
+  // we never sign a URL for an absent key (avoids leaking existence).
+  const MIN_EXPIRES = 60;
+  const MAX_EXPIRES = 900;
+  const DEFAULT_EXPIRES = 600;
+  router.get("/v1/sessions/:id/workspace/preview-url", async (c) => {
+    const tenant = c.get("tenant");
+    const session = await resolveSession(c.req.param("id"), tenant);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+
+    const path = c.req.query("path");
+    if (!path || !isSafePath(path)) {
+      return c.json({ error: "Invalid file path" }, 400);
+    }
+
+    const artifact = await deps.artifactStore.get(
+      tenant.tenantId,
+      session.workspaceId,
+      path,
+    );
+    if (!artifact) return c.json({ error: "File not found" }, 404);
+
+    if (!deps.artifactStore.createSignedReadUrl) {
+      return c.json(
+        { error: "Presigned reads not supported by this backend" },
+        501,
+      );
+    }
+
+    const raw = Number(c.req.query("expiresIn"));
+    const expiresIn = Number.isFinite(raw)
+      ? Math.min(MAX_EXPIRES, Math.max(MIN_EXPIRES, Math.trunc(raw)))
+      : DEFAULT_EXPIRES;
+
+    let url: string;
+    try {
+      url = await deps.artifactStore.createSignedReadUrl(
+        tenant.tenantId,
+        session.workspaceId,
+        path,
+        expiresIn,
+      );
+    } catch {
+      // Backend can list/get but cannot produce a reachable signed URL (e.g. no
+      // public base configured) — treat as "presigned reads not available".
+      return c.json(
+        { error: "Presigned reads not available (storage public base not configured)" },
+        501,
+      );
+    }
+    return c.json({ url, expiresIn });
+  });
+
   // GET /v1/sessions/:id/workspace/files — list the Workspace file tree.
   router.get("/v1/sessions/:id/workspace/files", async (c) => {
     const tenant = c.get("tenant");
