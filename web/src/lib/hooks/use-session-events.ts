@@ -86,14 +86,16 @@ export function useSessionEvents(sessionId: string) {
     // into `addEvent`. Shared by both the initial connect and every reconnect,
     // so the frame-parsing lives in exactly one place. Returns when the stream
     // ends (`done`); throws on network/HTTP failure or abort.
-    async function pumpSse(token: string | null, lastSeq: number) {
+    async function pumpSse(token: string | null) {
+      // Always resume from the current anchor — the single source of truth,
+      // seeded from history on first connect and advanced as events arrive.
       const sseRes = await fetch(
         `${BASE_URL}/v1/sessions/${sessionId}/events`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
             Accept: "text/event-stream",
-            "Last-Event-ID": String(lastSeq),
+            "Last-Event-ID": String(lastSeqRef.current),
           },
           signal,
         },
@@ -220,7 +222,7 @@ export function useSessionEvents(sessionId: string) {
           : 0;
 
       // 2. Open SSE connection
-      await pumpSse(token, lastSeqRef.current);
+      await pumpSse(token);
     }
 
     // Reconnect path: no history refetch. Reopen SSE directly at the resume
@@ -228,7 +230,7 @@ export function useSessionEvents(sessionId: string) {
     // dedupes by seq, so re-delivered events don't duplicate.
     async function connectSse() {
       const token = localStorage.getItem(STORAGE_KEY);
-      await pumpSse(token, lastSeqRef.current);
+      await pumpSse(token);
     }
 
     // Both unexpected exits — the read loop finishing (`done`) and a thrown
