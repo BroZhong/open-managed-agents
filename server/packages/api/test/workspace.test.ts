@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../src/app.js";
 import { InMemoryArtifactStore } from "@oma-server/store-memory";
+import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   SessionStore,
@@ -67,12 +68,14 @@ function createTestApp() {
   process.env.AUTH_DISABLED = "true";
   const sessionStore = new InMemorySessionStore();
   const artifactStore = new InMemoryArtifactStore();
+  const turnStreamStore = new InMemoryTurnStreamStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
     sessionStore,
     artifactStore,
+    turnStreamStore,
   });
-  return { app, sessionStore, artifactStore };
+  return { app, sessionStore, artifactStore, turnStreamStore };
 }
 
 const dummyAgent = {
@@ -225,5 +228,316 @@ describe("GET /v1/sessions/:id/workspace/files/*", () => {
     await artifactStore.put({ tenantId: "other-tenant", workspaceId: "ws_1", path: "a.txt", body: "x" });
     const res = await app.request(`/v1/sessions/${session.id}/workspace/files/a.txt`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("PUT /v1/sessions/:id/workspace/files/content", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("writes a file that then shows up in list and get", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+
+    const put = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "notes.md", content: "# hi" }),
+      },
+    );
+    expect(put.status).toBe(200);
+    expect(await put.json()).toEqual({ path: "notes.md" });
+
+    const list = await app.request(`/v1/sessions/${session.id}/workspace/files`);
+    const listBody = await list.json();
+    expect(listBody.data.map((f: { path: string }) => f.path)).toContain("notes.md");
+
+    const get = await app.request(`/v1/sessions/${session.id}/workspace/files/notes.md`);
+    expect(get.status).toBe(200);
+    expect(await get.text()).toBe("# hi");
+  });
+
+  it("rejects a traversal path with 400", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "../escape.txt", content: "x" }),
+      },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for another tenant's session", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore, "other-tenant");
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "a.txt", content: "x" }),
+      },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("is rejected with 423 while the active turn is running", async () => {
+    const { app, sessionStore, turnStreamStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "t1", status: "running" });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "a.txt", content: "x" }),
+      },
+    );
+    expect(res.status).toBe(423);
+    expect((await res.json()).code).toBe("workspace_locked");
+  });
+
+  it("is allowed when the active turn is idle", async () => {
+    const { app, sessionStore, turnStreamStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "t1", status: "idle" });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "a.txt", content: "x" }),
+      },
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("DELETE /v1/sessions/:id/workspace/files/content", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("deletes an existing file", async () => {
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "gone.txt", body: "x" });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content?path=gone.txt`,
+      { method: "DELETE" },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ type: "workspace_file_deleted", path: "gone.txt" });
+
+    const get = await app.request(`/v1/sessions/${session.id}/workspace/files/gone.txt`);
+    expect(get.status).toBe(404);
+  });
+
+  it("returns 404 when the file does not exist", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content?path=ghost.txt`,
+      { method: "DELETE" },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a traversal path with 400", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content?path=..`,
+      { method: "DELETE" },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("is rejected with 423 while the active turn is running", async () => {
+    const { app, sessionStore, artifactStore, turnStreamStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "gone.txt", body: "x" });
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "t1", status: "running" });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/content?path=gone.txt`,
+      { method: "DELETE" },
+    );
+    expect(res.status).toBe(423);
+    expect((await res.json()).code).toBe("workspace_locked");
+  });
+});
+
+describe("POST /v1/sessions/:id/workspace/files/rename", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("moves the file to the new path and preserves contentType", async () => {
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({
+      tenantId: "dev",
+      workspaceId: "ws_1",
+      path: "old.md",
+      body: "# doc",
+      contentType: "text/markdown",
+    });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/rename`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from: "old.md", to: "new.md" }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      type: "workspace_file_renamed",
+      from: "old.md",
+      to: "new.md",
+    });
+
+    const oldGet = await app.request(`/v1/sessions/${session.id}/workspace/files/old.md`);
+    expect(oldGet.status).toBe(404);
+
+    const newGet = await app.request(`/v1/sessions/${session.id}/workspace/files/new.md`);
+    expect(newGet.status).toBe(200);
+    expect(newGet.headers.get("content-type")).toBe("text/markdown");
+    expect(await newGet.text()).toBe("# doc");
+  });
+
+  it("returns 404 when the source file is missing", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/rename`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from: "ghost.md", to: "new.md" }),
+      },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a traversal path with 400", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/rename`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from: "ok.md", to: "../escape.md" }),
+      },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("is rejected with 423 while the active turn is running", async () => {
+    const { app, sessionStore, artifactStore, turnStreamStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "old.md", body: "x" });
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "t1", status: "running" });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/rename`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from: "old.md", to: "new.md" }),
+      },
+    );
+    expect(res.status).toBe(423);
+    expect((await res.json()).code).toBe("workspace_locked");
+  });
+});
+
+describe("POST /v1/sessions/:id/workspace/files/upload", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("uploads a media file and persists its contentType from the upload MIME", async () => {
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+
+    const form = new FormData();
+    const png = new File([new Uint8Array([1, 2, 3, 4])], "pic.png", { type: "image/png" });
+    form.set("destDir", "assets");
+    form.set("file", png);
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/upload`,
+      { method: "POST", body: form },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: [{ path: "assets/pic.png" }] });
+
+    const stored = await artifactStore.get("dev", "ws_1", "assets/pic.png");
+    expect(stored).not.toBeNull();
+    expect(stored!.contentType).toBe("image/png");
+    expect(Array.from(stored!.body)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("honors an explicit per-file path", async () => {
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+
+    const form = new FormData();
+    form.set("path", "docs/readme.txt");
+    form.set("file", new File([new Uint8Array([65])], "ignored.txt", { type: "text/plain" }));
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/upload`,
+      { method: "POST", body: form },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: [{ path: "docs/readme.txt" }] });
+    expect(await artifactStore.get("dev", "ws_1", "docs/readme.txt")).not.toBeNull();
+  });
+
+  it("rejects a traversal destination with 400", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+
+    const form = new FormData();
+    form.set("destDir", "..");
+    form.set("file", new File([new Uint8Array([1])], "x.txt", { type: "text/plain" }));
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/upload`,
+      { method: "POST", body: form },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("is rejected with 423 while the active turn is running", async () => {
+    const { app, sessionStore, turnStreamStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "t1", status: "running" });
+
+    const form = new FormData();
+    form.set("destDir", "assets");
+    form.set("file", new File([new Uint8Array([1])], "x.png", { type: "image/png" }));
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/upload`,
+      { method: "POST", body: form },
+    );
+    expect(res.status).toBe(423);
+    expect((await res.json()).code).toBe("workspace_locked");
   });
 });

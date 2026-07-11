@@ -119,6 +119,7 @@ export function createApp(deps: AppDeps) {
     app.route("", workspaceRoutes({
       sessionStore: deps.sessionStore,
       artifactStore: deps.artifactStore,
+      turnStreamStore: deps.turnStreamStore,
     }));
   }
 
