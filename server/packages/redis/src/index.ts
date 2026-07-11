@@ -7,6 +7,7 @@ export type { RedisLike } from "./redis-like.js";
 export {
   RedisTurnStreamStore,
 } from "./turn-stream-store.js";
+export { InMemoryTurnStreamStore } from "./in-memory-turn-stream-store.js";
 export type {
   TurnStreamStore,
   TurnDelta,

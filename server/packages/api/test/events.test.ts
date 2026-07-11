@@ -1,12 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../src/app.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import type {
-  TurnStreamStore,
-  TurnDelta,
-  StoredTurnDelta,
-  ActiveTurn,
-} from "@oma-server/redis";
+import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   AgentStore,
@@ -241,48 +236,6 @@ class InMemoryPendingEventStore implements PendingEventStore {
   async count(sessionId: string): Promise<number> {
     const queue = this.queues.get(sessionId) ?? [];
     return queue.length;
-  }
-}
-
-// In-memory TurnStreamStore for testing the server-side reconnect merge.
-class InMemoryTurnStreamStore implements TurnStreamStore {
-  streams = new Map<string, StoredTurnDelta[]>();
-  activeTurns = new Map<string, ActiveTurn>();
-  private seq = 0;
-
-  async appendDelta(delta: TurnDelta): Promise<string> {
-    const id = `0-${this.seq++}`;
-    const list = this.streams.get(delta.turnId) ?? [];
-    list.push({ ...delta, id });
-    this.streams.set(delta.turnId, list);
-    return id;
-  }
-
-  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
-    const list = this.streams.get(turnId) ?? [];
-    if (!afterId) return [...list];
-    const idx = list.findIndex((d) => d.id === afterId);
-    return list.slice(idx + 1);
-  }
-
-  async deltaCount(turnId: string): Promise<number> {
-    return this.streams.get(turnId)?.length ?? 0;
-  }
-
-  async reclaim(turnId: string): Promise<void> {
-    this.streams.delete(turnId);
-  }
-
-  async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
-    this.activeTurns.set(sessionId, { ...turn });
-  }
-
-  async getActiveTurn(sessionId: string): Promise<ActiveTurn | null> {
-    return this.activeTurns.get(sessionId) ?? null;
-  }
-
-  async clearActiveTurn(sessionId: string): Promise<void> {
-    this.activeTurns.delete(sessionId);
   }
 }
 

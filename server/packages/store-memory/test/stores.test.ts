@@ -219,6 +219,43 @@ describe("createMemoryStores", () => {
     });
   });
 
+  describe("ArtifactStore", () => {
+    it("puts, lists, gets, and deletes under a tenant+workspace prefix", async () => {
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "a.txt", body: "hello" });
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "src/b.js", body: "x=1" });
+
+      const list = await stores.artifactStore.list("t1", "ws1");
+      expect(list.map((a) => a.path).sort()).toEqual(["a.txt", "src/b.js"]);
+      expect(list.find((a) => a.path === "a.txt")?.size).toBe(5);
+
+      const got = await stores.artifactStore.get("t1", "ws1", "a.txt");
+      expect(got?.body && new TextDecoder().decode(got.body)).toBe("hello");
+
+      expect(await stores.artifactStore.delete("t1", "ws1", "a.txt")).toBe(true);
+      expect(await stores.artifactStore.get("t1", "ws1", "a.txt")).toBeNull();
+      expect(await stores.artifactStore.delete("t1", "ws1", "a.txt")).toBe(false);
+    });
+
+    it("isolates by tenant and workspace, and filters by prefix", async () => {
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "mine.txt", body: "1" });
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws2", path: "other.txt", body: "2" });
+      await stores.artifactStore.put({ tenantId: "t2", workspaceId: "ws1", path: "theirs.txt", body: "3" });
+      await stores.artifactStore.put({ tenantId: "t1", workspaceId: "ws1", path: "src/deep.js", body: "4" });
+
+      expect((await stores.artifactStore.list("t1", "ws1")).map((a) => a.path).sort()).toEqual([
+        "mine.txt",
+        "src/deep.js",
+      ]);
+      expect((await stores.artifactStore.list("t1", "ws1", "src/")).map((a) => a.path)).toEqual(["src/deep.js"]);
+      expect(await stores.artifactStore.get("t2", "ws1", "mine.txt")).toBeNull();
+    });
+
+    it("records list calls for test assertions", async () => {
+      await stores.artifactStore.list("t1", "ws1", "src/");
+      expect(stores.artifactStore.listCalls).toEqual([{ tenantId: "t1", workspaceId: "ws1", prefix: "src/" }]);
+    });
+  });
+
   describe("SkillStore + SkillArtifactStore", () => {
     it("creates a Skill and isolates by tenant", async () => {
       const s = await stores.skillStore.create({ tenantId: "t1", name: "greeter", description: "d" });

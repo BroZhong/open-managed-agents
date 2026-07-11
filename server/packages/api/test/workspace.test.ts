@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../src/app.js";
+import { InMemoryArtifactStore } from "@oma-server/store-memory";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   SessionStore,
@@ -8,10 +9,6 @@ import type {
   SessionStoreListOpts,
   SessionStatus,
   PaginatedResult,
-  ArtifactStore,
-  Artifact,
-  ArtifactContent,
-  ArtifactPutInput,
 } from "@oma-server/store";
 
 // Minimal in-memory SessionStore for the workspace proxy tests.
@@ -59,47 +56,6 @@ class InMemorySessionStore implements SessionStore {
     if (!s) return null;
     s.status = "terminated";
     return s;
-  }
-}
-
-// In-memory ArtifactStore keyed by `<tenant>/<workspace>/<path>`.
-class InMemoryArtifactStore implements ArtifactStore {
-  private objects = new Map<string, { body: Uint8Array; contentType?: string; updatedAt: Date }>();
-  public listCalls: Array<{ tenantId: string; workspaceId: string; prefix?: string }> = [];
-
-  private key(t: string, w: string, p: string): string {
-    return `${t}/${w}/${p}`;
-  }
-
-  async list(tenantId: string, workspaceId: string, prefix = ""): Promise<Artifact[]> {
-    this.listCalls.push({ tenantId, workspaceId, prefix });
-    const wsPrefix = `${tenantId}/${workspaceId}/`;
-    const out: Artifact[] = [];
-    for (const [k, v] of this.objects) {
-      if (!k.startsWith(wsPrefix)) continue;
-      const rel = k.slice(wsPrefix.length);
-      if (prefix && !rel.startsWith(prefix)) continue;
-      out.push({ path: rel, size: v.body.byteLength, updatedAt: v.updatedAt });
-    }
-    return out;
-  }
-  async get(tenantId: string, workspaceId: string, path: string): Promise<ArtifactContent | null> {
-    const v = this.objects.get(this.key(tenantId, workspaceId, path));
-    if (!v) return null;
-    return { path, body: v.body, contentType: v.contentType };
-  }
-  async put(input: ArtifactPutInput): Promise<Artifact> {
-    const body =
-      typeof input.body === "string" ? new TextEncoder().encode(input.body) : input.body;
-    this.objects.set(this.key(input.tenantId, input.workspaceId, input.path), {
-      body,
-      contentType: input.contentType,
-      updatedAt: new Date(),
-    });
-    return { path: input.path, size: body.byteLength };
-  }
-  async delete(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
-    return this.objects.delete(this.key(tenantId, workspaceId, path));
   }
 }
 
