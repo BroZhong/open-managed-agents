@@ -28,6 +28,7 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
@@ -256,21 +257,10 @@ class DevCodexAdapter implements Adapter {
 
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
-class DevMockAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const text = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-    yield {
-      id: generateEventId(), timestamp: generateTimestamp(),
-      type: "agent.message", content: [{ type: "text", text: `[mock echo] ${text}` }],
-    } as SessionEvent;
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-  }
-}
+// The packaged mock emits model spans and three text chunks, while lifecycle
+// events remain solely owned by SessionRouter (the former inline echo doubled
+// running/idle and could not exercise Redis/SSE delta delivery).
+const mockAdapter = new MockAdapter({ delayMs: 75 });
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
@@ -285,8 +275,8 @@ function resolveAdapter(runtime: string): Adapter {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
     case "pi-agent": return piAgentAdapter;
-    case "mock": return new DevMockAdapter();
-    default: return new DevMockAdapter();
+    case "mock": return mockAdapter;
+    default: return mockAdapter;
   }
 }
 

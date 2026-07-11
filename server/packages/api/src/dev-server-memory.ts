@@ -18,6 +18,7 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -306,21 +307,7 @@ class DevPiAgentAdapter implements Adapter {
 
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
-class DevMockAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const text = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-    yield {
-      id: generateEventId(), timestamp: generateTimestamp(),
-      type: "agent.message", content: [{ type: "text", text: `[mock echo] ${text}` }],
-    } as SessionEvent;
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-  }
-}
+const mockAdapter = new MockAdapter({ delayMs: 75 });
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
@@ -329,7 +316,8 @@ function resolveAdapter(runtime: string): Adapter {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
     case "pi-agent": return new DevPiAgentAdapter();
-    default: return new DevMockAdapter();
+    case "mock": return mockAdapter;
+    default: return mockAdapter;
   }
 }
 
