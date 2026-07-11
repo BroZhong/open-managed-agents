@@ -65,6 +65,7 @@ function TreeRow({
   expanded,
   onToggle,
   onSelect,
+  onDropFiles,
 }: {
   node: TreeNode;
   depth: number;
@@ -72,6 +73,7 @@ function TreeRow({
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
+  onDropFiles?: (files: File[], destDir: string) => void;
 }) {
   const isOpen = expanded.has(node.path);
   const isSelected = !node.isDir && node.path === selectedPath;
@@ -82,6 +84,16 @@ function TreeRow({
       <button
         type="button"
         onClick={() => (node.isDir ? onToggle(node.path) : onSelect(node.path))}
+        onDragOver={(e) => {
+          if (node.isDir && onDropFiles) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          if (!node.isDir || !onDropFiles) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length) onDropFiles(files, node.path);
+        }}
         className={cn(
           "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors",
           isSelected
@@ -127,6 +139,7 @@ function TreeRow({
             expanded={expanded}
             onToggle={onToggle}
             onSelect={onSelect}
+            onDropFiles={onDropFiles}
           />
         ))}
     </>
@@ -618,6 +631,11 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       void source
         .write(selectedPath, text)
         .then(() => {
+          setContent((current) =>
+            current && current.path === selectedPath
+              ? { ...current, text, size: new Blob([text]).size }
+              : current,
+          );
           setSaved(true);
           onSuccess();
         })
@@ -657,12 +675,14 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   }, [source, selectedPath]);
 
   const handleUpload = useCallback(
-    async (files: File[]) => {
+    async (files: File[], explicitDestDir?: string) => {
       if (!source.upload || files.length === 0) return;
       setUploading(true);
       setListError(null);
       try {
-        const destDir = actions.allowSubdirs ? currentDir(selectedPath) : undefined;
+        const destDir = actions.allowSubdirs
+          ? explicitDestDir ?? currentDir(selectedPath)
+          : undefined;
         await source.upload(files, destDir);
         await refresh();
       } catch (err) {
@@ -817,6 +837,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
                   expanded={expanded}
                   onToggle={toggle}
                   onSelect={openFile}
+                  onDropFiles={actions.canUpload && !writeGated ? handleUpload : undefined}
                 />
               ))
             ) : (

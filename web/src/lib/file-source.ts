@@ -293,11 +293,15 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
     },
 
     async previewUrl(path: string): Promise<string> {
-      // #99: signed short-lived GET for direct S3 read, bypassing the proxy.
-      const res = await apiFetch<{ url: string; expiresIn: number }>(
-        `${apiPath}/preview-url?path=${encodeURIComponent(path)}`,
-      );
-      return res.url;
+      // Fetch through the authenticated Host proxy. Storage-signed URLs may
+      // point at a private/internal endpoint that the user's browser cannot
+      // reach; a blob URL also lets <img>, <video>, and downloads consume the
+      // response without putting the API token in a URL.
+      const res = await fetch(`${filesBase}/${encodePath(path)}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
+      return URL.createObjectURL(await res.blob());
     },
   };
 }
