@@ -196,6 +196,12 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
       // Attachments INTO this Skill — one PUT per file (the Skill file routes
       // are single-file; there is no batch endpoint). This is NOT the Library's
       // "upload a folder to create a Skill" (useUploadSkills), which stays out.
+      //
+      // TEXT-ONLY: the Skill content route (`PUT …/files/content`) takes a JSON
+      // `{ path, content: string }`, so bytes go through `file.text()`. Skills
+      // are a text domain (no previewUrl); binary attachments would be mangled.
+      // Uploading arbitrary binaries into a Skill needs a multipart Skill route
+      // that does not exist yet — see #91 (deliberately out of scope this pass).
       for (const file of files) {
         const path = joinDest(destDir, file.name);
         const content = await file.text();

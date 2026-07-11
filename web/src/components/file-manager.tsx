@@ -517,6 +517,16 @@ function isLockedError(err: unknown): boolean {
   return /\b423\b|locked/i.test(msg);
 }
 
+/** Shown when a write fails the server-side idle gate (423) after the client
+ *  optimistically allowed it — the TOCTOU backstop. Distinct from the
+ *  pre-emptive {@link WRITE_LOCKED_REASON} ("稍后可编辑") the button gate uses. */
+const WRITE_LOCKED_RETRY = "Agent 运行中，稍后重试";
+
+/** Message for a failed write: the retry hint if it was the idle gate, else the raw error. */
+function writeErrorMessage(err: unknown): string {
+  return isLockedError(err) ? WRITE_LOCKED_RETRY : (err as Error).message;
+}
+
 export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: FileManagerProps) {
   const methods = useMemo(() => methodsOf(source), [source]);
   const actions = useMemo(
@@ -612,11 +622,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
           onSuccess();
         })
         .catch((err) => {
-          setWriteError(
-            isLockedError(err)
-              ? "Agent 运行中，稍后重试"
-              : (err as Error).message,
-          );
+          setWriteError(writeErrorMessage(err));
         })
         .finally(() => setSaving(false));
     },
@@ -660,9 +666,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
         await source.upload(files, destDir);
         await refresh();
       } catch (err) {
-        setListError(
-          isLockedError(err) ? "Agent 运行中，稍后重试" : (err as Error).message,
-        );
+        setListError(writeErrorMessage(err));
       } finally {
         setUploading(false);
       }
@@ -683,7 +687,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       await refresh();
       await openFile(name);
     } catch (err) {
-      setWriteError(isLockedError(err) ? "Agent 运行中，稍后重试" : (err as Error).message);
+      setWriteError(writeErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -701,7 +705,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       await refresh();
       await openFile(to);
     } catch (err) {
-      setContentError(isLockedError(err) ? "Agent 运行中，稍后重试" : (err as Error).message);
+      setContentError(writeErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -717,7 +721,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       setContent(null);
       await refresh();
     } catch (err) {
-      setContentError(isLockedError(err) ? "Agent 运行中，稍后重试" : (err as Error).message);
+      setContentError(writeErrorMessage(err));
     } finally {
       setBusy(false);
     }

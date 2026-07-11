@@ -346,8 +346,11 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
       "cache-control": "no-store",
     };
     if (download) {
-      headers["content-disposition"] =
-        `attachment; filename="${basename(path).replace(/"/g, "")}"`;
+      // Strip quotes AND CR/LF so a crafted filename can't break out of the
+      // header value or inject a new header (defense-in-depth; path is already
+      // isSafePath-checked).
+      const filename = basename(path).replace(/[\r\n"]/g, "");
+      headers["content-disposition"] = `attachment; filename="${filename}"`;
     } else {
       headers["content-disposition"] = "inline";
     }
