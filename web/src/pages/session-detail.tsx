@@ -194,7 +194,11 @@ export default function SessionDetailPage() {
                   </span>
                 </div>
                 <div className="min-h-0 flex-1">
-                  <WorkspacePanel sessionId={id} refreshKey={fileChange.nonce} />
+                  <WorkspacePanel
+                    sessionId={id}
+                    refreshKey={fileChange.nonce}
+                    turnStatus={status === "running" ? "running" : "idle"}
+                  />
                 </div>
               </div>
             )}
@@ -206,7 +210,11 @@ export default function SessionDetailPage() {
         </div>
       ) : (
         <div className="flex-1 overflow-hidden">
-          <WorkspacePanel sessionId={id} refreshKey={fileChange.nonce} />
+          <WorkspacePanel
+            sessionId={id}
+            refreshKey={fileChange.nonce}
+            turnStatus={status === "running" ? "running" : "idle"}
+          />
         </div>
       )}
     </div>
