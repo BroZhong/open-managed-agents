@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import {
   FakeWorkspacePersistence,
+  S3WorkspacePersistence,
   type HydrateTarget,
   type SandboxFsAccess,
 } from "../src/workspace-persistence.js";
+import type { ArtifactPutInput, ArtifactStore } from "@oma-server/store";
 
 const TENANT = "tenant_1";
 const WS = "ws_1";
@@ -23,9 +25,14 @@ function fsAccessFor(
 ): SandboxFsAccess {
   return {
     writeFile: (path, content) => client.writeFile(id, path, content),
+    writeFileBytes: (path, content) => client.writeFileBytes(id, path, content),
     readFile: (path) => {
       spy?.reads.push(path);
       return client.readFile(id, path);
+    },
+    readFileBytes: (path) => {
+      spy?.reads.push(path);
+      return client.readFileBytes(id, path);
     },
     list: (dir) => client.list(id, dir),
   };
@@ -168,5 +175,63 @@ describe("FakeWorkspacePersistence (WorkspacePersistence seam)", () => {
     const second = await persistence.sync(session, targetFor(fs));
     expect(second.changed).toEqual([]);
     expect(second.deleted).toEqual([]);
+  });
+});
+
+describe("S3WorkspacePersistence binary safety", () => {
+  it("hydrates invalid UTF-8 bytes into the sandbox unchanged", async () => {
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
+    ]);
+    const store: ArtifactStore = {
+      list: async () => [{ path: "image.png", size: png.byteLength }],
+      get: async () => ({
+        path: "image.png",
+        body: png,
+        contentType: "image/png",
+      }),
+      put: async () => {
+        throw new Error("not expected");
+      },
+      delete: async () => false,
+    };
+    const persistence = new S3WorkspacePersistence(store);
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+
+    await persistence.hydrate(targetFor(fs));
+
+    expect(await client.readFileBytes(id, "/workspace/image.png")).toEqual(png);
+  });
+
+  it("syncs PNG bytes without UTF-8 replacement-character corruption", async () => {
+    const puts: ArtifactPutInput[] = [];
+    const store: ArtifactStore = {
+      list: async () => [],
+      get: async () => null,
+      put: async (input) => {
+        puts.push(input);
+        const size =
+          typeof input.body === "string"
+            ? Buffer.byteLength(input.body)
+            : input.body.byteLength;
+        return { path: input.path, size };
+      },
+      delete: async () => false,
+    };
+    const persistence = new S3WorkspacePersistence(store);
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
+    ]);
+
+    await client.writeFileBytes(id, "/workspace/image.png", png);
+    await persistence.sync(session, targetFor(fs));
+
+    expect(puts).toHaveLength(1);
+    expect(puts[0].body).toEqual(png);
+    expect(puts[0].contentType).toBe("image/png");
   });
 });

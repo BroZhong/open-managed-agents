@@ -26,6 +26,6 @@ export function syncHasChanges(result: WorkspaceSyncResult): boolean {
  * size, so a same-size edit (e.g. flipping one byte) is still detected and
  * pushed — the acceptance criterion the size-only approach would miss.
  */
-export function contentHash(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex");
+export function contentHash(content: string | Uint8Array): string {
+  return createHash("sha256").update(content).digest("hex");
 }

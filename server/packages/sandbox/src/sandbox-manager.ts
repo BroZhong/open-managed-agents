@@ -505,6 +505,9 @@ class SandboxSessionImpl implements SandboxSession {
       writeFile: (path, content) =>
         this.sandboxClient.writeFile(id, path, content),
       readFile: (path) => this.sandboxClient.readFile(id, path),
+      writeFileBytes: (path, content) =>
+        this.sandboxClient.writeFileBytes(id, path, content),
+      readFileBytes: (path) => this.sandboxClient.readFileBytes(id, path),
       list: (dir) => this.sandboxClient.list(id, dir),
     };
   }

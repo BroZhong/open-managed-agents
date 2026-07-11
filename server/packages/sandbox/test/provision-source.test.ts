@@ -28,6 +28,8 @@ function fsAccessFor(client: FakeSandboxClient, id: string): SandboxFsAccess {
   return {
     writeFile: (path, content) => client.writeFile(id, path, content),
     readFile: (path) => client.readFile(id, path),
+    writeFileBytes: (path, content) => client.writeFileBytes(id, path, content),
+    readFileBytes: (path) => client.readFileBytes(id, path),
     list: (dir) => client.list(id, dir),
   };
 }
@@ -108,6 +110,27 @@ describe("ProvisionSource seam", () => {
     const fs = fsAccessFor(client, id);
     expect(await fs.readFile("/skills/skl_1/SKILL.md")).toBe("# hello skill");
     expect(await fs.readFile("/skills/skl_1/scripts/run.sh")).toBe("echo run");
+  });
+
+  it("projects Skill binary assets without UTF-8 corruption", async () => {
+    const skills = new FakeSkillArtifactStore();
+    const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+    await skills.put(TENANT, "skl_binary", "asset.png", bytes);
+    const source = new S3ProvisionSource(skills);
+    const client = new FakeSandboxClient();
+    const { id } = await client.create();
+
+    await source.project(
+      {
+        kind: "s3",
+        ref: { tenantId: TENANT, skillId: "skl_binary" },
+      },
+      projectionTargetFor(client, id, "/skills/skl_binary"),
+    );
+
+    expect(await client.readFileBytes(id, "/skills/skl_binary/asset.png")).toEqual(
+      bytes,
+    );
   });
 
   it("dispatches by coordinate.kind to the registered adapter", async () => {

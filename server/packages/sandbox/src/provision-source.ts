@@ -186,8 +186,10 @@ export class S3ProvisionSource implements ProvisionSource {
     // `<tenant>/skills/<skill>/…` prefix, so we never touch the key layout.
     const files = await this.skills.getAll(tenantId, skillId);
     for (const file of files) {
-      const text = new TextDecoder().decode(file.body);
-      await target.fs.writeFile(joinPath(target.targetPath, file.path), text);
+      await target.fs.writeFileBytes(
+        joinPath(target.targetPath, file.path),
+        file.body,
+      );
     }
   }
 }

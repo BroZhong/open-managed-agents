@@ -100,6 +100,10 @@ export interface SandboxFsAccess {
   writeFile(path: string, content: string): Promise<void>;
   /** Read a UTF-8 file at an absolute sandbox path. */
   readFile(path: string): Promise<string>;
+  /** Write exact bytes at an absolute sandbox path, creating parents. */
+  writeFileBytes(path: string, content: Uint8Array): Promise<void>;
+  /** Read exact bytes at an absolute sandbox path. */
+  readFileBytes(path: string): Promise<Uint8Array>;
   /** List files under an absolute sandbox directory (recursively). */
   list(dir: string): Promise<SandboxFsEntry[]>;
 }
@@ -202,11 +206,10 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
         artifact.path,
       );
       if (!content) continue;
-      const text = new TextDecoder().decode(content.body);
-      await fs.writeFile(resolve(workspaceDir, artifact.path), text);
+      await fs.writeFileBytes(resolve(workspaceDir, artifact.path), content.body);
       const rel = normalizeRel(artifact.path);
       baseline.push(rel);
-      hashes.set(rel, contentHash(text));
+      hashes.set(rel, contentHash(content.body));
     }
     baseline.sort();
     const session: S3HydrationSession = {
@@ -255,8 +258,8 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
       const prior = state.get(rel);
       // Pre-filter: skip read+hash only when certain the file is unchanged.
       if (canSkipHash(prior, entry)) continue;
-      const text = await fs.readFile(entry.path);
-      const hash = contentHash(text);
+      const bytes = await fs.readFileBytes(entry.path);
+      const hash = contentHash(bytes);
       // Content hash is the final arbiter: a size/mtime delta on a byte-identical
       // file (rare, but possible) still short-circuits here without a push.
       if (prior?.hash === hash) {
@@ -268,7 +271,8 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
         tenantId,
         workspaceId,
         path: rel,
-        body: text,
+        body: bytes,
+        contentType: contentTypeForPath(rel),
       });
       state.set(rel, { hash, size: entry.size, mtimeMs: entry.mtimeMs });
       changed.push(rel);
@@ -307,7 +311,7 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
  * Workspaces (and multiple sessions sharing one Workspace) can coexist.
  */
 export class FakeWorkspacePersistence implements WorkspacePersistence {
-  private readonly store = new Map<string, string>();
+  private readonly store = new Map<string, Uint8Array>();
 
   private key(tenantId: string, workspaceId: string, path: string): string {
     return `${tenantId}/${workspaceId}/${path}`;
@@ -318,9 +322,13 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
     tenantId: string,
     workspaceId: string,
     path: string,
-    content: string,
+    content: string | Uint8Array,
   ): void {
-    this.store.set(this.key(tenantId, workspaceId, normalizeRel(path)), content);
+    const bytes =
+      typeof content === "string"
+        ? new TextEncoder().encode(content)
+        : new Uint8Array(content);
+    this.store.set(this.key(tenantId, workspaceId, normalizeRel(path)), bytes);
   }
 
   /** Current stored content for a workspace-relative path (test helper). */
@@ -329,7 +337,22 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
     workspaceId: string,
     path: string,
   ): string | undefined {
-    return this.store.get(this.key(tenantId, workspaceId, normalizeRel(path)));
+    const bytes = this.store.get(
+      this.key(tenantId, workspaceId, normalizeRel(path)),
+    );
+    return bytes ? new TextDecoder().decode(bytes) : undefined;
+  }
+
+  /** Exact stored bytes for binary-safety assertions. */
+  bytesOf(
+    tenantId: string,
+    workspaceId: string,
+    path: string,
+  ): Uint8Array | undefined {
+    const bytes = this.store.get(
+      this.key(tenantId, workspaceId, normalizeRel(path)),
+    );
+    return bytes ? new Uint8Array(bytes) : undefined;
   }
 
   /** Workspace-relative paths currently in the store, sorted (test helper). */
@@ -347,12 +370,12 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
     const prefix = `${tenantId}/${workspaceId}/`;
     const baseline: string[] = [];
     const hashes = new Map<string, string>();
-    for (const [k, text] of this.store) {
+    for (const [k, bytes] of this.store) {
       if (!k.startsWith(prefix)) continue;
       const rel = k.slice(prefix.length);
-      await fs.writeFile(resolve(workspaceDir, rel), text);
+      await fs.writeFileBytes(resolve(workspaceDir, rel), bytes);
       baseline.push(rel);
-      hashes.set(rel, contentHash(text));
+      hashes.set(rel, contentHash(bytes));
     }
     baseline.sort();
     const session: S3HydrationSession = {
@@ -379,13 +402,13 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
       present.add(rel);
       const prior = state.get(rel);
       if (canSkipHash(prior, entry)) continue; // pre-filter: certainly unchanged.
-      const text = await fs.readFile(entry.path);
-      const hash = contentHash(text);
+      const bytes = await fs.readFileBytes(entry.path);
+      const hash = contentHash(bytes);
       if (prior?.hash === hash) {
         state.set(rel, { hash, size: entry.size, mtimeMs: entry.mtimeMs });
         continue;
       }
-      this.store.set(this.key(tenantId, workspaceId, rel), text);
+      this.store.set(this.key(tenantId, workspaceId, rel), new Uint8Array(bytes));
       state.set(rel, { hash, size: entry.size, mtimeMs: entry.mtimeMs });
       changed.push(rel);
     }
@@ -453,4 +476,41 @@ function normalizeRel(path: string): string {
     throw new Error(`path escapes workspace: ${path}`);
   }
   return segments.join("/");
+}
+
+/** MIME for files produced inside the sandbox (whose filesystem has no MIME). */
+function contentTypeForPath(path: string): string | undefined {
+  const extension = path.split(".").pop()?.toLowerCase();
+  switch (extension) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "avif":
+      return "image/avif";
+    case "bmp":
+      return "image/bmp";
+    case "ico":
+      return "image/x-icon";
+    case "svg":
+      return "image/svg+xml";
+    case "mp4":
+    case "m4v":
+      return "video/mp4";
+    case "webm":
+      return "video/webm";
+    case "mov":
+      return "video/quicktime";
+    case "mkv":
+      return "video/x-matroska";
+    case "ogv":
+      return "video/ogg";
+    default:
+      return undefined;
+  }
 }

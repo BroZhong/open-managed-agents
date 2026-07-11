@@ -599,7 +599,7 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     // The hydrated file landed in the sandbox under the default workspace dir
     // (E2B's user home /home/user — issue #85).
     const id = sandboxClient.created[0];
-    expect(sandboxClient.filesOf(id).get("/home/user/notes.md")?.content).toBe(
+    expect(await sandboxClient.readFile(id, "/home/user/notes.md")).toBe(
       "hydrated-content",
     );
 

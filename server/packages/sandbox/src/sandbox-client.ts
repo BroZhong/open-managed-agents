@@ -85,8 +85,14 @@ export interface SandboxClient {
   /** Read a UTF-8 file at an absolute path inside the sandbox. */
   readFile(id: string, path: string): Promise<string>;
 
+  /** Read exact file bytes without UTF-8 decoding (Workspace persistence). */
+  readFileBytes(id: string, path: string): Promise<Uint8Array>;
+
   /** Write a UTF-8 file, creating parent directories as needed. */
   writeFile(id: string, path: string, content: string): Promise<void>;
+
+  /** Write exact file bytes, creating parent directories as needed. */
+  writeFileBytes(id: string, path: string, content: Uint8Array): Promise<void>;
 
   /** List files under an absolute directory (recursively). */
   list(id: string, dir: string): Promise<SandboxFileEntry[]>;

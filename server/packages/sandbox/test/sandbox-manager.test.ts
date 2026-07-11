@@ -104,11 +104,10 @@ describe("SandboxManager / SandboxSession", () => {
     await session.list();
 
     const id = sandboxClient.created[0];
-    const files = sandboxClient.filesOf(id);
     // Workspace hydrated under /workspace ...
-    expect(files.get("/workspace/notes/todo.md")?.content).toBe("buy milk");
+    expect(await sandboxClient.readFile(id, "/workspace/notes/todo.md")).toBe("buy milk");
     // ... and the skill projected OUTSIDE the workspace at /skills.
-    expect(files.get("/skills/skl_1/SKILL.md")?.content).toBe("# skill body");
+    expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe("# skill body");
     expect(provision.projected).toHaveLength(1);
   });
 
@@ -186,7 +185,7 @@ describe("SandboxManager / SandboxSession", () => {
     const second = sandboxClient.created[1];
     expect(second).not.toBe(first);
     // Re-hydrated: workspace file present in the fresh sandbox.
-    expect(sandboxClient.filesOf(second).get("/workspace/main.py")?.content).toBe(
+    expect(await sandboxClient.readFile(second, "/workspace/main.py")).toBe(
       "print('hi')",
     );
     // Re-projected: /skills present in the fresh sandbox, and project ran twice.
