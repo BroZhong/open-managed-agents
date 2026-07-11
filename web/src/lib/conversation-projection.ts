@@ -21,7 +21,7 @@ export interface DisplayMessage {
   input?: unknown;
   serverName?: string;
   result?: ToolResultData;
-  seq: number;
+  seq?: number;
 }
 
 export function processEventsToMessages(
@@ -68,9 +68,12 @@ export function processEventsToMessages(
     ...events,
     ...activeDeltas,
   ];
+  const activeBlockId = activeDeltas[0]
+    ? `${activeDeltas[0].turnId}:${activeDeltas[0].blockIndex}`
+    : "unknown";
 
   for (const event of projectionEvents) {
-    const seq = "seq" in event ? event.seq : -1;
+    const seq = "seq" in event ? event.seq : undefined;
     switch (event.type) {
       case "user.message": {
         const data = event.data as {
@@ -217,7 +220,7 @@ export function processEventsToMessages(
       }
 
       case "agent.tool_result": {
-        if (!pairedToolResultSeqs.has(seq)) {
+        if (seq === undefined || !pairedToolResultSeqs.has(seq)) {
           const data = event.data as {
             toolUseId: string;
             content: unknown;
@@ -255,33 +258,30 @@ export function processEventsToMessages(
 
   if (thinkingStreaming && thinkingStream) {
     messages.push({
-      id: "thinking-streaming",
+      id: `thinking-streaming-${activeBlockId}`,
       role: "thinking",
       text: thinkingStream,
       streaming: true,
-      seq: -1,
     });
   }
 
   if (toolInputStreaming && toolInputStreamId) {
     messages.push({
-      id: "tool-input-streaming",
+      id: `tool-input-streaming-${activeBlockId}`,
       role: "tool_use",
       text: "",
       name: toolInputStreamName,
       toolUseId: toolInputStreamId,
       input: toolInputStream,
       streaming: true,
-      seq: -1,
     });
   }
 
   if (streaming && currentStream) {
     messages.push({
-      id: "streaming-current",
+      id: `streaming-${activeBlockId}`,
       role: "assistant_streaming",
       text: currentStream,
-      seq: -1,
     });
   }
 

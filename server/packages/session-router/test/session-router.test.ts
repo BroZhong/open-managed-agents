@@ -764,6 +764,39 @@ describe("SessionRouter", () => {
       ]);
     });
 
+    it("does not let an empty stream steal the next Complete Event's block", async () => {
+      const adapter = createMockAdapter([
+        { id: "s0", timestamp: "t", type: "agent.thinking_stream_start" },
+        { id: "s1", timestamp: "t", type: "agent.thinking_stream_end" },
+        { id: "s2", timestamp: "t", type: "agent.thinking_stream_start" },
+        { id: "s3", timestamp: "t", type: "agent.thinking_chunk", text: "Actual" },
+        { id: "s4", timestamp: "t", type: "agent.thinking_stream_end" },
+        { id: "s5", timestamp: "t", type: "agent.thinking", text: "Actual" },
+      ]);
+      const deps = createTestDepsWithTurnStream(adapter);
+      const session = await deps.sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await deps.pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hi" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await deps.router.handleNewEvent(session.id, testAgent);
+
+      const stored = await deps.eventLogStore.getEvents(session.id, { limit: 100 });
+      const thinking = stored.data.find((event) => event.type === "agent.thinking")!;
+      expect(thinking.data).toMatchObject({
+        turnId: "turn_1",
+        blockIndex: 1,
+        text: "Actual",
+      });
+    });
+
     it("reclaims the per-turn Redis stream after the turn completes", async () => {
       const { turnStreamStore } = await runOneTurn();
       // The stream was reclaimed (DEL) at turn end.

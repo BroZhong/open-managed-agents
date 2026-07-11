@@ -34,8 +34,13 @@ describe("Conversation Delta projection", () => {
     expect(result.isStreaming).toBe(true);
     expect(result.messages).toMatchObject([
       { role: "user", text: "Explain", seq: 10 },
-      { role: "assistant_streaming", text: "Working...", seq: -1 },
+      {
+        id: "streaming-turn_10:0",
+        role: "assistant_streaming",
+        text: "Working...",
+      },
     ]);
+    expect(result.messages[1]).not.toHaveProperty("seq");
   });
 
   it("uses the protocol's delta field for streamed tool input", () => {

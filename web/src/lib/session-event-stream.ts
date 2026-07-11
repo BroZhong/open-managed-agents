@@ -1,9 +1,11 @@
-import type { SessionDelta, SessionEvent } from "@/lib/types";
+import type { OutputBlockRef, SessionDelta, SessionEvent } from "@/lib/types";
 
 export interface SessionEventStreamState {
   events: SessionEvent[];
   activeDeltas: SessionDelta[];
   completedBlocks: ReadonlySet<string>;
+  seenDeltaIds: ReadonlySet<string>;
+  latestDeltaBlock?: OutputBlockRef;
 }
 
 export type SessionEventStreamAction =
@@ -19,6 +21,7 @@ export const initialSessionEventStreamState: SessionEventStreamState = {
   events: [],
   activeDeltas: [],
   completedBlocks: new Set(),
+  seenDeltaIds: new Set(),
 };
 
 export function sessionEventStreamUrl(baseUrl: string, sessionId: string): string {
@@ -30,24 +33,24 @@ const LIVE_PROJECTION_END_TYPES: ReadonlySet<string> = new Set([
   "session.status_idle",
 ]);
 
-function blockKey(turnId: string, blockIndex: number): string {
-  return `${turnId}:${blockIndex}`;
+function blockKey(block: OutputBlockRef): string {
+  return `${block.turnId}:${block.blockIndex}`;
 }
 
-function completeEventBlockKey(event: SessionEvent): string | undefined {
+function completeEventBlock(event: SessionEvent): OutputBlockRef | undefined {
   if (!event.data || typeof event.data !== "object") return undefined;
   const data = event.data as Record<string, unknown>;
   if (typeof data.turnId !== "string" || typeof data.blockIndex !== "number") {
     return undefined;
   }
-  return blockKey(data.turnId, data.blockIndex);
+  return { turnId: data.turnId, blockIndex: data.blockIndex };
 }
 
 function completedBlocksOf(events: SessionEvent[]): ReadonlySet<string> {
   const completed = new Set<string>();
   for (const event of events) {
-    const key = completeEventBlockKey(event);
-    if (key !== undefined) completed.add(key);
+    const block = completeEventBlock(event);
+    if (block !== undefined) completed.add(blockKey(block));
   }
   return completed;
 }
@@ -137,16 +140,25 @@ export function sessionEventStreamReducer(
         events: action.events,
         activeDeltas: [],
         completedBlocks: completedBlocksOf(action.events),
+        seenDeltaIds: new Set(),
+        latestDeltaBlock: undefined,
       };
 
     case "delta.received": {
-      const key = blockKey(action.delta.turnId, action.delta.blockIndex);
+      const key = blockKey(action.delta);
       if (state.completedBlocks.has(key)) return state;
-      if (
-        action.delta.deltaId !== undefined &&
-        state.activeDeltas.some((delta) => delta.deltaId === action.delta.deltaId)
-      ) {
+      if (action.delta.deltaId !== undefined && state.seenDeltaIds.has(action.delta.deltaId)) {
         return state;
+      }
+
+      const seenDeltaIds = new Set(state.seenDeltaIds);
+      if (action.delta.deltaId !== undefined) seenDeltaIds.add(action.delta.deltaId);
+
+      if (
+        state.latestDeltaBlock?.turnId === action.delta.turnId &&
+        action.delta.blockIndex < state.latestDeltaBlock.blockIndex
+      ) {
+        return { ...state, seenDeltaIds };
       }
 
       const current = state.activeDeltas[0];
@@ -159,16 +171,23 @@ export function sessionEventStreamReducer(
         activeDeltas: sameBlock
           ? [...state.activeDeltas, action.delta]
           : [action.delta],
+        seenDeltaIds,
+        latestDeltaBlock: {
+          turnId: action.delta.turnId,
+          blockIndex: action.delta.blockIndex,
+        },
       };
     }
 
     case "event.received": {
-      const key = completeEventBlockKey(action.event);
+      const block = completeEventBlock(action.event);
+      const key = block === undefined ? undefined : blockKey(block);
       const completedBlocks = new Set(state.completedBlocks);
       if (key !== undefined) completedBlocks.add(key);
       const liveProjectionEnded = LIVE_PROJECTION_END_TYPES.has(action.event.type);
 
       return {
+        ...state,
         events: state.events.some((event) => event.seq === action.event.seq)
           ? state.events
           : [...state.events, action.event],
@@ -177,7 +196,7 @@ export function sessionEventStreamReducer(
           : key === undefined
             ? state.activeDeltas
             : state.activeDeltas.filter(
-                (delta) => blockKey(delta.turnId, delta.blockIndex) !== key,
+                (delta) => blockKey(delta) !== key,
               ),
         completedBlocks,
       };

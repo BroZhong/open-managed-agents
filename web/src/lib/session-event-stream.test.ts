@@ -140,6 +140,31 @@ describe("session event stream state", () => {
       { type: "agent.message_chunk", blockIndex: 1, deltaId: "1-2" },
     ]);
   });
+
+  it.each([
+    ["a duplicate", "1-1"],
+    ["a delayed unique Delta", "1-3"],
+  ])("does not let %s from an older block replace the latest block", (_case, deltaId) => {
+    let state = sessionEventStreamReducer(initialSessionEventStreamState, {
+      type: "delta.received",
+      delta: delta("agent.thinking_chunk", "1-1", { text: "Old" }),
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "delta.received",
+      delta: {
+        ...delta("agent.message_chunk", "1-2", { text: "Latest" }),
+        blockIndex: 1,
+      },
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "delta.received",
+      delta: delta("agent.thinking_chunk", deltaId, { text: "Old again" }),
+    });
+
+    expect(state.activeDeltas).toMatchObject([
+      { type: "agent.message_chunk", blockIndex: 1, deltaId: "1-2" },
+    ]);
+  });
 });
 
 describe("parseSessionSseFrame", () => {

@@ -557,14 +557,24 @@ export class SessionRouter {
               deltaId,
             });
           } else {
-            const pendingBlockIndex = pendingStreamBlocks.findIndex((block) => {
+            const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
               if (!block.completeTypes.has(event.type)) return false;
               if (block.toolUseId === undefined) return true;
               if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") {
                 return false;
               }
               return event.toolUseId === block.toolUseId;
-            });
+            };
+            // Prefer the latest matching start. A runtime may emit an empty
+            // stream lifecycle with no Complete Event; an older unmatched start
+            // must never steal the next real block's completion.
+            let pendingBlockIndex = -1;
+            for (let i = pendingStreamBlocks.length - 1; i >= 0; i--) {
+              if (matchesCompleteEvent(pendingStreamBlocks[i])) {
+                pendingBlockIndex = i;
+                break;
+              }
+            }
             const pendingBlock =
               pendingBlockIndex === -1
                 ? undefined

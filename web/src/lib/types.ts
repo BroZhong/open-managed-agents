@@ -6,12 +6,15 @@ export interface SessionEvent {
 }
 
 /** A transient output increment for the active Turn; never durable history. */
-export interface SessionDelta {
+export interface OutputBlockRef {
+  turnId: string;
+  blockIndex: number;
+}
+
+export interface SessionDelta extends OutputBlockRef {
   type: string;
   data: unknown;
   ts: string;
-  turnId: string;
-  blockIndex: number;
   deltaId?: string;
 }
 
