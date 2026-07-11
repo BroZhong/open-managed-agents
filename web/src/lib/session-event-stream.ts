@@ -4,7 +4,7 @@ export interface SessionEventStreamState {
   events: SessionEvent[];
   activeDeltas: SessionDelta[];
   completedBlocks: ReadonlySet<string>;
-  seenDeltaIds: ReadonlySet<string>;
+  seenDeltaKeys: ReadonlySet<string>;
   latestDeltaBlock?: OutputBlockRef;
 }
 
@@ -21,7 +21,7 @@ export const initialSessionEventStreamState: SessionEventStreamState = {
   events: [],
   activeDeltas: [],
   completedBlocks: new Set(),
-  seenDeltaIds: new Set(),
+  seenDeltaKeys: new Set(),
 };
 
 export function sessionEventStreamUrl(baseUrl: string, sessionId: string): string {
@@ -35,6 +35,10 @@ const LIVE_PROJECTION_END_TYPES: ReadonlySet<string> = new Set([
 
 function blockKey(block: OutputBlockRef): string {
   return `${block.turnId}:${block.blockIndex}`;
+}
+
+function deltaKey(delta: SessionDelta): string | undefined {
+  return delta.deltaId === undefined ? undefined : `${delta.turnId}:${delta.deltaId}`;
 }
 
 function completeEventBlock(event: SessionEvent): OutputBlockRef | undefined {
@@ -140,25 +144,26 @@ export function sessionEventStreamReducer(
         events: action.events,
         activeDeltas: [],
         completedBlocks: completedBlocksOf(action.events),
-        seenDeltaIds: new Set(),
+        seenDeltaKeys: new Set(),
         latestDeltaBlock: undefined,
       };
 
     case "delta.received": {
       const key = blockKey(action.delta);
       if (state.completedBlocks.has(key)) return state;
-      if (action.delta.deltaId !== undefined && state.seenDeltaIds.has(action.delta.deltaId)) {
+      const identity = deltaKey(action.delta);
+      if (identity !== undefined && state.seenDeltaKeys.has(identity)) {
         return state;
       }
 
-      const seenDeltaIds = new Set(state.seenDeltaIds);
-      if (action.delta.deltaId !== undefined) seenDeltaIds.add(action.delta.deltaId);
+      const seenDeltaKeys = new Set(state.seenDeltaKeys);
+      if (identity !== undefined) seenDeltaKeys.add(identity);
 
       if (
         state.latestDeltaBlock?.turnId === action.delta.turnId &&
         action.delta.blockIndex < state.latestDeltaBlock.blockIndex
       ) {
-        return { ...state, seenDeltaIds };
+        return { ...state, seenDeltaKeys };
       }
 
       const current = state.activeDeltas[0];
@@ -171,7 +176,7 @@ export function sessionEventStreamReducer(
         activeDeltas: sameBlock
           ? [...state.activeDeltas, action.delta]
           : [action.delta],
-        seenDeltaIds,
+        seenDeltaKeys,
         latestDeltaBlock: {
           turnId: action.delta.turnId,
           blockIndex: action.delta.blockIndex,

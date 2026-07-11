@@ -165,6 +165,33 @@ describe("session event stream state", () => {
       { type: "agent.message_chunk", blockIndex: 1, deltaId: "1-2" },
     ]);
   });
+
+  it("scopes deltaId deduplication to one Turn", () => {
+    let state = sessionEventStreamReducer(initialSessionEventStreamState, {
+      type: "delta.received",
+      delta: delta("agent.message_chunk", "1-1", { text: "First Turn" }),
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "event.received",
+      event: {
+        seq: 11,
+        type: "session.status_idle",
+        data: {},
+        ts: "2026-07-11T00:00:02.000Z",
+      },
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "delta.received",
+      delta: {
+        ...delta("agent.message_chunk", "1-1", { text: "Second Turn" }),
+        turnId: "turn_20",
+      },
+    });
+
+    expect(state.activeDeltas).toMatchObject([
+      { turnId: "turn_20", deltaId: "1-1", data: { text: "Second Turn" } },
+    ]);
+  });
 });
 
 describe("parseSessionSseFrame", () => {
