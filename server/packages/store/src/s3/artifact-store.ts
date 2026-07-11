@@ -77,6 +77,10 @@ export class S3ArtifactStore implements ArtifactStore {
     return { path: normalizePath(path), body: obj.body, contentType: obj.contentType };
   }
 
+  async exists(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
+    return this.client.objectExists(this.key(tenantId, workspaceId, path));
+  }
+
   async put(input: ArtifactPutInput): Promise<Artifact> {
     const body = toBytes(input.body);
     await this.client.putObject(

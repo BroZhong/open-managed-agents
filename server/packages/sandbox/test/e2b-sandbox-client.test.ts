@@ -29,6 +29,7 @@ class FakeSandbox implements E2BSandbox {
   readonly sandboxId: string;
   readonly runCalls: RunCall[] = [];
   readonly writes: Array<{ path: string; data: string | ArrayBuffer }> = [];
+  readonly removes: string[] = [];
   readonly reads = new Map<string, string | Uint8Array>();
   killed = false;
   running = true;
@@ -82,6 +83,15 @@ class FakeSandbox implements E2BSandbox {
         typeof data === "string" ? data : new Uint8Array(data),
       );
       return { path };
+    },
+    remove: async (path: string): Promise<void> => {
+      this.removes.push(path);
+      const base = path.replace(/\/+$/, "");
+      for (const candidate of [...this.reads.keys()]) {
+        if (candidate === base || candidate.startsWith(`${base}/`)) {
+          this.reads.delete(candidate);
+        }
+      }
     },
   } as E2BSandbox["files"];
 
@@ -288,6 +298,17 @@ describe("E2BSandboxClient", () => {
       (entry) => entry.path === "/workspace/copy.png",
     );
     expect(new Uint8Array(written!.data as ArrayBuffer)).toEqual(bytes);
+  });
+
+  it("removes a file or directory through the E2B filesystem API", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].reads.set("/skills/a/SKILL.md", "body");
+
+    await client.remove(id, "/skills/a");
+
+    expect(sandboxes[0].removes).toEqual(["/skills/a"]);
+    expect(sandboxes[0].reads.has("/skills/a/SKILL.md")).toBe(false);
   });
 
   it("list runs find and parses recursive entries", async () => {

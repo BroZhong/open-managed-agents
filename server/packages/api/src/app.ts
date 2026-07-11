@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogStore, PendingEventStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -32,8 +32,8 @@ export interface AppDeps {
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
   sessionStore?: SessionStore;
-  eventLogStore?: EventLogStore;
-  pendingEventStore?: PendingEventStore;
+  eventLogStore?: EventLogIngressStore;
+  pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;

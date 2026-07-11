@@ -58,6 +58,12 @@ export interface TurnStreamStore {
   getActiveTurn(sessionId: string): Promise<ActiveTurn | null>;
   /** Clear the active-turn record for a session. */
   clearActiveTurn(sessionId: string): Promise<void>;
+  /** Atomically replace/delete only the exact active turn observed by caller. */
+  compareAndSetActiveTurn?(
+    sessionId: string,
+    expectedTurnId: string | null,
+    next: ActiveTurn | null,
+  ): Promise<boolean>;
 }
 
 function turnStreamKey(turnId: string): string {
@@ -67,6 +73,16 @@ function turnStreamKey(turnId: string): string {
 function activeTurnKey(sessionId: string): string {
   return `session:active-turn:${sessionId}`;
 }
+
+const ACTIVE_TURN_CAS_SCRIPT = `-- oma:active-turn-cas
+local current = redis.call('HGET', KEYS[1], 'turnId') or ''
+if current ~= ARGV[1] then return 0 end
+if ARGV[2] == '' then
+  redis.call('DEL', KEYS[1])
+else
+  redis.call('HSET', KEYS[1], 'turnId', ARGV[2], 'status', ARGV[3])
+end
+return 1`;
 
 export class RedisTurnStreamStore implements TurnStreamStore {
   constructor(private readonly redis: RedisLike) {}
@@ -134,6 +150,22 @@ export class RedisTurnStreamStore implements TurnStreamStore {
 
   async clearActiveTurn(sessionId: string): Promise<void> {
     await this.redis.del(activeTurnKey(sessionId));
+  }
+
+  async compareAndSetActiveTurn(
+    sessionId: string,
+    expectedTurnId: string | null,
+    next: ActiveTurn | null,
+  ): Promise<boolean> {
+    const result = await this.redis.eval(
+      ACTIVE_TURN_CAS_SCRIPT,
+      1,
+      activeTurnKey(sessionId),
+      expectedTurnId ?? "",
+      next?.turnId ?? "",
+      next?.status ?? "",
+    );
+    return Number(result) === 1;
   }
 }
 

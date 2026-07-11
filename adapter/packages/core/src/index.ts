@@ -8,6 +8,7 @@ export type {
   McpServerConfig,
   // Message
   UserMessage,
+  SkillDescriptor,
   // Input
   AdapterInput,
   // Lifecycle events

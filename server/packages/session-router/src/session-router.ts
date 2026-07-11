@@ -1,6 +1,8 @@
 import type {
   EventLogStore,
   PendingEventStore,
+  PendingEventClaim,
+  PendingEventFence,
   StoredEvent,
   Agent,
   AgentFileStore,
@@ -9,6 +11,8 @@ import type {
   SkillStore,
   SkillArtifactStore,
 } from "@oma-server/store";
+import { PendingEventClaimLostError } from "@oma-server/store";
+import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
@@ -17,6 +21,7 @@ import type {
   SandboxManager,
   SandboxSession,
   SyncResult,
+  ReadonlyProjection,
 } from "@oma-server/sandbox";
 import { syncHasChanges } from "@oma-server/sandbox";
 import type {
@@ -26,6 +31,7 @@ import type {
   ContentBlock,
   ToolExecutor,
   UserMessage,
+  SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
 import { isStreamEvent } from "@open-managed-agents/adapter-core";
 
@@ -53,6 +59,18 @@ interface PendingStreamBlock {
   blockIndex: number;
   completeTypes: ReadonlySet<string>;
   toolUseId?: string;
+}
+
+interface EquippedSkill {
+  id: string;
+  descriptor: SkillDescriptor;
+}
+
+class PendingLeaseLostError extends Error {
+  constructor() {
+    super("Pending event lease lost");
+    this.name = "PendingLeaseLostError";
+  }
 }
 
 export interface SessionRouterDeps {
@@ -85,11 +103,10 @@ export interface SessionRouterDeps {
   agentFileStore?: AgentFileStore;
   /**
    * The tenant's Agent config store. When present, the router resolves the
-   * running Agent's **current model** per turn (issue #59 / ADR-0003 §3),
-   * rather than using the model snapshotted onto the Session at creation. This
-   * makes an Agent model change take effect on existing conversations. Only the
-   * model is resolved live; all other Session-snapshot semantics are unchanged.
-   * Absent ⇒ the snapshot model is used (prior behavior).
+   * running Agent's **current mutable config** per turn, rather than using the
+   * copy snapshotted onto the Session at creation. This makes model/system/tool/
+   * runtime and equipped-Skill edits take effect in existing conversations;
+   * the Session snapshot remains the historical fallback if the Agent is gone.
    */
   agentStore?: AgentStore;
   /**
@@ -128,6 +145,31 @@ export interface SessionRouterDeps {
    * Absent ⇒ only the Agent's own `sandbox.env` is used (prior behavior).
    */
   defaultSandboxEnv?: Record<string, string>;
+  /** Stable, process-unique pending owner. Injectable for deterministic tests. */
+  pendingClaimOwnerId?: string;
+  /** Pending lease duration; renewed while an Adapter/tool turn is running. */
+  pendingClaimLeaseMs?: number;
+  /** Heartbeat cadence. Must be shorter than pendingClaimLeaseMs. */
+  pendingClaimRenewIntervalMs?: number;
+  /** Bounded retry window when another Host currently owns the FIFO head. */
+  pendingClaimRetryMinMs?: number;
+  pendingClaimRetryMaxMs?: number;
+  /** Observe background retry failures without creating unhandled rejections. */
+  onDrainError?: (failure: PendingRecoveryFailure) => void;
+}
+
+export interface PendingRecoverySummary {
+  /** Valid Sessions whose retained input was scheduled on their single drainer. */
+  recovered: string[];
+  /** Missing or terminated Sessions whose unusable queues were cleared. */
+  discarded: string[];
+  /** Valid Sessions left pending because recovery failed and may be retried. */
+  failed: Array<{ sessionId: string; error: unknown }>;
+}
+
+export interface PendingRecoveryFailure {
+  sessionId: string;
+  error: unknown;
 }
 
 export class SessionRouter {
@@ -143,7 +185,24 @@ export class SessionRouter {
   private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
   private readonly defaultSandboxEnv?: Record<string, string>;
+  private readonly pendingClaimOwnerId: string;
+  private readonly pendingClaimLeaseMs: number;
+  private readonly pendingClaimRenewIntervalMs: number;
+  private readonly pendingClaimRetryMinMs: number;
+  private readonly pendingClaimRetryMaxMs: number;
+  private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
   private readonly activeSessions = new Map<string, AbortController>();
+  private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly claimRetryAttempts = new Map<string, number>();
+  private readonly claimHeartbeatStops = new Map<string, () => void>();
+  private readonly idleWaiters = new Set<() => void>();
+  /**
+   * Sessions for which new pending input arrived while their drain loop was
+   * still active. The active loop normally observes that input itself; this bit
+   * closes the narrower empty→unlock handoff window where it has already
+   * observed an empty queue but has not yet removed {@link activeSessions}.
+   */
+  private readonly wakeRequested = new Set<string>();
   /**
    * One {@link SandboxSession} per session, reused across turns. This is a
    * **lookup** map, NOT a lifecycle registry: the SandboxSession owns its own
@@ -169,13 +228,242 @@ export class SessionRouter {
     this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
     this.defaultSandboxEnv = deps.defaultSandboxEnv;
+    this.pendingClaimOwnerId = deps.pendingClaimOwnerId ?? `host_${randomUUID()}`;
+    this.pendingClaimLeaseMs = deps.pendingClaimLeaseMs ?? 30_000;
+    this.pendingClaimRenewIntervalMs = deps.pendingClaimRenewIntervalMs ?? 10_000;
+    this.pendingClaimRetryMinMs = deps.pendingClaimRetryMinMs ?? 100;
+    this.pendingClaimRetryMaxMs = deps.pendingClaimRetryMaxMs ?? 5_000;
+    this.onDrainError = deps.onDrainError;
+    if (
+      this.pendingClaimRenewIntervalMs <= 0 ||
+      this.pendingClaimRenewIntervalMs >= this.pendingClaimLeaseMs
+    ) {
+      throw new RangeError("pending claim renew interval must be positive and shorter than its lease");
+    }
+  }
+
+  private fenceFor(claim: PendingEventClaim): PendingEventFence {
+    return {
+      eventId: claim.event.id,
+      ownerId: claim.ownerId,
+      generation: claim.generation,
+    };
+  }
+
+  /** Compatibility for narrow single-process test doubles; production PG has claim(). */
+  private async claimPendingHead(sessionId: string): Promise<PendingEventClaim | null> {
+    if (typeof this.pendingEventStore.claim === "function") {
+      return this.pendingEventStore.claim(
+        sessionId,
+        this.pendingClaimOwnerId,
+        this.pendingClaimLeaseMs,
+      );
+    }
+    const event = await this.pendingEventStore.peek(sessionId);
+    return event ? {
+      event,
+      ownerId: this.pendingClaimOwnerId,
+      generation: 1,
+      expiresAt: new Date(Date.now() + this.pendingClaimLeaseMs),
+    } : null;
+  }
+
+  private async renewPendingClaim(
+    sessionId: string,
+    claim: PendingEventClaim,
+  ): Promise<boolean> {
+    if (typeof this.pendingEventStore.renewClaim !== "function") return true;
+    return this.pendingEventStore.renewClaim(
+      sessionId,
+      claim.event.id,
+      claim,
+      this.pendingClaimLeaseMs,
+    );
+  }
+
+  private turnIdentity(turnId: string): { seq: number; generation: number } | null {
+    const generated = /^turn_(\d+)_a(\d+)$/.exec(turnId);
+    if (generated) {
+      return { seq: Number(generated[1]), generation: Number(generated[2]) };
+    }
+    const legacy = /^turn_(\d+)$/.exec(turnId);
+    return legacy ? { seq: Number(legacy[1]), generation: 0 } : null;
+  }
+
+  private async setActiveTurnFenced(
+    sessionId: string,
+    next: { turnId: string; status: "running" | "idle" },
+  ): Promise<boolean> {
+    if (!this.turnStreamStore) return true;
+    const nextIdentity = this.turnIdentity(next.turnId);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const current = await this.turnStreamStore.getActiveTurn(sessionId);
+      const currentIdentity = current ? this.turnIdentity(current.turnId) : null;
+      if (
+        current &&
+        currentIdentity &&
+        nextIdentity &&
+        (
+          currentIdentity.seq > nextIdentity.seq ||
+          (currentIdentity.seq === nextIdentity.seq &&
+            currentIdentity.generation > nextIdentity.generation)
+        )
+      ) {
+        return false;
+      }
+      if (this.turnStreamStore.compareAndSetActiveTurn) {
+        if (await this.turnStreamStore.compareAndSetActiveTurn(
+          sessionId,
+          current?.turnId ?? null,
+          next,
+        )) return true;
+        continue;
+      }
+      // Narrow test-double fallback; production Redis uses the atomic CAS.
+      await this.turnStreamStore.setActiveTurn(sessionId, next);
+      return true;
+    }
+    return false;
+  }
+
+  private async clearActiveTurnFenced(
+    sessionId: string,
+    expectedTurnId: string,
+  ): Promise<boolean> {
+    if (!this.turnStreamStore) return true;
+    if (this.turnStreamStore.compareAndSetActiveTurn) {
+      return this.turnStreamStore.compareAndSetActiveTurn(
+        sessionId,
+        expectedTurnId,
+        null,
+      );
+    }
+    const current = await this.turnStreamStore.getActiveTurn(sessionId);
+    if (current?.turnId !== expectedTurnId) return false;
+    await this.turnStreamStore.clearActiveTurn(sessionId);
+    return true;
+  }
+
+  private reportDrainError(sessionId: string, error: unknown): void {
+    this.onDrainError?.({ sessionId, error });
+  }
+
+  private clearClaimRetry(sessionId: string): void {
+    const timer = this.claimRetryTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.claimRetryTimers.delete(sessionId);
+  }
+
+  private resetClaimRetry(sessionId: string): void {
+    this.clearClaimRetry(sessionId);
+    this.claimRetryAttempts.delete(sessionId);
+  }
+
+  private scheduleClaimRetry(sessionId: string, agentConfig: Agent): void {
+    if (this.activeSessions.has(sessionId) || this.claimRetryTimers.has(sessionId)) return;
+    const attempt = (this.claimRetryAttempts.get(sessionId) ?? 0) + 1;
+    this.claimRetryAttempts.set(sessionId, attempt);
+    const delay = Math.min(
+      this.pendingClaimRetryMaxMs,
+      this.pendingClaimRetryMinMs * 2 ** Math.min(attempt - 1, 8),
+    );
+    const timer = setTimeout(() => {
+      this.claimRetryTimers.delete(sessionId);
+      void this.handleNewEvent(sessionId, agentConfig).catch((error) => {
+        this.reportDrainError(sessionId, error);
+        this.scheduleClaimRetry(sessionId, agentConfig);
+      });
+    }, delay);
+    this.claimRetryTimers.set(sessionId, timer);
+  }
+
+  private notifyIdleIfSettled(): void {
+    if (this.activeSessions.size > 0 || this.claimRetryTimers.size > 0) return;
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
+  }
+
+  /**
+   * Wait for active drainers, including a queued handoff, without aborting or
+   * acknowledging their current turns. Used after HTTP stops accepting work.
+   */
+  async waitForIdle(timeoutMs: number): Promise<boolean> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new RangeError("waitForIdle timeoutMs must be a finite non-negative number");
+    }
+    if (this.activeSessions.size === 0 && this.claimRetryTimers.size === 0) return true;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        this.idleWaiters.delete(onIdle);
+        resolve(value);
+      };
+      const onIdle = () => finish(true);
+      const timeout = setTimeout(() => finish(false), timeoutMs);
+      this.idleWaiters.add(onIdle);
+      this.notifyIdleIfSettled();
+    });
+  }
+
+  private startClaimHeartbeat(
+    sessionId: string,
+    claim: PendingEventClaim,
+    turnController: AbortController,
+    onLeaseLost: (error: unknown) => void,
+  ): () => void {
+    this.claimHeartbeatStops.get(sessionId)?.();
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      if (this.claimHeartbeatStops.get(sessionId) === stop) {
+        this.claimHeartbeatStops.delete(sessionId);
+      }
+    };
+    const tick = async () => {
+      if (stopped || turnController.signal.aborted) return;
+      try {
+        const renewed = await this.renewPendingClaim(sessionId, claim);
+        if (stopped) return;
+        if (!renewed) {
+          const error = new PendingLeaseLostError();
+          onLeaseLost(error);
+          turnController.abort(error);
+          stop();
+          return;
+        }
+      } catch (error) {
+        if (stopped) return;
+        onLeaseLost(error);
+        turnController.abort(error);
+        stop();
+        return;
+      }
+      if (!stopped) {
+        timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
+      }
+    };
+    timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
+    this.claimHeartbeatStops.set(sessionId, stop);
+    return stop;
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
-    // If session is already running, return — the active loop will pick up new events
+    // Usually the active loop will pick up newly queued input itself. Remember
+    // the wake as well, so an arrival after its final empty dequeue cannot be
+    // stranded merely because the per-process active marker is still present.
     if (this.activeSessions.has(sessionId)) {
+      this.wakeRequested.add(sessionId);
       return;
     }
+
+    // A direct request/recovery trigger supersedes a slower scheduled retry.
+    this.clearClaimRetry(sessionId);
 
     const abortController = new AbortController();
     this.activeSessions.set(sessionId, abortController);
@@ -184,14 +472,76 @@ export class SessionRouter {
       await this.drainLoop(sessionId, agentConfig, abortController.signal);
     } finally {
       this.activeSessions.delete(sessionId);
+      this.wakeRequested.delete(sessionId);
+
+      // Always inspect the durable queue at handoff. This covers the original
+      // empty→unlock lost wake, a preloaded tail after user interrupt, and a
+      // claim/PG failure that must retry without waiting for a new request.
+      try {
+        if (await this.pendingEventStore.peek(sessionId)) {
+          this.scheduleClaimRetry(sessionId, agentConfig);
+        } else {
+          this.resetClaimRetry(sessionId);
+        }
+      } catch (error) {
+        this.reportDrainError(sessionId, error);
+        this.scheduleClaimRetry(sessionId, agentConfig);
+      }
+      this.notifyIdleIfSettled();
     }
+  }
+
+  /**
+   * Recover accepted input retained by the Pending Event Store across a Host
+   * restart. Session ids are deduplicated before routing, and all valid work
+   * enters through {@link handleNewEvent}, preserving its one-drainer-per-Session
+   * gate. Missing/terminated Sessions can never execute again, so their stale
+   * queues are explicitly discarded. A failed valid Session is left untouched
+   * for the next recovery attempt and does not block other Sessions.
+   */
+  async recoverPendingEvents(
+    onBackgroundError?: (failure: PendingRecoveryFailure) => void,
+  ): Promise<PendingRecoverySummary> {
+    const summary: PendingRecoverySummary = {
+      recovered: [],
+      discarded: [],
+      failed: [],
+    };
+    const sessionIds = new Set(await this.pendingEventStore.listPendingSessionIds());
+
+    for (const sessionId of sessionIds) {
+      try {
+        const session = await this.sessionStore.getById(sessionId);
+        if (!session || session.status === "terminated") {
+          await this.pendingEventStore.clear(sessionId);
+          summary.discarded.push(sessionId);
+          continue;
+        }
+
+        // Register the active drainer synchronously, but never await the Agent
+        // turn here: a slow LLM/tool/video turn must not block HTTP readiness or
+        // serialize recovery of unrelated Sessions. handleNewEvent's local gate
+        // makes repeated scans for this Session join the same drainer.
+        void this.handleNewEvent(sessionId, session.agent).catch((error) => {
+          onBackgroundError?.({ sessionId, error });
+        });
+        summary.recovered.push(sessionId);
+      } catch (error) {
+        summary.failed.push({ sessionId, error });
+      }
+    }
+
+    return summary;
   }
 
   interrupt(sessionId: string): void {
     const controller = this.activeSessions.get(sessionId);
     if (controller) {
-      controller.abort();
+      this.clearClaimRetry(sessionId);
+      this.claimHeartbeatStops.get(sessionId)?.();
+      controller.abort(new DOMException("Session interrupted", "AbortError"));
     }
+    this.notifyIdleIfSettled();
   }
 
   /**
@@ -205,11 +555,16 @@ export class SessionRouter {
    */
   async terminateSession(sessionId: string): Promise<void> {
     this.interrupt(sessionId);
+    // Termination, unlike an idle user interrupt, intentionally cancels any
+    // local recovery timer; the terminated queue is discarded by recovery.
+    this.clearClaimRetry(sessionId);
+    this.notifyIdleIfSettled();
+    await this.pendingEventStore.clear(sessionId);
     const session = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     if (session) {
       const result = await session.dispose();
-      if (syncHasChanges(result)) this.emitFileChange(sessionId, result);
+      if (syncHasChanges(result)) await this.emitFileChange(sessionId, result);
     }
   }
 
@@ -243,7 +598,7 @@ export class SessionRouter {
    * Projection at `/skills/<id>` (outside `/workspace`, so the workspace sync
    * never writes it back — the invariant the manager fail-loud asserts).
    *
-   * `equippedSkillIds` is precomputed by the caller (it needs async store
+   * `equippedSkills` is precomputed by the caller (it needs async store
    * lookups for ownership + non-empty validation), so `specFor` stays a pure
    * value builder. The projection `source` is the weak-typed coordinate the
    * `S3ProvisionSource` (registered under `kind: "s3"` in the manager's deps)
@@ -258,7 +613,7 @@ export class SessionRouter {
   private specFor(
     session: Session,
     agent: Agent,
-    equippedSkillIds: string[],
+    equippedSkills: EquippedSkill[],
   ): EnvSpec {
     const mergedEnv = { ...this.defaultSandboxEnv, ...agent.sandbox?.env };
     return {
@@ -266,10 +621,7 @@ export class SessionRouter {
       workspaceId: session.workspaceId,
       image: agent.sandbox?.image,
       env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
-      projections: equippedSkillIds.map((id) => ({
-        targetPath: `/skills/${id}`,
-        source: { kind: "s3", ref: { tenantId: session.tenantId, skillId: id } },
-      })),
+      projections: this.skillProjections(session, equippedSkills),
     };
   }
 
@@ -287,15 +639,28 @@ export class SessionRouter {
     sessionId: string,
     session: Session,
     agent: Agent,
-    equippedSkillIds: string[],
+    equippedSkills: EquippedSkill[],
   ): SandboxSession | undefined {
     if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
     let sandbox = this.sessions.get(sessionId);
     if (!sandbox) {
-      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkillIds));
+      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills));
       this.sessions.set(sessionId, sandbox);
     }
     return sandbox; // lazy: no sandbox actually started yet.
+  }
+
+  private skillProjections(
+    session: Session,
+    equippedSkills: EquippedSkill[],
+  ): ReadonlyProjection[] {
+    return equippedSkills.map(({ id }) => ({
+      targetPath: `/skills/${id}`,
+      source: {
+        kind: "s3",
+        ref: { tenantId: session.tenantId, skillId: id },
+      },
+    }));
   }
 
   /**
@@ -311,6 +676,8 @@ export class SessionRouter {
   private async emitFileChange(
     sessionId: string,
     result: SyncResult,
+    idempotencyKey?: string,
+    pendingFence?: PendingEventFence,
   ): Promise<void> {
     const data = {
       workspaceId: result.workspaceId,
@@ -321,11 +688,13 @@ export class SessionRouter {
       type: "workspace.file_change",
       data,
       sessionThreadId: "sthr_primary",
+      idempotencyKey,
+      pendingFence,
     });
     this.eventStreamHub.publish(sessionId, {
-      type: "workspace.file_change",
+      type: stored.type,
       seq: stored.seq,
-      data,
+      data: stored.data,
     });
   }
 
@@ -344,6 +713,8 @@ export class SessionRouter {
   private async checkpointWorkspace(
     sessionId: string,
     sandbox: SandboxSession,
+    idempotencyPrefix?: string,
+    pendingFence?: PendingEventFence,
   ): Promise<void> {
     let result: SyncResult;
     try {
@@ -355,16 +726,177 @@ export class SessionRouter {
         type: "session.error",
         data: { error },
         sessionThreadId: "sthr_primary",
+        idempotencyKey: idempotencyPrefix
+          ? `${idempotencyPrefix}:workspace_sync_error`
+          : undefined,
+        pendingFence,
       });
       this.eventStreamHub.publish(sessionId, {
-        type: "session.error",
+        type: errorEvent.type,
         seq: errorEvent.seq,
-        data: { error },
+        data: errorEvent.data,
       });
       return;
     }
 
-    if (syncHasChanges(result)) await this.emitFileChange(sessionId, result);
+    if (syncHasChanges(result)) {
+      await this.emitFileChange(
+        sessionId,
+        result,
+        idempotencyPrefix ? `${idempotencyPrefix}:workspace_file_change` : undefined,
+        pendingFence,
+      );
+    }
+  }
+
+  private turnKey(pendingEventId: string, phase: string): string {
+    return `pending:${pendingEventId}:${phase}`;
+  }
+
+  private turnCompleted(events: StoredEvent[], pendingEventId: string): boolean {
+    return events.some((event) => {
+      if (event.type !== "session.turn_completed") return false;
+      const data = event.data as { pendingEventId?: unknown } | null;
+      return data?.pendingEventId === pendingEventId;
+    });
+  }
+
+  private async reclaimEarlierAttempts(
+    sessionId: string,
+    promotedSeq: number,
+    claimGeneration: number,
+    currentTurnId: string,
+  ): Promise<void> {
+    if (!this.turnStreamStore) return;
+    const staleTurnIds = new Set<string>([`turn_${promotedSeq}`]);
+    if (claimGeneration > 1) staleTurnIds.add(`turn_${promotedSeq}_a${claimGeneration - 1}`);
+    const active = await this.turnStreamStore.getActiveTurn(sessionId);
+    if (active && active.turnId !== currentTurnId) {
+      const activeIdentity = this.turnIdentity(active.turnId);
+      const currentIdentity = this.turnIdentity(currentTurnId);
+      const isExplicitlyOlder = Boolean(
+        activeIdentity &&
+        currentIdentity &&
+        (
+          activeIdentity.seq < currentIdentity.seq ||
+          (activeIdentity.seq === currentIdentity.seq &&
+            activeIdentity.generation < currentIdentity.generation)
+        ),
+      );
+      if (isExplicitlyOlder) {
+        staleTurnIds.add(active.turnId);
+        await this.clearActiveTurnFenced(sessionId, active.turnId);
+      }
+    }
+    staleTurnIds.delete(currentTurnId);
+    for (const staleTurnId of staleTurnIds) {
+      await this.turnStreamStore.reclaim(staleTurnId);
+    }
+  }
+
+  private async repairDanglingToolUses(
+    sessionId: string,
+    pendingEventId: string,
+    turnId: string,
+    attemptEvents: StoredEvent[],
+    pendingFence: PendingEventFence,
+  ): Promise<void> {
+    const results = new Set<string>();
+    for (const event of attemptEvents) {
+      if (event.type !== "agent.tool_result" && event.type !== "agent.mcp_tool_result") continue;
+      const data = event.data as { toolUseId?: unknown } | null;
+      if (typeof data?.toolUseId === "string") results.add(data.toolUseId);
+    }
+
+    for (const event of attemptEvents) {
+      if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") continue;
+      const data = event.data as { toolUseId?: unknown; serverName?: unknown } | null;
+      if (typeof data?.toolUseId !== "string" || results.has(data.toolUseId)) continue;
+      const isMcp = event.type === "agent.mcp_tool_use";
+      const repairedData = {
+        id: `recovery_${pendingEventId}_${data.toolUseId}`,
+        timestamp: new Date().toISOString(),
+        type: isMcp ? "agent.mcp_tool_result" : "agent.tool_result",
+        toolUseId: data.toolUseId,
+        ...(isMcp
+          ? { serverName: typeof data.serverName === "string" ? data.serverName : "unknown" }
+          : {}),
+        content: [{
+          type: "text",
+          text: "The previous tool execution was interrupted before a result was committed.",
+        }],
+        isError: true,
+        turnId,
+      };
+      const stored = await this.eventLogStore.append(sessionId, {
+        type: repairedData.type,
+        data: repairedData,
+        sessionThreadId: "sthr_primary",
+        idempotencyKey: this.turnKey(
+          pendingEventId,
+          `recovery_tool_result:${encodeURIComponent(data.toolUseId)}`,
+        ),
+        pendingFence,
+      });
+      this.eventStreamHub.publish(sessionId, {
+        type: stored.type,
+        seq: stored.seq,
+        data: stored.data,
+      });
+      results.add(data.toolUseId);
+    }
+  }
+
+  /**
+   * Persist the durable turn boundary before acknowledging its pending input.
+   * The ordering is the recovery protocol:
+   *   full output/checkpoint → durable idle → completion marker → pending ack.
+   * A crash before the marker retries under turn-scoped idempotency keys; a
+   * crash after the marker only re-acks and never reruns the Adapter.
+   */
+  private async completeTurn(
+    sessionId: string,
+    pendingEventId: string,
+    turnId: string,
+    pendingFence: PendingEventFence,
+  ): Promise<boolean> {
+    const session = await this.sessionStore.getById(sessionId);
+    if (session?.status !== "terminated") {
+      if (this.sessionStore.updateStatusIfClaimed) {
+        await this.sessionStore.updateStatusIfClaimed(sessionId, "idle", pendingFence);
+      } else {
+        await this.sessionStore.updateStatus(sessionId, "idle");
+      }
+
+      const idleEvent = await this.eventLogStore.append(sessionId, {
+        type: "session.status_idle",
+        data: {},
+        sessionThreadId: "sthr_primary",
+        idempotencyKey: this.turnKey(pendingEventId, "status_idle"),
+        pendingFence,
+      });
+      this.eventStreamHub.publish(sessionId, {
+        type: idleEvent.type,
+        seq: idleEvent.seq,
+        data: idleEvent.data,
+      });
+    }
+
+    const completionData = { pendingEventId, turnId };
+    const completionEvent = await this.eventLogStore.append(sessionId, {
+      type: "session.turn_completed",
+      data: completionData,
+      sessionThreadId: "sthr_primary",
+      idempotencyKey: this.turnKey(pendingEventId, "completed"),
+      pendingFence,
+    });
+    this.eventStreamHub.publish(sessionId, {
+      type: completionEvent.type,
+      seq: completionEvent.seq,
+      data: completionEvent.data,
+    });
+
+    return this.pendingEventStore.ack(sessionId, pendingEventId, pendingFence);
   }
 
   private async drainLoop(
@@ -372,56 +904,192 @@ export class SessionRouter {
     agentConfig: Agent,
     signal: AbortSignal,
   ): Promise<void> {
+    let lastOwnedTurnId: string | undefined;
     while (!signal.aborted) {
-      // Dequeue next pending event (FIFO, removes from pending collection)
-      const pendingEvent = await this.pendingEventStore.dequeue(sessionId);
-      if (!pendingEvent) {
+      const claim = await this.claimPendingHead(sessionId);
+      if (!claim) {
+        if (await this.pendingEventStore.peek(sessionId)) {
+          this.scheduleClaimRetry(sessionId, agentConfig);
+        }
         break;
       }
+      this.resetClaimRetry(sessionId);
+      const pendingEvent = claim.event;
+      const pendingFence = this.fenceFor(claim);
+
+      // Enqueue and execution race with termination. Re-read only after claim;
+      // a missing/terminated Session can never be revived by status_running.
+      const claimedSession = await this.sessionStore.getById(sessionId);
+      if (!claimedSession || claimedSession.status === "terminated") {
+        await this.pendingEventStore.clear(sessionId);
+        break;
+      }
+
+      let leaseLost = false;
+      let turnId: string | undefined;
+      const turnController = new AbortController();
+      const forwardOuterAbort = () => {
+        turnController.abort(signal.reason ?? new DOMException("Session interrupted", "AbortError"));
+      };
+      if (signal.aborted) forwardOuterAbort();
+      else signal.addEventListener("abort", forwardOuterAbort, { once: true });
+      const stopHeartbeat = this.startClaimHeartbeat(
+        sessionId,
+        claim,
+        turnController,
+        (error) => {
+          leaseLost = true;
+          this.reportDrainError(sessionId, error);
+        },
+      );
+
+      try {
 
       // Promote: insert user message into canonical event log (correct seq position)
       const promotedEvent = await this.eventLogStore.append(sessionId, {
         type: pendingEvent.type,
         data: pendingEvent.data,
         sessionThreadId: pendingEvent.sessionThreadId,
+        idempotencyKey: `pending:${pendingEvent.id}`,
+        pendingFence,
       });
+
+      // Read the complete log once after idempotent promotion. On restart, a
+      // completion marker means all durable output + idle already committed and
+      // only the pending acknowledgement was interrupted — never rerun the
+      // Adapter in that case.
+      const priorEvents = await this.readAllEvents(sessionId);
+      turnId = `turn_${promotedEvent.seq}_a${claim.generation}`;
+      if (this.turnCompleted(priorEvents, pendingEvent.id)) {
+        await this.reclaimEarlierAttempts(
+          sessionId,
+          promotedEvent.seq,
+          claim.generation,
+          turnId,
+        );
+        const acknowledged = await this.pendingEventStore.ack(
+          sessionId,
+          pendingEvent.id,
+          pendingFence,
+        );
+        if (!acknowledged) return;
+        continue;
+      }
+
+      const attemptEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq);
+      const alreadyIdle = attemptEvents.some((event) => event.type === "session.status_idle");
+      const partialDurableOutput = attemptEvents.some(
+        (event) => event.type !== "session.status_running",
+      );
+      if (alreadyIdle || partialDurableOutput) {
+        await this.repairDanglingToolUses(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          attemptEvents,
+          pendingFence,
+        );
+        if (!alreadyIdle) {
+          const recoveryError = {
+            message:
+              "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
+            code: "recovery_partial_turn_aborted",
+          };
+          const errorEvent = await this.eventLogStore.append(sessionId, {
+            type: "session.error",
+            data: { error: recoveryError },
+            sessionThreadId: "sthr_primary",
+            idempotencyKey: this.turnKey(pendingEvent.id, "recovery_partial_turn_aborted"),
+            pendingFence,
+          });
+          this.eventStreamHub.publish(sessionId, {
+            type: errorEvent.type,
+            seq: errorEvent.seq,
+            data: errorEvent.data,
+          });
+        }
+        await this.reclaimEarlierAttempts(
+          sessionId,
+          promotedEvent.seq,
+          claim.generation,
+          turnId,
+        );
+        if (this.turnStreamStore) {
+          if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
+            leaseLost = true;
+            return;
+          }
+          lastOwnedTurnId = turnId;
+        }
+        if (!await this.completeTurn(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          pendingFence,
+        )) return;
+        continue;
+      }
+
+      // A retry with no durable output is safe. Remove prior transient deltas
+      // first; generation in turnId also prevents browser-side concatenation.
+      await this.reclaimEarlierAttempts(
+        sessionId,
+        promotedEvent.seq,
+        claim.generation,
+        turnId,
+      );
+
       this.eventStreamHub.publish(sessionId, {
         type: promotedEvent.type,
         seq: promotedEvent.seq,
         data: promotedEvent.data,
       });
 
-      // The turnId is derived from the promoted user message's seq and is the
-      // key for this turn's transient delta stream + active-turn record.
-      const turnId = `turn_${promotedEvent.seq}`;
-
       // Record the active turn in Redis (not process memory) so a reconnecting
       // client — possibly on another Host instance — can find and backfill the
       // in-flight turn's deltas.
       if (this.turnStreamStore) {
-        await this.turnStreamStore.setActiveTurn(sessionId, { turnId, status: "running" });
+        if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "running" })) {
+          leaseLost = true;
+          return;
+        }
+        lastOwnedTurnId = turnId;
       }
 
       // Set session status to running
-      await this.sessionStore.updateStatus(sessionId, "running");
+      const runningSession = this.sessionStore.updateStatusIfClaimed
+        ? await this.sessionStore.updateStatusIfClaimed(sessionId, "running", pendingFence)
+        : await this.sessionStore.updateStatus(sessionId, "running");
+      if (!runningSession || runningSession.status === "terminated") {
+        await this.pendingEventStore.clear(sessionId);
+        break;
+      }
 
       // Persist + publish session.status_running
       const runningEvent = await this.eventLogStore.append(sessionId, {
         type: "session.status_running",
         data: {},
         sessionThreadId: "sthr_primary",
+        idempotencyKey: this.turnKey(pendingEvent.id, "status_running"),
+        pendingFence,
       });
       this.eventStreamHub.publish(sessionId, {
-        type: "session.status_running",
+        type: runningEvent.type,
         seq: runningEvent.seq,
-        data: {},
+        data: runningEvent.data,
       });
+
+      // A Session stores an Agent snapshot for historical identity, but mutable
+      // Agent configuration is resolved per turn so system/tools/runtime and
+      // equipped-Skill membership edits apply to existing conversations.
+      const currentAgent = await this.resolveCurrentAgent(agentConfig);
+      if (leaseLost) return;
 
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
       // must NOT run — otherwise the adapter falls back to built-in fs/bash tools
       // that write to the server pod filesystem. Emit a session.error, mark the
       // turn handled (it was already dequeued), and skip the adapter for this turn.
-      if (this.isSandboxedButUnprovisionable(agentConfig)) {
+      if (this.isSandboxedButUnprovisionable(currentAgent)) {
         const error = {
           message:
             "Agent is sandboxed but no sandbox manager is available (SANDBOX_ENABLED / E2B config missing)",
@@ -431,19 +1099,30 @@ export class SessionRouter {
           type: "session.error",
           data: { error },
           sessionThreadId: "sthr_primary",
+          idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_unavailable"),
+          pendingFence,
         });
         this.eventStreamHub.publish(sessionId, {
-          type: "session.error",
+          type: errorEvent.type,
           seq: errorEvent.seq,
-          data: { error },
+          data: errorEvent.data,
         });
         // Mirror the normal turn-end housekeeping so the transient stream/active
         // turn record don't leak, then move on to the next pending event (the
         // drain loop falls through to the idle transition when the queue empties).
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(turnId);
-          await this.turnStreamStore.setActiveTurn(sessionId, { turnId, status: "idle" });
+          if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
+            leaseLost = true;
+            return;
+          }
         }
+        if (!await this.completeTurn(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          pendingFence,
+        )) return;
         continue;
       }
 
@@ -454,68 +1133,110 @@ export class SessionRouter {
       // dangling agent.tool_use whose tool_result lived beyond seq 50, which the
       // model API rejects. Loop on `hasMore` using the last seq seen as
       // `afterSeq` so history never silently truncates as a session grows.
-      const priorEvents = await this.readAllEvents(sessionId);
-
-      // Select the Agent's valid equipped-Skill ids up front — the async store
+      // Select the Agent's valid equipped Skills up front — the async store
       // validation feeds BOTH the EnvSpec projections (via `sandboxFor`) and the
       // in-sandbox `skillPaths` handed to the adapter, so the two never diverge.
-      const equippedSkillIds = await this.equippedSkillIds(agentConfig);
+      const equippedSkills = await this.equippedSkills(currentAgent);
+      if (leaseLost) return;
 
       // Bind the per-session SandboxSession (lazy — no sandbox yet). A pure-chat
       // turn never touches it, so nothing is created. Needs the Session record
       // for its tenant/workspace binding.
       const session = await this.sessionStore.getById(sessionId);
+      if (leaseLost) return;
       if (!session) {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
-      const sandbox = this.sandboxFor(sessionId, session, agentConfig, equippedSkillIds);
+      const sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
+      const projections = this.skillProjections(session, equippedSkills);
+
+      // The write gate is already running at this point. Before adapter.run,
+      // reconcile any idle-time Workspace edits from S3 and re-project the
+      // current equipped Skills into the same live sandbox. Cold sessions stay
+      // lazy: refresh only updates their projection recipe and creates nothing.
+      if (sandbox) {
+        try {
+          await sandbox.refresh(projections);
+          if (leaseLost) return;
+        } catch (error) {
+          const refreshError = {
+            message: error instanceof Error ? error.message : String(error),
+            code: "sandbox_refresh_failed",
+          };
+          const stored = await this.eventLogStore.append(sessionId, {
+            type: "session.error",
+            data: { error: refreshError },
+            sessionThreadId: "sthr_primary",
+            idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_refresh_failed"),
+            pendingFence,
+          });
+          this.eventStreamHub.publish(sessionId, {
+            type: stored.type,
+            seq: stored.seq,
+            data: stored.data,
+          });
+          if (this.turnStreamStore) {
+            await this.turnStreamStore.reclaim(turnId);
+            if (!await this.setActiveTurnFenced(sessionId, {
+              turnId,
+              status: "idle",
+            })) {
+              leaseLost = true;
+              return;
+            }
+          }
+          if (!await this.completeTurn(
+            sessionId,
+            pendingEvent.id,
+            turnId,
+            pendingFence,
+          )) return;
+          continue;
+        }
+      }
 
       // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
       // skipped). Skills are no longer materialized to a Host temp dir — they are
       // projected into the sandbox by the SandboxManager (ADR-0005 §4); the
       // adapter is pointed at their in-sandbox `/skills/<id>` roots below.
-      const appendSystemPrompt = await this.assembleAgentFiles(agentConfig);
-      const skillPaths = equippedSkillIds.map((id) => `/skills/${id}`);
-
-      // Resolve the model live from the Agent's *current* config (issue #59 /
-      // ADR-0003 §3), not the model snapshotted onto the Session at creation.
-      // Only the model is resolved live; all other agentConfig fields keep the
-      // snapshot. Because a fresh in-memory Pi session is rebuilt per turn and
-      // prior assistant messages carry their own origin provider/api/model, the
-      // provider layer normalizes tool-call ids correctly across a model switch.
-      const model = await this.resolveCurrentModel(agentConfig);
+      const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
+      if (leaseLost) return;
+      const skillPaths = equippedSkills.map(({ id }) => `/skills/${id}`);
+      const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
 
       const adapterInput = this.buildAdapterInput(
         sessionId,
         turnId,
         promotedEvent,
-        agentConfig,
+        currentAgent,
         priorEvents,
         sandbox,
         appendSystemPrompt,
         skillPaths,
-        model,
+        skillDescriptors,
+        currentAgent.model,
         // Thread the per-turn abort signal so the adapter can wire it to its
         // runtime's native cancel (issue #84) — a user interrupt then unwedges a
         // hung turn instead of locking the session forever.
-        signal,
+        turnController.signal,
       );
 
       // The Adapter is a pure translator: it runs directly and routes any tool
       // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
       // There is no separate sandbox orchestrator — the sandbox lives behind the
       // session and is invisible to the router and the adapter alike.
-      const adapter = this.resolveAdapter(agentConfig.runtime);
+      const adapter = this.resolveAdapter(currentAgent.runtime);
       const events = adapter.run(adapterInput);
 
       // blockIndex increments on each stream_start, aligning a turn's deltas to
       // the full Event they roll up into (shared turnId + blockIndex).
       let blockIndex = -1;
+      let durableEventIndex = 0;
       const pendingStreamBlocks: PendingStreamBlock[] = [];
 
       try {
         for await (const event of events) {
-          if (signal.aborted) break;
+          if (turnController.signal.aborted) break;
 
           if (isStreamEvent(event)) {
             if (STREAM_START_TYPES.has(event.type)) {
@@ -581,36 +1302,61 @@ export class SessionRouter {
                 : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
             const completeEvent = pendingBlock
               ? { ...event, turnId, blockIndex: pendingBlock.blockIndex }
-              : event;
+              : { ...event, turnId };
             const stored = await this.eventLogStore.append(sessionId, {
               type: completeEvent.type,
               data: completeEvent,
               sessionThreadId: "sthr_primary",
+              idempotencyKey: this.turnKey(
+                pendingEvent.id,
+                `event:${durableEventIndex++}`,
+              ),
+              pendingFence,
             });
             this.eventStreamHub.publish(sessionId, {
-              type: completeEvent.type,
+              type: stored.type,
               seq: stored.seq,
-              data: completeEvent,
+              data: stored.data,
             });
           }
         }
       } catch (err) {
-        if (signal.aborted) {
+        if (leaseLost) {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(turnId);
           }
-          break;
+          return;
         }
-        const errorEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error: { message: String(err), code: "adapter_error" } },
-          sessionThreadId: "sthr_primary",
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: "session.error",
-          seq: errorEvent.seq,
-          data: { error: { message: String(err), code: "adapter_error" } },
-        });
+        if (turnController.signal.aborted) {
+          if (this.turnStreamStore) {
+            await this.turnStreamStore.reclaim(turnId);
+          }
+        } else {
+          const errorEvent = await this.eventLogStore.append(sessionId, {
+            type: "session.error",
+            data: { error: { message: String(err), code: "adapter_error" } },
+            sessionThreadId: "sthr_primary",
+            idempotencyKey: this.turnKey(pendingEvent.id, "adapter_error"),
+            pendingFence,
+          });
+          this.eventStreamHub.publish(sessionId, {
+            type: errorEvent.type,
+            seq: errorEvent.seq,
+            data: errorEvent.data,
+          });
+        }
+      }
+
+      if (leaseLost) return;
+
+      // Checkpoint can mutate S3. Extend and validate the exact generation
+      // immediately before crossing that external side-effect boundary.
+      const checkpointLease = await this.renewPendingClaim(sessionId, claim);
+      if (!checkpointLease) {
+        leaseLost = true;
+        turnController.abort(new PendingLeaseLostError());
+        if (this.turnStreamStore) await this.turnStreamStore.reclaim(turnId);
+        return;
       }
 
       // Turn-end lifecycle checkpoint (ADR-0005 §5): sync the sandbox Workspace
@@ -618,7 +1364,22 @@ export class SessionRouter {
       // event. Owned by the SandboxSession; a pure-chat turn never created a
       // sandbox, so this is a cheap empty no-op.
       if (sandbox) {
-        await this.checkpointWorkspace(sessionId, sandbox);
+        await this.checkpointWorkspace(
+          sessionId,
+          sandbox,
+          this.turnKey(pendingEvent.id, "checkpoint"),
+          pendingFence,
+        );
+      }
+
+      // Checkpoint may be slow and is not transactionally coupled to PG. Fence
+      // again before any global Redis cleanup/idle mutation or durable commit;
+      // a late old generation must leave a newer Host's active turn untouched.
+      const completionLease = await this.renewPendingClaim(sessionId, claim);
+      if (!completionLease) {
+        leaseLost = true;
+        turnController.abort(new PendingLeaseLostError());
+        return;
       }
 
       // The turn's full content is now persisted to PostgreSQL, so the
@@ -627,42 +1388,49 @@ export class SessionRouter {
       // interrupt (the for-loop `break` falls through to here).
       if (this.turnStreamStore) {
         await this.turnStreamStore.reclaim(turnId);
-        await this.turnStreamStore.setActiveTurn(sessionId, { turnId, status: "idle" });
+        if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
+          leaseLost = true;
+          return;
+        }
+      }
+
+      if (!await this.completeTurn(
+        sessionId,
+        pendingEvent.id,
+        turnId,
+        pendingFence,
+      )) return;
+      } catch (error) {
+        if (leaseLost || error instanceof PendingEventClaimLostError) {
+          if (turnId && this.turnStreamStore) {
+            await this.turnStreamStore.reclaim(turnId);
+          }
+          return;
+        }
+        throw error;
+      } finally {
+        stopHeartbeat();
+        signal.removeEventListener("abort", forwardOuterAbort);
       }
     }
 
-    // After drain loop ends, clear the active-turn record and set idle.
-    if (this.turnStreamStore) {
-      await this.turnStreamStore.clearActiveTurn(sessionId);
+    // Every handled Turn persisted its own idle + completion boundary before its
+    // pending acknowledgement. Once the queue drains, only the transient active
+    // map remains to clear — no additional durable lifecycle Event is needed.
+    if (this.turnStreamStore && lastOwnedTurnId) {
+      await this.clearActiveTurnFenced(sessionId, lastOwnedTurnId);
     }
-    await this.sessionStore.updateStatus(sessionId, "idle");
-
-    const idleEvent = await this.eventLogStore.append(sessionId, {
-      type: "session.status_idle",
-      data: {},
-      sessionThreadId: "sthr_primary",
-    });
-    this.eventStreamHub.publish(sessionId, {
-      type: "session.status_idle",
-      seq: idleEvent.seq,
-      data: {},
-    });
 
     // The session's sandbox (if any was created) is intentionally kept across
     // turns and destroyed only when the session is explicitly terminated, via
     // terminateSession → SandboxSession.dispose.
   }
 
-  /**
-   * The model to run this turn on. Resolved from the Agent's **current** config
-   * (via {@link agentStore}) so a model change takes effect on existing
-   * conversations (issue #59). Falls back to the Session-snapshot model when no
-   * agent store is configured or the Agent has since been deleted.
-   */
-  private async resolveCurrentModel(agentConfig: Agent): Promise<string> {
-    if (!this.agentStore) return agentConfig.model;
-    const current = await this.agentStore.getById(agentConfig.id);
-    return current?.model ?? agentConfig.model;
+  /** Resolve mutable Agent configuration live for an existing conversation. */
+  private async resolveCurrentAgent(agentSnapshot: Agent): Promise<Agent> {
+    if (!this.agentStore) return agentSnapshot;
+    const current = await this.agentStore.getById(agentSnapshot.id);
+    return current?.tenantId === agentSnapshot.tenantId ? current : agentSnapshot;
   }
 
   /**
@@ -696,6 +1464,7 @@ export class SessionRouter {
     toolExecutor?: ToolExecutor,
     appendSystemPrompt?: string[],
     skillPaths?: string[],
+    skillDescriptors?: SkillDescriptor[],
     model: string = agentConfig.model,
     signal?: AbortSignal,
   ): AdapterInput {
@@ -739,6 +1508,10 @@ export class SessionRouter {
           ? appendSystemPrompt
           : undefined,
         skillPaths: skillPaths && skillPaths.length > 0 ? skillPaths : undefined,
+        skillDescriptors:
+          skillDescriptors && skillDescriptors.length > 0
+            ? skillDescriptors
+            : undefined,
       },
       history,
       // Per-call injection: the single seam between the pure Adapter and infra.
@@ -769,10 +1542,10 @@ export class SessionRouter {
   }
 
   /**
-   * Select the ids of the Agent's equipped Skills that should be projected into
+   * Select the Agent's equipped Skills that should be projected into
    * the sandbox as Read-only Projections at `/skills/<id>` (ADR-0005 §4). This
    * is the *validation* half of the old `materializeSkills`, minus the Host
-   * temp-dir write: it decides WHICH Skill ids become projections; the *content*
+   * temp-dir write: it decides WHICH Skills become projections/descriptors; the *content*
    * flows S3→sandbox inside the SandboxManager (`S3ProvisionSource`), never
    * through the Host.
    *
@@ -782,18 +1555,18 @@ export class SessionRouter {
    *    `ownerType==='agent'` — is owned by this Agent. Per ADR-0004
    *    `agent.skills` holds the Agent's own Skill Fork ids, which always exist
    *    while equipped; we still guard on ownership defensively.
-   *  - A Skill with **zero files** is skipped (the old zero-files skip). We
-   *    confirm non-empty with `skillArtifactStore.list` (paths only) rather than
+   *  - A Skill without its required `SKILL.md` is skipped. We confirm this with
+   *    `skillArtifactStore.list` (paths only) rather than
    *    `getAll` (bodies) — the bodies are the manager's job now, so the router
    *    reads only enough to make the include/skip decision.
    */
-  private async equippedSkillIds(agentConfig: Agent): Promise<string[]> {
+  private async equippedSkills(agentConfig: Agent): Promise<EquippedSkill[]> {
     const skillIds = agentConfig.skills ?? [];
     if (!this.skillStore || !this.skillArtifactStore || skillIds.length === 0) {
       return [];
     }
 
-    const valid: string[] = [];
+    const valid: EquippedSkill[] = [];
     for (const skillId of skillIds) {
       // Only project the Agent's own forks (owned by this Agent, in this
       // tenant). Anything else (missing, cross-tenant, or a stale Library id
@@ -802,16 +1575,23 @@ export class SessionRouter {
       if (
         !skill ||
         skill.tenantId !== agentConfig.tenantId ||
-        (skill.ownerType === "agent" && skill.ownerId !== agentConfig.id)
+        skill.ownerType !== "agent" ||
+        skill.ownerId !== agentConfig.id
       ) {
         continue;
       }
-      // Confirm the Skill is non-empty (zero-files skip, preserved from
-      // materializeSkills). `list` reads only paths — the bytes are projected
+      // Confirm the Skill has its entrypoint. `list` reads only paths — bytes are projected
       // S3→sandbox by the manager, so the router never touches Skill content.
       const files = await this.skillArtifactStore.list(agentConfig.tenantId, skillId);
-      if (files.length === 0) continue;
-      valid.push(skillId);
+      if (!files.includes("SKILL.md")) continue;
+      valid.push({
+        id: skillId,
+        descriptor: {
+          name: skill.name,
+          description: skill.description,
+          path: `/skills/${skillId}/SKILL.md`,
+        },
+      });
     }
     return valid;
   }

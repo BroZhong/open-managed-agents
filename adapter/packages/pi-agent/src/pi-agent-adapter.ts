@@ -3,7 +3,6 @@ import {
   DefaultResourceLoader,
   formatSkillsForPrompt,
   getAgentDir,
-  loadSkills,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
@@ -15,6 +14,7 @@ import type {
   Adapter,
   AdapterInput,
   SessionEvent,
+  SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
 import type { Message } from "@earendil-works/pi-ai";
 import {
@@ -61,6 +61,8 @@ export interface PiResourceLoaderOptions {
   appendSystemPrompt: string[];
   /** Equipped-Skill root directories the Host provides (`additionalSkillPaths`). */
   additionalSkillPaths: string[];
+  /** Host-resolved metadata for Skills projected inside the sandbox. */
+  skillDescriptors: SkillDescriptor[];
   /** Host owns instructions; never auto-discover cwd context files. */
   noContextFiles: true;
 }
@@ -109,6 +111,7 @@ export function buildResourceLoaderOptions(
   return {
     appendSystemPrompt,
     additionalSkillPaths: agent.skillPaths ?? [],
+    skillDescriptors: agent.skillDescriptors ?? [],
     noContextFiles: true,
   };
 }
@@ -128,7 +131,15 @@ export function buildResourceLoaderOptions(
  *
  * Returns `""` when there are no model-invocable Skills.
  */
-export function buildSkillsPromptSection(skills: Skill[]): string {
+export function buildSkillsPromptSection(descriptors: SkillDescriptor[]): string {
+  const skills = descriptors.map(
+    ({ name, description, path }): Skill => ({
+      name,
+      description,
+      filePath: path,
+      disableModelInvocation: false,
+    }) as Skill,
+  );
   return formatSkillsForPrompt(skills) || "";
 }
 
@@ -277,24 +288,25 @@ export class PiAgentAdapter implements Adapter {
     const agentDir = getAgentDir();
     const cwd = process.cwd();
     const skillPaths = args.resourceLoaderOptions.additionalSkillPaths;
+    const skillDescriptors = args.resourceLoaderOptions.skillDescriptors;
 
     // Pi only injects the `<available_skills>` prompt section when a builtin
     // `read` tool is selected; with custom tools + `noTools: "builtin"` that
     // gate never fires, so the equipped Skills would be invisible to the model even
     // though the Host provided their paths. When we run custom tools, assemble the
-    // section ourselves from the equipped Skill dirs and fold it into the
+    // section ourselves from Host-resolved metadata and fold it into the
     // Host-owned appendSystemPrompt, then pass `noSkills` so Pi does not also
     // try (and skip) its own gated injection (see buildSkillsPromptSection).
     let appendSystemPrompt = args.resourceLoaderOptions.appendSystemPrompt;
-    const injectSkillsIntoPrompt = Boolean(customTools) && skillPaths.length > 0;
+    if (customTools && skillPaths.length > 0 && skillDescriptors.length === 0) {
+      throw new Error(
+        "Custom-tool Skill injection requires agent.skillDescriptors; " +
+        "sandbox skillPaths cannot be loaded from the Host",
+      );
+    }
+    const injectSkillsIntoPrompt = Boolean(customTools) && skillDescriptors.length > 0;
     if (injectSkillsIntoPrompt) {
-      const { skills } = loadSkills({
-        cwd,
-        agentDir,
-        skillPaths,
-        includeDefaults: false,
-      });
-      const skillsSection = buildSkillsPromptSection(skills);
+      const skillsSection = buildSkillsPromptSection(skillDescriptors);
       if (skillsSection) {
         appendSystemPrompt = [...appendSystemPrompt, skillsSection];
       }

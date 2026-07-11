@@ -51,4 +51,16 @@ export class InMemoryTurnStreamStore implements TurnStreamStore {
   async clearActiveTurn(sessionId: string): Promise<void> {
     this.activeTurns.delete(sessionId);
   }
+
+  async compareAndSetActiveTurn(
+    sessionId: string,
+    expectedTurnId: string | null,
+    next: ActiveTurn | null,
+  ): Promise<boolean> {
+    const current = this.activeTurns.get(sessionId)?.turnId ?? null;
+    if (current !== expectedTurnId) return false;
+    if (next) this.activeTurns.set(sessionId, next);
+    else this.activeTurns.delete(sessionId);
+    return true;
+  }
 }

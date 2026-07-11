@@ -1,4 +1,5 @@
 import type { Agent, PaginatedResult, Session, SessionStatus } from "../types.js";
+import type { PendingEventFence } from "./pending-event-store.js";
 
 export interface SessionStoreListOpts {
   limit?: number;
@@ -24,6 +25,12 @@ export interface SessionStore {
   getById(id: string): Promise<Session | null>;
   list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>>;
   updateStatus(id: string, status: SessionStatus): Promise<Session | null>;
+  /** PG-backed fenced variant used by a claimed turn owner. */
+  updateStatusIfClaimed?(
+    id: string,
+    status: SessionStatus,
+    fence: PendingEventFence,
+  ): Promise<Session | null>;
   /**
    * Set the Session's title (a snapshot of the user's first message). Callers
    * set it once, on the first message, only when it is currently unset.

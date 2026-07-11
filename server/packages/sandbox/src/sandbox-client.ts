@@ -94,6 +94,9 @@ export interface SandboxClient {
   /** Write exact file bytes, creating parent directories as needed. */
   writeFileBytes(id: string, path: string, content: Uint8Array): Promise<void>;
 
+  /** Remove a file or directory tree. Missing paths are an idempotent no-op. */
+  remove(id: string, path: string): Promise<void>;
+
   /** List files under an absolute directory (recursively). */
   list(id: string, dir: string): Promise<SandboxFileEntry[]>;
 

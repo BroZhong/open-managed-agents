@@ -7,10 +7,8 @@ import {
   createRedisClient,
   redisConfigFromEnv,
   RedisTurnStreamStore,
-  RedisPendingEventStore,
 } from "@oma-server/redis";
 import type { TurnStreamStore } from "@oma-server/redis";
-import type { PendingEventStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import {
@@ -32,6 +30,7 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
+import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -306,21 +305,20 @@ async function main() {
     `Connected to PostgreSQL (${pgConfig.connectionString ?? `${pgConfig.host ?? "127.0.0.1"}:${pgConfig.port ?? 5432}`}, schema=${schema})`,
   );
 
-  // ─── Redis (transient traffic: pending queue + per-turn delta streams) ────
-  // When Redis is reachable, the pending-input queue and per-turn delta streams
-  // + active-turn map live in Redis (ADR-0002 §3). When it is not, fall back to
-  // the PostgreSQL pending queue and live-only deltas (no reconnect backfill).
+  // ─── Redis (transient per-turn deltas only) ────────────────────────────────
+  // Accepted pending input is always authoritative in PostgreSQL: a Redis
+  // restart must never erase a message for which the API already returned 202.
+  // Redis retains only reconstructable/live turn traffic (deltas + active map).
   const redis = createRedisClient(redisConfigFromEnv());
   let turnStreamStore: TurnStreamStore | undefined;
-  let pendingEventStore: PendingEventStore = stores.pendingEventStore;
+  const pendingEventStore = stores.pendingEventStore;
   try {
     await redis.connect();
     turnStreamStore = new RedisTurnStreamStore(redis);
-    pendingEventStore = new RedisPendingEventStore(redis);
-    console.log("Connected to Redis (pending queue + delta streams + active-turn map)");
+    console.log("Connected to Redis (delta streams + active-turn map; pending input stays in PostgreSQL)");
   } catch (err) {
     console.log(
-      `Redis not reachable (${String(err)}) — falling back to PostgreSQL pending queue, live-only deltas`,
+      `Redis not reachable (${String(err)}) — pending input remains in PostgreSQL, deltas are live-only`,
     );
   }
 
@@ -416,6 +414,20 @@ async function main() {
     skillArtifactStore,
   });
 
+  // Recover input that was accepted (202) before a previous Host process died.
+  // This runs before the HTTP listener opens, so startup recovery and new
+  // requests cannot race to create two local drainers for one Session.
+  const pendingRecovery = await sessionRouter.recoverPendingEvents(({ sessionId, error }) => {
+    console.error(`Background pending recovery failed for ${sessionId}:`, error);
+  });
+  console.log(
+    `Pending recovery: ${pendingRecovery.recovered.length} recovered, ` +
+    `${pendingRecovery.discarded.length} discarded, ${pendingRecovery.failed.length} failed`,
+  );
+  for (const failure of pendingRecovery.failed) {
+    console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
+  }
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -434,7 +446,7 @@ async function main() {
     sessionRouter,
   });
 
-  serve({ fetch: app.fetch, port: PORT }, (info) => {
+  const httpServer = serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`\nServer listening on http://localhost:${info.port}`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
     console.log(`Adapters: claude-code, codex, pi-agent`);
@@ -442,11 +454,29 @@ async function main() {
     console.log(`\nTry: curl http://localhost:${info.port}/health`);
   });
 
-  process.on("SIGINT", async () => {
-    await pool.end().catch(() => {});
-    redis.disconnect();
-    process.exit(0);
+  const shutdown = createGracefulShutdown({
+    server: httpServer,
+    waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
+    timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
+    closeResources: async () => {
+      try {
+        await pool.end();
+      } finally {
+        redis.disconnect();
+      }
+    },
   });
+  const handleSignal = (signal: NodeJS.Signals) => {
+    void shutdown(signal).then(
+      () => process.exit(0),
+      (error) => {
+        console.error("Graceful shutdown failed:", error);
+        process.exit(1);
+      },
+    );
+  };
+  process.on("SIGTERM", handleSignal);
+  process.on("SIGINT", handleSignal);
 }
 
 main().catch((err) => {

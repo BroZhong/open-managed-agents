@@ -108,6 +108,19 @@ export class SupabaseStorageClient {
     };
   }
 
+  /** Check object existence without transferring its body. */
+  async objectExists(key: string): Promise<boolean> {
+    const res = await this.fetchImpl(this.objectUrl(key), {
+      method: "HEAD",
+      headers: this.authHeaders(),
+    });
+    if (res.status === 404 || res.status === 400) return false;
+    if (!res.ok) {
+      throw new Error(`Supabase objectExists failed: ${res.status} ${await safeText(res)}`);
+    }
+    return true;
+  }
+
   /** Delete an object. Returns true if it existed. */
   async deleteObject(key: string): Promise<boolean> {
     const res = await this.fetchImpl(this.objectUrl(key), {

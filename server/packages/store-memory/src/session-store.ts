@@ -5,11 +5,20 @@ import type {
   SessionStoreCreateInput,
   SessionStoreListOpts,
   PaginatedResult,
+  PendingEventFence,
 } from "@oma-server/store";
+import { PendingEventClaimLostError } from "@oma-server/store";
 
 export class InMemorySessionStore implements SessionStore {
   private sessions: Session[] = [];
   private nextId = 1;
+
+  constructor(
+    private readonly validateFence?: (
+      sessionId: string,
+      fence: PendingEventFence,
+    ) => Promise<boolean>,
+  ) {}
 
   async create(input: SessionStoreCreateInput): Promise<Session> {
     const session: Session = {
@@ -59,6 +68,24 @@ export class InMemorySessionStore implements SessionStore {
     session.status = status;
     session.updatedAt = new Date();
     return session;
+  }
+
+  async updateStatusIfClaimed(
+    id: string,
+    status: SessionStatus,
+    fence: PendingEventFence,
+  ): Promise<Session | null> {
+    if (this.validateFence && !await this.validateFence(id, fence)) {
+      throw new PendingEventClaimLostError(
+        id,
+        fence.eventId,
+        fence.ownerId,
+        fence.generation,
+      );
+    }
+    const session = await this.getById(id);
+    if (!session || session.status === "terminated") return null;
+    return this.updateStatus(id, status);
   }
 
   async setTitle(id: string, title: string): Promise<Session | null> {

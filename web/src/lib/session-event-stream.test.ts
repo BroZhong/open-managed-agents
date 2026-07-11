@@ -192,6 +192,27 @@ describe("session event stream state", () => {
       { turnId: "turn_20", deltaId: "1-1", data: { text: "Second Turn" } },
     ]);
   });
+
+  it("replaces a crashed attempt's partial Delta when a new claim generation starts", () => {
+    let state = sessionEventStreamReducer(initialSessionEventStreamState, {
+      type: "delta.received",
+      delta: {
+        ...delta("agent.message_chunk", "1-1", { text: "Hel" }),
+        turnId: "turn_10_a1",
+      },
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "delta.received",
+      delta: {
+        ...delta("agent.message_chunk", "1-1", { text: "Hello" }),
+        turnId: "turn_10_a2",
+      },
+    });
+
+    expect(state.activeDeltas).toMatchObject([
+      { turnId: "turn_10_a2", deltaId: "1-1", data: { text: "Hello" } },
+    ]);
+  });
 });
 
 describe("parseSessionSseFrame", () => {

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { EventLogStore, PendingEventStore, SessionStore } from "@oma-server/store";
+import type { EventLogIngressStore, PendingEventIngressStore, SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import { alignedChunkData } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
@@ -14,8 +14,8 @@ type Env = {
 };
 
 export interface EventRouteDeps {
-  eventLogStore: EventLogStore;
-  pendingEventStore: PendingEventStore;
+  eventLogStore: EventLogIngressStore;
+  pendingEventStore: PendingEventIngressStore;
   sessionStore: SessionStore;
   eventStreamHub?: EventStreamHub;
   sessionRouter?: SessionRouter;
@@ -38,6 +38,17 @@ const ALLOWED_USER_TYPES = [
 
 type AllowedUserType = (typeof ALLOWED_USER_TYPES)[number];
 
+type IncomingUserEvent = {
+  type: AllowedUserType;
+  data: unknown;
+};
+
+const PENDING_USER_TYPES = new Set<AllowedUserType>([
+  "user.message",
+  "user.tool_confirmation",
+  "user.custom_tool_result",
+]);
+
 export function eventRoutes(deps: EventRouteDeps) {
   const router = new Hono<Env>();
 
@@ -51,13 +62,73 @@ export function eventRoutes(deps: EventRouteDeps) {
     if (!session || session.tenantId !== tenant.tenantId) {
       return c.json({ error: "Session not found" }, 404);
     }
+    if (session.status === "terminated") {
+      return c.json({ error: "Session is terminated" }, 410);
+    }
 
     const body = await c.req.json().catch(() => null);
     if (!body || !Array.isArray(body.events)) {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    let hasPendingTrigger = false;
+    if (body.events.length === 0) {
+      return c.json({ error: "events must not be empty" }, 400);
+    }
+
+    // Validate the complete batch before any title, queue, log, or interrupt
+    // side effect. A client may safely correct/retry a rejected batch without
+    // duplicating a prefix that the server had already accepted.
+    const events: IncomingUserEvent[] = [];
+    for (const candidate of body.events) {
+      const type = candidate && typeof candidate === "object"
+        ? (candidate as { type?: unknown }).type
+        : undefined;
+      if (typeof type !== "string" || !ALLOWED_USER_TYPES.includes(type as AllowedUserType)) {
+        return c.json({ error: `Unsupported event type: ${String(type)}` }, 400);
+      }
+      events.push({
+        type: type as AllowedUserType,
+        data: (candidate as { data?: unknown }).data,
+      });
+    }
+
+    const interrupt = events.find((event) => event.type === "user.interrupt");
+    if (interrupt) {
+      if (events.length !== 1) {
+        return c.json({ error: "user.interrupt must be the only event in a batch" }, 400);
+      }
+      deps.sessionRouter?.interrupt(sessionId);
+      return c.json({ accepted: true, interrupted: true }, 202);
+    }
+
+    const pendingEvents = events.filter((event) => PENDING_USER_TYPES.has(event.type));
+    const directEvents = events.filter((event) => !PENDING_USER_TYPES.has(event.type));
+    if (pendingEvents.length > 0 && directEvents.length > 0) {
+      return c.json({ error: "Queued and direct events cannot share one batch" }, 400);
+    }
+    // Direct events do not share the pending-input transaction. Keep their
+    // existing semantics explicit and single-event so a request can never be
+    // partially committed.
+    if (directEvents.length > 1) {
+      return c.json({ error: "Direct events must be submitted one at a time" }, 400);
+    }
+
+    let acceptedPending = false;
+    if (pendingEvents.length > 0) {
+      const inserted = await deps.pendingEventStore.enqueueBatchIfSessionActive(
+        sessionId,
+        pendingEvents.map(({ type, data }) => ({
+          type,
+          data,
+          sessionThreadId: "sthr_primary",
+        })),
+      );
+      if (!inserted) {
+        return c.json({ error: "Session is terminated" }, 410);
+      }
+      acceptedPending = true;
+    }
+
     // Snapshot a title from the FIRST user.message in this batch, but only if the
     // Session has no title yet — so later messages never overwrite it (#70). We
     // track it locally too, so a batch carrying multiple messages still titles
@@ -65,19 +136,8 @@ export function eventRoutes(deps: EventRouteDeps) {
     // messages via /events, not /messages).
     let titleAlreadyHandled = Boolean(session.title);
 
-    for (const event of body.events) {
+    for (const event of events) {
       const { type, data } = event;
-
-      if (!ALLOWED_USER_TYPES.includes(type as AllowedUserType)) {
-        return c.json({ error: `Unsupported event type: ${type}` }, 400);
-      }
-
-      if (type === "user.interrupt") {
-        if (deps.sessionRouter) {
-          deps.sessionRouter.interrupt(sessionId);
-        }
-        return c.json({ accepted: true, interrupted: true }, 202);
-      }
 
       // Derive + store the Session title from the first user.message's text
       // (once, never overwritten). Best-effort: a store failure must never block
@@ -94,31 +154,26 @@ export function eventRoutes(deps: EventRouteDeps) {
         }
       }
 
-      const isPending = type === "user.message" ||
-        type === "user.tool_confirmation" ||
-        type === "user.custom_tool_result";
-
-      if (isPending) {
-        // Write to pending queue (will be promoted to canonical log by session-router)
-        await deps.pendingEventStore.enqueue(sessionId, {
-          type,
-          data,
-          sessionThreadId: "sthr_primary",
-        });
-        hasPendingTrigger = true;
-      } else {
+      if (!PENDING_USER_TYPES.has(type)) {
         // Non-pending events (user.define_outcome) go directly to canonical log
-        await deps.eventLogStore.append(sessionId, {
+        const appended = await deps.eventLogStore.appendIfSessionActive(sessionId, {
           type,
           data,
           sessionThreadId: "sthr_primary",
         });
+        if (!appended) {
+          return c.json({ error: "Session is terminated" }, 410);
+        }
       }
     }
 
     // Trigger session router if we enqueued pending events
-    if (hasPendingTrigger && deps.sessionRouter) {
-      deps.sessionRouter.handleNewEvent(sessionId, session.agent);
+    if (acceptedPending && deps.sessionRouter) {
+      void deps.sessionRouter.handleNewEvent(sessionId, session.agent).catch((error) => {
+        // The input is already durable in the Pending Event Store. Keep the
+        // request accepted and leave recovery/retry to the router lifecycle.
+        console.error(`SessionRouter failed after accepting input for ${sessionId}:`, error);
+      });
     }
 
     return c.body(null, 202);

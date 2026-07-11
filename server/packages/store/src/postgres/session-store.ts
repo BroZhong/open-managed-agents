@@ -1,7 +1,9 @@
 import { nanoid } from "nanoid";
 import type { Pool } from "./connection.js";
 import type { SessionStore, SessionStoreCreateInput, SessionStoreListOpts } from "../interfaces/session-store.js";
+import type { PendingEventFence } from "../interfaces/pending-event-store.js";
 import type { Agent, PaginatedResult, Session, SessionStatus } from "../types.js";
+import { PendingEventClaimLostError } from "../errors.js";
 
 interface SessionRow {
   id: string;
@@ -94,6 +96,70 @@ export class PgSessionStore implements SessionStore {
     return rows[0] ? rowToSession(rows[0]) : null;
   }
 
+  async updateStatusIfClaimed(
+    id: string,
+    status: SessionStatus,
+    fence: PendingEventFence,
+  ): Promise<Session | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const session = await client.query<{ status: SessionStatus }>(
+        `SELECT status FROM sessions WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!session.rows[0] || session.rows[0].status === "terminated") {
+        await client.query("COMMIT");
+        return null;
+      }
+      const locked = await client.query<{ id: string }>(
+        `SELECT id FROM pending_events
+         WHERE session_id = $1 AND id = $2
+         FOR UPDATE`,
+        [id, fence.eventId],
+      );
+      if (!locked.rows[0]) {
+        throw new PendingEventClaimLostError(
+          id,
+          fence.eventId,
+          fence.ownerId,
+          fence.generation,
+        );
+      }
+      const live = await client.query<{ id: string }>(
+        `SELECT id FROM pending_events
+         WHERE session_id = $1
+           AND id = $2
+           AND claim_owner = $3
+           AND claim_generation = $4
+           AND claim_expires_at > clock_timestamp()`,
+        [id, fence.eventId, fence.ownerId, fence.generation],
+      );
+      if (!live.rows[0]) {
+        throw new PendingEventClaimLostError(
+          id,
+          fence.eventId,
+          fence.ownerId,
+          fence.generation,
+        );
+      }
+      const { rows } = await client.query<SessionRow>(
+        `UPDATE sessions
+         SET status = $2, updated_at = $3
+         WHERE id = $1 AND status <> 'terminated'
+         RETURNING *`,
+        [id, status, new Date()],
+      );
+      await client.query("COMMIT");
+      return rows[0] ? rowToSession(rows[0]) : null;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async setTitle(id: string, title: string): Promise<Session | null> {
     const { rows } = await this.pool.query<SessionRow>(
       `UPDATE sessions SET title = $2, updated_at = $3 WHERE id = $1 RETURNING *`,
@@ -104,10 +170,34 @@ export class PgSessionStore implements SessionStore {
 
   async terminate(id: string): Promise<Session | null> {
     const now = new Date();
-    const { rows } = await this.pool.query<SessionRow>(
-      `UPDATE sessions SET status = 'terminated', updated_at = $2, terminated_at = $2 WHERE id = $1 RETURNING *`,
-      [id, now],
-    );
-    return rows[0] ? rowToSession(rows[0]) : null;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query<{ id: string }>(
+        `SELECT id FROM sessions WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!locked.rows[0]) {
+        await client.query("COMMIT");
+        return null;
+      }
+      const { rows } = await client.query<SessionRow>(
+        `UPDATE sessions
+         SET status = 'terminated', updated_at = $2, terminated_at = $2
+         WHERE id = $1
+         RETURNING *`,
+        [id, now],
+      );
+      // Deleting retained input is the remote-Host fence: its next heartbeat,
+      // durable append, checkpoint gate, or ack fails immediately.
+      await client.query(`DELETE FROM pending_events WHERE session_id = $1`, [id]);
+      await client.query("COMMIT");
+      return rowToSession(rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

@@ -26,6 +26,7 @@ export function WorkspacePanel({ sessionId, refreshKey, turnStatus }: WorkspaceP
   const source = useMemo(() => createWorkspaceFileSource(sessionId), [sessionId]);
   return (
     <FileManager
+      key={sessionId}
       source={source}
       turnStatus={turnStatus}
       refreshKey={refreshKey}

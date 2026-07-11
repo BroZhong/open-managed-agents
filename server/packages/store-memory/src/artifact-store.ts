@@ -39,6 +39,10 @@ export class InMemoryArtifactStore implements ArtifactStore {
     return { path, body: v.body, contentType: v.contentType };
   }
 
+  async exists(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
+    return this.objects.has(this.key(tenantId, workspaceId, path));
+  }
+
   async put(input: ArtifactPutInput): Promise<Artifact> {
     const body =
       typeof input.body === "string" ? new TextEncoder().encode(input.body) : input.body;

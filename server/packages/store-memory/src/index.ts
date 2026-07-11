@@ -37,15 +37,29 @@ export interface MemoryStores {
 }
 
 export function createMemoryStores(): MemoryStores {
+  let sessionStore!: InMemorySessionStore;
+  const pendingEventStore = new InMemoryPendingEventStore(async (sessionId) => {
+    const session = await sessionStore.getById(sessionId);
+    return Boolean(session && session.status !== "terminated");
+  });
+  sessionStore = new InMemorySessionStore((sessionId, fence) =>
+    pendingEventStore.ownsClaim(sessionId, fence.eventId, fence));
+  const eventLogStore = new InMemoryEventLogStore(
+    (sessionId, fence) => pendingEventStore.ownsClaim(sessionId, fence.eventId, fence),
+    async (sessionId) => {
+      const session = await sessionStore.getById(sessionId);
+      return Boolean(session && session.status !== "terminated");
+    },
+  );
   return {
     agentStore: new InMemoryAgentStore(),
     agentFileStore: new InMemoryAgentFileStore(),
     skillStore: new InMemorySkillStore(),
     skillArtifactStore: new InMemorySkillArtifactStore(),
     artifactStore: new InMemoryArtifactStore(),
-    sessionStore: new InMemorySessionStore(),
-    eventLogStore: new InMemoryEventLogStore(),
-    pendingEventStore: new InMemoryPendingEventStore(),
+    sessionStore,
+    eventLogStore,
+    pendingEventStore,
     apiKeyStore: new InMemoryApiKeyStore(),
     userStore: new InMemoryUserStore(),
     workspaceStore: new InMemoryWorkspaceMetadataStore(),

@@ -243,12 +243,12 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
       return c.json({ error: "Invalid file path" }, 400);
     }
 
-    const artifact = await deps.artifactStore.get(
+    const exists = await deps.artifactStore.exists(
       tenant.tenantId,
       session.workspaceId,
       path,
     );
-    if (!artifact) return c.json({ error: "File not found" }, 404);
+    if (!exists) return c.json({ error: "File not found" }, 404);
 
     if (!deps.artifactStore.createSignedReadUrl) {
       return c.json(

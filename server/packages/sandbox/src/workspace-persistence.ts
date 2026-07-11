@@ -74,6 +74,13 @@ export interface WorkspacePersistence {
   hydrate(target: HydrateTarget): Promise<HydrationSession>;
 
   /**
+   * Reconcile an already-live sandbox downward from the authoritative medium at
+   * a safe turn boundary. Must update/create/delete sandbox files in place and
+   * advance the opaque session baseline; never creates or destroys a sandbox.
+   */
+  refresh(session: HydrationSession, target: HydrateTarget): Promise<void>;
+
+  /**
    * Using the same session, sync the sandbox's current workspace state back.
    * The medium decides what "changed/deleted" means.
    */
@@ -104,6 +111,8 @@ export interface SandboxFsAccess {
   writeFileBytes(path: string, content: Uint8Array): Promise<void>;
   /** Read exact bytes at an absolute sandbox path. */
   readFileBytes(path: string): Promise<Uint8Array>;
+  /** Remove a file or directory tree. Missing paths are an idempotent no-op. */
+  remove(path: string): Promise<void>;
   /** List files under an absolute sandbox directory (recursively). */
   list(dir: string): Promise<SandboxFsEntry[]>;
 }
@@ -222,6 +231,26 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
     return session as unknown as HydrationSession;
   }
 
+  async refresh(
+    session: HydrationSession,
+    target: HydrateTarget,
+  ): Promise<void> {
+    const { tenantId, workspaceId } = target;
+    const authoritative = new Map<string, Uint8Array>();
+    const artifacts = await this.artifactStore.list(tenantId, workspaceId);
+    for (const artifact of artifacts) {
+      const content = await this.artifactStore.get(
+        tenantId,
+        workspaceId,
+        artifact.path,
+      );
+      if (content) {
+        authoritative.set(normalizeRel(artifact.path), content.body);
+      }
+    }
+    await reconcileDownward(session, target, authoritative);
+  }
+
   /**
    * Sync the sandbox `/workspace` back to S3. Steps (unchanged from the executor
    * except the pre-filter):
@@ -291,6 +320,8 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
       if (existed) deleted.push(rel);
     }
 
+    advanceSessionSnapshot(baseline, state, present);
+
     changed.sort();
     deleted.sort();
     return { tenantId, workspaceId, changed, deleted };
@@ -329,6 +360,13 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
         ? new TextEncoder().encode(content)
         : new Uint8Array(content);
     this.store.set(this.key(tenantId, workspaceId, normalizeRel(path)), bytes);
+  }
+
+  /** Delete a persisted file (test helper for idle-time Host edits). */
+  delete(tenantId: string, workspaceId: string, path: string): boolean {
+    return this.store.delete(
+      this.key(tenantId, workspaceId, normalizeRel(path)),
+    );
   }
 
   /** Current stored content for a workspace-relative path (test helper). */
@@ -385,6 +423,21 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
     return session as unknown as HydrationSession;
   }
 
+  async refresh(
+    session: HydrationSession,
+    target: HydrateTarget,
+  ): Promise<void> {
+    const { tenantId, workspaceId } = target;
+    const prefix = `${tenantId}/${workspaceId}/`;
+    const authoritative = new Map<string, Uint8Array>();
+    for (const [key, bytes] of this.store) {
+      if (key.startsWith(prefix)) {
+        authoritative.set(key.slice(prefix.length), new Uint8Array(bytes));
+      }
+    }
+    await reconcileDownward(session, target, authoritative);
+  }
+
   async sync(
     session: HydrationSession,
     target: HydrateTarget,
@@ -421,6 +474,8 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
       if (existed) deleted.push(rel);
     }
 
+    advanceSessionSnapshot(baseline, state, present);
+
     changed.sort();
     deleted.sort();
     return { tenantId, workspaceId, changed, deleted };
@@ -428,6 +483,69 @@ export class FakeWorkspacePersistence implements WorkspacePersistence {
 }
 
 // ─── path helpers (mirrors the executor's own) ───────────────────────────────
+
+/**
+ * Replace a live sandbox's Workspace with one authoritative medium snapshot.
+ * The comparison is hash-based; session size/mtime state is only a safe skip
+ * optimization. The opaque baseline/state are advanced after reconciliation so
+ * the next upward sync can delete files introduced by this refresh.
+ */
+async function reconcileDownward(
+  session: HydrationSession,
+  target: HydrateTarget,
+  authoritative: Map<string, Uint8Array>,
+): Promise<void> {
+  const { workspaceDir, fs } = target;
+  const { baseline, state } = asS3Session(session);
+  const entries = await fs.list(workspaceDir);
+  const byRel = new Map<string, SandboxFsEntry>();
+  for (const entry of entries) {
+    const rel = toRelative(workspaceDir, entry.path);
+    if (rel) byRel.set(rel, entry);
+  }
+
+  // The medium is authoritative at the turn boundary: remove sandbox-only
+  // paths, including files deleted through the idle-time Workspace UI.
+  for (const [rel, entry] of byRel) {
+    if (!authoritative.has(rel)) await fs.remove(entry.path);
+  }
+
+  const hashes = new Map<string, string>();
+  for (const [rel, bytes] of authoritative) {
+    const hash = contentHash(bytes);
+    hashes.set(rel, hash);
+    const entry = byRel.get(rel);
+    let alreadyCurrent = false;
+    if (entry) {
+      const prior = state.get(rel);
+      if (prior?.hash === hash && canSkipHash(prior, entry)) {
+        alreadyCurrent = true;
+      } else {
+        alreadyCurrent = contentHash(await fs.readFileBytes(entry.path)) === hash;
+      }
+    }
+    if (!alreadyCurrent) {
+      await fs.writeFileBytes(resolve(workspaceDir, rel), bytes);
+    }
+  }
+
+  baseline.splice(0, baseline.length, ...[...authoritative.keys()].sort());
+  const refreshedState = await seedState(workspaceDir, fs, hashes);
+  state.clear();
+  for (const [rel, pathState] of refreshedState) state.set(rel, pathState);
+}
+
+/** Advance the deletion baseline after a successful upward sync. */
+function advanceSessionSnapshot(
+  baseline: string[],
+  state: Map<string, S3PathState>,
+  present: Set<string>,
+): void {
+  baseline.splice(0, baseline.length, ...[...present].sort());
+  for (const rel of [...state.keys()]) {
+    if (!present.has(rel)) state.delete(rel);
+  }
+}
 
 /**
  * Combine per-path content hashes (from what we just hydrated) with the

@@ -18,6 +18,7 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -364,6 +365,20 @@ async function main() {
     skillArtifactStore: stores.skillArtifactStore,
   });
 
+  // Keep startup semantics identical to the full server. The in-memory queues
+  // are normally empty on process start, but tests/dev embedding can seed them
+  // before wiring the app and still exercise the same recovery entry point.
+  const pendingRecovery = await sessionRouter.recoverPendingEvents(({ sessionId, error }) => {
+    console.error(`Background pending recovery failed for ${sessionId}:`, error);
+  });
+  console.log(
+    `Pending recovery: ${pendingRecovery.recovered.length} recovered, ` +
+    `${pendingRecovery.discarded.length} discarded, ${pendingRecovery.failed.length} failed`,
+  );
+  for (const failure of pendingRecovery.failed) {
+    console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
+  }
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -380,7 +395,7 @@ async function main() {
     sessionRouter,
   });
 
-  serve({ fetch: app.fetch, port: PORT }, (info) => {
+  const httpServer = serve({ fetch: app.fetch, port: PORT }, (info) => {
     console.log(`\nServer listening on http://localhost:${info.port}`);
     console.log(`Storage: in-memory (no PostgreSQL/Redis required)`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
@@ -388,6 +403,24 @@ async function main() {
     console.log(`\nDev API key: ${seedResult.rawKey}`);
     console.log(`\nTry: curl http://localhost:${info.port}/health`);
   });
+
+  const shutdown = createGracefulShutdown({
+    server: httpServer,
+    waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
+    timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
+    closeResources: async () => {},
+  });
+  const handleSignal = (signal: NodeJS.Signals) => {
+    void shutdown(signal).then(
+      () => process.exit(0),
+      (error) => {
+        console.error("Graceful shutdown failed:", error);
+        process.exit(1);
+      },
+    );
+  };
+  process.on("SIGTERM", handleSignal);
+  process.on("SIGINT", handleSignal);
 }
 
 main().catch((err) => {

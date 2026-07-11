@@ -87,6 +87,9 @@ function makeFakeFetch(initial: Record<string, Uint8Array> = {}) {
           headers: { "content-type": "application/octet-stream" },
         });
       }
+      if (method === "HEAD") {
+        return new Response(null, { status: objects.has(key) ? 200 : 404 });
+      }
       if (method === "POST") {
         const buf =
           init!.body instanceof Uint8Array
@@ -158,6 +161,18 @@ describe("S3ArtifactStore", () => {
     const fake = makeFakeFetch();
     const store = makeStore(fake);
     expect(await store.get("t1", "w1", "nope.txt")).toBeNull();
+  });
+
+  it("checks existence with HEAD without downloading the object body", async () => {
+    const fake = makeFakeFetch();
+    const store = makeStore(fake);
+    await store.put({ tenantId: "t1", workspaceId: "w1", path: "movie.mp4", body: "bytes" });
+
+    expect(await store.exists("t1", "w1", "movie.mp4")).toBe(true);
+    expect(await store.exists("t1", "w1", "missing.mp4")).toBe(false);
+
+    const objectReads = fake.calls.filter((call) => call.url.includes("/object/workspace/") && ["GET", "HEAD"].includes(call.method));
+    expect(objectReads.map((call) => call.method)).toEqual(["HEAD", "HEAD"]);
   });
 
   it("lists only objects under the workspace prefix", async () => {

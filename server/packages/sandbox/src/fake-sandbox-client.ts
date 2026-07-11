@@ -179,6 +179,17 @@ export class FakeSandboxClient implements SandboxClient {
     });
   }
 
+  async remove(id: string, path: string): Promise<void> {
+    const sandbox = this.require(id);
+    const base = path.replace(/\/+$/, "") || "/";
+    const prefix = base === "/" ? "/" : `${base}/`;
+    for (const filePath of [...sandbox.files.keys()]) {
+      if (filePath === base || filePath.startsWith(prefix)) {
+        sandbox.files.delete(filePath);
+      }
+    }
+  }
+
   async list(id: string, dir: string): Promise<SandboxFileEntry[]> {
     const sandbox = this.require(id);
     const prefix = dir.endsWith("/") ? dir : `${dir}/`;

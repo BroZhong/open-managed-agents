@@ -37,6 +37,7 @@ export interface E2BSandbox {
     read(path: string, opts?: { format?: "text" }): Promise<string>;
     read(path: string, opts: { format: "bytes" }): Promise<Uint8Array>;
     write(path: string, data: string | ArrayBuffer): Promise<unknown>;
+    remove(path: string): Promise<void>;
   };
   /** True while the gateway still has this sandbox running (not reclaimed). */
   isRunning(): Promise<boolean>;
@@ -184,6 +185,17 @@ export class E2BSandboxClient implements SandboxClient {
     // non-zero offset, while the SDK accepts the whole ArrayBuffer.
     const copy = new Uint8Array(content);
     await sandbox.files.write(path, copy.buffer);
+  }
+
+  async remove(id: string, path: string): Promise<void> {
+    const sandbox = this.require(id);
+    try {
+      await sandbox.files.remove(path);
+    } catch (error) {
+      // Downward reconciliation is idempotent. A concurrent/missing delete is
+      // already the desired state; preserve all other backend failures.
+      if (!isMissingFileError(error)) throw error;
+    }
   }
 
   async list(id: string, dir: string): Promise<SandboxFileEntry[]> {
@@ -340,6 +352,11 @@ function isCommandExitError(e: unknown): boolean {
     "exitCode" in e &&
     typeof (e as { exitCode: unknown }).exitCode === "number"
   );
+}
+
+function isMissingFileError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /not[ -]?found|no such file|404/i.test(message);
 }
 
 /**

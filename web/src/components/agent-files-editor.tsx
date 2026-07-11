@@ -14,5 +14,5 @@ import { createAgentFileSource } from "@/lib/file-source";
  */
 export function AgentFilesEditor({ agentId }: { agentId: string }) {
   const source = useMemo(() => createAgentFileSource(agentId), [agentId]);
-  return <FileManager source={source} turnStatus="idle" />;
+  return <FileManager key={agentId} source={source} turnStatus="idle" />;
 }

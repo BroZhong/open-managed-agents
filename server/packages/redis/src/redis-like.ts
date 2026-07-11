@@ -8,6 +8,18 @@
  * Redis while exercising the exact command surface they depend on.
  */
 export interface RedisLike {
+  // ─── Atomic scripts ───────────────────────────────────────────────────────
+  eval(script: string, numberOfKeys: number, ...keysAndArgs: string[]): Promise<unknown>;
+
+  // ─── Cursor scan (startup pending-input recovery) ───────────────────────────
+  scan(
+    cursor: string | number,
+    patternToken: "MATCH",
+    pattern: string,
+    countToken: "COUNT",
+    count: string | number,
+  ): Promise<[string, string[]]>;
+
   // ─── Streams (per-turn deltas) ─────────────────────────────────────────────
   xadd(key: string, id: string, ...fieldsAndValues: string[]): Promise<string | null>;
   xrange(key: string, start: string, end: string): Promise<Array<[string, string[]]>>;
@@ -21,6 +33,7 @@ export interface RedisLike {
   rpush(key: string, ...values: string[]): Promise<number>;
   lpop(key: string): Promise<string | null>;
   lindex(key: string, index: number): Promise<string | null>;
+  lrem(key: string, count: number, value: string): Promise<number>;
   llen(key: string): Promise<number>;
 
   // ─── Keyspace ──────────────────────────────────────────────────────────────

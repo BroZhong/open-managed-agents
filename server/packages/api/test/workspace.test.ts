@@ -548,6 +548,13 @@ describe("POST /v1/sessions/:id/workspace/files/upload", () => {
 // the real S3 store's "internal-sign, public-base" shape (research #88 §3).
 const PUBLIC_BASE = "http://public.example/storage/v1";
 class SigningArtifactStore extends InMemoryArtifactStore {
+  public getCalls = 0;
+
+  override async get(tenantId: string, workspaceId: string, path: string) {
+    this.getCalls += 1;
+    return super.get(tenantId, workspaceId, path);
+  }
+
   async createSignedReadUrl(
     tenantId: string,
     workspaceId: string,
@@ -601,6 +608,7 @@ describe("GET /v1/sessions/:id/workspace/preview-url", () => {
     expect(body.url).toContain("token=");
     expect(body.url).toContain("/dev/ws_1/media/clip.mp4");
     expect(body.expiresIn).toBe(600);
+    expect(artifactStore.getCalls).toBe(0);
   });
 
   it("clamps expiresIn into the allowed range", async () => {

@@ -52,8 +52,11 @@ export function useSessionEvents(sessionId: string) {
   const backoffRef = useRef(1000);
 
   const addEvent = useCallback((event: SessionEvent) => {
-    // Workspace file-change events are transient signals, not part of the
-    // conversation/timeline event list — route them to the refresh channel.
+    // Every id-bearing frame is a persisted Complete Event and therefore part
+    // of durable history. Workspace file changes additionally refresh the file
+    // tree, but must not disappear from Timeline when they arrive via SSE
+    // replay (JSON history already includes the same events).
+    dispatch({ type: "event.received", event });
     if (event.type === "workspace.file_change") {
       const data = (event.data ?? {}) as { changed?: unknown; deleted?: unknown };
       const changed = Array.isArray(data.changed)
@@ -66,7 +69,6 @@ export function useSessionEvents(sessionId: string) {
       return;
     }
 
-    dispatch({ type: "event.received", event });
     if (event.type === "session.status_running") setStatus("running");
     if (event.type === "session.status_idle") {
       setStatus("idle");

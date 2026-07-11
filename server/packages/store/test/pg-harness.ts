@@ -1,4 +1,4 @@
-import { newDb } from "pg-mem";
+import { DataType, newDb } from "pg-mem";
 import { ensureSchema } from "../src/postgres/schema.js";
 import type { Pool } from "../src/postgres/connection.js";
 
@@ -63,6 +63,12 @@ function createMemHarness(): PgTestHarness {
 
   const reset = async () => {
     const db = newDb();
+    db.public.registerFunction({
+      name: "clock_timestamp",
+      returns: DataType.timestamptz,
+      impure: true,
+      implementation: () => new Date(),
+    });
     const { Pool } = db.adapters.createPg();
     pool = new Pool() as unknown as Pool;
     // pg-mem is schema-agnostic for our unqualified queries; apply DDL to the

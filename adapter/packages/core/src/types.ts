@@ -40,6 +40,17 @@ export interface UserMessage {
   content: ContentBlock[];
 }
 
+/**
+ * Prompt metadata for an equipped Skill whose body lives inside the sandbox.
+ * `path` is the sandbox-visible `SKILL.md` path the model can open through the
+ * injected read tool; the Adapter must never try to resolve it on the Host.
+ */
+export interface SkillDescriptor {
+  name: string;
+  description: string;
+  path: string;
+}
+
 // ─── Adapter input ───────────────────────────────────────────────────────────
 
 export interface AdapterInput {
@@ -67,6 +78,13 @@ export interface AdapterInput {
      * runtime's resource loader at them. When absent, no Skills are loaded.
      */
     skillPaths?: string[];
+    /**
+     * Already-resolved metadata for sandbox-projected Skills. Required by
+     * runtimes that replace native tools with a Host-injected ToolExecutor:
+     * those runtimes format the available-Skills prompt from these descriptors
+     * and leave the bodies in the sandbox for the read tool to load.
+     */
+    skillDescriptors?: SkillDescriptor[];
   };
   history: SessionEvent[];
   constraints?: {

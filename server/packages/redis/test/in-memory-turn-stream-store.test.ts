@@ -8,6 +8,15 @@ describe("InMemoryTurnStreamStore", () => {
     store = new InMemoryTurnStreamStore();
   });
 
+  it("CAS protects a newer active turn from stale cleanup", async () => {
+    await store.setActiveTurn("s", { turnId: "turn_1_a2", status: "running" });
+    expect(await store.compareAndSetActiveTurn("s", "turn_1_a1", null)).toBe(false);
+    expect(await store.getActiveTurn("s")).toEqual({
+      turnId: "turn_1_a2",
+      status: "running",
+    });
+  });
+
   describe("active-turn status", () => {
     it("reads back a running turn", async () => {
       await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });

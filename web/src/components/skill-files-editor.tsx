@@ -16,5 +16,12 @@ import { createSkillFileSource } from "@/lib/file-source";
  */
 export function SkillFilesEditor({ skillId }: { skillId: string }) {
   const source = useMemo(() => createSkillFileSource(skillId), [skillId]);
-  return <FileManager source={source} turnStatus="idle" emptyHint="No files." />;
+  return (
+    <FileManager
+      key={skillId}
+      source={source}
+      turnStatus="idle"
+      emptyHint="No files."
+    />
+  );
 }

@@ -30,6 +30,7 @@ function fsAccessFor(client: FakeSandboxClient, id: string): SandboxFsAccess {
     readFile: (path) => client.readFile(id, path),
     writeFileBytes: (path, content) => client.writeFileBytes(id, path, content),
     readFileBytes: (path) => client.readFileBytes(id, path),
+    remove: (path) => client.remove(id, path),
     list: (dir) => client.list(id, dir),
   };
 }

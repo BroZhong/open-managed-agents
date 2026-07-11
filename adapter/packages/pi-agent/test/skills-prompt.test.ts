@@ -1,15 +1,14 @@
 import { describe, it, expect } from "vitest";
-import type { Skill } from "@earendil-works/pi-coding-agent";
+import type { SkillDescriptor } from "@open-managed-agents/adapter-core";
 import { buildSkillsPromptSection } from "../src/pi-agent-adapter.js";
 
-function skill(over: Partial<Skill> = {}): Skill {
+function skill(over: Partial<SkillDescriptor> = {}): SkillDescriptor {
   return {
     name: "teach",
     description: "Teach the user a new skill or concept.",
-    filePath: "/tmp/oma-skills-x/skill_abc/SKILL.md",
-    disableModelInvocation: false,
+    path: "/skills/skill_abc/SKILL.md",
     ...over,
-  } as Skill;
+  };
 }
 
 describe("buildSkillsPromptSection (skills invisible-at-runtime fix)", () => {
@@ -22,7 +21,7 @@ describe("buildSkillsPromptSection (skills invisible-at-runtime fix)", () => {
     expect(section).toContain("<available_skills>");
     expect(section).toContain("<name>teach</name>");
     expect(section).toContain("Teach the user a new skill or concept.");
-    expect(section).toContain("/tmp/oma-skills-x/skill_abc/SKILL.md");
+    expect(section).toContain("/skills/skill_abc/SKILL.md");
   });
 
   it("points the model at the read tool that our native factory exposes", () => {
@@ -30,12 +29,5 @@ describe("buildSkillsPromptSection (skills invisible-at-runtime fix)", () => {
     // Our custom tools use Pi's native factories, so the read tool is named
     // `read` — matching Pi's own "Use the read tool" wording verbatim.
     expect(section).toContain("the read tool");
-  });
-
-  it("excludes skills flagged disableModelInvocation", () => {
-    const section = buildSkillsPromptSection([
-      skill({ name: "hidden", disableModelInvocation: true }),
-    ]);
-    expect(section).toBe("");
   });
 });

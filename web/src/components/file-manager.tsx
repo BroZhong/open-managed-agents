@@ -24,6 +24,7 @@ import {
   classifyMedia,
   methodsOf,
   resolveFileActions,
+  resolveFilePresentation,
   type FileActions,
   type FileContent,
   type FileNode,
@@ -167,6 +168,7 @@ function MediaPreview({
   onDownload: (readyUrl?: string) => void;
 }) {
   const kind = classifyMedia(content.path, content.contentType);
+  const presentation = resolveFilePresentation(content, actions.mediaMode);
   const name = content.path.split("/").pop() ?? content.path;
 
   const downloadCard = (reason: string) => (
@@ -182,8 +184,8 @@ function MediaPreview({
     </div>
   );
 
-  // Non-media binary, or a domain with no signed-URL preview (mediaMode==="download").
-  if (kind === "binary" || actions.mediaMode !== "preview") {
+  // Anything without a concrete renderable body/media type falls back safely.
+  if (presentation === "download") {
     return downloadCard(
       kind === "binary"
         ? "Not a previewable media type."
@@ -191,13 +193,30 @@ function MediaPreview({
     );
   }
 
-  if (kind === "image") {
+  if (presentation === "image") {
     return (
-      <ImagePreview content={content} getPreviewUrl={getPreviewUrl} onDownload={onDownload} />
+      <ImagePreview
+        key={content.path}
+        content={content}
+        getPreviewUrl={getPreviewUrl}
+        onDownload={onDownload}
+      />
     );
   }
-  // video
-  return <VideoPreview content={content} getPreviewUrl={getPreviewUrl} onDownload={onDownload} />;
+  // The only remaining presentation is video.
+  return (
+    <VideoPreview
+      key={content.path}
+      content={content}
+      getPreviewUrl={getPreviewUrl}
+      onDownload={onDownload}
+    />
+  );
+}
+
+/** Blob URLs are owned by this component; signed http(s) URLs are not. */
+function revokePreviewUrl(url: string | null | undefined): void {
+  if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
 }
 
 /**
@@ -223,19 +242,19 @@ function ImagePreview({
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    setForceLoad(!isLarge);
-    setUrl(null);
-    setError(false);
-  }, [content.path, isLarge]);
-
-  useEffect(() => {
     if (!forceLoad) return;
     let alive = true;
+    let acquiredUrl: string | null = null;
     void getPreviewUrl(content.path)
-      .then((u) => alive && setUrl(u))
+      .then((u) => {
+        acquiredUrl = u;
+        if (alive) setUrl(u);
+        else revokePreviewUrl(u);
+      })
       .catch(() => alive && setError(true));
     return () => {
       alive = false;
+      revokePreviewUrl(acquiredUrl);
     };
   }, [forceLoad, content.path, getPreviewUrl]);
 
@@ -284,7 +303,15 @@ function ImagePreview({
   }
 
   return (
-    <div className="flex h-full items-center justify-center overflow-auto bg-[var(--color-bg)] p-4">
+    <div className="relative flex h-full items-center justify-center overflow-auto bg-[var(--color-bg)] p-4">
+      <Button
+        variant="outline"
+        size="sm"
+        className="absolute right-3 top-3 z-10"
+        onClick={() => onDownload(url)}
+      >
+        <Download className="h-3.5 w-3.5" /> Download
+      </Button>
       <img
         src={url}
         alt={content.path}
@@ -312,36 +339,36 @@ function VideoPreview({
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [retry, setRetry] = useState(0);
   // Guard against an infinite re-sign loop when the URL is genuinely broken.
   const resignedRef = useRef(false);
 
-  const load = useCallback(() => {
+  useEffect(() => {
     let alive = true;
+    let acquiredUrl: string | null = null;
     void getPreviewUrl(content.path)
-      .then((u) => alive && setUrl(u))
+      .then((u) => {
+        acquiredUrl = u;
+        if (alive) setUrl(u);
+        else revokePreviewUrl(u);
+      })
       .catch(() => alive && setError(true));
     return () => {
       alive = false;
+      revokePreviewUrl(acquiredUrl);
     };
-  }, [content.path, getPreviewUrl]);
-
-  useEffect(() => {
-    resignedRef.current = false;
-    setUrl(null);
-    setError(false);
-    return load();
-  }, [content.path, load]);
+  }, [content.path, getPreviewUrl, retry]);
 
   const handleError = useCallback(() => {
     // First error → assume an expired signature and silently re-sign once.
     if (!resignedRef.current) {
       resignedRef.current = true;
       setUrl(null);
-      load();
+      setRetry((value) => value + 1);
     } else {
       setError(true);
     }
-  }, [load]);
+  }, []);
 
   if (error) {
     return (
@@ -366,7 +393,15 @@ function VideoPreview({
     );
   }
   return (
-    <div className="flex h-full items-center justify-center bg-black p-4">
+    <div className="relative flex h-full items-center justify-center bg-black p-4">
+      <Button
+        variant="outline"
+        size="sm"
+        className="absolute right-3 top-3 z-10"
+        onClick={() => onDownload(url)}
+      >
+        <Download className="h-3.5 w-3.5" /> Download
+      </Button>
       <video src={url} controls onError={handleError} className="max-h-full max-w-full rounded-md" />
     </div>
   );
@@ -376,6 +411,7 @@ function VideoPreview({
 
 function FilePane({
   content,
+  contentRevision,
   loading,
   error,
   actions,
@@ -387,6 +423,7 @@ function FilePane({
   onDownload,
 }: {
   content: FileContent | null;
+  contentRevision: number;
   loading: boolean;
   error: string | null;
   actions: FileActions;
@@ -420,10 +457,10 @@ function FilePane({
     );
   }
 
-  const kind = classifyMedia(content.path, content.contentType);
+  const presentation = resolveFilePresentation(content, actions.mediaMode);
 
   // Text → shared editor (writable) or read-only viewer.
-  if (kind === "text" && !content.isBinary && content.text !== null) {
+  if (presentation === "text" && content.text !== null) {
     if (actions.canSave) {
       return (
         <div className="h-full overflow-auto p-4">
@@ -436,7 +473,7 @@ function FilePane({
               disabled editor (writeDisabledReason shown above); 423 is the
               server-side TOCTOU backstop. */}
           <TextFileEditor
-            resetKey={content.path}
+            resetKey={`${content.path}:${contentRevision}`}
             initialContent={content.text}
             loading={!!actions.writeDisabledReason}
             saving={saving}
@@ -458,6 +495,7 @@ function FilePane({
 
   return (
     <MediaPreview
+      key={`${content.path}:${contentRevision}`}
       content={content}
       actions={actions}
       getPreviewUrl={getPreviewUrl}
@@ -561,6 +599,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [content, setContent] = useState<FileContent | null>(null);
+  const [contentRevision, setContentRevision] = useState(0);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
 
@@ -573,13 +612,16 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
 
   const nested = source.capabilities.hierarchy === "nested" && actions.showDirs;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<FileNode[] | null> => {
     setListLoading(true);
     setListError(null);
     try {
-      setNodes(await source.list());
+      const nextNodes = await source.list();
+      setNodes(nextNodes);
+      return nextNodes;
     } catch (err) {
       setListError((err as Error).message);
+      return null;
     } finally {
       setListLoading(false);
     }
@@ -593,7 +635,9 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       setWriteError(undefined);
       setSaved(false);
       try {
-        setContent(await source.read(path));
+        const nextContent = await source.read(path);
+        setContent(nextContent);
+        setContentRevision((revision) => revision + 1);
       } catch (err) {
         setContent(null);
         setContentError((err as Error).message);
@@ -604,22 +648,34 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
     [source],
   );
 
-  // Load / reload the tree when the source or host refreshKey changes.
-  useEffect(() => {
-    void refresh();
-  }, [refresh, refreshKey]);
+  /** Refresh the tree and reload/drop the selected file from the same snapshot. */
+  const refreshSelected = useCallback(
+    async (path: string | null = selectedPath) => {
+      const nextNodes = await refresh();
+      if (!nextNodes || !path) return;
+      if (nextNodes.some((node) => node.path === path && !node.isDir)) {
+        await openFile(path);
+      } else {
+        setSelectedPath(null);
+        setContent(null);
+      }
+    },
+    [openFile, refresh, selectedPath],
+  );
 
-  // Reselect / drop the open file after a refresh (agent may have rewritten it).
+  // A new source or Host refresh pulse is one atomic tree + selected-content
+  // refresh. `refreshSelected` is deliberately omitted: selecting a file changes
+  // that callback, but must not itself trigger a second network reload.
   useEffect(() => {
-    if (!selectedPath) return;
-    if (nodes.some((n) => n.path === selectedPath && !n.isDir)) {
-      void openFile(selectedPath);
-    } else {
-      setSelectedPath(null);
-      setContent(null);
-    }
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) return refreshSelected();
+    });
+    return () => {
+      active = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey]);
+  }, [source, refreshKey]);
 
   const toggle = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -676,7 +732,15 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       const url = source.previewUrl
         ? await source.previewUrl(selectedPath)
         : null;
-      if (url) triggerDownload(url, selectedPath);
+      if (url) {
+        triggerDownload(url, selectedPath);
+        // This fresh URL belongs only to this download. URLs already mounted
+        // in a preview arrive via readyUrl and are released by that preview's
+        // effect on replacement/unmount.
+        if (url.startsWith("blob:")) {
+          window.setTimeout(() => revokePreviewUrl(url), 0);
+        }
+      }
     } catch {
       // best-effort; the preview pane already surfaces load errors.
     }
@@ -692,14 +756,14 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
           ? explicitDestDir ?? currentDir(selectedPath)
           : undefined;
         await source.upload(files, destDir);
-        await refresh();
+        await refreshSelected();
       } catch (err) {
         setListError(writeErrorMessage(err));
       } finally {
         setUploading(false);
       }
     },
-    [source, actions.allowSubdirs, selectedPath, refresh],
+    [source, actions.allowSubdirs, selectedPath, refreshSelected],
   );
 
   const handleNewFile = useCallback(async () => {
@@ -778,7 +842,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
           )}
         </span>
         <div className="flex flex-shrink-0 items-center gap-1">
-          {actions.canSave && (
+          {actions.canCreate && (
             <Button
               variant="ghost"
               size="sm"
@@ -814,7 +878,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void refresh()}
+            onClick={() => void refreshSelected()}
             disabled={listLoading}
             title="Refresh"
           >
@@ -882,6 +946,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
         <div className="min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-surface)]">
           <FilePane
             content={content}
+            contentRevision={contentRevision}
             loading={contentLoading}
             error={contentError}
             actions={actions}

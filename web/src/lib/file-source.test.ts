@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyMedia,
+  resolveFilePresentation,
   resolveFileActions,
   methodsOf,
   createSkillFileSource,
@@ -36,6 +37,7 @@ describe("resolveFileActions", () => {
   it("gives writable actions when the write method is present", () => {
     const a = resolveFileActions(NESTED_UNGATED, ALL_METHODS, "idle");
     expect(a.canSave).toBe(true);
+    expect(a.canCreate).toBe(true);
     expect(a.canRename).toBe(true);
     expect(a.canDelete).toBe(true);
     expect(a.canUpload).toBe(true);
@@ -45,6 +47,7 @@ describe("resolveFileActions", () => {
   it("withholds writable actions on a read-only domain", () => {
     const a = resolveFileActions(NESTED_UNGATED, NO_METHODS, "idle");
     expect(a.canSave).toBe(false);
+    expect(a.canCreate).toBe(false);
     expect(a.canRename).toBe(false);
     expect(a.canDelete).toBe(false);
     expect(a.canUpload).toBe(false);
@@ -60,6 +63,7 @@ describe("resolveFileActions", () => {
     };
     const a = resolveFileActions(FLAT, methods, "idle");
     expect(a.canSave).toBe(true);
+    expect(a.canCreate).toBe(false);
     expect(a.canDelete).toBe(true);
     expect(a.canRename).toBe(false);
     expect(a.canUpload).toBe(false);
@@ -101,6 +105,52 @@ describe("resolveFileActions", () => {
     const a = resolveFileActions(FLAT, ALL_METHODS, "idle");
     expect(a.showDirs).toBe(false);
     expect(a.allowSubdirs).toBe(false);
+  });
+});
+
+// ── File presentation (content availability + media capability) ─────────────
+
+describe("resolveFilePresentation", () => {
+  it("downloads oversized text whose body was intentionally not loaded", () => {
+    expect(
+      resolveFilePresentation(
+        {
+          path: "reports/large.md",
+          text: null,
+          contentType: "text/markdown",
+          size: 600 * 1024,
+          isBinary: true,
+        },
+        "preview",
+      ),
+    ).toBe("download");
+  });
+
+  it("renders only loaded text as text", () => {
+    expect(
+      resolveFilePresentation(
+        {
+          path: "notes.md",
+          text: "hello",
+          contentType: "text/markdown",
+          size: 5,
+          isBinary: false,
+        },
+        "preview",
+      ),
+    ).toBe("text");
+  });
+
+  it("previews only known image/video kinds and honors download-only sources", () => {
+    const image = {
+      path: "cover.png",
+      text: null,
+      contentType: "application/octet-stream",
+      size: 10,
+      isBinary: true,
+    };
+    expect(resolveFilePresentation(image, "preview")).toBe("image");
+    expect(resolveFilePresentation(image, "download")).toBe("download");
   });
 });
 

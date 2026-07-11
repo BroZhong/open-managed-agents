@@ -122,6 +122,8 @@ describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<id
       tenantId: "tenant_1",
       name: "greeter",
       description: "greets",
+      ownerType: "agent",
+      ownerId: "agent_1",
     });
     await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "---\nname: greeter\n---\nhi");
 
@@ -129,6 +131,13 @@ describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<id
     const input = await runOneTurn({ skillStore, skillArtifactStore, agent });
 
     expect(input?.agent.skillPaths).toEqual([`/skills/${skill.id}`]);
+    expect(input?.agent.skillDescriptors).toEqual([
+      {
+        name: "greeter",
+        description: "greets",
+        path: `/skills/${skill.id}/SKILL.md`,
+      },
+    ]);
   });
 
   it("skips a Skill with zero files (never becomes a skillPath)", async () => {

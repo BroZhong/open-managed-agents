@@ -34,6 +34,7 @@ function fsAccessFor(
       spy?.reads.push(path);
       return client.readFileBytes(id, path);
     },
+    remove: (path) => client.remove(id, path),
     list: (dir) => client.list(id, dir),
   };
 }
@@ -176,6 +177,53 @@ describe("FakeWorkspacePersistence (WorkspacePersistence seam)", () => {
     expect(second.changed).toEqual([]);
     expect(second.deleted).toEqual([]);
   });
+
+  it("refresh reconciles the live sandbox downward from authoritative storage", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed(TENANT, WS, "edit.txt", "before");
+    persistence.seed(TENANT, WS, "deleted.txt", "remove me");
+
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+    await client.writeFile(id, "/workspace/local-only.txt", "stale sandbox state");
+
+    // Simulate idle-time Workspace edits made through the Host/S3 APIs.
+    persistence.seed(TENANT, WS, "edit.txt", "from web");
+    persistence.seed(TENANT, WS, "added.txt", "new from web");
+    persistence.delete(TENANT, WS, "deleted.txt");
+
+    await persistence.refresh(session, targetFor(fs));
+
+    expect(await client.readFile(id, "/workspace/edit.txt")).toBe("from web");
+    expect(await client.readFile(id, "/workspace/added.txt")).toBe("new from web");
+    await expect(client.readFile(id, "/workspace/deleted.txt")).rejects.toThrow();
+    await expect(client.readFile(id, "/workspace/local-only.txt")).rejects.toThrow();
+
+    // Refresh also advances the baseline: deleting the web-added file in the
+    // next turn must delete it from authoritative storage on sync.
+    client.filesOf(id).delete("/workspace/added.txt");
+    const result = await persistence.sync(session, targetFor(fs));
+    expect(result.deleted).toEqual(["added.txt"]);
+    expect(persistence.contentOf(TENANT, WS, "added.txt")).toBeUndefined();
+  });
+
+  it("sync advances its baseline so a newly-created file can be deleted next turn", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+
+    await client.writeFile(id, "/workspace/transient.txt", "turn one");
+    expect((await persistence.sync(session, targetFor(fs))).changed).toEqual([
+      "transient.txt",
+    ]);
+
+    client.filesOf(id).delete("/workspace/transient.txt");
+    const second = await persistence.sync(session, targetFor(fs));
+    expect(second.deleted).toEqual(["transient.txt"]);
+    expect(persistence.contentOf(TENANT, WS, "transient.txt")).toBeUndefined();
+  });
 });
 
 describe("S3WorkspacePersistence binary safety", () => {
@@ -190,6 +238,7 @@ describe("S3WorkspacePersistence binary safety", () => {
         body: png,
         contentType: "image/png",
       }),
+      exists: async () => true,
       put: async () => {
         throw new Error("not expected");
       },
@@ -209,6 +258,7 @@ describe("S3WorkspacePersistence binary safety", () => {
     const store: ArtifactStore = {
       list: async () => [],
       get: async () => null,
+      exists: async () => false,
       put: async (input) => {
         puts.push(input);
         const size =

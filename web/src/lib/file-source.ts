@@ -450,6 +450,8 @@ export type MediaMode = "preview" | "download" | "none";
 export interface FileActions {
   /** Show a Save action at all (the source can write). */
   canSave: boolean;
+  /** Show arbitrary new-file creation. Closed, flat sources cannot add names. */
+  canCreate: boolean;
   /** Show a rename action. */
   canRename: boolean;
   /** Show a delete action. */
@@ -492,6 +494,7 @@ export function resolveFileActions(
 
   return {
     canSave: methods.write,
+    canCreate: methods.write && nested,
     canRename: methods.rename,
     canDelete: methods.delete,
     canUpload: methods.upload,
@@ -500,6 +503,28 @@ export function resolveFileActions(
     allowSubdirs: nested,
     mediaMode: methods.previewUrl ? "preview" : "download",
   };
+}
+
+/** The concrete pane selected after considering both file kind and loaded body. */
+export type FilePresentation = "text" | "image" | "video" | "download";
+
+/**
+ * Decide how a file can actually be rendered, not merely what its extension
+ * suggests. Text over the inline-preview cap has `text: null` and
+ * `isBinary: true`; it must fall back to download instead of flowing into a
+ * media component. Only known image/video kinds may reach media elements.
+ */
+export function resolveFilePresentation(
+  content: FileContent,
+  mediaMode: MediaMode,
+): FilePresentation {
+  const kind = classifyMedia(content.path, content.contentType);
+  if (kind === "text") {
+    return !content.isBinary && content.text !== null ? "text" : "download";
+  }
+  if (mediaMode !== "preview") return "download";
+  if (kind === "image" || kind === "video") return kind;
+  return "download";
 }
 
 /**
