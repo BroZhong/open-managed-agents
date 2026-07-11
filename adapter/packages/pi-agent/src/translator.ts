@@ -22,6 +22,7 @@ export class PiEventTranslator {
   private currentApi = "";
   private textAccumulator = "";
   private thinkingAccumulator = "";
+  private pendingProviderError: string | undefined;
 
   processEvent(event: AgentSessionEvent): SessionEvent[] {
     const events: SessionEvent[] = [];
@@ -218,8 +219,12 @@ export class PiEventTranslator {
 
       case "message_end": {
         if (event.message.role === "assistant") {
-          const usage = (event.message as { usage?: { input: number; output: number } })
-            .usage;
+          const message = event.message as {
+            usage?: { input: number; output: number };
+            stopReason?: string;
+            errorMessage?: string;
+          };
+          const usage = message.usage;
           if (this.spanStarted && usage) {
             this.spanStarted = false;
             events.push({
@@ -232,6 +237,10 @@ export class PiEventTranslator {
               },
             } as SessionEvent);
           }
+          this.pendingProviderError =
+            message.stopReason === "error"
+              ? message.errorMessage?.trim() || "Pi provider request failed"
+              : undefined;
         }
         break;
       }
@@ -243,6 +252,33 @@ export class PiEventTranslator {
     }
 
     return events;
+  }
+
+  /**
+   * Finish one session.prompt() translation after its event queue has drained.
+   *
+   * Pi represents provider failures as assistant messages with
+   * `stopReason: "error"`. Neither value of agent_end.willRetry proves that the
+   * whole prompt is over: automatic retries use true, while context-overflow
+   * recovery can emit false and then compact + continue. Deferring the error to
+   * this prompt-settlement boundary prevents both dropped recovery output and a
+   * stale error when a later continuation succeeds.
+   */
+  finalize(): SessionEvent[] {
+    if (!this.pendingProviderError) return [];
+    const message = this.pendingProviderError;
+    this.pendingProviderError = undefined;
+    return [
+      {
+        id: generateEventId(),
+        timestamp: generateTimestamp(),
+        type: "session.error",
+        error: {
+          message,
+          code: "pi_agent_error",
+        },
+      } as SessionEvent,
+    ];
   }
 }
 

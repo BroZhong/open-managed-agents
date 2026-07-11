@@ -13,6 +13,11 @@ type Env = {
   };
 };
 
+// Keep this comfortably below common load-balancer idle timeouts. SSE comments
+// produce transport activity without dispatching a browser MessageEvent or
+// changing Last-Event-ID.
+const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 10_000;
+
 export interface EventRouteDeps {
   eventLogStore: EventLogIngressStore;
   pendingEventStore: PendingEventIngressStore;
@@ -26,6 +31,8 @@ export interface EventRouteDeps {
    * connection goes live — the client sees one seamless stream.
    */
   turnStreamStore?: TurnStreamStore;
+  /** Override the SSE keepalive cadence in focused tests. */
+  sseHeartbeatIntervalMs?: number;
 }
 
 const ALLOWED_USER_TYPES = [
@@ -210,96 +217,165 @@ export function eventRoutes(deps: EventRouteDeps) {
       );
 
       const turnStreamStore = deps.turnStreamStore;
+      const heartbeatIntervalMs = Math.max(
+        1,
+        deps.sseHeartbeatIntervalMs ?? DEFAULT_SSE_HEARTBEAT_INTERVAL_MS,
+      );
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      let liveReader: ReadableStreamDefaultReader<string> | undefined;
+      let responseClosed = false;
+      let cleanupStarted = false;
+
+      // Cancellation can race with async PG/Redis replay, the heartbeat timer,
+      // and a pending hub read. Make every exit converge on one idempotent
+      // cleanup path so no timer writes to a closed response controller.
+      const cleanup = () => {
+        if (cleanupStarted) return;
+        cleanupStarted = true;
+
+        if (heartbeatTimer !== undefined) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = undefined;
+        }
+
+        const reader = liveReader;
+        liveReader = undefined;
+        if (reader) {
+          void reader.cancel().catch(() => {});
+        }
+        unsubscribe();
+      };
 
       const responseStream = new ReadableStream<string>({
         start: async (controller) => {
-          // Send retry directive as first frame
-          controller.enqueue("retry: 1000\n\n");
-
-          // Highest Redis stream entry id backfilled per turn. A live delta
-          // whose entry id is <= this was already emitted by the backfill, so
-          // it is skipped — de-overlapping the narrow window between subscribing
-          // to the hub and snapshotting Redis. Keyed by turnId.
-          const maxBackfilledIdForTurn = new Map<string, string>();
-
-          // Replay completed events + active-turn deltas server-side.
-          if (shouldReplay) {
-            let afterSeq: number | undefined;
-            if (lastEventId) {
-              const parsed = parseInt(lastEventId, 10);
-              if (!isNaN(parsed)) {
-                afterSeq = parsed;
-              }
-            }
-
-            // 1. Completed Events from PostgreSQL (authoritative log). Page
-            //    until hasMore is false so a resume after >1 batch of queued
-            //    events backfills ALL of them — never just the first page.
-            let cursorSeq = afterSeq;
-            let hasMore = true;
-            while (hasMore) {
-              const result = await deps.eventLogStore.getEvents(sessionId, {
-                afterSeq: cursorSeq,
-                limit: 1000,
-              });
-
-              for (const event of result.data) {
-                let frame = `event: ${event.type}\n`;
-                frame += `id: ${event.seq}\n`;
-                frame += `data: ${JSON.stringify(event.data)}\n\n`;
-                controller.enqueue(frame);
-                cursorSeq = event.seq;
-              }
-
-              hasMore = result.hasMore;
-            }
-
-            // 2. Active turn's half-emitted deltas from Redis (if a turn is
-            //    still running). Once a turn ends its stream is reclaimed and
-            //    the full content already came from PostgreSQL above, so there
-            //    is nothing (and nothing needed) to backfill.
-            if (turnStreamStore) {
-              const active = await turnStreamStore.getActiveTurn(sessionId);
-              if (active && active.status === "running") {
-                const deltas = await turnStreamStore.readDeltas(active.turnId);
-                for (const delta of deltas) {
-                  const data = alignedChunkData({
-                    data: delta.data,
-                    turnId: delta.turnId,
-                    blockIndex: delta.blockIndex,
-                    deltaId: delta.id,
-                  });
-                  controller.enqueue(
-                    `event: ${delta.type}\ndata: ${JSON.stringify(data)}\n\n`,
-                  );
-                }
-                if (deltas.length > 0) {
-                  maxBackfilledIdForTurn.set(active.turnId, deltas[deltas.length - 1].id);
-                }
-              }
-            }
-          }
-
-          // Pipe live events from hub subscription, dropping delta frames that
-          // were already covered by the Redis backfill.
-          const reader = liveStream.getReader();
           try {
-            while (true) {
-              const { value, done } = await reader.read();
+            const enqueue = (frame: string): boolean => {
+              if (responseClosed) return false;
+              try {
+                controller.enqueue(frame);
+                return true;
+              } catch {
+                // The downstream response closed between our state check and
+                // enqueue. Stop all producers; cancellation is not an error.
+                responseClosed = true;
+                cleanup();
+                return false;
+              }
+            };
+
+            // Send retry directive as the first frame, then a comment while the
+            // stream is otherwise idle. The timer starts before replay so a
+            // slow PG/Redis backfill is protected too.
+            if (!enqueue("retry: 1000\n\n")) return;
+            heartbeatTimer = setInterval(() => {
+              enqueue(": keepalive\n\n");
+            }, heartbeatIntervalMs);
+
+            // Highest Redis stream entry id backfilled per turn. A live delta
+            // whose entry id is <= this was already emitted by the backfill, so
+            // it is skipped — de-overlapping the narrow window between subscribing
+            // to the hub and snapshotting Redis. Keyed by turnId.
+            const maxBackfilledIdForTurn = new Map<string, string>();
+
+            // Replay completed events + active-turn deltas server-side.
+            if (shouldReplay) {
+              let afterSeq: number | undefined;
+              if (lastEventId) {
+                const parsed = parseInt(lastEventId, 10);
+                if (!isNaN(parsed)) {
+                  afterSeq = parsed;
+                }
+              }
+
+              // 1. Completed Events from PostgreSQL (authoritative log). Page
+              //    until hasMore is false so a resume after >1 batch of queued
+              //    events backfills ALL of them — never just the first page.
+              let cursorSeq = afterSeq;
+              let hasMore = true;
+              while (hasMore) {
+                const result = await deps.eventLogStore.getEvents(sessionId, {
+                  afterSeq: cursorSeq,
+                  limit: 1000,
+                });
+                if (responseClosed) return;
+
+                for (const event of result.data) {
+                  let frame = `event: ${event.type}\n`;
+                  frame += `id: ${event.seq}\n`;
+                  frame += `data: ${JSON.stringify(event.data)}\n\n`;
+                  if (!enqueue(frame)) return;
+                  cursorSeq = event.seq;
+                }
+
+                hasMore = result.hasMore;
+              }
+
+              // 2. Active turn's half-emitted deltas from Redis (if a turn is
+              //    still running). Once a turn ends its stream is reclaimed and
+              //    the full content already came from PostgreSQL above, so there
+              //    is nothing (and nothing needed) to backfill.
+              if (turnStreamStore) {
+                const active = await turnStreamStore.getActiveTurn(sessionId);
+                if (responseClosed) return;
+                if (active && active.status === "running") {
+                  const deltas = await turnStreamStore.readDeltas(active.turnId);
+                  if (responseClosed) return;
+                  for (const delta of deltas) {
+                    const data = alignedChunkData({
+                      data: delta.data,
+                      turnId: delta.turnId,
+                      blockIndex: delta.blockIndex,
+                      deltaId: delta.id,
+                    });
+                    if (!enqueue(
+                      `event: ${delta.type}\ndata: ${JSON.stringify(data)}\n\n`,
+                    )) return;
+                  }
+                  if (deltas.length > 0) {
+                    maxBackfilledIdForTurn.set(active.turnId, deltas[deltas.length - 1].id);
+                  }
+                }
+              }
+            }
+
+            // Pipe live events from hub subscription, dropping delta frames that
+            // were already covered by the Redis backfill.
+            if (responseClosed) return;
+            liveReader = liveStream.getReader();
+            while (!responseClosed) {
+              const { value, done } = await liveReader.read();
               if (done) break;
               if (shouldReplay && maxBackfilledIdForTurn.size > 0) {
                 if (isBackfilledDelta(value, maxBackfilledIdForTurn)) continue;
               }
-              controller.enqueue(value);
+              if (!enqueue(value)) break;
             }
-          } catch {
-            // stream cancelled
+          } catch (error) {
+            if (!responseClosed) {
+              responseClosed = true;
+              cleanup();
+              try {
+                controller.error(error);
+              } catch {
+                // Response was cancelled while the async failure surfaced.
+              }
+            }
           } finally {
-            controller.close();
+            const shouldCloseController = !responseClosed;
+            responseClosed = true;
+            cleanup();
+            if (shouldCloseController) {
+              try {
+                controller.close();
+              } catch {
+                // Downstream cancellation won the race.
+              }
+            }
           }
         },
         cancel: () => {
-          unsubscribe();
+          responseClosed = true;
+          cleanup();
         },
       });
 
@@ -316,8 +392,9 @@ export function eventRoutes(deps: EventRouteDeps) {
       return new Response(byteStream, {
         headers: {
           "content-type": "text/event-stream",
-          "cache-control": "no-cache",
+          "cache-control": "no-cache, no-transform",
           "connection": "keep-alive",
+          "x-accel-buffering": "no",
         },
       });
     }

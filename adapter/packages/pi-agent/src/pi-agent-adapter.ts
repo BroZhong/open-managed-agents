@@ -199,15 +199,13 @@ export class PiAgentAdapter implements Adapter {
       const translator = new PiEventTranslator();
 
       // Bridge the push-based subscribe() into a pull queue. The listener
-      // enqueues each SDK event; the async generator below drains it. We
-      // complete the queue on `agent_end` (the last event of a run) and on
-      // any streamed error event.
+      // enqueues each SDK event; the async generator below drains it. Only the
+      // settlement of session.prompt() ends the queue: agent_end is an inner
+      // agent-loop boundary, and Pi may compact + continue even after an
+      // agent_end whose willRetry flag is false.
       const queue = new EventQueue<AgentSessionEvent>();
       const unsubscribe = session.subscribe((event) => {
         queue.push(event);
-        if (event.type === "agent_end") {
-          queue.close();
-        }
       });
 
       // Wire the router's per-turn abort signal to Pi's native cancel (issue
@@ -234,14 +232,16 @@ export class PiAgentAdapter implements Adapter {
       }
 
       try {
-        // Fire the turn. prompt() resolves once the turn is accepted; output
-        // arrives via the subscription. A rejection here (bad model, no auth,
-        // ...) is surfaced by closing the queue with the error so it becomes a
-        // single session.error rather than an uncaught throw.
+        // Fire the turn. prompt() resolves after Pi has finished the whole
+        // operation, including automatic retries and overflow compaction /
+        // continuation; output arrives via the subscription. A rejection here
+        // (bad model, no auth, ...) is surfaced through the queue so it becomes
+        // a single session.error rather than an uncaught throw.
         session.prompt(prompt).then(
           () => {
-            // If the SDK ever completes prompt() without an agent_end (e.g. an
-            // extension command that never starts a turn), don't hang forever.
+            // Close on the next tick so any events synchronously following the
+            // prompt settlement are enqueued first. Buffered events still drain
+            // before iteration completes.
             queue.closeSoon();
           },
           (error: unknown) => {
@@ -252,6 +252,10 @@ export class PiAgentAdapter implements Adapter {
         for await (const event of queue) {
           for (const e of translator.processEvent(event)) yield e;
         }
+        // A provider failure is final only now, after prompt() has settled and
+        // every retry/compaction continuation event has drained. A later
+        // successful assistant message clears any earlier pending failure.
+        for (const e of translator.finalize()) yield e;
       } finally {
         unsubscribe();
         if (signal) signal.removeEventListener("abort", onAbort);

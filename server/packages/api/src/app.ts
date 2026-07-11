@@ -39,6 +39,8 @@ export interface AppDeps {
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
   turnStreamStore?: TurnStreamStore;
+  /** Override the SSE keepalive cadence in focused tests. */
+  sseHeartbeatIntervalMs?: number;
   sessionRouter?: SessionRouter;
 }
 
@@ -110,6 +112,7 @@ export function createApp(deps: AppDeps) {
       sessionStore: deps.sessionStore,
       eventStreamHub: deps.eventStreamHub,
       turnStreamStore: deps.turnStreamStore,
+      sseHeartbeatIntervalMs: deps.sseHeartbeatIntervalMs,
       sessionRouter: deps.sessionRouter,
     }));
   }

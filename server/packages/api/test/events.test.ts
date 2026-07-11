@@ -342,6 +342,33 @@ async function readSSEFrames(res: Response, count: number, timeoutMs = 300): Pro
   return frames;
 }
 
+/** Read raw SSE bytes until `needle` arrives, or return null on timeout/end. */
+async function readSSETextUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  needle: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const decoder = new TextDecoder();
+  const deadline = Date.now() + timeoutMs;
+  let text = "";
+
+  while (Date.now() < deadline) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const result = await Promise.race([
+      reader.read().then((read) => ({ kind: "read" as const, read })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: "timeout" }), deadline - Date.now());
+      }),
+    ]);
+    if (timeout !== undefined) clearTimeout(timeout);
+    if (result.kind === "timeout" || result.read.done) return null;
+    text += decoder.decode(result.read.value, { stream: true });
+    if (text.includes(needle)) return text;
+  }
+
+  return null;
+}
+
 function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   return {
     async findByKeyHash(keyHash) {
@@ -950,7 +977,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     process.env.AUTH_DISABLED = "true";
   });
 
-  function createMergeApp() {
+  function createMergeApp(sseHeartbeatIntervalMs?: number) {
     process.env.AUTH_DISABLED = "true";
     const agentStore = new InMemoryAgentStore();
     const sessionStore = new InMemorySessionStore();
@@ -972,9 +999,50 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
       pendingEventStore,
       eventStreamHub,
       turnStreamStore,
+      sseHeartbeatIntervalMs,
     });
     return { app, agentStore, sessionStore, eventLogStore, pendingEventStore, eventStreamHub, turnStreamStore };
   }
+
+  it("keeps an idle SSE connection alive and still delivers a later durable event", async () => {
+    const { app, agentStore, sessionStore, eventLogStore, eventStreamHub } = createMergeApp(10);
+    const { session } = await createTestSession(agentStore, sessionStore);
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    let heartbeatTimerCleared = false;
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      headers: { accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(200);
+
+    const reader = res.body!.getReader();
+    try {
+      const heartbeat = await readSSETextUntil(reader, ": keepalive\n\n", 100);
+      expect(heartbeat).toContain("retry: 1000\n\n");
+      expect(heartbeat).toContain(": keepalive\n\n");
+
+      const data = { type: "agent.message", content: [{ type: "text", text: "after idle" }] };
+      const stored = await eventLogStore.append(session.id, {
+        type: "agent.message",
+        data,
+        sessionThreadId: "sthr_primary",
+      });
+      eventStreamHub.publish(session.id, {
+        type: "agent.message",
+        seq: stored.seq,
+        data,
+      });
+
+      const live = await readSSETextUntil(reader, "event: agent.message\n", 100);
+      expect(live).toContain(`id: ${stored.seq}\n`);
+      expect(live).toContain('"after idle"');
+    } finally {
+      await reader.cancel().catch(() => {});
+      heartbeatTimerCleared = clearIntervalSpy.mock.calls.length > 0;
+      clearIntervalSpy.mockRestore();
+    }
+    expect(heartbeatTimerCleared).toBe(true);
+  });
 
   it("reconnect mid-turn: backfills PG completed events, then the half-emitted deltas, then continues live", async () => {
     const { app, agentStore, sessionStore, eventLogStore, eventStreamHub, turnStreamStore } =
