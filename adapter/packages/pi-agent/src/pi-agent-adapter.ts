@@ -1,5 +1,6 @@
 import {
   createAgentSession,
+  createEventBus,
   DefaultResourceLoader,
   formatSkillsForPrompt,
   getAgentDir,
@@ -28,6 +29,7 @@ import { buildCustomTools } from "./custom-tools.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
+import { createManagedSubagentToolsExtension } from "./subagent-tool-bridge.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -368,7 +370,21 @@ export class PiAgentAdapter implements Adapter {
       const resourceLoader = new DefaultResourceLoader({
         cwd,
         agentDir,
+        // Each managed Turn owns an EventBus. The subagent bridge passes tool
+        // definitions over this in-process bus, so concurrent parents have no
+        // shared capability registry.
+        eventBus: createEventBus(),
         appendSystemPrompt,
+        // @tintinweb/pi-subagents creates a second SDK session. Give its
+        // pinned bridge access to this parent's exact Sandbox-backed tool
+        // definitions over this Turn's private EventBus for concurrency.
+        ...(customTools
+          ? {
+              extensionFactories: [
+                createManagedSubagentToolsExtension(customTools),
+              ],
+            }
+          : {}),
         // When we inject the skills section ourselves (custom-tool path), skip
         // Pi's own skill loading so the section is not duplicated / re-gated.
         ...(injectSkillsIntoPrompt

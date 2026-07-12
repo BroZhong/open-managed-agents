@@ -35,6 +35,8 @@ COPY server/packages/store-memory/package.json ./server/packages/store-memory/
 RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
  && cd /app/server && pnpm install --no-frozen-lockfile
 
+COPY deploy/patch-tintinweb-pi-subagents.mjs /tmp/patch-tintinweb-pi-subagents.mjs
+
 # Pi extensions used by every managed Pi runtime. Install them with Pi's own
 # package manager (rather than merely adding npm dependencies) so the generated
 # settings.json + package tree are exactly what DefaultResourceLoader discovers
@@ -56,10 +58,16 @@ RUN PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
  && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
       /app/adapter/packages/pi-agent/node_modules/.bin/pi list
 
+# The pinned extension currently constructs child SDK sessions with Pi's
+# Host-native built-ins. Apply a version/anchor-guarded overlay that injects the
+# parent Turn's exact Sandbox-backed customTools and fails closed when absent.
+RUN node /tmp/patch-tintinweb-pi-subagents.mjs \
+      /opt/pi-agent-seed/npm/node_modules/@tintinweb/pi-subagents
+
 # @tintinweb/pi-subagents creates child Pi sessions in the Host process. Its
 # defaults include native Host tools, so the managed seed disables every default
-# type and publishes exactly one pinned, foreground, text-only type. The parent
-# Agent remains the sole owner of Sandbox-backed tools (including vfs-cli).
+# type and publishes exactly one pinned, foreground type. The overlay above
+# replaces child built-ins with the parent's same Sandbox-backed tools.
 COPY deploy/pi-subagents-settings.json /opt/pi-agent-seed/subagents.json
 COPY deploy/pi-subagents-storyboard-stage.md /opt/pi-agent-seed/agents/storyboard-stage.md
 RUN chmod 0644 /opt/pi-agent-seed/subagents.json \
