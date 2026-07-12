@@ -4,6 +4,7 @@ import type {
   FileListEntry,
   ToolExecutor,
 } from "@open-managed-agents/adapter-core";
+import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { SandboxClient } from "./sandbox-client.js";
 import {
   assertProjectionOutsideWorkspace,
@@ -23,8 +24,8 @@ import type {
 // E2B's recommended user directory. It is the sandbox `user` account's home, so
 // it is user-owned and writable without any chown gymnastics — unlike a
 // root-owned `/workspace`, which the non-privileged exec user cannot mkdir under
-// (issue #85). Overridable per-EnvSpec via `workspaceDir`.
-const DEFAULT_WORKSPACE_DIR = "/home/user";
+// (issue #85). This is a cross-runtime contract shared with the Pi adapter.
+const DEFAULT_WORKSPACE_DIR = SANDBOX_WORKSPACE_ROOT;
 
 /**
  * Default sandbox lifetime (issue #68). The
@@ -56,14 +57,9 @@ export interface EnvSpec {
   env?: Record<string, string>;
 
   /**
-   * The two-way area: hydrated into `workspaceDir`, synced back on every
-   * checkpoint and before dispose. Defaults to `/workspace`.
-   */
-  workspaceDir?: string;
-
-  /**
    * Read-only projections: one-way downward, **never** synced, mounted *outside*
-   * `workspaceDir`. Zero or more (design doc §1, ADR-0005 §3).
+   * the canonical `/home/user` Workspace. Zero or more (design doc §1,
+   * ADR-0005 §3).
    */
   projections?: readonly ReadonlyProjection[];
 }
@@ -84,8 +80,8 @@ export interface SandboxManagerDeps {
   persistence: WorkspacePersistence;
   /** Projection sources dispatched by {@link ProvisionCoordinate.kind} (`{ s3 }` today). */
   provisionSources: Record<string, ProvisionSource>;
-  /** Manager-wide defaults an EnvSpec may omit. */
-  defaults?: { workspaceDir?: string; lifetimeSeconds?: number };
+  /** Manager-wide lifecycle defaults an EnvSpec may omit. */
+  defaults?: { lifetimeSeconds?: number };
 }
 
 // ─── §2  SandboxDescriptor ───────────────────────────────────────────────────
@@ -274,13 +270,28 @@ class SandboxSessionImpl implements SandboxSession {
   private closed = false;
 
   constructor(deps: SandboxManagerDeps, spec: EnvSpec) {
+    // `workspaceDir` existed before `/home/user` became a cross-runtime
+    // contract. Reject stale JavaScript callers explicitly instead of silently
+    // reintroducing a Pi/session/persistence split-brain cwd.
+    const legacyWorkspaceDir = (
+      spec as EnvSpec & { workspaceDir?: unknown }
+    ).workspaceDir;
+    if (
+      legacyWorkspaceDir !== undefined &&
+      legacyWorkspaceDir !== DEFAULT_WORKSPACE_DIR
+    ) {
+      throw new Error(
+        `Sandbox workspace root is fixed at ${DEFAULT_WORKSPACE_DIR}; ` +
+        `workspaceDir overrides are not supported`,
+      );
+    }
+
     this.sandboxClient = deps.sandboxClient;
     this.persistence = deps.persistence;
     this.provisionSources = deps.provisionSources;
     this.tenantId = spec.tenantId;
     this.workspaceId = spec.workspaceId;
-    this.workspaceDir =
-      spec.workspaceDir ?? deps.defaults?.workspaceDir ?? DEFAULT_WORKSPACE_DIR;
+    this.workspaceDir = DEFAULT_WORKSPACE_DIR;
     this.image = spec.image;
     this.env = spec.env;
     this.projections = spec.projections ?? [];
@@ -603,11 +614,11 @@ class SandboxSessionImpl implements SandboxSession {
    * An **absolute** path (leading `/`) is passed through untouched. Callers that
    * speak absolute paths have already chosen their target, which may be
    * *outside* `workspaceDir` — e.g. a Read-only Projection at `/skills/<id>`.
-   * The Pi adapter's tools (#80) run with `cwd = /workspace` and hand the
-   * executor a Pi-resolved absolute path, so a workspace file arrives as
-   * `/workspace/foo` and a projected Skill as `/skills/<id>/SKILL.md`; re-basing
-   * either under `workspaceDir` would send reads to `/workspace/skills/…` and
-   * make projected Skills unreadable (the invisible-Skill bug).
+   * The Pi adapter's tools (#80) run with `cwd = /home/user` and strip a
+   * workspace file back to an executor-relative path before it arrives here.
+   * A projected Skill remains absolute as `/skills/<id>/SKILL.md`; re-basing it
+   * under `workspaceDir` would send reads to `/home/user/skills/…` and make
+   * projected Skills unreadable (the invisible-Skill bug).
    *
    * A **relative** path is joined under `workspaceDir` — the workspace is simply
    * the default root for relative access (E2B's persisted workdir plays the same

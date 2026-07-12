@@ -53,6 +53,8 @@ export type {
   FileListEntry,
 } from "./tool-executor.js";
 
+export { SANDBOX_WORKSPACE_ROOT } from "./tool-executor.js";
+
 export {
   generateEventId,
   generateTimestamp,

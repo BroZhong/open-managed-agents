@@ -24,6 +24,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import {
   generateEventId,
   generateTimestamp,
+  SANDBOX_WORKSPACE_ROOT,
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
@@ -334,7 +335,10 @@ export class PiAgentAdapter implements Adapter {
       : undefined;
 
     const agentDir = getAgentDir();
-    const cwd = process.cwd();
+    // A sandboxed Pi session must expose the same cwd as its seven custom
+    // tools and the SandboxManager. This cwd also flows into extension ctx and
+    // @tintinweb/pi-subagents' effectiveCwd. Unsandboxed Pi keeps the Host cwd.
+    const cwd = customTools ? SANDBOX_WORKSPACE_ROOT : process.cwd();
     const skillPaths = args.resourceLoaderOptions.additionalSkillPaths;
     const skillDescriptors = args.resourceLoaderOptions.skillDescriptors;
 
@@ -410,12 +414,13 @@ export class PiAgentAdapter implements Adapter {
       // at construction, loading this history into the LLM context before the
       // first `prompt()`. `persist = false`, so nothing is written to disk — the
       // event log stays the sole authoritative store.
-      const sessionManager = SessionManager.inMemory();
+      const sessionManager = SessionManager.inMemory(cwd);
       for (const message of args.historyMessages) {
         sessionManager.appendMessage(message);
       }
 
       const { session } = await createAgentSession({
+        cwd,
         model: args.model as never,
         sessionManager,
         resourceLoader,

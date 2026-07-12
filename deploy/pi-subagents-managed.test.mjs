@@ -25,6 +25,9 @@ test("the tintinweb extension exposes only the managed Sandbox-backed Agent type
   assert.match(agent, /^run_in_background: false$/m);
   assert.match(agent, /^prompt_mode: append$/m);
   assert.match(agent, /^max_turns: 30$/m);
+  assert.match(agent, /Treat `\/home\/user` as the only Workspace root/);
+  assert.match(agent, /Equipped Skills are\s+projected under `\/skills\/`/);
+  assert.doesNotMatch(agent, /Treat `\/workspace` as the only Workspace root/);
 });
 
 test("the server image installs and patches the requested package", () => {

@@ -1,4 +1,5 @@
 import { Sandbox } from "e2b";
+import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -65,7 +66,7 @@ const DEFAULT_TEMPLATE = "code-interpreter";
 // the non-privileged user failed silently (issue #85); `/home/user` sidesteps
 // that entirely. This is the create-time existence guard only; the effective
 // cwd is chosen by SandboxManager (EnvSpec.workspaceDir), which defaults here.
-const DEFAULT_WORKSPACE_DIR = "/home/user";
+const DEFAULT_WORKSPACE_DIR = SANDBOX_WORKSPACE_ROOT;
 
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.brozhong.com"); SDK resolves api.<domain>. */

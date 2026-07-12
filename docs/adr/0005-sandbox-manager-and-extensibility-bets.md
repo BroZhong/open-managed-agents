@@ -32,8 +32,8 @@ The Pi tools themselves use Pi's own `create*ToolDefinition(cwd, {operations})` 
 
 ### 3. Two orthogonal kinds of sandbox content
 
-- **Workspace** — two-way. Hydrated into `/workspace`, writable, synced back to the **Workspace Store** (content-hash push + baseline-diff delete). The **Baseline** is per-sandbox-instance and private to the Store.
-- **Read-only Projection** — one-way, downward only, **never synced**. Equipped Skills, a code repo, a dataset. Projected into a path *outside* `/workspace` (e.g. `/skills`, `/repo`) so the sync scan never mistakes it for a user artifact. Its source is a pluggable **Provision Source** (S3 today; git/tarball later). Content flows S3 → sandbox directly, never routed through the Host — the Host supplies only coordinates.
+- **Workspace** — two-way. Hydrated into `/home/user`, writable, synced back to the **Workspace Store** (content-hash push + baseline-diff delete). The **Baseline** is per-sandbox-instance and private to the Store.
+- **Read-only Projection** — one-way, downward only, **never synced**. Equipped Skills, a code repo, a dataset. Projected into a path *outside* `/home/user` (e.g. `/skills`, `/repo`) so the sync scan never mistakes it for a user artifact. Its source is a pluggable **Provision Source** (S3 today; git/tarball later). Content flows S3 → sandbox directly, never routed through the Host — the Host supplies only coordinates.
 
 ### 4. Skills must be projected into the sandbox
 

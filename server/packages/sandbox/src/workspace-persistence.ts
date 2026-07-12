@@ -137,7 +137,7 @@ export interface SandboxFsEntry {
 export interface HydrateTarget {
   tenantId: string;
   workspaceId: string;
-  /** Absolute sandbox dir the Workspace hydrates into (e.g. `/workspace`). */
+  /** Absolute sandbox dir the Workspace hydrates into (e.g. `/home/user`). */
   workspaceDir: string;
   /** Filled by the caller with the current live sandbox: writeFile/readFile/list. */
   fs: SandboxFsAccess;
@@ -198,7 +198,7 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
   constructor(private readonly artifactStore: ArtifactStore) {}
 
   /**
-   * List the Workspace's S3 artifacts, write each into the sandbox `/workspace`,
+   * List the Workspace's S3 artifacts, write each into the sandbox workspaceDir,
    * capture the workspace-relative paths as the {@link Baseline}, and seed the
    * content-hash (+ size/mtime) comparison state — all inside the returned
    * opaque session.
@@ -252,7 +252,7 @@ export class S3WorkspacePersistence implements WorkspacePersistence {
   }
 
   /**
-   * Sync the sandbox `/workspace` back to S3. Steps (unchanged from the executor
+   * Sync the sandbox workspaceDir back to S3. Steps (unchanged from the executor
    * except the pre-filter):
    *
    *  1. **Full scan** — list every file under `workspaceDir` (recursive), so

@@ -23,16 +23,13 @@ export interface EnvSpec {
   image?: string;                       // 容器镜像 / e2b template;缺省用 Manager 默认
   env?: Record<string, string>;         // 烘进沙箱运行时的环境变量
 
-  /** 双向区：hydrate 进 workspaceDir、每检查点 + 销毁前 sync 回。默认 /workspace。 */
-  workspaceDir?: string;
-
-  /** 只读投影：单向下行、永不 sync，挂 workspaceDir 之外。0 个或多个。 */
+  /** 只读投影：单向下行、永不 sync，挂固定 /home/user 之外。0 个或多个。 */
   projections?: readonly ReadonlyProjection[];
 }
 
 /** 一条只读投影（值）。source 是坐标,I/O 由注入的 ProvisionSource 按 kind 分发。 */
 export interface ReadonlyProjection {
-  /** 沙箱内绝对路径,MUST 在 workspaceDir 之外(如 /skills、/repo)。 */
+  /** 沙箱内绝对路径,MUST 在 /home/user 之外(如 /skills、/repo)。 */
   targetPath: string;
   source: ProvisionCoordinate;
 }
@@ -45,7 +42,7 @@ export interface ProvisionCoordinate {
 }
 ```
 
-**不变量**：任一 `projection.targetPath` 落在 `workspaceDir` 之内 → `open` 直接 fail loud（否则 sync 全量扫描会把投影当用户产物回写，污染 Workspace）。
+**不变量**：Workspace 根固定为 `/home/user`；任一 `projection.targetPath` 落在该目录之内 → `open` 直接 fail loud（否则 sync 全量扫描会把投影当用户产物回写，污染 Workspace）。
 
 ---
 
@@ -146,7 +143,7 @@ export interface SandboxManagerDeps {
   sandboxClient: SandboxClient;                       // True external:E2B + Fake(均已存在)
   persistence: WorkspacePersistence;                  // Remote-but-owned:介质无关,S3 today
   provisionSources: Record<string, ProvisionSource>;  // 按 coordinate.kind 分发,{ s3 } today
-  defaults?: { workspaceDir?: string; lifetimeSeconds?: number };
+  defaults?: { lifetimeSeconds?: number };
 }
 
 /**
@@ -165,7 +162,7 @@ export interface WorkspacePersistence {
 export interface HydrateTarget {
   tenantId: string;
   workspaceId: string;
-  workspaceDir: string;
+  workspaceDir: string;  // Manager 传固定 /home/user；Persistence 仍保持介质无关
   fs: SandboxFsAccess;   // Manager 用当前活沙箱填充:writeFile/readFile/list
 }
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build & push the code-interpreter-vfscli sandbox image.
 #
-# The image FROMs the ACS code-interpreter base and layers on vfs-cli, a
-# user-writable /workspace (#85), a configurable WORKSPACE_DIR, and python on a
+# The image FROMs the ACS code-interpreter base and layers on a user-writable
+# canonical /home/user (#85), vfs-cli, and python on a
 # plain PATH. See ./Dockerfile for the layer-by-layer rationale.
 #
 # Field-tested constraints this script encodes (see .scratch/deploy notes):
@@ -26,7 +26,6 @@
 #   TAG          image tag   (default: code-interpreter-vfscli-<VERSION>)
 #   VERSION      semantic bump used in the default tag (default: 0.3.0)
 #   BASE_IMAGE   ACS base    (default: HK VPC mirror; set cn-shanghai-vpc on vfs-dev)
-#   WORKSPACE_DIR  baked default cwd (default: /workspace)
 #   VFS_CLI_SRC  path to the linux/amd64 vfs-cli binary to stage into bin/
 set -euo pipefail
 
@@ -36,7 +35,6 @@ REGISTRY="${REGISTRY:-crpi-egv1p3qc9sh5spft.cn-hongkong.personal.cr.aliyuncs.com
 VERSION="${VERSION:-0.3.0}"
 TAG="${TAG:-code-interpreter-vfscli-${VERSION}}"
 BASE_IMAGE="${BASE_IMAGE:-registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
-WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 PLATFORM="linux/amd64"
 IMAGE="${REGISTRY}:${TAG}"
 CACHE_DIR="${CACHE_DIR:-.buildx-cache}"
@@ -69,7 +67,6 @@ echo "==> building ${IMAGE} (${PLATFORM}) from ${BASE_IMAGE}"
 docker buildx build \
   --platform "${PLATFORM}" \
   --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-  --build-arg "WORKSPACE_DIR=${WORKSPACE_DIR}" \
   --cache-from "type=local,src=${CACHE_DIR}" \
   --cache-to "type=local,dest=${CACHE_DIR},mode=max" \
   -t "${IMAGE}" \

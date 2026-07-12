@@ -30,7 +30,7 @@ interface FakeSandbox {
  * A custom command handler for the fake, keyed by the first argv element.
  * Receives the argv and the sandbox's in-memory file map and returns the
  * chunks to stream back. Lets tests simulate a tool reading a hydrated file
- * (e.g. `cat /workspace/foo.txt`) without any real process.
+ * (e.g. `cat /home/user/foo.txt`) without any real process.
  */
 export type FakeExecHandler = (
   command: string[],

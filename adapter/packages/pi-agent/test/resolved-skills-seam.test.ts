@@ -9,6 +9,10 @@ import type {
 const sdkSeam = vi.hoisted(() => ({
   loadSkillsCalls: 0,
   resourceLoaderOptions: [] as Array<Record<string, unknown>>,
+  sessionOptions: [] as Array<{
+    cwd?: string;
+    sessionManager?: { getCwd(): string };
+  }>,
   mcpConfigPath: undefined as string | undefined,
   mcpConfig: undefined as unknown,
   lifecycle: [] as string[],
@@ -39,7 +43,12 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
       sdkSeam.loadSkillsCalls += 1;
       throw new Error("Host loadSkills must not read sandbox paths");
     },
-    createAgentSession: async (options: { resourceLoader?: FakeResourceLoader }) => {
+    createAgentSession: async (options: {
+      cwd?: string;
+      resourceLoader?: FakeResourceLoader;
+      sessionManager?: { getCwd(): string };
+    }) => {
+      sdkSeam.sessionOptions.push(options);
       const configPath = options.resourceLoader
         ?.getExtensions()
         .runtime.flagValues.get("mcp-config");
@@ -129,6 +138,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   beforeEach(() => {
     sdkSeam.loadSkillsCalls = 0;
     sdkSeam.resourceLoaderOptions.length = 0;
+    sdkSeam.sessionOptions.length = 0;
     sdkSeam.mcpConfigPath = undefined;
     sdkSeam.mcpConfig = undefined;
     sdkSeam.lifecycle.length = 0;
@@ -151,6 +161,9 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(String((options.appendSystemPrompt as string[])[1])).toContain(
       "/skills/skill_abc/SKILL.md",
     );
+    expect(options.cwd).toBe("/home/user");
+    expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user");
+    expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user");
   });
 
   it("preserves native skillPaths when no ToolExecutor is injected", async () => {
@@ -159,9 +172,12 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.loadSkillsCalls).toBe(0);
     expect(sdkSeam.resourceLoaderOptions[0]).toMatchObject({
+      cwd: process.cwd(),
       additionalSkillPaths: ["/skills/skill_abc"],
       noContextFiles: true,
     });
+    expect(sdkSeam.sessionOptions[0].cwd).toBe(process.cwd());
+    expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe(process.cwd());
   });
 
   it("projects each Agent's MCP servers through an isolated Pi config and removes it after the Turn", async () => {

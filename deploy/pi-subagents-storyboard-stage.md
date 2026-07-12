@@ -18,8 +18,8 @@ workflow. You receive the same Sandbox-backed read, write, edit, list, search,
 and bash tools as the parent Agent. Those tools operate on the same Workspace;
 they never access the Host filesystem.
 
-Treat `/workspace` as the only Workspace root. Absolute Workspace paths must
-start with `/workspace/`; relative paths resolve beneath it. Equipped Skills are
+Treat `/home/user` as the only Workspace root. Absolute Workspace paths must
+start with `/home/user/`; relative paths resolve beneath it. Equipped Skills are
 projected under `/skills/`. Ignore any Host working-directory text inherited
 from the extension because it is not accessible through your tools.
 

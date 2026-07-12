@@ -8,8 +8,8 @@ the stock ACS `code-interpreter` base while keeping the E2B protocol intact.
 
 | Gap in the stock base | Fix in this image |
 | --- | --- |
-| Old default `/workspace` sits under root-owned `/`; e2b `exec` runs as the non-privileged `user`, so `mkdir /workspace` failed silently and bash `>` / program writes to it failed (**#85**) | Default `WORKSPACE_DIR=/home/user` — E2B's recommended user home, owned by `user` by construction — plus a `chown` + `0775` for overridden paths |
-| Workspace path is fixed | `WORKSPACE_DIR` build ARG/ENV (default `/home/user`); the chown tracks it, and it stays in sync with SandboxManager's `EnvSpec.workspaceDir` (same default) |
+| Old default `/workspace` sits under root-owned `/`; e2b `exec` runs as the non-privileged `user`, so `mkdir /workspace` failed silently and bash `>` / program writes to it failed (**#85**) | Canonical `WORKSPACE_DIR=/home/user` — E2B's recommended user home, owned by `user` by construction |
+| Parent/child tools and persistence could drift onto different roots | One fixed `/home/user` contract shared by Pi, subagents, SandboxManager, and the image |
 | `vfs-cli` absent | Go static binary (linux/amd64) COPYd onto `/usr/local/bin` |
 | `python`/`pip` live in `/opt/venv/bin`, absent from e2b exec's non-login PATH (`python: command not found`) | symlinked into `/usr/local/bin` |
 

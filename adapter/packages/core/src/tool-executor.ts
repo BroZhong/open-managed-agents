@@ -22,6 +22,16 @@ export interface ExecOutputChunk {
   text: string;
 }
 
+/**
+ * Canonical model-visible root of a sandboxed Agent's writable Workspace.
+ *
+ * Pi's custom tools, Pi session context, and the concrete SandboxManager must
+ * agree on this exact path. Keeping it beside the ToolExecutor contract avoids
+ * a split-brain cwd where path tools are virtualized under one root while bash
+ * and extensions (including subagents) inherit another.
+ */
+export const SANDBOX_WORKSPACE_ROOT = "/home/user";
+
 /** Options for a single `exec` invocation. */
 export interface ExecOptions {
   /** Working directory for the command, relative to the executor root. */

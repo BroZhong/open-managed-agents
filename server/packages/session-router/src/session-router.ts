@@ -595,7 +595,7 @@ export class SessionRouter {
    * Compute the complete recipe the SandboxManager needs for this Session
    * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
    * Agent's image/env, and each validated equipped Skill as a Read-only
-   * Projection at `/skills/<id>` (outside `/workspace`, so the workspace sync
+   * Projection at `/skills/<id>` (outside `/home/user`, so the workspace sync
    * never writes it back — the invariant the manager fail-loud asserts).
    *
    * `equippedSkills` is precomputed by the caller (it needs async store

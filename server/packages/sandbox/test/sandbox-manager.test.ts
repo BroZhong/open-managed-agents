@@ -42,10 +42,7 @@ function makeManager(opts?: {
 }
 
 function specFor(overrides: Partial<EnvSpec> = {}): EnvSpec {
-  // Pin workspaceDir explicitly so these assertions (which hard-code
-  // `/workspace/…` paths) are independent of the production default, which is
-  // `/home/user` (issue #85). Override per-test as needed.
-  return { tenantId: TENANT, workspaceId: WS, workspaceDir: "/workspace", ...overrides };
+  return { tenantId: TENANT, workspaceId: WS, ...overrides };
 }
 
 async function drainExec(
@@ -107,19 +104,19 @@ describe("SandboxManager / SandboxSession", () => {
     await session.list();
 
     const id = sandboxClient.created[0];
-    // Workspace hydrated under /workspace ...
-    expect(await sandboxClient.readFile(id, "/workspace/notes/todo.md")).toBe("buy milk");
+    // Workspace hydrated under the canonical /home/user ...
+    expect(await sandboxClient.readFile(id, "/home/user/notes/todo.md")).toBe("buy milk");
     // ... and the skill projected OUTSIDE the workspace at /skills.
     expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe("# skill body");
     expect(provision.projected).toHaveLength(1);
   });
 
   it("reads a projected Skill through the session primitives (absolute path is NOT re-based under workspace)", async () => {
-    // Regression: the Pi adapter's tools run with cwd=/workspace and hand the
-    // executor a Pi-resolved ABSOLUTE path — a workspace file as `/workspace/x`
+    // Regression: the Pi adapter's tools run with cwd=/home/user and hand the
+    // executor a Pi-resolved ABSOLUTE path — a workspace file as `/home/user/x`
     // and a projected Skill as `/skills/<id>/SKILL.md`. If readFile/list re-base
     // every path under workspaceDir, a projected Skill read becomes
-    // `/workspace/skills/…` and is unreadable (the invisible-Skill bug found in
+    // `/home/user/skills/…` and is unreadable (the invisible-Skill bug found in
     // the HK E2E). Absolute paths must pass through untouched.
     const { manager, provision } = makeManager({
       seed: [["main.py", "print('hi')"]],
@@ -139,7 +136,7 @@ describe("SandboxManager / SandboxSession", () => {
 
     // A workspace file still resolves under workspaceDir via BOTH forms.
     expect(await session.readFile("main.py")).toBe("print('hi')");
-    expect(await session.readFile("/workspace/main.py")).toBe("print('hi')");
+    expect(await session.readFile("/home/user/main.py")).toBe("print('hi')");
   });
 
   // ─── invariant §2: two opens → two independent sessions ───────────────────
@@ -188,7 +185,7 @@ describe("SandboxManager / SandboxSession", () => {
     const second = sandboxClient.created[1];
     expect(second).not.toBe(first);
     // Re-hydrated: workspace file present in the fresh sandbox.
-    expect(await sandboxClient.readFile(second, "/workspace/main.py")).toBe(
+    expect(await sandboxClient.readFile(second, "/home/user/main.py")).toBe(
       "print('hi')",
     );
     // Re-projected: /skills present in the fresh sandbox, and project ran twice.
@@ -212,7 +209,7 @@ describe("SandboxManager / SandboxSession", () => {
     expect(created.metadata?.["oma.dev/workspace"]).toBe(WS);
   });
 
-  it("honors EnvSpec image/env and a workspaceDir default override", async () => {
+  it("honors EnvSpec image/env and the lifetime default", async () => {
     const sandboxClient = new FakeSandboxClient();
     const manager = new DefaultSandboxManager({
       sandboxClient,
@@ -330,10 +327,10 @@ describe("SandboxManager / SandboxSession", () => {
 
     expect(sandboxClient.created).toEqual([id]);
     expect(sandboxClient.destroyed).toEqual([]);
-    expect(await sandboxClient.readFile(id, "/workspace/edit.txt")).toBe("from web");
-    expect(await sandboxClient.readFile(id, "/workspace/added.txt")).toBe("new from web");
+    expect(await sandboxClient.readFile(id, "/home/user/edit.txt")).toBe("from web");
+    expect(await sandboxClient.readFile(id, "/home/user/added.txt")).toBe("new from web");
     await expect(
-      sandboxClient.readFile(id, "/workspace/deleted.txt"),
+      sandboxClient.readFile(id, "/home/user/deleted.txt"),
     ).rejects.toThrow();
     expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe(
       "new skill",
@@ -392,7 +389,7 @@ describe("SandboxManager / SandboxSession", () => {
     const png = Uint8Array.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
     ]);
-    await sandboxClient.writeFileBytes(id, "/workspace/result.png", png);
+    await sandboxClient.writeFileBytes(id, "/home/user/result.png", png);
 
     await expect(session.checkpoint()).rejects.toThrow("temporary medium failure");
     expect(backing.bytesOf(TENANT, WS, "result.png")).toBeUndefined();
@@ -400,7 +397,7 @@ describe("SandboxManager / SandboxSession", () => {
     await session.refresh();
 
     expect(backing.bytesOf(TENANT, WS, "result.png")).toEqual(png);
-    expect(await sandboxClient.readFileBytes(id, "/workspace/result.png")).toEqual(png);
+    expect(await sandboxClient.readFileBytes(id, "/home/user/result.png")).toEqual(png);
   });
 
   // ─── invariant §5/§8: dispose sync-before-destroy, idempotent, closes ─────
@@ -483,15 +480,24 @@ describe("SandboxManager / SandboxSession", () => {
 
   // ─── invariant §6: projection inside workspace fails loud at open ─────────
 
+  it("rejects a legacy workspaceDir override outside canonical /home/user", () => {
+    const { manager } = makeManager();
+    const legacySpec = {
+      ...specFor(),
+      workspaceDir: "/workspace",
+    } as EnvSpec;
+
+    expect(() => manager.open(legacySpec)).toThrow(/workspace root is fixed.*\/home\/user/i);
+  });
+
   it("open FAILS LOUD when a projection.targetPath is inside workspaceDir", () => {
     const { manager } = makeManager();
     expect(() =>
       manager.open(
         specFor({
-          workspaceDir: "/workspace",
           projections: [
             {
-              targetPath: "/workspace/skills",
+              targetPath: "/home/user/skills",
               source: { kind: "s3", ref: {} },
             },
           ],
@@ -506,7 +512,7 @@ describe("SandboxManager / SandboxSession", () => {
       manager.open(
         specFor({
           projections: [
-            { targetPath: "/workspace/x", source: { kind: "s3", ref: {} } },
+            { targetPath: "/home/user/x", source: { kind: "s3", ref: {} } },
           ],
         }),
       ),

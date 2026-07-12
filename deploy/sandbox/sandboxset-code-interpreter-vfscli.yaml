@@ -1,6 +1,6 @@
 # Warm pool for the `code-interpreter-vfscli` E2B template on the brozhong ACS
 # HK cluster. This is the custom image (see code-interpreter-vfscli/Dockerfile):
-# the stock ACS code-interpreter base + vfs-cli + a user-writable /workspace
+# the stock ACS code-interpreter base + vfs-cli + a user-writable /home/user
 # (#85) + python on a plain PATH.
 #
 # The SandboxSet name IS the E2B templateID. Agents opt in with

@@ -28,7 +28,7 @@ Pi runs in the Host. Its tool calls are intercepted via Pi's Extension/`host_too
 
 - A **Workspace** is the S3-backed authoritative home of a Session's artifacts. There is one kind; a user-supplied ID is used as-is, an unspecified one is auto-created. A Session binds one Workspace immutably at creation; a Workspace may be bound by many Sessions concurrently (collisions are the user's responsibility). Workspaces belong to a tenant.
 - **Sandboxes** (Alibaba Cloud ACK Agent Sandbox via the e2b SDK) are short-lived and stateless: created lazily on first filesystem/code tool use, hydrated from S3, synced back, destroyed. No pause/resume — that model is 1:1 per-instance and conflicts with 1:N Workspace sharing and S3-authoritative storage.
-- **Sync** (owned by the `ToolExecutor` implementation, invisible to the Adapter): full `/workspace` scan (catches shell-created files), content-hash to push changes, and a hydrate-baseline diff to propagate deletions — deleting from S3 only files present in this sandbox's hydrate baseline but now absent, so concurrent sessions never delete each other's new files. The baseline lives in Host memory for the sandbox's lifetime.
+- **Sync** (owned by the `ToolExecutor` implementation, invisible to the Adapter): full `/home/user` scan (the canonical Workspace root; catches shell-created files), content-hash to push changes, and a hydrate-baseline diff to propagate deletions — deleting from S3 only files present in this sandbox's hydrate baseline but now absent, so concurrent sessions never delete each other's new files. The baseline lives in Host memory for the sandbox's lifetime.
 
 ### 5. Artifacts surface through the Host
 
