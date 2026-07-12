@@ -1,4 +1,5 @@
 import type { OutputBlockRef, SessionDelta, SessionEvent } from "@/lib/types";
+import { outputBlockKey } from "@/lib/output-block";
 
 export interface SessionEventStreamState {
   events: SessionEvent[];
@@ -33,10 +34,6 @@ const LIVE_PROJECTION_END_TYPES: ReadonlySet<string> = new Set([
   "session.status_idle",
 ]);
 
-function blockKey(block: OutputBlockRef): string {
-  return `${block.turnId}:${block.blockIndex}`;
-}
-
 function deltaKey(delta: SessionDelta): string | undefined {
   return delta.deltaId === undefined ? undefined : `${delta.turnId}:${delta.deltaId}`;
 }
@@ -54,7 +51,7 @@ function completedBlocksOf(events: SessionEvent[]): ReadonlySet<string> {
   const completed = new Set<string>();
   for (const event of events) {
     const block = completeEventBlock(event);
-    if (block !== undefined) completed.add(blockKey(block));
+    if (block !== undefined) completed.add(outputBlockKey(block));
   }
   return completed;
 }
@@ -149,7 +146,7 @@ export function sessionEventStreamReducer(
       };
 
     case "delta.received": {
-      const key = blockKey(action.delta);
+      const key = outputBlockKey(action.delta);
       if (state.completedBlocks.has(key)) return state;
       const identity = deltaKey(action.delta);
       const sameTurn =
@@ -185,7 +182,7 @@ export function sessionEventStreamReducer(
 
     case "event.received": {
       const block = completeEventBlock(action.event);
-      const key = block === undefined ? undefined : blockKey(block);
+      const key = block === undefined ? undefined : outputBlockKey(block);
       const completedBlocks = new Set(state.completedBlocks);
       if (key !== undefined) completedBlocks.add(key);
       const liveProjectionEnded = LIVE_PROJECTION_END_TYPES.has(action.event.type);
@@ -200,7 +197,7 @@ export function sessionEventStreamReducer(
           : key === undefined
             ? state.activeDeltas
             : state.activeDeltas.filter(
-                (delta) => blockKey(delta) !== key,
+                (delta) => outputBlockKey(delta) !== key,
               ),
         completedBlocks,
       };

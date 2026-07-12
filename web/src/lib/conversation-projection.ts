@@ -1,4 +1,5 @@
 import type { SessionDelta, SessionEvent } from "@/lib/types";
+import { outputBlockKey } from "@/lib/output-block";
 
 interface ToolResultData {
   content: unknown;
@@ -212,7 +213,7 @@ export function processEventsToMessages(
   }
 
   for (const block of groupActiveDeltas(activeDeltas)) {
-    const blockId = `${block.turnId}:${block.blockIndex}`;
+    const blockId = outputBlockKey(block);
     let kind: "message" | "thinking" | "tool" | undefined;
     let text = "";
     let toolUseId = "";
@@ -291,7 +292,7 @@ function stableBlockId(
   seq: number | undefined,
 ): string {
   return typeof data.turnId === "string" && typeof data.blockIndex === "number"
-    ? `${prefix}-${data.turnId}:${data.blockIndex}`
+    ? `${prefix}-${outputBlockKey({ turnId: data.turnId, blockIndex: data.blockIndex })}`
     : `${prefix}-${seq}`;
 }
 
@@ -305,7 +306,7 @@ interface ActiveDeltaBlock {
 function groupActiveDeltas(activeDeltas: SessionDelta[]): ActiveDeltaBlock[] {
   const groups = new Map<string, ActiveDeltaBlock>();
   for (const delta of activeDeltas) {
-    const key = `${delta.turnId}:${delta.blockIndex}`;
+    const key = outputBlockKey(delta);
     const existing = groups.get(key);
     if (existing) {
       existing.deltas.push(delta);

@@ -357,6 +357,12 @@ export class PiAgentAdapter implements Adapter {
         "sandbox skillPaths cannot be loaded from the Host",
       );
     }
+    if (!customTools && skillDescriptors.length > 0) {
+      throw new Error(
+        "Managed Skill descriptors require a ToolExecutor; " +
+        "sandbox Skill paths cannot be loaded by Host-native tools",
+      );
+    }
     const injectSkillsIntoPrompt = Boolean(customTools) && skillDescriptors.length > 0;
     if (injectSkillsIntoPrompt) {
       const skillsSection = buildSkillsPromptSection(skillDescriptors);

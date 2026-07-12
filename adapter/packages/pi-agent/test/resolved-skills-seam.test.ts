@@ -168,7 +168,9 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   });
 
   it("preserves native skillPaths when no ToolExecutor is injected", async () => {
-    const events = await collect(new PiAgentAdapter().run(input(false)));
+    const nativeInput = input(false);
+    nativeInput.agent.skillDescriptors = [];
+    const events = await collect(new PiAgentAdapter().run(nativeInput));
 
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.loadSkillsCalls).toBe(0);
@@ -179,6 +181,20 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     });
     expect(sdkSeam.sessionOptions[0].cwd).toBe(process.cwd());
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe(process.cwd());
+  });
+
+  it("fails loud instead of asking Host-native tools to open sandbox Skill paths", async () => {
+    const events = await collect(new PiAgentAdapter().run(input(false)));
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.error",
+        error: expect.objectContaining({
+          message: expect.stringMatching(/managed Skill descriptors require a ToolExecutor/i),
+        }),
+      }),
+    );
+    expect(sdkSeam.sessionOptions).toHaveLength(0);
   });
 
   it("projects each Agent's MCP servers through an isolated Pi config and removes it after the Turn", async () => {

@@ -118,8 +118,11 @@ through unchanged, matching Pi's native behavior.
 
 The Host may use Skill metadata to build this instruction but must not open or
 inline the Skill body. The real `read` call and result therefore remain visible
-as Complete Events and are reconstructed in later structured history. Turns
-without a `ToolExecutor` retain Pi's native Skill loading and command expansion.
+as Complete Events and are reconstructed in later structured history. A managed
+Agent with projected Skill descriptors and no `ToolExecutor` fails loud rather
+than asking Host-native tools to open a Sandbox-only path. Independent SDK
+consumers may retain Pi-native expansion only when they supply real
+Host-readable Skill paths without managed descriptors.
 
 ## Consequences
 
