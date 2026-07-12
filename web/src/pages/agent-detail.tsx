@@ -9,6 +9,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
 import { CreateSessionDialog } from "@/components/create-session-dialog";
 import { AgentFilesEditor } from "@/components/agent-files-editor";
+import { AgentMcpEditor } from "@/components/agent-mcp-editor";
 import { EquipPicker } from "@/components/equip-picker";
 import { StatusBadge } from "@/components/status-badge";
 import { useAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
@@ -177,6 +178,10 @@ export default function AgentDetailPage() {
           {/* Equip Skills from the tenant Library (Slice 4) */}
           <section>
             <EquipPicker agent={agent} />
+          </section>
+
+          <section>
+            <AgentMcpEditor key={agent.id} agent={agent} />
           </section>
 
           {/* Sessions nested under this Agent (Slice 5) */}

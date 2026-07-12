@@ -35,6 +35,37 @@ COPY server/packages/store-memory/package.json ./server/packages/store-memory/
 RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
  && cd /app/server && pnpm install --no-frozen-lockfile
 
+# Pi extensions used by every managed Pi runtime. Install them with Pi's own
+# package manager (rather than merely adding npm dependencies) so the generated
+# settings.json + package tree are exactly what DefaultResourceLoader and child
+# `pi` processes discover at runtime. The live /root/.pi/agent is a writable
+# emptyDir; deploy/k8s.yaml copies this immutable seed into it before the server
+# starts, then overlays the refreshable auth.json Secret.
+ARG PI_WEB_ACCESS_VERSION=0.13.0
+ARG PI_MCP_ADAPTER_VERSION=2.11.0
+ARG PI_SUBAGENTS_VERSION=0.34.0
+RUN PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
+      npm:pi-web-access@${PI_WEB_ACCESS_VERSION} \
+ && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
+      npm:pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION} \
+ && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
+      npm:pi-subagents@${PI_SUBAGENTS_VERSION} \
+ && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+      /app/adapter/packages/pi-agent/node_modules/.bin/pi list
+
+# pi-subagents normally gives child Pi processes native Host read/bash/write
+# tools. Managed children are text-only reasoning workers: the wrapper strips
+# tool/Skill/project-context escape hatches and only permits pi-subagents' own
+# child-boundary extension paths. The main Agent remains the sole owner of the
+# sandbox-backed tools (including vfs-cli).
+COPY deploy/pi-subagent-safe.mjs /usr/local/lib/oma/pi-subagent-safe.mjs
+RUN chmod 0755 /usr/local/lib/oma/pi-subagent-safe.mjs
+ENV PI_SUBAGENT_REAL_PI_BINARY=/app/adapter/packages/pi-agent/node_modules/.bin/pi
+ENV PI_SUBAGENT_PI_BINARY=/usr/local/lib/oma/pi-subagent-safe.mjs
+
 # ─── Source layer (changes on every code edit; deps above stay cached) ──────
 COPY adapter/ ./adapter/
 COPY server/ ./server/

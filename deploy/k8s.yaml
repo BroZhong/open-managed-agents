@@ -9,7 +9,8 @@
 #     --from-literal=REDIS_PASSWORD=... \
 #     --from-literal=SUPABASE_SERVICE_KEY=... \
 #     --from-literal=E2B_DOMAIN=... \
-#     --from-literal=E2B_API_KEY=...
+#     --from-literal=E2B_API_KEY=... \
+#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=...
 #
 # The sandbox is mandatory (issue #54): SANDBOX_ENABLED=true below + the E2B_*
 # secrets are what make Agent runs execute inside a sandbox. A sandboxed Agent
@@ -23,7 +24,7 @@ metadata:
   namespace: oma-infra
 data:
   PORT: "3000"
-  AUTH_DISABLED: "true"
+  AUTH_DISABLED: "false"
   # PostgreSQL (internal RDS; oma schema; sslmode=disable)
   PG_HOST: "pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com"
   PG_PORT: "5432"
@@ -50,7 +51,7 @@ data:
   SANDBOX_ENABLED: "true"
   # E2B templateID = the SandboxSet name in the sandbox-system namespace
   # (see deploy/sandbox/README.md). The code-interpreter warm pool.
-  SANDBOX_TEMPLATE: "code-interpreter"
+  SANDBOX_TEMPLATE: "code-interpreter-vfscli"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -78,7 +79,7 @@ spec:
       initContainers:
         - name: seed-pi-auth
           image: OMA_SERVER_IMAGE  # replaced at deploy time
-          command: ["sh", "-c", "mkdir -p /root/.pi/agent && cp /seed/auth.json /root/.pi/agent/auth.json && chmod 600 /root/.pi/agent/auth.json"]
+          command: ["sh", "-c", "mkdir -p /root/.pi/agent && cp -a /opt/pi-agent-seed/. /root/.pi/agent/ && cp /seed/auth.json /root/.pi/agent/auth.json && chmod 600 /root/.pi/agent/auth.json"]
           volumeMounts:
             - { name: pi-auth-seed, mountPath: /seed, readOnly: true }
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
@@ -101,6 +102,14 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
             - name: E2B_API_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_API_KEY } }
+            # The same VFS access token is exposed under two purpose-specific
+            # names: vfs-cli receives VFS_TOKEN inside each sandbox through the
+            # Host's DEFAULT_SANDBOX_VFS_TOKEN mapping; pi-mcp-adapter resolves
+            # ${RDS_MCP_APIKEY} in the Host-only RDS MCP config.
+            - name: DEFAULT_SANDBOX_VFS_TOKEN
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
+            - name: RDS_MCP_APIKEY
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
           volumeMounts:
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:

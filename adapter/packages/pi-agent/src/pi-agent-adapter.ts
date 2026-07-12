@@ -5,6 +5,9 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   AgentSessionEvent,
   PromptOptions,
@@ -43,7 +46,7 @@ export interface PiSessionLike {
    * a pure reuse of Pi's own cancel — no timeout/watchdog is introduced.
    */
   abort(): Promise<void> | void;
-  dispose(): void;
+  dispose(): Promise<void> | void;
 }
 
 /**
@@ -152,6 +155,45 @@ export interface PiAgentAdapterOptions {
    * must return an object implementing {@link PiSessionLike}.
    */
   _sessionFactory?: (args: SessionFactoryArgs) => Promise<PiSessionLike>;
+}
+
+interface MaterializedMcpConfig {
+  path: string;
+  cleanup(): void;
+}
+
+/**
+ * Render the Agent-owned MCP list into the standard config shape consumed by
+ * `pi-mcp-adapter`. The file is deliberately per Turn: two Agents may use the
+ * same server name with different endpoints, so a shared `~/.pi/agent/mcp.json`
+ * would create cross-Agent configuration bleed. Values such as
+ * `${RDS_MCP_APIKEY}` remain placeholders and are resolved by the extension
+ * from the Host environment when it connects.
+ */
+function materializeMcpConfig(
+  servers: AdapterInput["agent"]["mcpServers"],
+): MaterializedMcpConfig | undefined {
+  if (!servers || servers.length === 0) return undefined;
+
+  const dir = mkdtempSync(join(tmpdir(), "oma-pi-mcp-"));
+  const path = join(dir, "mcp.json");
+  const mcpServers = Object.fromEntries(
+    servers.map(({ name, ...definition }) => [name, definition]),
+  );
+  writeFileSync(path, `${JSON.stringify({ mcpServers }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+
+  let cleaned = false;
+  return {
+    path,
+    cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
 }
 
 export class PiAgentAdapter implements Adapter {
@@ -270,7 +312,7 @@ export class PiAgentAdapter implements Adapter {
       } as SessionEvent;
     } finally {
       try {
-        session?.dispose();
+        await session?.dispose();
       } catch {
         // dispose() must never mask the real outcome of the run.
       }
@@ -320,39 +362,97 @@ export class PiAgentAdapter implements Adapter {
     // DefaultResourceLoader (ADR-0002: the Host owns *what* to inject; the
     // Adapter only points the runtime at it). `noContextFiles` keeps Pi from
     // auto-discovering cwd files — instructions come solely from the Host.
-    const resourceLoader = new DefaultResourceLoader({
-      cwd,
-      agentDir,
-      appendSystemPrompt,
-      // When we inject the skills section ourselves (custom-tool path), skip
-      // Pi's own skill loading so the section is not duplicated / re-gated.
-      ...(injectSkillsIntoPrompt
-        ? { noSkills: true }
-        : { additionalSkillPaths: skillPaths }),
-      noContextFiles: args.resourceLoaderOptions.noContextFiles,
-    });
-    await resourceLoader.reload();
+    const mcpConfig = materializeMcpConfig(args.input.agent.mcpServers);
+    let createdSession: { dispose(): Promise<void> | void } | undefined;
+    try {
+      const resourceLoader = new DefaultResourceLoader({
+        cwd,
+        agentDir,
+        appendSystemPrompt,
+        // When we inject the skills section ourselves (custom-tool path), skip
+        // Pi's own skill loading so the section is not duplicated / re-gated.
+        ...(injectSkillsIntoPrompt
+          ? { noSkills: true }
+          : { additionalSkillPaths: skillPaths }),
+        noContextFiles: args.resourceLoaderOptions.noContextFiles,
+      });
+      await resourceLoader.reload();
 
-    // Seed the rebuilt structured history into an in-memory SessionManager
-    // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
-    // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
-    // at construction, loading this history into the LLM context before the
-    // first `prompt()`. `persist = false`, so nothing is written to disk — the
-    // event log stays the sole authoritative store.
-    const sessionManager = SessionManager.inMemory();
-    for (const message of args.historyMessages) {
-      sessionManager.appendMessage(message);
+      // `pi-mcp-adapter` registers this public extension flag and reads it at
+      // session_start. Set the per-Turn value on this loader's isolated runtime
+      // instead of mutating process.argv/process.env (both are shared across
+      // concurrent Agents).
+      if (mcpConfig) {
+        resourceLoader
+          .getExtensions()
+          .runtime.flagValues.set("mcp-config", mcpConfig.path);
+      }
+
+      // Seed the rebuilt structured history into an in-memory SessionManager
+      // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
+      // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
+      // at construction, loading this history into the LLM context before the
+      // first `prompt()`. `persist = false`, so nothing is written to disk — the
+      // event log stays the sole authoritative store.
+      const sessionManager = SessionManager.inMemory();
+      for (const message of args.historyMessages) {
+        sessionManager.appendMessage(message);
+      }
+
+      const { session } = await createAgentSession({
+        model: args.model as never,
+        sessionManager,
+        resourceLoader,
+        ...(customTools
+          ? { customTools, noTools: "builtin" as const }
+          : {}),
+      });
+      createdSession = session;
+
+      // SDK consumers own extension lifecycle binding. CLI modes do this for
+      // themselves, but a bare createAgentSession() does not emit
+      // `session_start`; extensions such as pi-mcp-adapter therefore register a
+      // tool but remain uninitialized until the Host explicitly binds them.
+      await session.bindExtensions({ mode: "print" });
+
+      const active = session as PiSessionLike;
+      let disposed = false;
+      return {
+        subscribe: active.subscribe.bind(active),
+        prompt: active.prompt.bind(active),
+        abort: active.abort.bind(active),
+        async dispose() {
+          if (disposed) return;
+          disposed = true;
+          try {
+            // AgentSession.dispose() invalidates extension contexts but does
+            // not emit session_shutdown. Give extensions their documented
+            // cleanup event first so MCP connections, subagent watchers, and
+            // web-access state cannot leak beyond the managed Turn.
+            await session.extensionRunner.emit({
+              type: "session_shutdown",
+              reason: "quit",
+            });
+          } finally {
+            try {
+              await active.dispose();
+            } finally {
+              mcpConfig?.cleanup();
+            }
+          }
+        },
+      };
+    } catch (error) {
+      try {
+        await createdSession?.dispose();
+      } catch {
+        // Startup failure is the primary error; best-effort disposal must not
+        // replace it with a secondary cleanup failure.
+      } finally {
+        mcpConfig?.cleanup();
+      }
+      throw error;
     }
-
-    const { session } = await createAgentSession({
-      model: args.model as never,
-      sessionManager,
-      resourceLoader,
-      ...(customTools
-        ? { customTools, noTools: "builtin" as const }
-        : {}),
-    });
-    return session as PiSessionLike;
   }
 }
 

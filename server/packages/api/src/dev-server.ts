@@ -348,7 +348,7 @@ async function main() {
   }
 
   // Create a dev seed key for local testing (persisted in PG).
-  const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
+  await stores.apiKeyStore.create("dev", "dev-console");
 
   // Sandbox lifecycle owner (ADR-0005 §1/§2, design doc §5): a
   // DefaultSandboxManager wired with the three seams — an e2b-SDK
@@ -440,7 +440,7 @@ async function main() {
     console.log(`\nServer listening on http://localhost:${info.port}`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
     console.log(`Adapters: claude-code, codex, pi-agent`);
-    console.log(`\nDev API key: ${seedResult.rawKey}`);
+    console.log(`\nDev API key seeded (value hidden)`);
     console.log(`\nTry: curl http://localhost:${info.port}/health`);
   });
 

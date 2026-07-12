@@ -43,7 +43,7 @@ export default function OverviewPage() {
 
   return (
     <div>
-      <PageHeader title="Overview" />
+      <PageHeader title="Dashboard" />
 
       <div className="space-y-8 p-6">
         {/* Summary cards */}

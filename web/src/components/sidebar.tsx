@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Bot,
   BookOpen,
+  Plug,
   Key,
   PanelLeftClose,
   PanelLeftOpen,
@@ -50,11 +51,25 @@ export function useSidebarState() {
 
 // Agents are the primary subject of the console (Agent-centric entry). Sessions
 // are no longer a global nav item — they are only reached through an Agent.
-const navItems = [
-  { label: "Overview", icon: LayoutDashboard, path: "/" },
-  { label: "Agents", icon: Bot, path: "/agents" },
-  { label: "Skills", icon: BookOpen, path: "/skills" },
-  { label: "API Keys", icon: Key, path: "/api-keys" },
+const navGroups = [
+  {
+    label: "Agent Platform",
+    items: [
+      { label: "Dashboard", icon: LayoutDashboard, path: "/" },
+      { label: "Agent", icon: Bot, path: "/agents" },
+    ],
+  },
+  {
+    label: "Resources",
+    items: [
+      { label: "Skill", icon: BookOpen, path: "/skills" },
+      { label: "MCP", icon: Plug, path: "/mcp" },
+    ],
+  },
+  {
+    label: "Configuration",
+    items: [{ label: "API-Key", icon: Key, path: "/api-keys" }],
+  },
 ]
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
@@ -125,38 +140,48 @@ export function Sidebar() {
         {activeAgentId ? (
           <AgentContextNav agentId={activeAgentId} collapsed={collapsed} />
         ) : (
-          navItems.map((item) => {
-            const isActive =
-              location.pathname === item.path ||
-              location.pathname.startsWith(item.path + "/")
-            const Icon = item.icon
-
-            const linkContent = (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
-                    : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
+          <div className={cn("space-y-4", collapsed && "space-y-1")}>
+            {navGroups.map((group) => (
+              <div key={group.label} className="space-y-0.5">
+                {!collapsed && (
+                  <p className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">
+                    {group.label}
+                  </p>
                 )}
-              >
-                <Icon className="h-[18px] w-[18px] shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
-            )
+                {group.items.map((item) => {
+                  const isActive =
+                    location.pathname === item.path ||
+                    location.pathname.startsWith(item.path + "/")
+                  const Icon = item.icon
 
-            if (collapsed) {
-              return (
-                <Tooltip key={item.path} content={item.label}>
-                  {linkContent}
-                </Tooltip>
-              )
-            }
+                  const linkContent = (
+                    <Link
+                      to={item.path}
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
+                        isActive
+                          ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+                          : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)]"
+                      )}
+                    >
+                      <Icon className="h-[18px] w-[18px] shrink-0" />
+                      {!collapsed && <span>{item.label}</span>}
+                    </Link>
+                  )
 
-            return linkContent
-          })
+                  if (collapsed) {
+                    return (
+                      <Tooltip key={item.path} content={item.label}>
+                        {linkContent}
+                      </Tooltip>
+                    )
+                  }
+
+                  return <div key={item.path}>{linkContent}</div>
+                })}
+              </div>
+            ))}
+          </div>
         )}
       </nav>
 

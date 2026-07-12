@@ -84,6 +84,9 @@ export function AgentFormDialog({
       // (`code-interpreter`, the SandboxSet from #52). Sending a container-image
       // string here would be used as a non-existent template → create 400s.
       sandbox: {
+        // Editing must preserve deployment-specific image/env settings (for
+        // example sandbox VFS settings) that this form does not expose.
+        ...agent?.sandbox,
         enabled: true,
       },
     };

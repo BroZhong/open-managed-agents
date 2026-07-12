@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
 import type {
   AdapterInput,
   SessionEvent,
@@ -8,17 +9,27 @@ import type {
 const sdkSeam = vi.hoisted(() => ({
   loadSkillsCalls: 0,
   resourceLoaderOptions: [] as Array<Record<string, unknown>>,
+  mcpConfigPath: undefined as string | undefined,
+  mcpConfig: undefined as unknown,
+  lifecycle: [] as string[],
+  failBindExtensions: false,
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
 
   class FakeResourceLoader {
+    private readonly runtime = { flagValues: new Map<string, boolean | string>() };
+
     constructor(options: Record<string, unknown>) {
       sdkSeam.resourceLoaderOptions.push(options);
     }
 
     async reload(): Promise<void> {}
+
+    getExtensions() {
+      return { extensions: [], errors: [], runtime: this.runtime };
+    }
   }
 
   return {
@@ -28,10 +39,30 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
       sdkSeam.loadSkillsCalls += 1;
       throw new Error("Host loadSkills must not read sandbox paths");
     },
-    createAgentSession: async () => {
+    createAgentSession: async (options: { resourceLoader?: FakeResourceLoader }) => {
+      const configPath = options.resourceLoader
+        ?.getExtensions()
+        .runtime.flagValues.get("mcp-config");
+      if (typeof configPath === "string") {
+        sdkSeam.mcpConfigPath = configPath;
+        sdkSeam.mcpConfig = JSON.parse(readFileSync(configPath, "utf8"));
+      }
       let listener: ((event: Record<string, unknown>) => void) | undefined;
       return {
         session: {
+          async bindExtensions() {
+            if (sdkSeam.failBindExtensions) {
+              throw new Error("extension startup failed");
+            }
+            sdkSeam.lifecycle.push("session_start");
+          },
+          extensionRunner: {
+            async emit(event: { type: string }) {
+              if (event.type === "session_shutdown") {
+                sdkSeam.lifecycle.push("session_shutdown");
+              }
+            },
+          },
           subscribe(next: (event: Record<string, unknown>) => void) {
             listener = next;
             return () => {
@@ -42,7 +73,9 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
             listener?.({ type: "agent_end", messages: [], willRetry: false });
           },
           abort() {},
-          dispose() {},
+          dispose() {
+            sdkSeam.lifecycle.push("dispose");
+          },
         },
       };
     },
@@ -96,6 +129,10 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   beforeEach(() => {
     sdkSeam.loadSkillsCalls = 0;
     sdkSeam.resourceLoaderOptions.length = 0;
+    sdkSeam.mcpConfigPath = undefined;
+    sdkSeam.mcpConfig = undefined;
+    sdkSeam.lifecycle.length = 0;
+    sdkSeam.failBindExtensions = false;
   });
 
   it("formats sandbox Skill descriptors on the real custom-tool createSession path", async () => {
@@ -125,5 +162,71 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       additionalSkillPaths: ["/skills/skill_abc"],
       noContextFiles: true,
     });
+  });
+
+  it("projects each Agent's MCP servers through an isolated Pi config and removes it after the Turn", async () => {
+    const configured = input(true);
+    configured.agent.mcpServers = [
+      {
+        name: "rds-mcp",
+        url: "https://campaign.welltop.tech/agent/mcp/rds",
+        transport: "streamable-http",
+        headers: {
+          Authorization: "Bearer ${RDS_MCP_APIKEY}",
+        },
+      },
+    ];
+
+    const events = await collect(new PiAgentAdapter().run(configured));
+
+    expect(events.some((event) => event.type === "session.error")).toBe(false);
+    expect(sdkSeam.mcpConfig).toEqual({
+      mcpServers: {
+        "rds-mcp": {
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: {
+            Authorization: "Bearer ${RDS_MCP_APIKEY}",
+          },
+        },
+      },
+    });
+    expect(sdkSeam.mcpConfigPath).toBeDefined();
+    expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
+  });
+
+  it("starts and shuts down Pi extension lifecycle around the managed Turn", async () => {
+    await collect(new PiAgentAdapter().run(input(true)));
+
+    expect(sdkSeam.lifecycle).toEqual([
+      "session_start",
+      "session_shutdown",
+      "dispose",
+    ]);
+  });
+
+  it("disposes a partially-created session when extension startup fails", async () => {
+    const configured = input(true);
+    configured.agent.mcpServers = [
+      {
+        name: "rds-mcp",
+        url: "https://campaign.welltop.tech/agent/mcp/rds",
+        transport: "streamable-http",
+        headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+      },
+    ];
+    sdkSeam.failBindExtensions = true;
+
+    const events = await collect(new PiAgentAdapter().run(configured));
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "session.error",
+        error: expect.objectContaining({ message: "extension startup failed" }),
+      }),
+    ]);
+    expect(sdkSeam.lifecycle).toEqual(["dispose"]);
+    expect(sdkSeam.mcpConfigPath).toBeDefined();
+    expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
   });
 });

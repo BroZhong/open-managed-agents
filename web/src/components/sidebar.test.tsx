@@ -33,6 +33,40 @@ function SessionRoute() {
   );
 }
 
+function renderGlobalSidebar(path = "/") {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { gcTime: Infinity, retry: false, staleTime: Infinity },
+    },
+  });
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Sidebar />
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Sidebar global navigation", () => {
+  it("groups the console entry points by platform, resources, and configuration", () => {
+    renderGlobalSidebar();
+
+    expect(screen.getByText("Agent Platform")).toBeTruthy();
+    expect(screen.getByText("Resources")).toBeTruthy();
+    expect(screen.getByText("Configuration")).toBeTruthy();
+
+    expect(screen.getByRole("link", { name: "Dashboard" }).getAttribute("href")).toBe("/");
+    expect(screen.getByRole("link", { name: "Agent" }).getAttribute("href")).toBe("/agents");
+    expect(screen.getByRole("link", { name: "Skill" }).getAttribute("href")).toBe("/skills");
+    expect(screen.getByRole("link", { name: "MCP" }).getAttribute("href")).toBe("/mcp");
+    expect(screen.getByRole("link", { name: "API-Key" }).getAttribute("href")).toBe("/api-keys");
+  });
+});
+
 describe("Sidebar Session navigation", () => {
   it("keeps the Agent context while linked and newly created Sessions load", async () => {
     const agent: Agent = {

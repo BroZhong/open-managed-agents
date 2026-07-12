@@ -326,7 +326,7 @@ async function main() {
   const eventStreamHub = new InProcessEventStreamHub();
 
   // Create a dev seed key so auth can be tested
-  const seedResult = await stores.apiKeyStore.create("dev", "dev-console");
+  await stores.apiKeyStore.create("dev", "dev-console");
 
   // In-memory dev mode has no S3 Workspace to hydrate from, so the
   // sandbox-backed ToolExecutor is intentionally not wired here. Use the full
@@ -388,7 +388,7 @@ async function main() {
     console.log(`Storage: in-memory (no PostgreSQL/Redis required)`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
     console.log(`Adapters: claude-code, codex, pi-agent`);
-    console.log(`\nDev API key: ${seedResult.rawKey}`);
+    console.log(`\nDev API key seeded (value hidden)`);
     console.log(`\nTry: curl http://localhost:${info.port}/health`);
   });
 

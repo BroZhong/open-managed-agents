@@ -9,6 +9,95 @@ type Env = {
 };
 
 const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
+const ALLOWED_MCP_SERVER = {
+  name: "rds-mcp",
+  url: "https://campaign.welltop.tech/agent/mcp/rds",
+  transport: "streamable-http",
+  authorization: "Bearer ${RDS_MCP_APIKEY}",
+} as const;
+
+function validateMcpServers(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return "mcpServers must be an array";
+  if (value.length > 1) {
+    return "mcpServers may only contain the allowlisted rds-mcp server";
+  }
+
+  const names = new Set<string>();
+  for (let index = 0; index < value.length; index++) {
+    const candidate = value[index];
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return `mcpServers[${index}] must be an object`;
+    }
+
+    const server = candidate as Record<string, unknown>;
+    const name = server.name;
+    if (typeof name !== "string" || name.trim().length === 0) {
+      return `mcpServers[${index}].name must be a non-empty string`;
+    }
+    const uniqueName = name.trim();
+    if (names.has(uniqueName)) {
+      return `mcpServers contains duplicate name: ${uniqueName}`;
+    }
+    names.add(uniqueName);
+
+    const url = server.url;
+    if (typeof url !== "string") {
+      return `mcpServers[${index}].url must be a valid http/https URL`;
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return `mcpServers[${index}].url must be a valid http/https URL`;
+      }
+    } catch {
+      return `mcpServers[${index}].url must be a valid http/https URL`;
+    }
+
+    const transport = server.transport;
+    if (
+      transport !== undefined &&
+      transport !== "sse" &&
+      transport !== "streamable-http"
+    ) {
+      return `mcpServers[${index}].transport must be sse or streamable-http`;
+    }
+
+    const headers = server.headers;
+    if (headers !== undefined) {
+      if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+        return `mcpServers[${index}].headers must be an object of string values`;
+      }
+      for (const [headerName, headerValue] of Object.entries(headers)) {
+        if (typeof headerValue !== "string") {
+          return `mcpServers[${index}].headers must be an object of string values`;
+        }
+        if (/\r|\n/.test(headerName) || /\r|\n/.test(headerValue)) {
+          return `mcpServers[${index}].headers must not contain CR or LF`;
+        }
+      }
+    }
+
+    if (
+      name !== ALLOWED_MCP_SERVER.name ||
+      url !== ALLOWED_MCP_SERVER.url ||
+      transport !== ALLOWED_MCP_SERVER.transport
+    ) {
+      return `mcpServers[${index}] is not an allowlisted MCP server`;
+    }
+
+    const headerEntries =
+      headers && typeof headers === "object" && !Array.isArray(headers)
+        ? Object.entries(headers)
+        : [];
+    if (
+      headerEntries.length !== 1 ||
+      headerEntries[0]?.[0] !== "Authorization" ||
+      headerEntries[0]?.[1] !== ALLOWED_MCP_SERVER.authorization
+    ) {
+      return `mcpServers[${index}].headers must contain only the allowlisted Authorization value`;
+    }
+  }
+}
 
 export function agentRoutes(agentStore: AgentStore) {
   const router = new Hono<Env>();
@@ -46,8 +135,9 @@ export function agentRoutes(agentStore: AgentStore) {
     if (tools !== undefined && !Array.isArray(tools)) {
       return c.json({ error: "tools must be an array" }, 400);
     }
-    if (mcpServers !== undefined && !Array.isArray(mcpServers)) {
-      return c.json({ error: "mcpServers must be an array" }, 400);
+    if (mcpServers !== undefined) {
+      const error = validateMcpServers(mcpServers);
+      if (error) return c.json({ error }, 400);
     }
     if (skills !== undefined && !Array.isArray(skills)) {
       return c.json({ error: "skills must be an array" }, 400);
@@ -150,6 +240,11 @@ export function agentRoutes(agentStore: AgentStore) {
 
     if (body.description !== undefined && typeof body.description !== "string") {
       return c.json({ error: "description must be a string" }, 400);
+    }
+
+    if (body.mcpServers !== undefined) {
+      const error = validateMcpServers(body.mcpServers);
+      if (error) return c.json({ error }, 400);
     }
 
     const updateInput: Record<string, unknown> = {};

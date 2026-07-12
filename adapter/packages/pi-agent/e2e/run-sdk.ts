@@ -21,6 +21,10 @@
  *     ^ picks the model/provider. Auth comes from ~/.pi/agent/auth.json, so use
  *       whichever provider you are logged into there (`pi login`). Default is
  *       claude-sonnet-4-5 (anthropic).
+ *   RDS_MCP_APIKEY=... pnpm e2e:pi --tools --rds-mcp "List visible RDS tables"
+ *     ^ projects the production RDS MCP config through the same per-Agent seam
+ *       used by the Host. The token stays in the environment; config contains
+ *       only the `${RDS_MCP_APIKEY}` placeholder.
  */
 
 import { mkdtempSync } from "node:fs";
@@ -35,6 +39,7 @@ async function main() {
   // invoked via `pnpm --filter ... e2e --`, plus the flags below.
   const argv = process.argv.slice(2).filter((a) => a !== "--");
   const useTools = argv.includes("--tools");
+  const useRdsMcp = argv.includes("--rds-mcp");
 
   // --model <id> selects the model/provider (default: claude-sonnet-4-5).
   const modelIdx = argv.indexOf("--model");
@@ -43,6 +48,7 @@ async function main() {
   const positional = argv.filter(
     (a, i) =>
       a !== "--tools" &&
+      a !== "--rds-mcp" &&
       a !== "--model" &&
       !(modelIdx >= 0 && i === modelIdx + 1),
   );
@@ -50,7 +56,8 @@ async function main() {
 
   console.log(
     `\n--- Running Pi adapter e2e (SDK) model="${model}" prompt="${prompt}"` +
-      `${useTools ? " [+tools]" : ""} ---\n`,
+      `${useTools ? " [+tools]" : ""}` +
+      `${useRdsMcp ? " [+rds-mcp]" : ""} ---\n`,
   );
 
   const adapter = new PiAgentAdapter();
@@ -69,6 +76,20 @@ async function main() {
     agent: {
       model,
       system: "You are a helpful assistant. Be concise.",
+      ...(useRdsMcp
+        ? {
+            mcpServers: [
+              {
+                name: "rds-mcp",
+                url: "https://campaign.welltop.tech/agent/mcp/rds",
+                transport: "streamable-http" as const,
+                headers: {
+                  Authorization: "Bearer ${RDS_MCP_APIKEY}",
+                },
+              },
+            ],
+          }
+        : {}),
     },
     history: [],
     constraints: { timeoutSeconds: 120 },

@@ -326,6 +326,226 @@ describe("POST /v1/agents", () => {
       image: "open-managed-agents/sandbox:latest",
     });
   });
+
+  it("returns 400 when an MCP server URL is not HTTP(S)", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Pi Agent",
+        model: "openai-codex/gpt-5.5",
+        system: "You are helpful",
+        runtime: "pi-agent",
+        mcpServers: [{ name: "rds-mcp", url: "file:///tmp/mcp.sock" }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts the RDS streamable HTTP MCP configuration", async () => {
+    const { app } = createTestApp();
+    const mcpServers = [
+      {
+        name: "rds-mcp",
+        url: "https://campaign.welltop.tech/agent/mcp/rds",
+        transport: "streamable-http",
+        headers: {
+          Authorization: "Bearer ${RDS_MCP_APIKEY}",
+        },
+      },
+    ];
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "RDS Agent",
+        model: "openai-codex/gpt-5.5",
+        system: "You are helpful",
+        runtime: "pi-agent",
+        mcpServers,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).mcpServers).toEqual(mcpServers);
+  });
+
+  it.each([
+    {
+      label: "a non-array value",
+      mcpServers: { name: "rds-mcp", url: "https://example.com/mcp" },
+    },
+    {
+      label: "a non-object entry",
+      mcpServers: [null],
+    },
+    {
+      label: "an empty name",
+      mcpServers: [{ name: "   ", url: "https://example.com/mcp" }],
+    },
+    {
+      label: "duplicate names",
+      mcpServers: [
+        { name: "rds-mcp", url: "https://example.com/one" },
+        { name: "rds-mcp", url: "https://example.com/two" },
+      ],
+    },
+    {
+      label: "an unsupported transport",
+      mcpServers: [
+        { name: "rds-mcp", url: "https://example.com/mcp", transport: "stdio" },
+      ],
+    },
+    {
+      label: "non-object headers",
+      mcpServers: [
+        { name: "rds-mcp", url: "https://example.com/mcp", headers: ["bad"] },
+      ],
+    },
+    {
+      label: "a non-string header value",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          headers: { Authorization: 42 },
+        },
+      ],
+    },
+    {
+      label: "a header name containing a newline",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          headers: { "X-Test\nInjected": "value" },
+        },
+      ],
+    },
+    {
+      label: "a header value containing a newline",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer safe\r\nX-Injected: yes" },
+        },
+      ],
+    },
+  ])("returns 400 when MCP servers contain $label", async ({ mcpServers }) => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Pi Agent",
+        model: "openai-codex/gpt-5.5",
+        system: "You are helpful",
+        runtime: "pi-agent",
+        mcpServers,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it.each([
+    {
+      label: "a different server name",
+      mcpServers: [
+        {
+          name: "other-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "a different URL",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "SSE transport",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "sse",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "an omitted transport",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "missing headers",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+        },
+      ],
+    },
+    {
+      label: "a different token expression",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${OTHER_TOKEN}" },
+        },
+      ],
+    },
+    {
+      label: "an extra header",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: {
+            Authorization: "Bearer ${RDS_MCP_APIKEY}",
+            "X-Extra": "value",
+          },
+        },
+      ],
+    },
+  ])("returns 400 for $label outside the MCP allowlist", async ({ mcpServers }) => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Pi Agent",
+        model: "openai-codex/gpt-5.5",
+        system: "You are helpful",
+        runtime: "pi-agent",
+        mcpServers,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("GET /v1/agents", () => {
@@ -514,6 +734,274 @@ describe("POST /v1/agents/:id (update)", () => {
     expect(body.name).toBe("Updated Agent");
     expect(body.model).toBe("claude-3");
     expect(body.runtime).toBe("claude-code");
+  });
+
+  it("preserves MCP servers when a partial update omits them", async () => {
+    const { app, agentStore } = createTestApp();
+    const mcpServers = [
+      {
+        name: "rds-mcp",
+        url: "https://campaign.welltop.tech/agent/mcp/rds",
+        transport: "streamable-http" as const,
+        headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+      },
+    ];
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "openai-codex/gpt-5.5",
+      system: "You are helpful",
+      runtime: "pi-agent",
+      mcpServers,
+    });
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Renamed Agent" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).mcpServers).toEqual(mcpServers);
+  });
+
+  it("updates an agent with a valid RDS MCP server", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "openai-codex/gpt-5.5",
+      system: "You are helpful",
+      runtime: "pi-agent",
+    });
+    const mcpServers = [
+      {
+        name: "rds-mcp",
+        url: "https://campaign.welltop.tech/agent/mcp/rds",
+        transport: "streamable-http",
+        headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+      },
+    ];
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mcpServers }),
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).mcpServers).toEqual(mcpServers);
+  });
+
+  it.each([
+    {
+      label: "a non-array value",
+      mcpServers: { name: "rds-mcp", url: "https://example.com/mcp" },
+    },
+    {
+      label: "a non-object entry",
+      mcpServers: [null],
+    },
+    {
+      label: "an empty name",
+      mcpServers: [{ name: "", url: "https://example.com/mcp" }],
+    },
+    {
+      label: "duplicate names",
+      mcpServers: [
+        { name: "rds-mcp", url: "https://example.com/one" },
+        { name: "rds-mcp", url: "https://example.com/two" },
+      ],
+    },
+    {
+      label: "an invalid URL",
+      mcpServers: [{ name: "rds-mcp", url: "not a url" }],
+    },
+    {
+      label: "an unsupported transport",
+      mcpServers: [
+        { name: "rds-mcp", url: "https://example.com/mcp", transport: "stdio" },
+      ],
+    },
+    {
+      label: "non-object headers",
+      mcpServers: [
+        { name: "rds-mcp", url: "https://example.com/mcp", headers: null },
+      ],
+    },
+    {
+      label: "a non-string header value",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          headers: { Authorization: false },
+        },
+      ],
+    },
+    {
+      label: "a header name containing CR/LF",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          headers: { "X-Test\rInjected": "value" },
+        },
+      ],
+    },
+    {
+      label: "a header value containing CR/LF",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer safe\nX-Injected: yes" },
+        },
+      ],
+    },
+  ])("returns 400 when an MCP update contains $label", async ({ mcpServers }) => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "openai-codex/gpt-5.5",
+      system: "You are helpful",
+      runtime: "pi-agent",
+    });
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mcpServers }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it.each([
+    {
+      label: "a different server name",
+      mcpServers: [
+        {
+          name: "other-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "a different URL",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://example.com/mcp",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "SSE transport",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "sse",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "an omitted transport",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    },
+    {
+      label: "missing headers",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+        },
+      ],
+    },
+    {
+      label: "a different token expression",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${OTHER_TOKEN}" },
+        },
+      ],
+    },
+    {
+      label: "an extra header",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: {
+            Authorization: "Bearer ${RDS_MCP_APIKEY}",
+            "X-Extra": "value",
+          },
+        },
+      ],
+    },
+  ])("returns 400 for $label outside the MCP update allowlist", async ({ mcpServers }) => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "openai-codex/gpt-5.5",
+      system: "You are helpful",
+      runtime: "pi-agent",
+    });
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mcpServers }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("clears MCP servers when updated with an empty array", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "openai-codex/gpt-5.5",
+      system: "You are helpful",
+      runtime: "pi-agent",
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
+    });
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mcpServers: [] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).mcpServers).toEqual([]);
   });
 
   it("updates the description (and can clear it with an empty string)", async () => {
