@@ -1222,7 +1222,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     ]);
   });
 
-  it("an existing Session picks up live Agent system and newly equipped Skills", async () => {
+  it("an existing Session picks up live Agent system, newly equipped Skills, and MCP", async () => {
     const agentStore = new InMemoryAgentStore();
     const liveAgent = await agentStore.create({
       tenantId: "tenant_1",
@@ -1249,14 +1249,18 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       { "SKILL.md": "late body" },
     );
 
-    const seen: Array<{ system: string; body?: string }> = [];
+    const seen: Array<{ system: string; body?: string; mcpNames: string[] }> = [];
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
         const root = input.agent.skillPaths?.[0];
         let body: string | undefined;
         if (root) body = await input.toolExecutor!.readFile(`${root}/SKILL.md`);
         else await input.toolExecutor!.writeFile("warm.txt", "warm");
-        seen.push({ system: input.agent.system, body });
+        seen.push({
+          system: input.agent.system,
+          body,
+          mcpNames: input.agent.mcpServers?.map((server) => server.name) ?? [],
+        });
         yield {
           id: "live-agent-config",
           timestamp: "2024-01-01T00:00:00.000Z",
@@ -1284,14 +1288,22 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     await agentStore.update(liveAgent.id, {
       system: "new system",
       skills: [skill.id],
+      mcpServers: [
+        {
+          name: "rds-mcp",
+          url: "https://campaign.welltop.tech/agent/mcp/rds",
+          transport: "streamable-http",
+          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        },
+      ],
     });
     await enqueue(pendingEventStore, session.id, "use newly equipped skill");
     await router.handleNewEvent(session.id, session.agent);
 
     expect(sandboxClient.created).toHaveLength(1);
     expect(seen).toEqual([
-      { system: "old system", body: undefined },
-      { system: "new system", body: "late body" },
+      { system: "old system", body: undefined, mcpNames: [] },
+      { system: "new system", body: "late body", mcpNames: ["rds-mcp"] },
     ]);
   });
 });

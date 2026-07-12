@@ -5,6 +5,7 @@ import { AlertCircle, ChevronDown } from "lucide-react";
 import type { SessionDelta, SessionEvent } from "@/lib/types";
 import {
   processEventsToMessages,
+  shouldShowTypingIndicator,
   type DisplayMessage,
 } from "@/lib/conversation-projection";
 import { ThinkingBlock } from "@/components/thinking-block";
@@ -122,8 +123,7 @@ export function ConversationView({
     setHasNewMessages(false);
   }
 
-  const showTypingIndicator =
-    sessionStatus === "running" && !isStreaming && messages.length > 0;
+  const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
 
   return (
     <div className="relative flex h-full flex-col">

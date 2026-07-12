@@ -152,34 +152,33 @@ export function sessionEventStreamReducer(
       const key = blockKey(action.delta);
       if (state.completedBlocks.has(key)) return state;
       const identity = deltaKey(action.delta);
-      if (identity !== undefined && state.seenDeltaKeys.has(identity)) {
+      const sameTurn =
+        state.latestDeltaBlock === undefined ||
+        state.latestDeltaBlock.turnId === action.delta.turnId;
+      const previousDeltaKeys = sameTurn ? state.seenDeltaKeys : new Set<string>();
+      if (identity !== undefined && previousDeltaKeys.has(identity)) {
         return state;
       }
 
-      const seenDeltaKeys = new Set(state.seenDeltaKeys);
+      const seenDeltaKeys = new Set(previousDeltaKeys);
       if (identity !== undefined) seenDeltaKeys.add(identity);
 
-      if (
-        state.latestDeltaBlock?.turnId === action.delta.turnId &&
-        action.delta.blockIndex < state.latestDeltaBlock.blockIndex
-      ) {
-        return { ...state, seenDeltaKeys };
-      }
-
-      const current = state.activeDeltas[0];
-      const sameBlock =
-        current !== undefined &&
-        current.turnId === action.delta.turnId &&
-        current.blockIndex === action.delta.blockIndex;
       return {
         ...state,
-        activeDeltas: sameBlock
+        // Complete Events replace only their aligned (turnId, blockIndex)
+        // Delta block. A later block must not erase an earlier partial bubble.
+        activeDeltas: sameTurn
           ? [...state.activeDeltas, action.delta]
           : [action.delta],
         seenDeltaKeys,
         latestDeltaBlock: {
           turnId: action.delta.turnId,
-          blockIndex: action.delta.blockIndex,
+          blockIndex: sameTurn
+            ? Math.max(
+                state.latestDeltaBlock?.blockIndex ?? action.delta.blockIndex,
+                action.delta.blockIndex,
+              )
+            : action.delta.blockIndex,
         },
       };
     }

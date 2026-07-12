@@ -23,6 +23,10 @@ real trust-boundary change. `pi-mcp-adapter` also accepts its runtime server lis
 only as a config-file path, while MCP configuration is owned by an Agent and can
 differ between concurrent Turns.
 
+Managed Skills add a related command-expansion problem: Pi's native
+`/skill:<name>` expansion reads `SKILL.md` from the Host filesystem, while this
+system deliberately projects Skill bodies only into the Sandbox.
+
 ## Decision
 
 ### 1. Host-resident extensions are an explicit, managed exception
@@ -98,6 +102,25 @@ Adapter may not reuse a shared config path, mutate process arguments, persist
 the file, or perform the MCP network call itself. This is an SDK-format bridge,
 not a general infrastructure seam.
 
+All server entrypoints, including the dependency-light in-memory development
+server, use this canonical SDK Adapter. A second CLI-spawning Pi adapter is not
+permitted: it would bypass the per-Turn MCP materialization, extension
+lifecycle, structured history, and managed Skill behavior described here.
+
+### 5. Skill slash commands expand into an observable Sandbox read
+
+For a Sandbox-backed Turn, a per-Turn inline input extension recognizes only an
+exact `/skill:<name>` match from the Host-resolved `skillDescriptors`. It
+transforms that input into an instruction that first calls the Sandbox-backed
+`read` tool on the descriptor's projected `SKILL.md`, then follows the loaded
+instructions with the user's arguments. Ordinary and unknown commands pass
+through unchanged, matching Pi's native behavior.
+
+The Host may use Skill metadata to build this instruction but must not open or
+inline the Skill body. The real `read` call and result therefore remain visible
+as Complete Events and are reconstructed in later structured history. Turns
+without a `ToolExecutor` retain Pi's native Skill loading and command expansion.
+
 ## Consequences
 
 - The Host process now has intentionally bounded outbound network capability;
@@ -117,3 +140,6 @@ not a general infrastructure seam.
   supported child `customTools` provider.
 - Replace the temporary-file bridge if `pi-mcp-adapter` gains a supported
   in-memory configuration API.
+- Replace the managed Skill input transform if Pi exposes a native Skill command
+  expander that accepts content through an abstract read capability instead of
+  Host `readFileSync`.

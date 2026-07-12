@@ -20,6 +20,7 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -233,78 +234,6 @@ class DevCodexAdapter implements Adapter {
   }
 }
 
-// ─── Pi Agent Adapter (spawns `pi` CLI) ────────────────────────────────────
-
-class DevPiAgentAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const prompt = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    const isFirstTurn = input.history.length === 0;
-    const sessionDir = `/tmp/oma-pi-sessions/${input.sessionId}`;
-    const args = [
-      "--print", "--mode", "json",
-      "--session-dir", sessionDir,
-      ...(isFirstTurn ? [] : ["--continue"]),
-      "-p", prompt,
-    ];
-    if (input.agent.model && input.agent.model !== "default") args.push("--model", input.agent.model);
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-
-    const child = spawn("pi", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    });
-
-    const rl = createInterface({ input: child.stdout });
-    let hasError = false;
-    let textAccumulator = "";
-
-    try {
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let event: any;
-        try { event = JSON.parse(line); } catch { continue; }
-
-        if (event.type === "message_update" && event.assistantMessageEvent) {
-          const ame = event.assistantMessageEvent;
-          if (ame.type === "text_delta" && ame.delta) {
-            textAccumulator += ame.delta;
-          }
-          if (ame.type === "text_end") {
-            textAccumulator = ame.content ?? textAccumulator;
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "agent.message", content: [{ type: "text", text: textAccumulator }],
-            } as SessionEvent;
-            textAccumulator = "";
-          }
-        }
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.on("close", (code) => {
-          if (code !== 0 && !hasError) reject(new Error(`pi exited with code ${code}`));
-          else resolve();
-        });
-        child.on("error", reject);
-      });
-
-      if (!hasError) {
-        yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-      }
-    } catch (err: unknown) {
-      yield {
-        id: generateEventId(), timestamp: generateTimestamp(),
-        type: "session.error", error: { message: String(err), code: "pi_agent_error" },
-      } as SessionEvent;
-    }
-  }
-}
-
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
 const mockAdapter = new MockAdapter({ delayMs: 75 });
@@ -315,7 +244,7 @@ function resolveAdapter(runtime: string): Adapter {
   switch (runtime) {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
-    case "pi-agent": return new DevPiAgentAdapter();
+    case "pi-agent": return memoryPiAgentAdapter;
     case "mock": return mockAdapter;
     default: return mockAdapter;
   }

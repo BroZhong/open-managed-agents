@@ -24,6 +24,16 @@ export interface DisplayMessage {
   seq?: number;
 }
 
+export function shouldShowTypingIndicator(
+  messages: DisplayMessage[],
+  sessionStatus: "idle" | "running",
+): boolean {
+  if (sessionStatus !== "running") return false;
+  const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
+  if (latestUserIndex === -1) return false;
+  return messages.slice(latestUserIndex + 1).length === 0;
+}
+
 export function processEventsToMessages(
   events: SessionEvent[],
   activeDeltas: SessionDelta[] = [],
@@ -32,16 +42,6 @@ export function processEventsToMessages(
   isStreaming: boolean;
 } {
   const messages: DisplayMessage[] = [];
-  let currentStream = "";
-  let streaming = false;
-
-  let thinkingStream = "";
-  let thinkingStreaming = false;
-
-  let toolInputStream = "";
-  let toolInputStreaming = false;
-  let toolInputStreamId = "";
-  let toolInputStreamName = "";
 
   const toolResultMap = new Map<
     string,
@@ -64,13 +64,9 @@ export function processEventsToMessages(
     }
   }
 
-  const projectionEvents: Array<SessionEvent | SessionDelta> = [
-    ...events,
-    ...activeDeltas,
-  ];
-  const activeBlockId = activeDeltas[0]
-    ? `${activeDeltas[0].turnId}:${activeDeltas[0].blockIndex}`
-    : "unknown";
+  // Durable Events project first. Incomplete Delta blocks are projected below
+  // as independent aligned blocks, so starting block N+1 cannot erase block N.
+  const projectionEvents: SessionEvent[] = events;
 
   for (const event of projectionEvents) {
     const seq = "seq" in event ? event.seq : undefined;
@@ -94,65 +90,34 @@ export function processEventsToMessages(
       case "agent.message": {
         const data = event.data as {
           content: Array<{ type: string; text: string }>;
+          turnId?: string;
+          blockIndex?: number;
         };
         const text = data.content
           .filter((c) => c.type === "text")
           .map((c) => c.text)
           .join("\n");
         messages.push({
-          id: `assistant-${seq}`,
+          id: stableBlockId("assistant", data, seq),
           role: "assistant",
           text,
           seq,
         });
-        streaming = false;
-        currentStream = "";
-        break;
-      }
-      case "agent.message_stream_start":
-        streaming = true;
-        currentStream = "";
-        break;
-      case "agent.message_chunk": {
-        const data = event.data as { text: string };
-        currentStream += data.text;
-        break;
-      }
-
-      case "agent.thinking_stream_start":
-        thinkingStreaming = true;
-        thinkingStream = "";
-        break;
-      case "agent.thinking_chunk": {
-        const data = event.data as { text: string };
-        thinkingStream += data.text;
         break;
       }
       case "agent.thinking": {
-        const data = event.data as { text: string };
-        thinkingStreaming = false;
-        thinkingStream = "";
+        const data = event.data as {
+          text: string;
+          turnId?: string;
+          blockIndex?: number;
+        };
         messages.push({
-          id: `thinking-${seq}`,
+          id: stableBlockId("thinking", data, seq),
           role: "thinking",
           text: data.text,
           streaming: false,
           seq,
         });
-        break;
-      }
-
-      case "agent.tool_use_input_stream_start": {
-        const data = event.data as { toolUseId: string; name: string };
-        toolInputStreaming = true;
-        toolInputStream = "";
-        toolInputStreamId = data.toolUseId;
-        toolInputStreamName = data.name;
-        break;
-      }
-      case "agent.tool_use_input_chunk": {
-        const data = event.data as { toolUseId: string; delta?: string; text?: string };
-        toolInputStream += data.delta ?? data.text ?? "";
         break;
       }
 
@@ -162,18 +127,13 @@ export function processEventsToMessages(
           name: string;
           input: unknown;
         };
-        toolInputStreaming = false;
-        toolInputStream = "";
-        toolInputStreamId = "";
-        toolInputStreamName = "";
-
         const pairedResult = toolResultMap.get(data.toolUseId);
         if (pairedResult) {
           pairedToolResultSeqs.add(pairedResult.seq);
         }
 
         messages.push({
-          id: `tool-${seq}`,
+          id: `tool-${data.toolUseId}`,
           role: "tool_use",
           text: "",
           name: data.name,
@@ -193,18 +153,13 @@ export function processEventsToMessages(
           input: unknown;
           serverName: string;
         };
-        toolInputStreaming = false;
-        toolInputStream = "";
-        toolInputStreamId = "";
-        toolInputStreamName = "";
-
         const pairedResult = toolResultMap.get(data.toolUseId);
         if (pairedResult) {
           pairedToolResultSeqs.add(pairedResult.seq);
         }
 
         messages.push({
-          id: `tool-${seq}`,
+          id: `tool-${data.toolUseId}`,
           role: "tool_use",
           text: "",
           name: data.name,
@@ -256,37 +211,114 @@ export function processEventsToMessages(
     }
   }
 
-  if (thinkingStreaming && thinkingStream) {
-    messages.push({
-      id: `thinking-streaming-${activeBlockId}`,
-      role: "thinking",
-      text: thinkingStream,
-      streaming: true,
-    });
-  }
+  for (const block of groupActiveDeltas(activeDeltas)) {
+    const blockId = `${block.turnId}:${block.blockIndex}`;
+    let kind: "message" | "thinking" | "tool" | undefined;
+    let text = "";
+    let toolUseId = "";
+    let toolName = "";
 
-  if (toolInputStreaming && toolInputStreamId) {
-    messages.push({
-      id: `tool-input-streaming-${activeBlockId}`,
-      role: "tool_use",
-      text: "",
-      name: toolInputStreamName,
-      toolUseId: toolInputStreamId,
-      input: toolInputStream,
-      streaming: true,
-    });
-  }
+    for (const delta of block.deltas) {
+      const data = delta.data as Record<string, unknown>;
+      switch (delta.type) {
+        case "agent.message_stream_start":
+          kind = "message";
+          break;
+        case "agent.message_chunk":
+          kind = "message";
+          text += typeof data.text === "string" ? data.text : "";
+          break;
+        case "agent.thinking_stream_start":
+          kind = "thinking";
+          break;
+        case "agent.thinking_chunk":
+          kind = "thinking";
+          text += typeof data.text === "string" ? data.text : "";
+          break;
+        case "agent.tool_use_input_stream_start":
+          kind = "tool";
+          toolUseId = typeof data.toolUseId === "string" ? data.toolUseId : "";
+          toolName = typeof data.name === "string" ? data.name : "";
+          break;
+        case "agent.tool_use_input_chunk":
+          kind = "tool";
+          if (typeof data.toolUseId === "string") toolUseId = data.toolUseId;
+          text +=
+            typeof data.delta === "string"
+              ? data.delta
+              : typeof data.text === "string"
+                ? data.text
+                : "";
+          break;
+      }
+    }
 
-  if (streaming && currentStream) {
-    messages.push({
-      id: `streaming-${activeBlockId}`,
-      role: "assistant_streaming",
-      text: currentStream,
-    });
+    if (kind === "message" && text) {
+      messages.push({
+        id: `assistant-${blockId}`,
+        role: "assistant_streaming",
+        text,
+      });
+    } else if (kind === "thinking" && text) {
+      messages.push({
+        id: `thinking-${blockId}`,
+        role: "thinking",
+        text,
+        streaming: true,
+      });
+    } else if (kind === "tool" && toolUseId) {
+      messages.push({
+        id: `tool-${toolUseId}`,
+        role: "tool_use",
+        text: "",
+        name: toolName,
+        toolUseId,
+        input: text,
+        streaming: true,
+      });
+    }
   }
 
   return {
     messages,
-    isStreaming: streaming || thinkingStreaming || toolInputStreaming,
+    isStreaming: activeDeltas.length > 0,
   };
+}
+
+function stableBlockId(
+  prefix: string,
+  data: { turnId?: string; blockIndex?: number },
+  seq: number | undefined,
+): string {
+  return typeof data.turnId === "string" && typeof data.blockIndex === "number"
+    ? `${prefix}-${data.turnId}:${data.blockIndex}`
+    : `${prefix}-${seq}`;
+}
+
+interface ActiveDeltaBlock {
+  turnId: string;
+  blockIndex: number;
+  order: number;
+  deltas: SessionDelta[];
+}
+
+function groupActiveDeltas(activeDeltas: SessionDelta[]): ActiveDeltaBlock[] {
+  const groups = new Map<string, ActiveDeltaBlock>();
+  for (const delta of activeDeltas) {
+    const key = `${delta.turnId}:${delta.blockIndex}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.deltas.push(delta);
+    } else {
+      groups.set(key, {
+        turnId: delta.turnId,
+        blockIndex: delta.blockIndex,
+        order: groups.size,
+        deltas: [delta],
+      });
+    }
+  }
+  return [...groups.values()].sort(
+    (a, b) => a.blockIndex - b.blockIndex || a.order - b.order,
+  );
 }

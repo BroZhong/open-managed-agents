@@ -52,7 +52,7 @@ it("keeps /overview as a legacy link to the console home", () => {
   expect(screen.getByRole("heading", { name: "Dashboard" })).toBeTruthy();
 });
 
-it("shows only managed MCP connections as Agent-owned resources", () => {
+it("shows the integratable MCP catalog without listing Agents", () => {
   const agents: Agent[] = [
     {
       id: "agent_storyboard",
@@ -88,10 +88,13 @@ it("shows only managed MCP connections as Agent-owned resources", () => {
   renderApp("/mcp", agents);
 
   expect(screen.getByRole("heading", { name: "MCP" })).toBeTruthy();
-  expect(screen.getByText(/managed MCP resources are configured per Agent/i)).toBeTruthy();
-  expect(screen.getByText("1 managed MCP server")).toBeTruthy();
-  expect(screen.getByText("No managed MCP servers")).toBeTruthy();
+  expect(screen.getByText("rds-mcp")).toBeTruthy();
+  expect(screen.getByText("streamable-http")).toBeTruthy();
+  expect(screen.getByText("https://campaign.welltop.tech/agent/mcp/rds")).toBeTruthy();
+  expect(screen.getByText(/connect it from an Agent's detail page/i)).toBeTruthy();
+  expect(screen.queryByText("Storyboard Agent")).toBeNull();
+  expect(screen.queryByText("Empty Agent")).toBeNull();
   expect(
-    screen.getByRole("link", { name: /Storyboard Agent/ }).getAttribute("href"),
-  ).toBe("/agents/agent_storyboard#mcp");
+    vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/v1/agents")),
+  ).toBe(false);
 });

@@ -123,7 +123,7 @@ describe("session event stream state", () => {
     expect(state.activeDeltas).toEqual([]);
   });
 
-  it("projects only the latest incomplete block", () => {
+  it("keeps every incomplete block in the current Turn until its Complete Event arrives", () => {
     let state = sessionEventStreamReducer(initialSessionEventStreamState, {
       type: "delta.received",
       delta: delta("agent.thinking_chunk", "1-1", { text: "Thinking" }),
@@ -137,14 +137,12 @@ describe("session event stream state", () => {
     });
 
     expect(state.activeDeltas).toMatchObject([
+      { type: "agent.thinking_chunk", blockIndex: 0, deltaId: "1-1" },
       { type: "agent.message_chunk", blockIndex: 1, deltaId: "1-2" },
     ]);
   });
 
-  it.each([
-    ["a duplicate", "1-1"],
-    ["a delayed unique Delta", "1-3"],
-  ])("does not let %s from an older block replace the latest block", (_case, deltaId) => {
+  it("deduplicates a replay without dropping a delayed unique Delta from an older block", () => {
     let state = sessionEventStreamReducer(initialSessionEventStreamState, {
       type: "delta.received",
       delta: delta("agent.thinking_chunk", "1-1", { text: "Old" }),
@@ -158,11 +156,51 @@ describe("session event stream state", () => {
     });
     state = sessionEventStreamReducer(state, {
       type: "delta.received",
-      delta: delta("agent.thinking_chunk", deltaId, { text: "Old again" }),
+      delta: delta("agent.thinking_chunk", "1-1", { text: "Replay" }),
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "delta.received",
+      delta: delta("agent.thinking_chunk", "1-3", { text: " delayed" }),
     });
 
     expect(state.activeDeltas).toMatchObject([
+      { type: "agent.thinking_chunk", blockIndex: 0, deltaId: "1-1" },
       { type: "agent.message_chunk", blockIndex: 1, deltaId: "1-2" },
+      { type: "agent.thinking_chunk", blockIndex: 0, deltaId: "1-3" },
+    ]);
+  });
+
+  it("removes only the completed block while a later block keeps streaming", () => {
+    let state = sessionEventStreamReducer(initialSessionEventStreamState, {
+      type: "delta.received",
+      delta: delta("agent.message_chunk", "1-1", { text: "Before tool" }),
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "delta.received",
+      delta: {
+        ...delta("agent.tool_use_input_stream_start", "1-2", {
+          toolUseId: "tool_1",
+          name: "read",
+        }),
+        blockIndex: 1,
+      },
+    });
+    state = sessionEventStreamReducer(state, {
+      type: "event.received",
+      event: {
+        seq: 11,
+        type: "agent.message",
+        data: {
+          content: [{ type: "text", text: "Before tool" }],
+          turnId: "turn_10",
+          blockIndex: 0,
+        },
+        ts: "2026-07-11T00:00:02.000Z",
+      },
+    });
+
+    expect(state.activeDeltas).toMatchObject([
+      { type: "agent.tool_use_input_stream_start", blockIndex: 1 },
     ]);
   });
 

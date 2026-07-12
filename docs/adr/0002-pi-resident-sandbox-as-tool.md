@@ -23,6 +23,7 @@ Pi runs in the Host. Its tool calls are intercepted via Pi's Extension/`host_too
 - **PostgreSQL** holds the authoritative event log and full messages (control plane too). MongoDB is retired.
 - **Redis** carries transient traffic only: the pending-input queue and per-turn delta streams (`stream:turn:{turnId}`, reclaimed when the turn ends). Deltas are never persisted to PostgreSQL; a turn's final content is stored whole as an Event, aligned to deltas by `turnId` + `blockIndex`.
 - **Reconnect merge is server-side**: the Host replays completed Events from PostgreSQL, then appends the active turn's Redis deltas, presenting the frontend a single SSE stream. Active-turn state (`sessionId → turnId + status`) lives in Redis/PostgreSQL, not process memory, to keep multi-instance reconnect correct.
+- **Frontend replacement is block-aligned**: it retains every incomplete Delta block in the current Turn until the Complete Event with the same `turnId + blockIndex` arrives (or the Turn ends). A later block never erases an earlier incomplete block, and the Delta/Complete projections share one logical UI identity so finalization does not remount the bubble.
 
 ### 4. Workspaces are S3-authoritative; sandboxes are disposable
 

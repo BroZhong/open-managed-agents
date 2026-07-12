@@ -11,6 +11,7 @@ import { MessageInput } from "@/components/message-input";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
+import { useAgentSkills } from "@/lib/hooks/use-skills";
 import { cn } from "@/lib/utils";
 import type { SessionEvent } from "@/lib/types";
 
@@ -20,6 +21,7 @@ export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: session, isLoading: sessionLoading } = useSession(id);
+  const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, isConnected, fileChange } = useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
@@ -180,7 +182,12 @@ export default function SessionDetailPage() {
                 sessionStatus={status}
               />
             </div>
-            <MessageInput onSend={handleSend} disabled={inputDisabled} pendingMessages={status === "running" ? unconfirmedEvents : []} />
+            <MessageInput
+              onSend={handleSend}
+              disabled={inputDisabled}
+              pendingMessages={status === "running" ? unconfirmedEvents : []}
+              skills={equippedSkills}
+            />
           </div>
           {/* Slide-out Workspace panel */}
           <div

@@ -31,6 +31,7 @@ import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
 import { createManagedSubagentToolsExtension } from "./subagent-tool-bridge.js";
+import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -386,6 +387,7 @@ export class PiAgentAdapter implements Adapter {
           ? {
               extensionFactories: [
                 createManagedSubagentToolsExtension(customTools),
+                createManagedSkillCommandExtension(skillDescriptors),
               ],
             }
           : {}),
