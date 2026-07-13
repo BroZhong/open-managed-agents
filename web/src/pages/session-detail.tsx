@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, FolderOpen, PanelRight, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,12 +8,14 @@ import { ConversationView } from "@/components/conversation-view";
 import { TimelineView } from "@/components/timeline-view";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
+import { TokenUsageMetrics } from "@/components/token-usage-metrics";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
 import { useAgentSkills } from "@/lib/hooks/use-skills";
 import { cn } from "@/lib/utils";
 import type { SessionEvent } from "@/lib/types";
+import { summarizeTokenUsage } from "@/lib/token-usage";
 
 type Tab = "conversation" | "timeline" | "workspace";
 
@@ -28,23 +30,6 @@ export default function SessionDetailPage() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
   const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
-
-  // Remove optimistic events once real ones arrive via SSE
-  useEffect(() => {
-    if (optimisticEvents.length === 0) return;
-    const hasConfirmed = events.some(
-      (e) =>
-        e.type === "user.message" &&
-        optimisticEvents.some((oe) => {
-          const oeData = oe.data as { content: Array<{ type: string; text: string }> };
-          const eData = e.data as { content: Array<{ type: string; text: string }> };
-          return oeData.content[0]?.text === eData.content[0]?.text;
-        }),
-    );
-    if (hasConfirmed) {
-      setOptimisticEvents([]);
-    }
-  }, [events, optimisticEvents]);
 
   const unconfirmedEvents = useMemo(() => {
     return optimisticEvents.filter(
@@ -87,6 +72,7 @@ export default function SessionDetailPage() {
       ? "running"
       : (session?.status ?? "idle");
   const inputDisabled = isPending;
+  const tokenUsage = useMemo(() => summarizeTokenUsage(events), [events]);
 
   if (sessionLoading) {
     return (
@@ -135,22 +121,24 @@ export default function SessionDetailPage() {
             </span>
           )}
         </div>
-        {activeTab === "conversation" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto"
-            onClick={() => setWorkspaceOpen((v) => !v)}
-            title={workspaceOpen ? "Hide workspace" : "Show workspace"}
-            aria-pressed={workspaceOpen}
-          >
-            {workspaceOpen ? (
-              <PanelRightClose className="h-4 w-4" />
-            ) : (
-              <PanelRight className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <TokenUsageMetrics usage={tokenUsage} />
+          {activeTab === "conversation" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setWorkspaceOpen((v) => !v)}
+              title={workspaceOpen ? "Hide workspace" : "Show workspace"}
+              aria-pressed={workspaceOpen}
+            >
+              {workspaceOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRight className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tab bar */}

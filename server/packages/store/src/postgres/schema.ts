@@ -138,13 +138,21 @@ CREATE TABLE IF NOT EXISTS ${s}.events (
   data               JSONB,
   ts                 TIMESTAMPTZ NOT NULL,
   session_thread_id  TEXT NOT NULL,
+  api_key_id         TEXT,
   idempotency_key    TEXT,
   PRIMARY KEY (session_id, seq)
 );
 ALTER TABLE ${s}.events ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE ${s}.events ADD COLUMN IF NOT EXISTS api_key_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS events_session_idempotency_key_uidx
   ON ${s}.events (session_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS events_session_usage_idx
+  ON ${s}.events (session_id, seq)
+  WHERE type = 'span.model_request_end';
+CREATE INDEX IF NOT EXISTS events_api_key_usage_idx
+  ON ${s}.events (api_key_id, session_id, seq)
+  WHERE type = 'span.model_request_end' AND api_key_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   id                 TEXT PRIMARY KEY,
@@ -152,12 +160,14 @@ CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   type               TEXT NOT NULL,
   data               JSONB,
   session_thread_id  TEXT NOT NULL,
+  api_key_id         TEXT,
   arrived_at         TIMESTAMPTZ NOT NULL,
   seq                BIGSERIAL,
   claim_owner        TEXT,
   claim_expires_at   TIMESTAMPTZ,
   claim_generation   BIGINT NOT NULL DEFAULT 0
 );
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS api_key_id TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_owner TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
@@ -169,8 +179,10 @@ CREATE TABLE IF NOT EXISTS ${s}.api_keys (
   name        TEXT NOT NULL,
   key_hash    TEXT NOT NULL UNIQUE,
   prefix      TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL
+  created_at  TIMESTAMPTZ NOT NULL,
+  revoked_at  TIMESTAMPTZ
 );
+ALTER TABLE ${s}.api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS api_keys_tenant_id_idx ON ${s}.api_keys (tenant_id);
 
 CREATE TABLE IF NOT EXISTS ${s}.users (

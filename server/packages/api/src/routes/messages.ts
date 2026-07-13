@@ -102,6 +102,7 @@ export function messageRoutes(deps: MessageRouteDeps) {
         type: "user.message",
         data: { content },
         sessionThreadId: "sthr_primary",
+        ...(tenant.apiKeyId ? { apiKeyId: tenant.apiKeyId } : {}),
       }]);
     } catch (error) {
       unsubscribe();

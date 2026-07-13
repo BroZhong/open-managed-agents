@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useReducer, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useReducer,
+  useRef,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
@@ -86,6 +93,33 @@ export function useSessionEvents(sessionId: string) {
   // Current backoff interval (ms): starts at 1s, doubles per failure, caps at
   // 30s, resets to 1s once a connection is successfully established.
   const backoffRef = useRef(1000);
+  // A render-time generation fence closes the gap before the previous
+  // effect's passive cleanup aborts its fetch. The counter also distinguishes
+  // A -> B -> A navigation, where comparing only the Session ID is unsafe.
+  const generationRef = useRef({ sessionId, value: 0 });
+  const [stateSessionId, setStateSessionId] = useState(sessionId);
+
+  // Layout effects run in the commit before passive effect cleanup. Invalidate
+  // the old stream in that gap without reading or mutating refs during render.
+  useLayoutEffect(() => {
+    if (generationRef.current.sessionId !== sessionId) {
+      generationRef.current = {
+        sessionId,
+        value: generationRef.current.value + 1,
+      };
+    }
+  }, [sessionId]);
+
+  // React Router can reuse this hook instance when only :id changes. Adjust
+  // the Session-scoped projection during render so no frame containing the old
+  // Session's messages or token usage is ever committed under the new URL.
+  if (stateSessionId !== sessionId) {
+    setStateSessionId(sessionId);
+    dispatch({ type: "history.loaded", events: [] });
+    setStatus("idle");
+    setIsConnected(false);
+    setFileChange({ nonce: 0, changed: [], deleted: [] });
+  }
 
   const projectStatus = useCallback((nextStatus: "idle" | "running") => {
     const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
@@ -197,9 +231,15 @@ export function useSessionEvents(sessionId: string) {
   useEffect(() => {
     if (!sessionId) return;
 
+    const generation = generationRef.current.value;
+    const isCurrentGeneration = () =>
+      generationRef.current.sessionId === sessionId &&
+      generationRef.current.value === generation;
+
     // Fresh lifecycle for this session: allow reconnects and start backoff low.
     closingRef.current = false;
     backoffRef.current = 1000;
+    lastSeqRef.current = 0;
 
     const abortController = new AbortController();
     const { signal } = abortController;
@@ -210,6 +250,7 @@ export function useSessionEvents(sessionId: string) {
     // so the frame-parsing lives in exactly one place. Returns when the stream
     // ends (`done`); throws on network/HTTP failure or abort.
     async function pumpSse(token: string | null) {
+      if (!isCurrentGeneration()) return;
       // Always resume from the current anchor — the single source of truth,
       // seeded from history on first connect and advanced as events arrive.
       const sseRes = await fetch(
@@ -233,12 +274,14 @@ export function useSessionEvents(sessionId: string) {
       let buffer = "";
       // A live stream: mark connected and reset backoff so the next drop
       // starts its wait fresh from 1s rather than wherever we'd climbed to.
+      if (signal.aborted || !isCurrentGeneration()) return;
       setIsConnected(true);
       backoffRef.current = 1000;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (signal.aborted || !isCurrentGeneration()) return;
         buffer += decoder.decode(value, { stream: true });
 
         // Parse SSE frames from buffer
@@ -250,6 +293,7 @@ export function useSessionEvents(sessionId: string) {
           if (!frame.trim()) continue;
           const parsed = parseSessionSseFrame(frame);
           if (!parsed) continue;
+          if (!isCurrentGeneration()) return;
           if (parsed.kind === "delta") {
             dispatch({ type: "delta.received", delta: parsed.delta });
             continue;
@@ -263,47 +307,64 @@ export function useSessionEvents(sessionId: string) {
       }
     }
 
-    // Initial connect: load the first history page (JSON mode) to render past
-    // conversation, seed the resume anchor, then let SSE backfill any remainder.
+    // Initial connect: page through full history (JSON mode) to render the
+    // conversation, calculate complete usage, and seed the resume anchor.
     async function connect() {
+      if (!isCurrentGeneration()) return;
       const token = localStorage.getItem(STORAGE_KEY);
 
-      // 1. Fetch historical events (JSON mode)
-      const historyRes = await fetch(
-        `${BASE_URL}/v1/sessions/${sessionId}/events`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
+      // 1. Fetch every historical event page (JSON mode). The endpoint defaults
+      // to 50; stopping after the first page would under-report older usage.
+      const historicalEvents: SessionEvent[] = [];
+      let afterSeq: number | undefined;
+      let hasMore = true;
+      while (hasMore) {
+        const query = new URLSearchParams({ limit: "1000" });
+        if (afterSeq !== undefined) query.set("after_seq", String(afterSeq));
+        const historyRes = await fetch(
+          `${BASE_URL}/v1/sessions/${sessionId}/events?${query.toString()}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+            signal,
           },
-          signal,
-        },
-      );
+        );
 
-      if (!historyRes.ok) {
-        throw new Error(`History fetch failed: ${historyRes.status}`);
+        if (signal.aborted || !isCurrentGeneration()) return;
+
+        if (!historyRes.ok) {
+          throw new Error(`History fetch failed: ${historyRes.status}`);
+        }
+
+        const historyData = await historyRes.json();
+        if (signal.aborted || !isCurrentGeneration()) return;
+        const page: SessionEvent[] = historyData.data || historyData || [];
+        historicalEvents.push(...page);
+        hasMore = Boolean(historyData.has_more);
+        if (hasMore) {
+          const nextSeq = page.at(-1)?.seq;
+          if (nextSeq === undefined || nextSeq === afterSeq) {
+            throw new Error("History pagination did not advance");
+          }
+          afterSeq = nextSeq;
+        }
       }
-
-      const historyData = await historyRes.json();
-      const historicalEvents: SessionEvent[] =
-        historyData.data || historyData || [];
-      const historyIsComplete = historyData.has_more !== true;
+      if (signal.aborted || !isCurrentGeneration()) return;
       dispatch({ type: "history.loaded", events: historicalEvents });
 
-      // A partial first page cannot determine current status. The SSE backfill
-      // starts at its last seq and will project the missing, authoritative
-      // transition. Only a complete history is safe to derive from directly.
-      if (historyIsComplete) {
-        for (let i = historicalEvents.length - 1; i >= 0; i--) {
-          const evt = historicalEvents[i];
-          if (evt.type === "session.status_running") {
-            projectStatus("running");
-            break;
-          }
-          if (evt.type === "session.status_idle") {
-            projectStatus("idle");
-            break;
-          }
+      // All pages are present, so the latest lifecycle transition is safe to
+      // project into both this hook and the shared Session query caches.
+      for (let i = historicalEvents.length - 1; i >= 0; i--) {
+        const evt = historicalEvents[i];
+        if (evt.type === "session.status_running") {
+          projectStatus("running");
+          break;
+        }
+        if (evt.type === "session.status_idle") {
+          projectStatus("idle");
+          break;
         }
       }
 
@@ -314,6 +375,7 @@ export function useSessionEvents(sessionId: string) {
           : 0;
 
       // 2. Open SSE connection
+      if (!isCurrentGeneration()) return;
       await pumpSse(token);
     }
 
@@ -321,6 +383,7 @@ export function useSessionEvents(sessionId: string) {
     // anchor and let the server's paginated backfill fill the gap; addEvent
     // dedupes by seq, so re-delivered events don't duplicate.
     async function connectSse() {
+      if (!isCurrentGeneration()) return;
       const token = localStorage.getItem(STORAGE_KEY);
       await pumpSse(token);
     }
@@ -329,9 +392,10 @@ export function useSessionEvents(sessionId: string) {
     // error — funnel here. A deliberate close (cleanup flipped closingRef) or
     // an AbortError is not a drop and must not reconnect.
     function scheduleReconnect(err?: unknown) {
-      setIsConnected(false);
+      if (signal.aborted || !isCurrentGeneration()) return;
       if (closingRef.current) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
+      setIsConnected(false);
 
       // Exponential backoff with ±20% jitter, capped at 30s.
       const base = backoffRef.current;
@@ -341,7 +405,11 @@ export function useSessionEvents(sessionId: string) {
 
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null;
-        if (closingRef.current) return;
+        if (
+          signal.aborted ||
+          closingRef.current ||
+          !isCurrentGeneration()
+        ) return;
         connectSse().then(scheduleReconnect, scheduleReconnect);
       }, delay);
     }
@@ -359,7 +427,6 @@ export function useSessionEvents(sessionId: string) {
         reconnectTimerRef.current = null;
       }
       abortController.abort();
-      setIsConnected(false);
     };
   }, [sessionId, addEvent, projectStatus]);
 

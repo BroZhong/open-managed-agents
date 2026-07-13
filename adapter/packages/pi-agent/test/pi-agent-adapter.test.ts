@@ -99,7 +99,12 @@ const assistantStart: AgentSessionEvent = {
   message: { role: "assistant", model: "claude-sonnet-4-5" } as never,
 } as AgentSessionEvent;
 
-function assistantEnd(input: number, output: number): AgentSessionEvent {
+function assistantEnd(
+  input: number,
+  output: number,
+  cacheRead = 0,
+  cacheWrite = 0,
+): AgentSessionEvent {
   return {
     type: "message_end",
     message: {
@@ -107,9 +112,9 @@ function assistantEnd(input: number, output: number): AgentSessionEvent {
       usage: {
         input,
         output,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: input + output,
+        cacheRead,
+        cacheWrite,
+        totalTokens: input + output + cacheRead + cacheWrite,
         cost: { total: 0 },
       },
     },
@@ -170,6 +175,29 @@ describe("PiAgentAdapter (SDK)", () => {
       ) as SpanModelRequestEndEvent;
       expect(end.usage.inputTokens).toBe(100);
       expect(end.usage.outputTokens).toBe(5);
+    });
+
+    it("normalizes cache reads and writes into total input usage", async () => {
+      const cachedScript: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_end", contentIndex: 0, content: "Cached." }),
+        assistantEnd(60, 5, 30, 10),
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(cachedScript),
+      });
+      const events = await collectEvents(adapter.run(makeInput("cached")));
+      const end = events.find(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent;
+
+      expect(end.usage).toEqual({
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 10,
+      });
     });
 
     it("emits streaming events in correct order", async () => {

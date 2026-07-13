@@ -1,8 +1,9 @@
 import { Hono } from "hono";
-import type { AgentStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession } from "../lib/public-projection.js";
+import { tokenUsageToWire } from "../lib/token-usage.js";
 
 type Env = {
   Variables: {
@@ -14,6 +15,7 @@ export interface SessionRouteDeps {
   sessionStore: SessionStore;
   agentStore: AgentStore;
   workspaceStore: WorkspaceMetadataStore;
+  eventLogStore?: EventLogStore;
   sessionRouter?: SessionRouter;
 }
 
@@ -114,6 +116,22 @@ export function sessionRoutes(deps: SessionRouteDeps) {
     }
 
     return c.json(response);
+  });
+
+  // GET /v1/sessions/:id/usage — Aggregate durable model spans
+  router.get("/v1/sessions/:id/usage", async (c) => {
+    const id = c.req.param("id");
+    const tenant = c.get("tenant");
+    const session = await deps.sessionStore.getById(id);
+    if (!session || session.tenantId !== tenant.tenantId) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    if (!deps.eventLogStore) {
+      return c.json({ error: "Usage service unavailable" }, 503);
+    }
+
+    const usage = await deps.eventLogStore.getUsage({ sessionId: id });
+    return c.json({ usage: tokenUsageToWire(usage) });
   });
 
   // GET /v1/sessions/:id — Get session

@@ -233,6 +233,15 @@ export class ClaudeCodeAdapter implements Adapter {
       message: {
         id: message.id ?? generateEventId(),
         model: message.model ?? "claude",
+        usage: message.usage
+          ? {
+              input_tokens: message.usage.input_tokens ?? 0,
+              cache_read_input_tokens:
+                message.usage.cache_read_input_tokens ?? 0,
+              cache_creation_input_tokens:
+                message.usage.cache_creation_input_tokens ?? 0,
+            }
+          : undefined,
       },
     };
 

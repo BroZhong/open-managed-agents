@@ -1,0 +1,172 @@
+name: Sync OpenAPI to Apifox
+
+on:
+  workflow_run:
+    workflows: ["OpenAPI contract"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apifox-openapi-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+      - name: Install server dependencies
+        run: pnpm --dir server install --frozen-lockfile
+      - name: Verify the generated contract and Hono route inventory
+        run: |
+          pnpm openapi:check
+          pnpm --dir server --filter @oma-server/api exec vitest run test/openapi.test.ts
+      - name: Check Apifox credentials
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
+          APIFOX_RUNNER_ID: ${{ vars.APIFOX_RUNNER_ID }}
+          APIFOX_RUNNER_TYPE: ${{ vars.APIFOX_RUNNER_TYPE }}
+        run: |
+          if [[ -z "$APIFOX_ACCESS_TOKEN" || -z "$APIFOX_PROJECT_ID" || -z "$APIFOX_DOCS_SITE_ID" || ! "$APIFOX_RUNNER_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Configure APIFOX_ACCESS_TOKEN and APIFOX_PROJECT_ID secrets, plus valid APIFOX_DOCS_SITE_ID and APIFOX_RUNNER_ID variables."
+            exit 1
+          fi
+          if [[ -n "$APIFOX_RUNNER_TYPE" && "$APIFOX_RUNNER_TYPE" != "TSHGR" && "$APIFOX_RUNNER_TYPE" != "OSHGR" ]]; then
+            echo "::error::APIFOX_RUNNER_TYPE must be TSHGR (team Runner) or OSHGR (organization Runner)."
+            exit 1
+          fi
+      - name: Set the deployed API server URL
+        env:
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+          APIFOX_RUNNER_ID: ${{ vars.APIFOX_RUNNER_ID }}
+          APIFOX_RUNNER_TYPE: ${{ vars.APIFOX_RUNNER_TYPE }}
+        run: |
+          if [[ ! "$PUBLIC_API_URL" =~ ^https://[^[:space:]]+$ ]]; then
+            echo "::error::Set the PUBLIC_API_URL repository variable to the deployed HTTPS API origin (for example, https://api.example.com)."
+            exit 1
+          fi
+          jq --arg url "${PUBLIC_API_URL%/}" '.servers[0].url = $url' \
+            docs/openapi.json > "$RUNNER_TEMP/openapi.json"
+          runner_type="${APIFOX_RUNNER_TYPE:-TSHGR}"
+          jq --arg sourceUrl "${PUBLIC_API_URL%/}/openapi.json" \
+            --arg runOn "$runner_type" \
+            --argjson runnerId "$APIFOX_RUNNER_ID" \
+            '.sourceUrl = $sourceUrl | .runOn = $runOn | .runnerId = $runnerId' \
+            docs/apifox-auto-import.json \
+            > "$RUNNER_TEMP/apifox-auto-import.json"
+      - name: Validate OpenAPI
+        run: npx --yes --package=@redocly/cli@2.39.0 redocly lint "$RUNNER_TEMP/openapi.json"
+      - name: Import OpenAPI into Apifox
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+        run: >-
+          npx --yes apifox-cli@2.2.7 import
+          --project "$APIFOX_PROJECT_ID"
+          --format openapi
+          --file "$RUNNER_TEMP/openapi.json"
+          --access-token "$APIFOX_ACCESS_TOKEN"
+      - name: Ensure exact scheduled synchronization from the remote OpenAPI endpoint
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_RUNNER_ID: ${{ vars.APIFOX_RUNNER_ID }}
+        run: |
+          setting_name="$(jq -r '.name' "$RUNNER_TEMP/apifox-auto-import.json")"
+          settings_file="$RUNNER_TEMP/apifox-auto-import-settings.json"
+          runner_file="$RUNNER_TEMP/apifox-runner.json"
+
+          npx --yes apifox-cli@2.2.7 runner get "$APIFOX_RUNNER_ID" \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" > "$runner_file"
+          if ! jq -e '.data.status == "STARTED"' "$runner_file" > /dev/null; then
+            echo "::error::The configured Apifox Runner is not STARTED; exact scheduled synchronization cannot run."
+            exit 1
+          fi
+
+          npx --yes apifox-cli@2.2.7 import auto-import list \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" > "$settings_file"
+
+          mapfile -t setting_ids < <(
+            jq -r --arg name "$setting_name" \
+              '.. | objects | select(.name? == $name and .id? != null) | .id' \
+              "$settings_file" | sort -u
+          )
+          if (( ${#setting_ids[@]} > 1 )); then
+            echo "::error::Multiple Apifox auto-import settings are named '$setting_name'. Remove duplicates before rerunning."
+            exit 1
+          fi
+
+          create_setting() {
+            npx --yes apifox-cli@2.2.7 cli-schema validate import-auto-import-create \
+              --file "$RUNNER_TEMP/apifox-auto-import.json"
+            npx --yes apifox-cli@2.2.7 import auto-import create \
+              --project "$APIFOX_PROJECT_ID" \
+              --file "$RUNNER_TEMP/apifox-auto-import.json" \
+              --access-token "$APIFOX_ACCESS_TOKEN"
+          }
+
+          if (( ${#setting_ids[@]} == 0 )); then
+            create_setting
+          else
+            setting_id="${setting_ids[0]}"
+            setting_file="$RUNNER_TEMP/apifox-auto-import-setting.json"
+            npx --yes apifox-cli@2.2.7 import auto-import get "$setting_id" \
+              --project "$APIFOX_PROJECT_ID" \
+              --access-token "$APIFOX_ACCESS_TOKEN" > "$setting_file"
+            if jq -e --slurpfile expected "$RUNNER_TEMP/apifox-auto-import.json" \
+              '.data as $actual |
+               ($expected[0] | to_entries |
+                all(.[]; $actual[.key] == .value))' "$setting_file" > /dev/null; then
+              echo "Apifox auto-import setting '$setting_name' matches the repository configuration."
+            else
+              npx --yes apifox-cli@2.2.7 import auto-import delete "$setting_id" \
+                --project "$APIFOX_PROJECT_ID" \
+                --access-token "$APIFOX_ACCESS_TOKEN"
+              create_setting
+            fi
+          fi
+      - name: Verify the Apifox documentation site is published
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
+          APIFOX_DOCS_URL: ${{ vars.APIFOX_DOCS_URL }}
+        run: |
+          site_file="$RUNNER_TEMP/apifox-docs-site.json"
+          npx --yes apifox-cli@2.2.7 docs-site get "$APIFOX_DOCS_SITE_ID" \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" > "$site_file"
+          if ! jq -e '.data.publishedAt | type == "string" and length > 0' \
+            "$site_file" > /dev/null; then
+            echo "::error::The configured Apifox documentation site has not been published. Publish it once in Apifox, then rerun this workflow."
+            exit 1
+          fi
+          {
+            echo "### Apifox documentation site"
+            echo "Verified published site ID: \`$APIFOX_DOCS_SITE_ID\`"
+            if [[ "$APIFOX_DOCS_URL" =~ ^https:// ]]; then
+              echo "Published documentation: $APIFOX_DOCS_URL"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

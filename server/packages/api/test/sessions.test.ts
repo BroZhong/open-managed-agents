@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../src/app.js";
+import { InMemoryEventLogStore } from "@oma-server/store-memory";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   AgentStore,
@@ -196,18 +197,20 @@ function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   };
 }
 
-function createTestApp() {
+function createTestApp(options: { includeEventLog?: boolean } = {}) {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
   const sessionStore = new InMemorySessionStore();
   const workspaceStore = new InMemoryWorkspaceMetadataStore();
+  const eventLogStore = new InMemoryEventLogStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
     agentStore,
     sessionStore,
     workspaceStore,
+    ...(options.includeEventLog === false ? {} : { eventLogStore }),
   });
-  return { app, agentStore, sessionStore, workspaceStore };
+  return { app, agentStore, sessionStore, workspaceStore, eventLogStore };
 }
 
 describe("POST /v1/sessions", () => {
@@ -661,6 +664,99 @@ describe("GET /v1/sessions", () => {
     const body = await res.json();
     expect(body.data).toHaveLength(1);
     expect(body.data[0].tenantId).toBe("dev");
+  });
+});
+
+describe("GET /v1/sessions/:id/usage", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("returns exact snake_case usage aggregated from durable model spans", async () => {
+    const { app, agentStore, sessionStore, eventLogStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "Agent",
+      model: "model",
+      system: "system",
+      runtime: "mock",
+    });
+    const session = await sessionStore.create({
+      tenantId: "dev",
+      agentId: agent.id,
+      agent,
+      workspaceId: "ws_1",
+    });
+    await eventLogStore.append(session.id, {
+      type: "span.model_request_end",
+      data: {
+        usage: {
+          inputTokens: 0,
+          outputTokens: 7,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 2,
+        },
+      },
+      sessionThreadId: "thread_1",
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/usage`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      usage: {
+        input_tokens: 0,
+        output_tokens: 7,
+        cache_read_tokens: 0,
+        cache_write_tokens: 2,
+        total_tokens: 7,
+        cache_hit_rate: null,
+      },
+    });
+  });
+
+  it("returns 503 when the usage store is unavailable", async () => {
+    const { app, agentStore, sessionStore } = createTestApp({ includeEventLog: false });
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "Agent",
+      model: "model",
+      system: "system",
+      runtime: "mock",
+    });
+    const session = await sessionStore.create({
+      tenantId: "dev",
+      agentId: agent.id,
+      agent,
+      workspaceId: "ws_1",
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/usage`);
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Usage service unavailable" });
+  });
+
+  it("does not expose usage for another tenant's Session", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "other",
+      name: "Agent",
+      model: "model",
+      system: "system",
+      runtime: "mock",
+    });
+    const session = await sessionStore.create({
+      tenantId: "other",
+      agentId: agent.id,
+      agent,
+      workspaceId: "ws_1",
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/usage`);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "Session not found" });
   });
 });
 

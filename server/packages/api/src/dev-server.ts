@@ -124,7 +124,15 @@ class DevClaudeCodeAdapter implements Adapter {
             yield {
               id: generateEventId(), timestamp: generateTimestamp(),
               type: "span.model_request_end",
-              usage: { inputTokens: event.message.usage.input_tokens, outputTokens: event.message.usage.output_tokens },
+              usage: {
+                inputTokens:
+                  event.message.usage.input_tokens +
+                  (event.message.usage.cache_read_input_tokens ?? 0) +
+                  (event.message.usage.cache_creation_input_tokens ?? 0),
+                outputTokens: event.message.usage.output_tokens,
+                cacheReadTokens: event.message.usage.cache_read_input_tokens ?? 0,
+                cacheWriteTokens: event.message.usage.cache_creation_input_tokens ?? 0,
+              },
             } as SessionEvent;
           }
         }
@@ -219,7 +227,12 @@ class DevCodexAdapter implements Adapter {
         if (event.type === "turn.completed" && event.usage) {
           yield {
             id: generateEventId(), timestamp: generateTimestamp(),
-            type: "span.model_request_end", usage: { inputTokens: event.usage.input_tokens || 0, outputTokens: event.usage.output_tokens || 0 },
+            type: "span.model_request_end", usage: {
+              inputTokens: event.usage.input_tokens || 0,
+              outputTokens: event.usage.output_tokens || 0,
+              cacheReadTokens: event.usage.cached_input_tokens || 0,
+              cacheWriteTokens: 0,
+            },
           } as SessionEvent;
         }
 

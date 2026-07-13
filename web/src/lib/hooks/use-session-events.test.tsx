@@ -85,29 +85,40 @@ function stubHistoryOnly(history: SessionEvent[], hasMore = false) {
 }
 
 describe("useSessionEvents history replay", () => {
-  it("merges replayed Complete Events without gaps or duplicates", async () => {
+  it("loads every history page then merges replay without gaps or duplicates", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    const history = Array.from({ length: 50 }, (_, index) =>
+    const firstPage = Array.from({ length: 50 }, (_, index) =>
       historicalEvent(index + 1),
+    );
+    const secondPage = Array.from({ length: 25 }, (_, index) =>
+      historicalEvent(index + 51),
     );
     const replayFrames =
       "event: user.message\n" +
-      "id: 50\n" +
-      'data: {"content":[{"type":"text","text":"message 50"}]}\n\n' +
+      "id: 75\n" +
+      'data: {"content":[{"type":"text","text":"message 75"}]}\n\n' +
       "event: workspace.file_change\n" +
-      "id: 51\n" +
+      "id: 76\n" +
       'data: {"workspaceId":"workspace_1","changed":["image.png"],"deleted":[]}\n\n';
+
+    const historyUrls: string[] = [];
 
     vi.stubGlobal(
       "fetch",
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const headers = init?.headers as Record<string, string> | undefined;
         if (headers?.Accept === "application/json") {
+          const url = String(input);
+          historyUrls.push(url);
+          const isSecondPage = url.includes("after_seq=50");
           return Promise.resolve({
             ok: true,
-            json: async () => ({ data: history, has_more: true }),
+            json: async () =>
+              isSecondPage
+                ? { data: secondPage, has_more: false }
+                : { data: firstPage, has_more: true },
           } as Response);
         }
 
@@ -131,8 +142,131 @@ describe("useSessionEvents history replay", () => {
 
     await waitFor(() => expect(result.current.fileChange.nonce).toBe(1));
     expect(result.current.events.map((event) => event.seq)).toEqual(
-      Array.from({ length: 51 }, (_, index) => index + 1),
+      Array.from({ length: 76 }, (_, index) => index + 1),
     );
+    expect(historyUrls).toHaveLength(2);
+    expect(historyUrls[0]).toContain("limit=1000");
+    expect(historyUrls[1]).toContain("after_seq=50");
+  });
+
+  it("clears the previous Session projection and resume anchor on switch", async () => {
+    const sseConnections: Array<{ url: string; lastEventId: string }> = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const headers = init?.headers as Record<string, string> | undefined;
+        if (headers?.Accept === "application/json") {
+          const seq = url.includes("session_1") ? 100 : 1;
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [historicalEvent(seq)], has_more: false }),
+          } as Response);
+        }
+
+        sseConnections.push({
+          url,
+          lastEventId: headers?.["Last-Event-ID"] ?? "missing",
+        });
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            init?.signal?.addEventListener("abort", () => controller.close(), {
+              once: true,
+            });
+          },
+        });
+        return Promise.resolve({ ok: true, body } as Response);
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useSessionEvents(sessionId),
+      { initialProps: { sessionId: "session_1" } },
+    );
+    await waitFor(() => expect(result.current.events[0]?.seq).toBe(100));
+
+    rerender({ sessionId: "session_2" });
+    expect(result.current.events).toEqual([]);
+    expect(result.current.status).toBe("idle");
+    expect(result.current.isConnected).toBe(false);
+
+    await waitFor(() => expect(result.current.events[0]?.seq).toBe(1));
+    await waitFor(() => expect(sseConnections).toHaveLength(2));
+    expect(sseConnections).toEqual([
+      expect.objectContaining({ url: expect.stringContaining("session_1"), lastEventId: "100" }),
+      expect.objectContaining({ url: expect.stringContaining("session_2"), lastEventId: "1" }),
+    ]);
+  });
+
+  it("rejects an old Session frame before passive abort cleanup can fence it", async () => {
+    let resolveOldRead:
+      | ((value: { done: false; value: Uint8Array }) => void)
+      | undefined;
+    const never = new Promise<Response>(() => {});
+    const staleFrame = new TextEncoder().encode(
+      "event: user.message\n" +
+        "id: 101\n" +
+        'data: {"content":[{"type":"text","text":"stale"}]}\n\n',
+    );
+
+    // Model the small commit-to-passive-cleanup window by keeping the old
+    // signal readable even after React invokes cleanup. A Session generation
+    // fence, rather than AbortSignal timing, must reject the stale frame.
+    vi.stubGlobal(
+      "AbortController",
+      class LaggingAbortController {
+        readonly signal = {
+          aborted: false,
+          addEventListener: vi.fn(),
+        } as unknown as AbortSignal;
+
+        abort() {}
+      },
+    );
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const headers = init?.headers as Record<string, string> | undefined;
+        if (headers?.Accept === "application/json") {
+          if (url.includes("session_2")) return never;
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [historicalEvent(100)], has_more: false }),
+          } as Response);
+        }
+
+        return Promise.resolve({
+          ok: true,
+          body: {
+            getReader: () => ({
+              read: () =>
+                new Promise<{ done: false; value: Uint8Array }>((resolve) => {
+                  resolveOldRead = resolve;
+                }),
+            }),
+          },
+        } as unknown as Response);
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useSessionEvents(sessionId),
+      {
+      initialProps: { sessionId: "session_1" },
+      },
+    );
+    await waitFor(() => expect(result.current.events[0]?.seq).toBe(100));
+    await waitFor(() => expect(resolveOldRead).toBeTypeOf("function"));
+
+    rerender({ sessionId: "session_2" });
+
+    expect(result.current.events).toEqual([]);
+    resolveOldRead?.({ done: false, value: staleFrame });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(result.current.events).toEqual([]);
   });
 
   it("projects the latest status from complete history into Session caches", async () => {

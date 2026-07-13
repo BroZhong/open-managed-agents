@@ -1,4 +1,4 @@
-import type { PaginatedResult, StoredEvent } from "../types.js";
+import type { PaginatedResult, StoredEvent, TokenUsageSummary } from "../types.js";
 import type { PendingEventFence } from "./pending-event-store.js";
 
 export interface EventLogStoreGetEventsOpts {
@@ -10,6 +10,8 @@ export interface EventLogStoreAppendInput {
   type: string;
   data: unknown;
   sessionThreadId: string;
+  /** API key that accepted the Turn input; absent for User session tokens. */
+  apiKeyId?: string;
   /**
    * Optional caller-stable identity for an at-least-once append. Repeating an
    * append with the same key in one Session returns the original Stored Event
@@ -23,9 +25,16 @@ export interface EventLogStoreAppendInput {
   pendingFence?: PendingEventFence;
 }
 
+export type EventLogUsageScope =
+  | { sessionId: string }
+  | { apiKeyId: string };
+
 export interface EventLogStore {
   append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent>;
   getEvents(sessionId: string, opts?: EventLogStoreGetEventsOpts): Promise<PaginatedResult<StoredEvent>>;
+  getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary>;
+  /** Bulk query used by API-key listings to avoid one query per key. */
+  getUsageByApiKeyIds(apiKeyIds: string[]): Promise<Map<string, TokenUsageSummary>>;
 }
 
 /** HTTP ingress for direct (non-pending) user Events. */

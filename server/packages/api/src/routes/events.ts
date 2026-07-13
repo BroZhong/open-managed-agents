@@ -128,6 +128,7 @@ export function eventRoutes(deps: EventRouteDeps) {
           type,
           data,
           sessionThreadId: "sthr_primary",
+          ...(tenant.apiKeyId ? { apiKeyId: tenant.apiKeyId } : {}),
         })),
       );
       if (!inserted) {

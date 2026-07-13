@@ -11,6 +11,7 @@ import type {
   EventLogStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
+  EventLogUsageScope,
   PendingEventStore,
   PendingEvent,
   PendingEventEnqueueInput,
@@ -21,6 +22,7 @@ import type {
   SessionStatus,
   StoredEvent,
   PaginatedResult,
+  TokenUsageSummary,
   Agent,
 } from "@oma-server/store";
 import type {
@@ -34,6 +36,12 @@ import type {
 class InMemoryEventLogStore implements EventLogStore {
   private events: Map<string, StoredEvent[]> = new Map();
   private seqCounters: Map<string, number> = new Map();
+  private usageEvents: Array<{
+    sessionId: string;
+    apiKeyId?: string;
+    type: string;
+    data: unknown;
+  }> = [];
 
   async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
     const currentSeq = this.seqCounters.get(sessionId) ?? 0;
@@ -52,6 +60,12 @@ class InMemoryEventLogStore implements EventLogStore {
     const sessionEvents = this.events.get(sessionId) ?? [];
     sessionEvents.push(stored);
     this.events.set(sessionId, sessionEvents);
+    this.usageEvents.push({
+      sessionId,
+      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
+      type: event.type,
+      data: event.data,
+    });
 
     return stored;
   }
@@ -70,6 +84,34 @@ class InMemoryEventLogStore implements EventLogStore {
 
     return { data, hasMore };
   }
+
+  async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    const count = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+    for (const event of this.usageEvents) {
+      const inScope = "sessionId" in scope
+        ? event.sessionId === scope.sessionId
+        : event.apiKeyId === scope.apiKeyId;
+      if (!inScope || event.type !== "span.model_request_end") continue;
+      const data = event.data as { usage?: Record<string, unknown> };
+      inputTokens += count(data.usage?.inputTokens);
+      outputTokens += count(data.usage?.outputTokens);
+      cacheReadTokens += count(data.usage?.cacheReadTokens);
+      cacheWriteTokens += count(data.usage?.cacheWriteTokens);
+    }
+    return {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens: inputTokens + outputTokens,
+      cacheHitRate: inputTokens === 0 ? null : cacheReadTokens / inputTokens,
+    };
+  }
 }
 
 // ─── In-memory PendingEventStore ─────────────────────────────────────────────
@@ -85,6 +127,7 @@ class InMemoryPendingEventStore implements PendingEventStore {
       type: event.type,
       data: event.data,
       sessionThreadId: event.sessionThreadId,
+      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
       arrivedAt: new Date(),
     };
     const queue = this.queues.get(sessionId) ?? [];
@@ -424,6 +467,44 @@ describe("SessionRouter", () => {
           process.env.OMA_SUPABASE_ALLOWED_TENANTS = originalAllowlist;
         }
       }
+    });
+
+    it("attributes durable model usage to the API key that queued the Turn", async () => {
+      const adapter = createMockAdapter([{
+        id: "evt_usage",
+        timestamp: "2024-01-01T00:00:00.000Z",
+        type: "span.model_request_end",
+        usage: {
+          inputTokens: 80,
+          outputTokens: 20,
+          cacheReadTokens: 32,
+          cacheWriteTokens: 4,
+        },
+      }]);
+      const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+        apiKeyId: "key_usage",
+      });
+
+      await router.handleNewEvent(session.id, testAgent);
+
+      await expect(eventLogStore.getUsage({ apiKeyId: "key_usage" })).resolves.toEqual({
+        inputTokens: 80,
+        outputTokens: 20,
+        cacheReadTokens: 32,
+        cacheWriteTokens: 4,
+        totalTokens: 100,
+        cacheHitRate: 0.4,
+      });
     });
   });
 

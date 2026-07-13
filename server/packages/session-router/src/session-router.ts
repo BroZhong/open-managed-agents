@@ -954,6 +954,7 @@ export class SessionRouter {
         type: pendingEvent.type,
         data: pendingEvent.data,
         sessionThreadId: pendingEvent.sessionThreadId,
+        ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
         idempotencyKey: `pending:${pendingEvent.id}`,
         pendingFence,
       });
@@ -1359,6 +1360,7 @@ export class SessionRouter {
               type: completeEvent.type,
               data: completeEvent,
               sessionThreadId: "sthr_primary",
+              ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
               idempotencyKey: this.turnKey(
                 pendingEvent.id,
                 `event:${durableEventIndex++}`,

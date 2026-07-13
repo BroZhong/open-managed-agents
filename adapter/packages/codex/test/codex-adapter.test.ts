@@ -82,8 +82,12 @@ describe("CodexAdapter", () => {
       const adapter = new CodexAdapter({ _eventSource: fakeSource(cliEvents) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
       const end = events.find((e) => e.type === "span.model_request_end") as SpanModelRequestEndEvent;
-      expect(end.usage.inputTokens).toBe(100);
-      expect(end.usage.outputTokens).toBe(5);
+      expect(end.usage).toEqual({
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 0,
+      });
     });
   });
 

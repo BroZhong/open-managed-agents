@@ -1,0 +1,40 @@
+name: OpenAPI contract
+
+on:
+  pull_request:
+    paths:
+      - "server/packages/api/**"
+      - "server/pnpm-lock.yaml"
+      - "docs/openapi.json"
+      - ".github/workflows/api-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server/packages/api/**"
+      - "server/pnpm-lock.yaml"
+      - "docs/openapi.json"
+      - ".github/workflows/api-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+      - name: Install server dependencies
+        run: pnpm --dir server install --frozen-lockfile
+      - name: Verify generated OpenAPI artifact
+        run: pnpm openapi:check
+      - name: Compare the OpenAPI inventory with Hono routes
+        run: pnpm --dir server --filter @oma-server/api exec vitest run test/openapi.test.ts

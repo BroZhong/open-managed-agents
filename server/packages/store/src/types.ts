@@ -135,6 +135,16 @@ export interface StoredEvent {
   sessionThreadId: string;
 }
 
+/** Aggregated, provider-neutral token accounting over durable model spans. */
+export interface TokenUsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cacheHitRate: number | null;
+}
+
 export interface ApiKey {
   id: string;
   tenantId: string;
@@ -142,6 +152,8 @@ export interface ApiKey {
   keyHash: string;
   prefix: string;
   createdAt: Date;
+  /** Revoked keys remain listable so their historical usage stays attributable. */
+  revokedAt?: Date;
 }
 
 export interface User {

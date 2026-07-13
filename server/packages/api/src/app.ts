@@ -19,6 +19,7 @@ import { workspaceRoutes } from "./routes/workspace.js";
 import { workspaceEntityRoutes } from "./routes/workspaces.js";
 import { mcpCatalogRoutes } from "./routes/mcp-catalog.js";
 import { loopRoutes } from "./routes/loops.js";
+import { createOpenApiDocument } from "./openapi/document.js";
 
 type Env = {
   Variables: {
@@ -54,6 +55,12 @@ export function createApp(deps: AppDeps) {
 
   // CORS middleware — allow all origins in dev
   app.use("*", cors());
+
+  // Public machine-readable contract for documentation tools such as Apifox.
+  app.get("/openapi.json", (c) => {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(createOpenApiDocument());
+  });
 
   // Health check — no auth required
   app.get("/health", (c) => {
@@ -103,7 +110,7 @@ export function createApp(deps: AppDeps) {
 
   // Mount API key CRUD routes
   if (deps.fullApiKeyStore) {
-    app.route("", apiKeyRoutes(deps.fullApiKeyStore));
+    app.route("", apiKeyRoutes(deps.fullApiKeyStore, deps.eventLogStore));
   }
 
   // Mount Workspace entity routes (create-named + list + get)
@@ -117,6 +124,7 @@ export function createApp(deps: AppDeps) {
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,
       workspaceStore: deps.workspaceStore,
+      eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
     }));
   }

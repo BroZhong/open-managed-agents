@@ -58,18 +58,18 @@ describe("/v1/* auth", () => {
     delete process.env.AUTH_DISABLED;
     const validKey = "test-api-key-123";
     const keyHash = createHash("sha256").update(validKey).digest("hex");
-    const store = makeStore(new Map([[keyHash, { tenantId: "tenant-1" }]]));
+    const store = makeStore(new Map([[keyHash, { tenantId: "tenant-1", apiKeyId: "key-1" }]]));
     const app = createApp({ apiKeyStore: store });
     app.get("/v1/test", (c) => {
       const tenant = c.get("tenant");
-      return c.json({ tenantId: tenant.tenantId });
+      return c.json({ tenantId: tenant.tenantId, apiKeyId: tenant.apiKeyId });
     });
 
     const res = await app.request("/v1/test", {
       headers: { "x-api-key": validKey },
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tenantId: "tenant-1" });
+    expect(await res.json()).toEqual({ tenantId: "tenant-1", apiKeyId: "key-1" });
   });
 
   it("bypasses auth when AUTH_DISABLED=true", async () => {

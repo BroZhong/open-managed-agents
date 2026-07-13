@@ -101,7 +101,15 @@ class DevClaudeCodeAdapter implements Adapter {
             yield {
               id: generateEventId(), timestamp: generateTimestamp(),
               type: "span.model_request_end",
-              usage: { inputTokens: event.message.usage.input_tokens, outputTokens: event.message.usage.output_tokens },
+              usage: {
+                inputTokens:
+                  event.message.usage.input_tokens +
+                  (event.message.usage.cache_read_input_tokens ?? 0) +
+                  (event.message.usage.cache_creation_input_tokens ?? 0),
+                outputTokens: event.message.usage.output_tokens,
+                cacheReadTokens: event.message.usage.cache_read_input_tokens ?? 0,
+                cacheWriteTokens: event.message.usage.cache_creation_input_tokens ?? 0,
+              },
             } as SessionEvent;
           }
         }

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
-import type { ApiKeyStore } from "@oma-server/store";
+import type { ApiKeyStore, EventLogStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
+import { EMPTY_TOKEN_USAGE, tokenUsageToWire } from "../lib/token-usage.js";
 
 type Env = {
   Variables: {
@@ -8,19 +9,29 @@ type Env = {
   };
 };
 
-export function apiKeyRoutes(apiKeyStore: ApiKeyStore) {
+export function apiKeyRoutes(apiKeyStore: ApiKeyStore, eventLogStore?: EventLogStore) {
   const router = new Hono<Env>();
 
   // GET /v1/api-keys — List keys for the tenant
   router.get("/v1/api-keys", async (c) => {
+    if (!eventLogStore) {
+      return c.json({ error: "Usage service unavailable" }, 503);
+    }
     const tenant = c.get("tenant");
     const keys = await apiKeyStore.list(tenant.tenantId);
+    const usageByApiKeyId = await eventLogStore.getUsageByApiKeyIds(
+      keys.map((key) => key.id),
+    );
 
     const data = keys.map((k) => ({
       id: k.id,
       name: k.name,
       prefix: k.prefix,
       createdAt: k.createdAt,
+      revokedAt: k.revokedAt ?? null,
+      usage: tokenUsageToWire(
+        usageByApiKeyId.get(k.id) ?? EMPTY_TOKEN_USAGE,
+      ),
     }));
 
     return c.json({ data, has_more: false });
@@ -53,16 +64,17 @@ export function apiKeyRoutes(apiKeyStore: ApiKeyStore) {
     );
   });
 
-  // DELETE /v1/api-keys/:id — Delete a key
+  // DELETE /v1/api-keys/:id — Revoke a key while retaining usage history
   router.delete("/v1/api-keys/:id", async (c) => {
     const id = c.req.param("id");
-    const deleted = await apiKeyStore.delete(id);
+    const tenant = c.get("tenant");
+    const revoked = await apiKeyStore.revoke(tenant.tenantId, id);
 
-    if (!deleted) {
+    if (!revoked) {
       return c.json({ error: "Not found" }, 404);
     }
 
-    return c.json({ type: "api_key_deleted", id });
+    return c.json({ type: "api_key_revoked", id });
   });
 
   return router;

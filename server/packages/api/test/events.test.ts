@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { createApp } from "../src/app.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
@@ -231,6 +232,7 @@ class InMemoryPendingEventStore implements PendingEventIngressStore {
       type: event.type,
       data: event.data,
       sessionThreadId: event.sessionThreadId,
+      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
       arrivedAt: new Date(),
     };
     const queue = this.queues.get(sessionId) ?? [];
@@ -377,7 +379,10 @@ function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   };
 }
 
-function createTestApp(sessionRouter?: SessionRouter) {
+function createTestApp(
+  sessionRouter?: SessionRouter,
+  apiKeys: Map<string, TenantContext> = new Map(),
+) {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
   const sessionStore = new InMemorySessionStore();
@@ -390,7 +395,7 @@ function createTestApp(sessionRouter?: SessionRouter) {
     return Boolean(current && current.status !== "terminated");
   });
   const app = createApp({
-    apiKeyStore: makeApiKeyStore(new Map()),
+    apiKeyStore: makeApiKeyStore(apiKeys),
     agentStore,
     sessionStore,
     eventLogStore,
@@ -444,6 +449,28 @@ describe("POST /v1/sessions/:id/events", () => {
     const pending = await pendingEventStore.peek(session.id);
     expect(pending).not.toBeNull();
     expect(pending!.type).toBe("user.message");
+  });
+
+  it("attributes queued events to the authenticating API key", async () => {
+    const rawKey = "event-attribution-key";
+    const hash = createHash("sha256").update(rawKey).digest("hex");
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(
+      undefined,
+      new Map([[hash, { tenantId: "dev", apiKeyId: "key_events" }]]),
+    );
+    delete process.env.AUTH_DISABLED;
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": rawKey },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "Hello" } }],
+      }),
+    });
+
+    expect(res.status).toBe(202);
+    expect((await pendingEventStore.peek(session.id))?.apiKeyId).toBe("key_events");
   });
 
   it("returns 410 for a terminated Session without enqueuing input", async () => {

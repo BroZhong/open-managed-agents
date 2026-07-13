@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { createApp } from "../src/app.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -211,6 +212,7 @@ function createTestApp(
     eventStreamHub: InProcessEventStreamHub;
     pendingEventStore: InMemoryPendingEventStore;
   }) => SessionRouter,
+  apiKeys: Map<string, TenantContext> = new Map(),
 ) {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
@@ -239,7 +241,7 @@ function createTestApp(
     },
   } as unknown as SessionRouter);
   const app = createApp({
-    apiKeyStore: makeApiKeyStore(new Map()),
+    apiKeyStore: makeApiKeyStore(apiKeys),
     agentStore,
     sessionStore,
     eventLogStore,
@@ -285,6 +287,33 @@ async function sendMessage(app: ReturnType<typeof createTestApp>["app"], session
 describe("POST /v1/sessions/:id/messages — lifecycle", () => {
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
+  });
+
+  it("attributes queued messages to the authenticating API key", async () => {
+    const rawKey = "message-attribution-key";
+    const hash = createHash("sha256").update(rawKey).digest("hex");
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(
+      undefined,
+      new Map([[hash, { tenantId: "dev", apiKeyId: "key_messages" }]]),
+    );
+    delete process.env.AUTH_DISABLED;
+    const session = await seedSession(app, agentStore, sessionStore);
+    const enqueue = pendingEventStore.enqueueBatchIfSessionActive.bind(pendingEventStore);
+    pendingEventStore.enqueueBatchIfSessionActive = vi.fn((sessionId, events) =>
+      enqueue(sessionId, events)
+    );
+
+    const res = await app.request(`/v1/sessions/${session.id}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": rawKey },
+      body: JSON.stringify({ content: "attribute me" }),
+    });
+    await drain(res);
+
+    expect(pendingEventStore.enqueueBatchIfSessionActive).toHaveBeenCalledWith(
+      session.id,
+      [expect.objectContaining({ apiKeyId: "key_messages" })],
+    );
   });
 
   it("returns 410 for a terminated Session without enqueuing input", async () => {
