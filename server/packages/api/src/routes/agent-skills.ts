@@ -1,7 +1,12 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { AgentStore, SkillStore, SkillArtifactStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -29,8 +34,8 @@ export function agentSkillRoutes(
   agentStore: AgentStore,
   skillStore: SkillStore,
   skillArtifacts: SkillArtifactStore,
-) {
-  const router = new Hono<Env>();
+): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   async function ownedAgent(c: Context<Env>) {
     const agentId = c.req.param("id");
@@ -42,7 +47,7 @@ export function agentSkillRoutes(
   }
 
   // GET /v1/agents/:id/skills — the Agent's equipped Skills (its forks)
-  router.get("/v1/agents/:id/skills", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listAgentSkills"), async (c) => {
     const agent = await ownedAgent(c);
     if (!agent) return c.json({ error: "Not found" }, 404);
     const forks = await skillStore.listByOwner(agent.tenantId, "agent", agent.id);
@@ -60,7 +65,7 @@ export function agentSkillRoutes(
 
   // POST /v1/agents/:id/skills — equip a Library Skill (fork it onto the Agent)
   //   body: { skillId: "<libraryId>" }
-  router.post("/v1/agents/:id/skills", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("equipAgentSkill"), async (c) => {
     const agent = await ownedAgent(c);
     if (!agent) return c.json({ error: "Not found" }, 404);
 
@@ -103,7 +108,7 @@ export function agentSkillRoutes(
   });
 
   // DELETE /v1/agents/:id/skills/:skillId — unequip (delete the Agent's fork)
-  router.delete("/v1/agents/:id/skills/:skillId", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("unequipAgentSkill"), async (c) => {
     const agent = await ownedAgent(c);
     if (!agent) return c.json({ error: "Not found" }, 404);
 

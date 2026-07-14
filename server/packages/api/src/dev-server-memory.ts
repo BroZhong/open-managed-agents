@@ -21,6 +21,7 @@ import {
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
+import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
 import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -214,11 +215,12 @@ class DevCodexAdapter implements Adapter {
           } as SessionEvent;
         }
 
-        if (event.type === "turn.failed" || event.type === "error") {
-          hasError = true;
+        for (const terminalEvent of translateDevCodexTerminalEvent(event)) {
+          if (terminalEvent.type === "session.error") hasError = true;
           yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "session.error", error: { message: event.error?.message || event.message || "Codex error", code: "codex_error" },
+            id: generateEventId(),
+            timestamp: generateTimestamp(),
+            ...terminalEvent,
           } as SessionEvent;
         }
       }

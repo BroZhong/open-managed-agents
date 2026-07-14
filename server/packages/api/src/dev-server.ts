@@ -33,6 +33,7 @@ import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
+import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -224,23 +225,12 @@ class DevCodexAdapter implements Adapter {
           } as SessionEvent;
         }
 
-        if (event.type === "turn.completed" && event.usage) {
+        for (const terminalEvent of translateDevCodexTerminalEvent(event)) {
+          if (terminalEvent.type === "session.error") hasError = true;
           yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "span.model_request_end", usage: {
-              inputTokens: event.usage.input_tokens || 0,
-              outputTokens: event.usage.output_tokens || 0,
-              cacheReadTokens: event.usage.cached_input_tokens || 0,
-              cacheWriteTokens: 0,
-            },
-          } as SessionEvent;
-        }
-
-        if (event.type === "turn.failed" || event.type === "error") {
-          hasError = true;
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "session.error", error: { message: event.error?.message || event.message || "Codex error", code: "codex_error" },
+            id: generateEventId(),
+            timestamp: generateTimestamp(),
+            ...terminalEvent,
           } as SessionEvent;
         }
       }

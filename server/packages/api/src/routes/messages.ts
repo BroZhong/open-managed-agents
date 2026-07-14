@@ -1,10 +1,15 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { EventLogIngressStore, PendingEventIngressStore, SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ContentBlock } from "@open-managed-agents/adapter-core";
 import type { TenantContext } from "../types.js";
 import { deriveTitleFromContent } from "../lib/derive-title.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -48,12 +53,12 @@ function completesPendingEvent(frame: string, pendingEventId: string): boolean {
  * derivation helper (`deriveTitleFromContent`) with the `/events` path so the
  * two routes can never silently diverge.
  */
-export function messageRoutes(deps: MessageRouteDeps) {
-  const router = new Hono<Env>();
+export function messageRoutes(deps: MessageRouteDeps): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/sessions/:id/messages — Send a message and stream response
-  router.post("/v1/sessions/:id/messages", async (c) => {
-    const sessionId = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("sendSessionMessage"), async (c) => {
+    const sessionId = c.req.param("id")!;
     const tenant = c.get("tenant");
 
     // Validate session exists and belongs to tenant

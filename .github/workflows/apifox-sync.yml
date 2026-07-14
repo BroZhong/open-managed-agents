@@ -39,16 +39,36 @@ jobs:
         run: |
           pnpm openapi:check
           pnpm --dir server --filter @oma-server/api exec vitest run test/openapi.test.ts
+          node --test .github/scripts/apifox-*.test.mjs
       - name: Check Apifox credentials
         env:
           APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
           APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_EXPECTED_PROJECT_NAME: ${{ vars.APIFOX_EXPECTED_PROJECT_NAME }}
+          APIFOX_EXPECTED_TEAM_ID: ${{ vars.APIFOX_EXPECTED_TEAM_ID }}
           APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
+          APIFOX_DOCS_URL: ${{ vars.APIFOX_DOCS_URL }}
           APIFOX_RUNNER_ID: ${{ vars.APIFOX_RUNNER_ID }}
           APIFOX_RUNNER_TYPE: ${{ vars.APIFOX_RUNNER_TYPE }}
         run: |
-          if [[ -z "$APIFOX_ACCESS_TOKEN" || -z "$APIFOX_PROJECT_ID" || -z "$APIFOX_DOCS_SITE_ID" || ! "$APIFOX_RUNNER_ID" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::Configure APIFOX_ACCESS_TOKEN and APIFOX_PROJECT_ID secrets, plus valid APIFOX_DOCS_SITE_ID and APIFOX_RUNNER_ID variables."
+          if [[ -z "$APIFOX_ACCESS_TOKEN" || -z "$APIFOX_PROJECT_ID" || -z "$APIFOX_EXPECTED_PROJECT_NAME" || -z "$APIFOX_DOCS_SITE_ID" ]]; then
+            echo "::error::Configure APIFOX_ACCESS_TOKEN and APIFOX_PROJECT_ID secrets, plus APIFOX_EXPECTED_PROJECT_NAME and APIFOX_DOCS_SITE_ID variables."
+            exit 1
+          fi
+          if [[ -n "$APIFOX_EXPECTED_TEAM_ID" && ! "$APIFOX_EXPECTED_TEAM_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::APIFOX_EXPECTED_TEAM_ID must be a positive integer when configured."
+            exit 1
+          fi
+          if [[ ! "$APIFOX_DOCS_URL" =~ ^https://[^[:space:]]+$ ]]; then
+            echo "::error::Set APIFOX_DOCS_URL to the published Apifox documentation site's HTTPS URL."
+            exit 1
+          fi
+          if [[ -n "$APIFOX_RUNNER_ID" && ! "$APIFOX_RUNNER_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::APIFOX_RUNNER_ID must be a positive integer when configured."
+            exit 1
+          fi
+          if [[ -n "$APIFOX_RUNNER_TYPE" && -z "$APIFOX_RUNNER_ID" ]]; then
+            echo "::error::APIFOX_RUNNER_TYPE requires APIFOX_RUNNER_ID."
             exit 1
           fi
           if [[ -n "$APIFOX_RUNNER_TYPE" && "$APIFOX_RUNNER_TYPE" != "TSHGR" && "$APIFOX_RUNNER_TYPE" != "OSHGR" ]]; then
@@ -67,15 +87,46 @@ jobs:
           fi
           jq --arg url "${PUBLIC_API_URL%/}" '.servers[0].url = $url' \
             docs/openapi.json > "$RUNNER_TEMP/openapi.json"
-          runner_type="${APIFOX_RUNNER_TYPE:-TSHGR}"
-          jq --arg sourceUrl "${PUBLIC_API_URL%/}/openapi.json" \
-            --arg runOn "$runner_type" \
-            --argjson runnerId "$APIFOX_RUNNER_ID" \
-            '.sourceUrl = $sourceUrl | .runOn = $runOn | .runnerId = $runnerId' \
-            docs/apifox-auto-import.json \
-            > "$RUNNER_TEMP/apifox-auto-import.json"
+          if [[ -n "$APIFOX_RUNNER_ID" ]]; then
+            runner_type="${APIFOX_RUNNER_TYPE:-TSHGR}"
+            jq --arg sourceUrl "${PUBLIC_API_URL%/}/openapi.json" \
+              --arg runOn "$runner_type" \
+              --argjson runnerId "$APIFOX_RUNNER_ID" \
+              '.sourceUrl = $sourceUrl | .runOn = $runOn | .runnerId = $runnerId' \
+              docs/apifox-auto-import.json \
+              > "$RUNNER_TEMP/apifox-auto-import.json"
+          else
+            echo "Apifox Runner is not configured; immediate CI import remains enabled."
+          fi
       - name: Validate OpenAPI
         run: npx --yes --package=@redocly/cli@2.39.0 redocly lint "$RUNNER_TEMP/openapi.json"
+      - name: Verify the dedicated Apifox project before import
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_EXPECTED_PROJECT_NAME: ${{ vars.APIFOX_EXPECTED_PROJECT_NAME }}
+          APIFOX_EXPECTED_TEAM_ID: ${{ vars.APIFOX_EXPECTED_TEAM_ID }}
+        run: |
+          project_file="$RUNNER_TEMP/apifox-project.json"
+          npx --yes apifox-cli@2.2.7 project get "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" > "$project_file"
+          jq_args=(
+            --arg id "$APIFOX_PROJECT_ID"
+            --arg name "$APIFOX_EXPECTED_PROJECT_NAME"
+          )
+          project_filter='.success == true and (.data.id | tostring) == $id and .data.name == $name'
+          if [[ -n "$APIFOX_EXPECTED_TEAM_ID" ]]; then
+            jq_args+=(--arg teamId "$APIFOX_EXPECTED_TEAM_ID")
+            project_filter="$project_filter and (.data.teamId | tostring) == \$teamId"
+          fi
+          if ! jq -e "${jq_args[@]}" "$project_filter" "$project_file" > /dev/null; then
+            echo "::error::APIFOX_PROJECT_ID does not match the expected dedicated project identity."
+            exit 1
+          fi
+          node .github/scripts/apifox-reconcile.mjs \
+            --mode preflight \
+            --spec "$RUNNER_TEMP/openapi.json" \
+            --project "$APIFOX_PROJECT_ID"
       - name: Import OpenAPI into Apifox
         env:
           APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
@@ -86,7 +137,17 @@ jobs:
           --format openapi
           --file "$RUNNER_TEMP/openapi.json"
           --access-token "$APIFOX_ACCESS_TOKEN"
-      - name: Ensure exact scheduled synchronization from the remote OpenAPI endpoint
+      - name: Reconcile the exact HTTP endpoint inventory
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_MAX_ENDPOINT_DELETIONS: ${{ vars.APIFOX_MAX_ENDPOINT_DELETIONS }}
+        run: >-
+          node .github/scripts/apifox-reconcile.mjs
+          --spec "$RUNNER_TEMP/openapi.json"
+          --project "$APIFOX_PROJECT_ID"
+      - name: Ensure optional Runner synchronization from the remote OpenAPI endpoint
+        if: ${{ vars.APIFOX_RUNNER_ID != '' }}
         env:
           APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
           APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
@@ -158,15 +219,27 @@ jobs:
           npx --yes apifox-cli@2.2.7 docs-site get "$APIFOX_DOCS_SITE_ID" \
             --project "$APIFOX_PROJECT_ID" \
             --access-token "$APIFOX_ACCESS_TOKEN" > "$site_file"
-          if ! jq -e '.data.publishedAt | type == "string" and length > 0' \
-            "$site_file" > /dev/null; then
-            echo "::error::The configured Apifox documentation site has not been published. Publish it once in Apifox, then rerun this workflow."
+          node .github/scripts/apifox-docs-site.mjs \
+            --site-file "$site_file" \
+            --project "$APIFOX_PROJECT_ID" \
+            --site "$APIFOX_DOCS_SITE_ID" \
+            --url "$APIFOX_DOCS_URL"
+          if ! effective_url="$(curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' \
+            --retry 3 --connect-timeout 10 --max-time 60 \
+            --output "$RUNNER_TEMP/apifox-docs-site.html" \
+            --write-out '%{url_effective}' \
+            "$APIFOX_DOCS_URL")"; then
+            echo "::error::The published Apifox documentation URL is not publicly reachable: $APIFOX_DOCS_URL"
             exit 1
           fi
+          node .github/scripts/apifox-docs-site.mjs \
+            --site-file "$site_file" \
+            --project "$APIFOX_PROJECT_ID" \
+            --site "$APIFOX_DOCS_SITE_ID" \
+            --url "$effective_url"
           {
             echo "### Apifox documentation site"
             echo "Verified published site ID: \`$APIFOX_DOCS_SITE_ID\`"
-            if [[ "$APIFOX_DOCS_URL" =~ ^https:// ]]; then
-              echo "Published documentation: $APIFOX_DOCS_URL"
-            fi
+            echo "Verified public documentation: $APIFOX_DOCS_URL"
           } >> "$GITHUB_STEP_SUMMARY"

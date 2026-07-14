@@ -1,7 +1,12 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { AgentFileStore, AgentStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -24,8 +29,11 @@ const VALID_FILENAMES = new Set<string>(AGENT_FILE_NAMES);
  * resolves the Agent and enforces tenant ownership (cross-tenant → 404), so a
  * File can only ever be reached through an Agent the caller owns.
  */
-export function agentFileRoutes(agentFileStore: AgentFileStore, agentStore: AgentStore) {
-  const router = new Hono<Env>();
+export function agentFileRoutes(
+  agentFileStore: AgentFileStore,
+  agentStore: AgentStore,
+): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   /** Resolve the Agent and confirm it belongs to the caller's tenant. */
   async function ownedAgent(c: Context<Env>) {
@@ -38,7 +46,7 @@ export function agentFileRoutes(agentFileStore: AgentFileStore, agentStore: Agen
   }
 
   // GET /v1/agents/:id/files — list an Agent's Files (metadata only)
-  router.get("/v1/agents/:id/files", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listAgentFiles"), async (c) => {
     const owned = await ownedAgent(c);
     if (!owned) return c.json({ error: "Not found" }, 404);
 
@@ -48,7 +56,7 @@ export function agentFileRoutes(agentFileStore: AgentFileStore, agentStore: Agen
   });
 
   // GET /v1/agents/:id/files/:filename — read one File's content
-  router.get("/v1/agents/:id/files/:filename", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("getAgentFile"), async (c) => {
     const owned = await ownedAgent(c);
     if (!owned) return c.json({ error: "Not found" }, 404);
 
@@ -60,7 +68,7 @@ export function agentFileRoutes(agentFileStore: AgentFileStore, agentStore: Agen
   });
 
   // POST /v1/agents/:id/files/:filename — upsert a File's content
-  router.post("/v1/agents/:id/files/:filename", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("upsertAgentFile"), async (c) => {
     const owned = await ownedAgent(c);
     if (!owned) return c.json({ error: "Not found" }, 404);
 
@@ -87,7 +95,7 @@ export function agentFileRoutes(agentFileStore: AgentFileStore, agentStore: Agen
   });
 
   // DELETE /v1/agents/:id/files/:filename
-  router.delete("/v1/agents/:id/files/:filename", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("deleteAgentFile"), async (c) => {
     const owned = await ownedAgent(c);
     if (!owned) return c.json({ error: "Not found" }, 404);
 

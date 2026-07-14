@@ -1,9 +1,14 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession } from "../lib/public-projection.js";
 import { tokenUsageToWire } from "../lib/token-usage.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -19,11 +24,11 @@ export interface SessionRouteDeps {
   sessionRouter?: SessionRouter;
 }
 
-export function sessionRoutes(deps: SessionRouteDeps) {
-  const router = new Hono<Env>();
+export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/sessions — Create session
-  router.post("/v1/sessions", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createSession"), async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
@@ -74,7 +79,7 @@ export function sessionRoutes(deps: SessionRouteDeps) {
   });
 
   // GET /v1/sessions — List sessions
-  router.get("/v1/sessions", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listSessions"), async (c) => {
     const tenant = c.get("tenant");
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor") || undefined;
@@ -119,8 +124,8 @@ export function sessionRoutes(deps: SessionRouteDeps) {
   });
 
   // GET /v1/sessions/:id/usage — Aggregate durable model spans
-  router.get("/v1/sessions/:id/usage", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("getSessionUsage"), async (c) => {
+    const id = c.req.param("id")!;
     const tenant = c.get("tenant");
     const session = await deps.sessionStore.getById(id);
     if (!session || session.tenantId !== tenant.tenantId) {
@@ -135,8 +140,8 @@ export function sessionRoutes(deps: SessionRouteDeps) {
   });
 
   // GET /v1/sessions/:id — Get session
-  router.get("/v1/sessions/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("getSession"), async (c) => {
+    const id = c.req.param("id")!;
     const tenant = c.get("tenant");
 
     const session = await deps.sessionStore.getById(id);
@@ -148,8 +153,8 @@ export function sessionRoutes(deps: SessionRouteDeps) {
   });
 
   // DELETE /v1/sessions/:id — Terminate session
-  router.delete("/v1/sessions/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("terminateSession"), async (c) => {
+    const id = c.req.param("id")!;
     const tenant = c.get("tenant");
 
     const existing = await deps.sessionStore.getById(id);

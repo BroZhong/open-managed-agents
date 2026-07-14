@@ -86,6 +86,18 @@ describe("Agent Files routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("keeps unknown filenames as 404 for read and delete", async () => {
+    const { app, agentId } = await setup();
+
+    const get = await app.request(`/v1/agents/${agentId}/files/NOPE`);
+    expect(get.status).toBe(404);
+
+    const del = await app.request(`/v1/agents/${agentId}/files/NOPE`, {
+      method: "DELETE",
+    });
+    expect(del.status).toBe(404);
+  });
+
   it("delete removes the file", async () => {
     const { app, agentId } = await setup();
     await app.request(`/v1/agents/${agentId}/files/USER`, {

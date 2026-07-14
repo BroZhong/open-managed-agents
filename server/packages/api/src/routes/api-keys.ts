@@ -1,7 +1,12 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { ApiKeyStore, EventLogStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { EMPTY_TOKEN_USAGE, tokenUsageToWire } from "../lib/token-usage.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -9,11 +14,14 @@ type Env = {
   };
 };
 
-export function apiKeyRoutes(apiKeyStore: ApiKeyStore, eventLogStore?: EventLogStore) {
-  const router = new Hono<Env>();
+export function apiKeyRoutes(
+  apiKeyStore: ApiKeyStore,
+  eventLogStore?: EventLogStore,
+): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // GET /v1/api-keys — List keys for the tenant
-  router.get("/v1/api-keys", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listApiKeys"), async (c) => {
     if (!eventLogStore) {
       return c.json({ error: "Usage service unavailable" }, 503);
     }
@@ -38,7 +46,7 @@ export function apiKeyRoutes(apiKeyStore: ApiKeyStore, eventLogStore?: EventLogS
   });
 
   // POST /v1/api-keys — Create a key
-  router.post("/v1/api-keys", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createApiKey"), async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
@@ -65,8 +73,8 @@ export function apiKeyRoutes(apiKeyStore: ApiKeyStore, eventLogStore?: EventLogS
   });
 
   // DELETE /v1/api-keys/:id — Revoke a key while retaining usage history
-  router.delete("/v1/api-keys/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("revokeApiKey"), async (c) => {
+    const id = c.req.param("id")!;
     const tenant = c.get("tenant");
     const revoked = await apiKeyStore.revoke(tenant.tenantId, id);
 

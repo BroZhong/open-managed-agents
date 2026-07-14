@@ -1,6 +1,11 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { WorkspaceMetadataStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -14,11 +19,13 @@ type Env = {
  * Session's artifacts. Here a Workspace is a first-class, nameable, tenant-owned
  * file collection that a Session can mount at creation.
  */
-export function workspaceEntityRoutes(workspaceStore: WorkspaceMetadataStore) {
-  const router = new Hono<Env>();
+export function workspaceEntityRoutes(
+  workspaceStore: WorkspaceMetadataStore,
+): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/workspaces — Create (or idempotently return) a Workspace.
-  router.post("/v1/workspaces", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createWorkspace"), async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
@@ -44,15 +51,15 @@ export function workspaceEntityRoutes(workspaceStore: WorkspaceMetadataStore) {
   });
 
   // GET /v1/workspaces — List the tenant's Workspaces (ordered by created_at).
-  router.get("/v1/workspaces", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listWorkspaces"), async (c) => {
     const tenant = c.get("tenant");
     const data = await workspaceStore.list(tenant.tenantId);
     return c.json({ data });
   });
 
   // GET /v1/workspaces/:id — Get one; 404 on not-found or cross-tenant.
-  router.get("/v1/workspaces/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("getWorkspace"), async (c) => {
+    const id = c.req.param("id")!;
     const tenant = c.get("tenant");
     const workspace = await workspaceStore.getById(tenant.tenantId, id);
     if (!workspace) {
@@ -62,8 +69,8 @@ export function workspaceEntityRoutes(workspaceStore: WorkspaceMetadataStore) {
   });
 
   // POST /v1/workspaces/:id — Update a Workspace (currently just rename).
-  router.post("/v1/workspaces/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("updateWorkspace"), async (c) => {
+    const id = c.req.param("id")!;
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);

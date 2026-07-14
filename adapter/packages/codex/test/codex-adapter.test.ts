@@ -186,6 +186,39 @@ describe("CodexAdapter", () => {
   });
 
   describe("error handling", () => {
+    it("preserves available token usage when turn.failed closes a model span", async () => {
+      const cliEvents: CodexCliEvent[] = [
+        { type: "thread.started", thread_id: "t1" },
+        { type: "turn.started" },
+        {
+          type: "turn.failed",
+          error: { message: "API rate limited" },
+          usage: {
+            input_tokens: 40,
+            cached_input_tokens: 12,
+            output_tokens: 3,
+          },
+        },
+      ];
+      const adapter = new CodexAdapter({ _eventSource: fakeSource(cliEvents) });
+
+      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const end = events.find(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent;
+
+      expect(end.usage).toEqual({
+        inputTokens: 40,
+        outputTokens: 3,
+        cacheReadTokens: 12,
+        cacheWriteTokens: 0,
+      });
+      expect(events.slice(-2).map((event) => event.type)).toEqual([
+        "span.model_request_end",
+        "session.error",
+      ]);
+    });
+
     it("emits session.error on turn.failed", async () => {
       const cliEvents: CodexCliEvent[] = [
         { type: "thread.started", thread_id: "t1" },
@@ -197,6 +230,35 @@ describe("CodexAdapter", () => {
       const last = events[events.length - 1] as any;
       expect(last.type).toBe("session.error");
       expect(last.error.message).toBe("API rate limited");
+    });
+
+    it("preserves partial token usage when an error event closes a model span", async () => {
+      const cliEvents: CodexCliEvent[] = [
+        { type: "thread.started", thread_id: "t1" },
+        { type: "turn.started" },
+        {
+          type: "error",
+          message: "model not found",
+          usage: { cached_input_tokens: 9, output_tokens: 2 },
+        },
+      ];
+      const adapter = new CodexAdapter({ _eventSource: fakeSource(cliEvents) });
+
+      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const end = events.find(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent;
+
+      expect(end.usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 2,
+        cacheReadTokens: 9,
+        cacheWriteTokens: 0,
+      });
+      expect(events.slice(-2).map((event) => event.type)).toEqual([
+        "span.model_request_end",
+        "session.error",
+      ]);
     });
 
     it("emits session.error on error event", async () => {
@@ -221,6 +283,32 @@ describe("CodexAdapter", () => {
       const last = events[events.length - 1] as any;
       expect(last.type).toBe("session.error");
       expect(last.error.message).toBe("unexpected crash");
+    });
+
+    it("closes an in-flight model span once when the event source throws", async () => {
+      const adapter = new CodexAdapter({
+        _eventSource: async function* () {
+          yield { type: "turn.started" } as CodexCliEvent;
+          throw new Error("connection reset");
+        },
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("crash")));
+      const ends = events.filter(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent[];
+
+      expect(ends).toHaveLength(1);
+      expect(ends[0]?.usage).toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      });
+      expect(events.slice(-2).map((event) => event.type)).toEqual([
+        "span.model_request_end",
+        "session.error",
+      ]);
     });
   });
 

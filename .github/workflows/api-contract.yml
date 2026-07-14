@@ -6,14 +6,20 @@ on:
       - "server/packages/api/**"
       - "server/pnpm-lock.yaml"
       - "docs/openapi.json"
+      - "docs/apifox-auto-import.json"
+      - ".github/scripts/apifox-*.mjs"
       - ".github/workflows/api-contract.yml"
+      - ".github/workflows/apifox-sync.yml"
   push:
     branches: [main]
     paths:
       - "server/packages/api/**"
       - "server/pnpm-lock.yaml"
       - "docs/openapi.json"
+      - "docs/apifox-auto-import.json"
+      - ".github/scripts/apifox-*.mjs"
       - ".github/workflows/api-contract.yml"
+      - ".github/workflows/apifox-sync.yml"
   workflow_dispatch:
 
 permissions:
@@ -36,5 +42,7 @@ jobs:
         run: pnpm --dir server install --frozen-lockfile
       - name: Verify generated OpenAPI artifact
         run: pnpm openapi:check
-      - name: Compare the OpenAPI inventory with Hono routes
-        run: pnpm --dir server --filter @oma-server/api exec vitest run test/openapi.test.ts
+      - name: Test API behavior and OpenAPI route alignment
+        run: pnpm --dir server --filter @oma-server/api test
+      - name: Test the safe Apifox endpoint reconciler
+        run: node --test .github/scripts/apifox-*.test.mjs

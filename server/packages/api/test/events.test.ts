@@ -959,6 +959,23 @@ describe("GET /v1/sessions/:id/events", () => {
     expect(body.has_more).toBe(true);
   });
 
+  it("preserves tolerant parsing for invalid event pagination values", async () => {
+    const { app, agentStore, sessionStore, eventLogStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+    await eventLogStore.append(session.id, {
+      type: "user.message",
+      data: { text: "Hello" },
+      sessionThreadId: "sthr_primary",
+    });
+
+    const res = await app.request(
+      `/v1/sessions/${session.id}/events?after_seq=abc&limit=abc`,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data).toHaveLength(1);
+  });
+
   it("returns 404 for non-existent session", async () => {
     const { app } = createTestApp();
 

@@ -701,7 +701,15 @@ describe("PiAgentAdapter (SDK)", () => {
     });
 
     it("emits one session.error when Pi exhausts retries with a provider error", async () => {
-      const providerFailure = (message: string): AgentSessionEvent =>
+      const providerFailure = (
+        message: string,
+        usage: {
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheWrite: number;
+        },
+      ): AgentSessionEvent =>
         ({
           type: "message_end",
           message: {
@@ -709,25 +717,36 @@ describe("PiAgentAdapter (SDK)", () => {
             stopReason: "error",
             errorMessage: message,
             usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
+              ...usage,
+              totalTokens:
+                usage.input +
+                usage.output +
+                usage.cacheRead +
+                usage.cacheWrite,
               cost: { total: 0 },
             },
           },
         }) as never as AgentSessionEvent;
       const script: AgentSessionEvent[] = [
         assistantStart,
-        providerFailure("temporary provider failure"),
+        providerFailure("temporary provider failure", {
+          input: 11,
+          output: 1,
+          cacheRead: 2,
+          cacheWrite: 3,
+        }),
         {
           type: "agent_end",
           messages: [],
           willRetry: true,
         } as AgentSessionEvent,
         assistantStart,
-        providerFailure("provider blocked the final attempt"),
+        providerFailure("provider blocked the final attempt", {
+          input: 23,
+          output: 4,
+          cacheRead: 5,
+          cacheWrite: 6,
+        }),
         {
           type: "agent_end",
           messages: [],
@@ -748,6 +767,21 @@ describe("PiAgentAdapter (SDK)", () => {
         message: "provider blocked the final attempt",
         code: "pi_agent_error",
       });
+      const eventTypes = events.map((event) => event.type);
+      const finalSpanEndIndex = eventTypes.lastIndexOf(
+        "span.model_request_end",
+      );
+      const finalErrorIndex = eventTypes.lastIndexOf("session.error");
+      const finalSpanEnd = events[
+        finalSpanEndIndex
+      ] as SpanModelRequestEndEvent;
+      expect(finalSpanEnd.usage).toEqual({
+        inputTokens: 34,
+        outputTokens: 4,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 6,
+      });
+      expect(finalSpanEndIndex).toBeLessThan(finalErrorIndex);
     });
 
     it("emits session.error when the session factory throws", async () => {

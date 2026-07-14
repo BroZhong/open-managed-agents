@@ -1413,11 +1413,11 @@
           {
             "schema": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "example": 50
+              "example": 50,
+              "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50."
             },
             "required": false,
+            "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
             "name": "limit",
             "in": "query"
           },
@@ -1692,7 +1692,7 @@
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/AgentFileName"
+              "type": "string"
             },
             "required": true,
             "name": "filename",
@@ -1834,7 +1834,7 @@
           },
           {
             "schema": {
-              "$ref": "#/components/schemas/AgentFileName"
+              "type": "string"
             },
             "required": true,
             "name": "filename",
@@ -2218,11 +2218,11 @@
           {
             "schema": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "example": 50
+              "example": 50,
+              "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50."
             },
             "required": false,
+            "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
             "name": "limit",
             "in": "query"
           },
@@ -3280,11 +3280,11 @@
           {
             "schema": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "example": 50
+              "example": 50,
+              "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50."
             },
             "required": false,
+            "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
             "name": "limit",
             "in": "query"
           },
@@ -3628,10 +3628,7 @@
           },
           {
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ]
+              "type": "integer"
             },
             "required": false,
             "name": "after_seq",
@@ -3639,8 +3636,7 @@
           },
           {
             "schema": {
-              "type": "integer",
-              "minimum": 1
+              "type": "integer"
             },
             "required": false,
             "name": "limit",
@@ -3648,10 +3644,7 @@
           },
           {
             "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
+              "type": "string"
             },
             "required": false,
             "name": "replay",
@@ -3659,10 +3652,7 @@
           },
           {
             "schema": {
-              "type": "string",
-              "enum": [
-                "chunks"
-              ]
+              "type": "string"
             },
             "required": false,
             "name": "include",
@@ -3670,11 +3660,7 @@
           },
           {
             "schema": {
-              "type": "string",
-              "enum": [
-                "application/json",
-                "text/event-stream"
-              ]
+              "type": "string"
             },
             "required": false,
             "name": "Accept",
@@ -4167,25 +4153,47 @@
           "content": {
             "multipart/form-data": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "files": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "format": "binary"
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "format": "binary"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "destDir": {
+                        "type": "string"
+                      }
                     },
-                    "minItems": 1
+                    "required": [
+                      "file"
+                    ]
                   },
-                  "path": {
-                    "type": "string"
-                  },
-                  "destDir": {
-                    "type": "string"
+                  {
+                    "type": "object",
+                    "properties": {
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "binary"
+                        },
+                        "minItems": 1
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "destDir": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "files"
+                    ]
                   }
-                },
-                "required": [
-                  "files"
                 ]
               }
             }
@@ -4284,11 +4292,11 @@
           {
             "schema": {
               "type": "integer",
-              "minimum": 60,
-              "maximum": 900,
-              "example": 600
+              "example": 600,
+              "description": "Clamped to the inclusive range 60–900 seconds."
             },
             "required": false,
+            "description": "Clamped to the inclusive range 60–900 seconds.",
             "name": "expiresIn",
             "in": "query"
           }

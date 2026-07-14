@@ -627,6 +627,24 @@ describe("GET /v1/sessions/:id/workspace/preview-url", () => {
     expect((await tooSmall.json()).expiresIn).toBe(60);
   });
 
+  it("preserves fallback and truncation for legacy expiresIn values", async () => {
+    const { app, sessionStore, artifactStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
+
+    const invalid = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png&expiresIn=abc`,
+    );
+    expect(invalid.status).toBe(200);
+    expect((await invalid.json()).expiresIn).toBe(600);
+
+    const decimal = await app.request(
+      `/v1/sessions/${session.id}/workspace/preview-url?path=a.png&expiresIn=61.9`,
+    );
+    expect(decimal.status).toBe(200);
+    expect((await decimal.json()).expiresIn).toBe(61);
+  });
+
   it("returns 404 for a non-existent file (never signs an absent key)", async () => {
     const { app, sessionStore } = createSigningTestApp();
     const session = await seedSession(sessionStore);

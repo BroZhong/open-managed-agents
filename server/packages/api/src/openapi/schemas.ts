@@ -13,7 +13,12 @@ export const ErrorSchema = z
   .openapi("Error");
 
 export const RuntimeSchema = z
-  .enum(["claude-code", "codex", "pi-agent", "mock"])
+  .enum(["claude-code", "codex", "pi-agent", "mock"], {
+    error: (issue) =>
+      issue.input === undefined
+        ? "runtime is required"
+        : "runtime must be one of: claude-code, codex, pi-agent, mock",
+  })
   .openapi("Runtime");
 
 export const ToolConfigSchema = z
@@ -61,17 +66,29 @@ export const AgentSchema = z
 
 export const CreateAgentInputSchema = z
   .object({
-    name: z.string().min(1),
-    description: z.string().optional(),
-    model: z.string().min(1),
-    system: z.string().min(1),
+    name: z
+      .string({ error: "name is required" })
+      .min(1, { error: "name is required" }),
+    description: z
+      .string({ error: "description must be a string" })
+      .optional(),
+    model: z
+      .string({ error: "model is required" })
+      .min(1, { error: "model is required" }),
+    system: z
+      .string({ error: "system is required" })
+      .min(1, { error: "system is required" }),
     runtime: RuntimeSchema,
-    tools: z.array(ToolConfigSchema).optional(),
+    tools: z
+      .array(ToolConfigSchema, { error: "tools must be an array" })
+      .optional(),
     mcpServers: z.array(McpServerConfigSchema).max(1).optional().openapi({
       description:
         "Only the Host-allowlisted rds-mcp configuration is accepted.",
     }),
-    skills: z.array(z.string()).optional(),
+    skills: z
+      .array(z.string(), { error: "skills must be an array" })
+      .optional(),
     sandbox: AgentSandboxConfigSchema.optional(),
   })
   .openapi("CreateAgentInput");
@@ -231,13 +248,18 @@ export const ContentBlockSchema = z
   .openapi("ContentBlock");
 
 export const UserEventTypeSchema = z
-  .enum([
-    "user.message",
-    "user.interrupt",
-    "user.tool_confirmation",
-    "user.custom_tool_result",
-    "user.define_outcome",
-  ])
+  .enum(
+    [
+      "user.message",
+      "user.interrupt",
+      "user.tool_confirmation",
+      "user.custom_tool_result",
+      "user.define_outcome",
+    ],
+    {
+      error: (issue) => `Unsupported event type: ${String(issue.input)}`,
+    },
+  )
   .openapi("UserEventType");
 
 export const UserEventSchema = z

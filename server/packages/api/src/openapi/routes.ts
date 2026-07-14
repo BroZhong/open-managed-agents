@@ -1,4 +1,4 @@
-import { z, type RouteConfig } from "@hono/zod-openapi";
+import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import {
   AgentFileListSchema,
   AgentFileNameSchema,
@@ -45,8 +45,8 @@ const jsonResponse = (schema: z.ZodType, description: string) => ({
 const errorResponse = (description: string) =>
   jsonResponse(ErrorSchema, description);
 
-function protectedRoute(config: RouteConfig): RouteConfig {
-  return {
+function protectedRoute<const R extends RouteConfig>(config: R) {
+  return createRoute({
     ...config,
     responses: {
       ...config.responses,
@@ -54,11 +54,11 @@ function protectedRoute(config: RouteConfig): RouteConfig {
         config.responses[401] ??
         errorResponse("Missing or invalid tenant credential"),
     },
-  };
+  });
 }
 
-function publicRoute(config: RouteConfig): RouteConfig {
-  return { ...config, security: [] };
+function publicRoute<const R extends RouteConfig>(config: R) {
+  return createRoute({ ...config, security: [] });
 }
 
 const idParams = z.object({
@@ -66,6 +66,13 @@ const idParams = z.object({
 });
 
 const agentFileParams = z.object({
+  id: z.string().openapi({ param: { name: "id", in: "path" } }),
+  filename: z.string().openapi({
+    param: { name: "filename", in: "path" },
+  }),
+});
+
+const writableAgentFileParams = z.object({
   id: z.string().openapi({ param: { name: "id", in: "path" } }),
   filename: AgentFileNameSchema.openapi({
     param: { name: "filename", in: "path" },
@@ -78,15 +85,18 @@ const agentSkillParams = z.object({
 });
 
 const paginationQuery = z.object({
-  limit: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(100)
+  // Keep the handlers' long-standing parseInt fallback behavior. The
+  // OpenAPI override advertises the intended integer shape while runtime
+  // validation remains tolerant of legacy values such as "abc" or "1.5".
+  limit: z
+    .string()
     .optional()
     .openapi({
+      type: "integer",
       param: { name: "limit", in: "query" },
       example: 50,
+      description:
+        "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
     }),
   cursor: z
     .string()
@@ -102,10 +112,22 @@ const pathQuery = z.object({
 });
 
 const binaryFileSchema = z
-  .string()
+  .file()
   .openapi({ type: "string", format: "binary" });
 
-export const openApiRoutes: readonly RouteConfig[] = [
+const uploadedFilesSchema = z
+  .union([binaryFileSchema, z.array(binaryFileSchema).min(1)])
+  .openapi({
+    type: "array",
+    items: { type: "string", format: "binary" },
+    minItems: 1,
+  });
+
+export type RegisteredOpenApiRoute = RouteConfig & {
+  getRoutingPath(): string;
+};
+
+export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   publicRoute({
     method: "get",
     path: "/health",
@@ -266,7 +288,7 @@ export const openApiRoutes: readonly RouteConfig[] = [
     summary: "Create or replace an Agent File",
     tags: ["Agents/Files"],
     request: {
-      params: agentFileParams,
+      params: writableAgentFileParams,
       body: jsonBody(z.object({ content: z.string() })),
     },
     responses: {
@@ -365,7 +387,7 @@ export const openApiRoutes: readonly RouteConfig[] = [
           "multipart/form-data": {
             schema: z.object({
               paths: z.string().openapi({ example: '["my-skill/SKILL.md"]' }),
-              files: z.array(binaryFileSchema).min(1),
+              files: uploadedFilesSchema,
             }),
           },
         },
@@ -536,7 +558,15 @@ export const openApiRoutes: readonly RouteConfig[] = [
     summary: "Create an API key",
     description: "The raw key is returned only once.",
     tags: ["API Keys"],
-    request: { body: jsonBody(z.object({ name: z.string().min(1) })) },
+    request: {
+      body: jsonBody(
+        z.object({
+          name: z
+            .string({ error: "name is required" })
+            .min(1, { error: "name is required" }),
+        }),
+      ),
+    },
     responses: {
       201: jsonResponse(ApiKeyCreateResultSchema, "API key created"),
       400: errorResponse("Invalid key name"),
@@ -568,7 +598,7 @@ export const openApiRoutes: readonly RouteConfig[] = [
         z.object({
           id: z.string().optional(),
           workspaceId: z.string().optional().openapi({ deprecated: true }),
-          name: z.string().optional(),
+          name: z.string({ error: "name must be a string" }).optional(),
         }),
       ),
     },
@@ -605,7 +635,11 @@ export const openApiRoutes: readonly RouteConfig[] = [
     tags: ["Workspaces"],
     request: {
       params: idParams,
-      body: jsonBody(z.object({ name: z.string().optional() })),
+      body: jsonBody(
+        z.object({
+          name: z.string({ error: "name must be a string" }).optional(),
+        }),
+      ),
     },
     responses: {
       200: jsonResponse(WorkspaceSchema, "Workspace updated"),
@@ -623,11 +657,21 @@ export const openApiRoutes: readonly RouteConfig[] = [
     request: {
       body: jsonBody(
         z.object({
-          agent: z.string(),
-          workspace_id: z.string().optional(),
-          workspace_name: z.string().optional(),
-          workspaceId: z.string().optional().openapi({ deprecated: true }),
-          workspaceName: z.string().optional().openapi({ deprecated: true }),
+          agent: z.string({ error: "Missing required field: agent" }),
+          workspace_id: z
+            .string({ error: "workspace_id must be a string" })
+            .optional(),
+          workspace_name: z
+            .string({ error: "workspace_name must be a string" })
+            .optional(),
+          workspaceId: z
+            .string({ error: "workspace_id must be a string" })
+            .optional()
+            .openapi({ deprecated: true }),
+          workspaceName: z
+            .string({ error: "workspace_name must be a string" })
+            .optional()
+            .openapi({ deprecated: true }),
         }),
       ),
     },
@@ -732,7 +776,7 @@ export const openApiRoutes: readonly RouteConfig[] = [
       params: idParams,
       headers: z.object({
         Accept: z
-          .enum(["application/json", "text/event-stream"])
+          .string()
           .optional()
           .openapi({
             param: { name: "Accept", in: "header" },
@@ -745,27 +789,26 @@ export const openApiRoutes: readonly RouteConfig[] = [
           }),
       }),
       query: z.object({
-        after_seq: z.coerce
-          .number()
-          .int()
+        after_seq: z
+          .string()
           .optional()
           .openapi({
+            type: "integer",
             param: { name: "after_seq", in: "query" },
           }),
-        limit: z.coerce
-          .number()
-          .int()
-          .min(1)
+        limit: z
+          .string()
           .optional()
           .openapi({
+            type: "integer",
             param: { name: "limit", in: "query" },
           }),
         replay: z
-          .literal("1")
+          .string()
           .optional()
           .openapi({ param: { name: "replay", in: "query" } }),
         include: z
-          .literal("chunks")
+          .string()
           .optional()
           .openapi({
             param: { name: "include", in: "query" },
@@ -906,11 +949,18 @@ export const openApiRoutes: readonly RouteConfig[] = [
         required: true,
         content: {
           "multipart/form-data": {
-            schema: z.object({
-              files: z.array(binaryFileSchema).min(1),
-              path: z.string().optional(),
-              destDir: z.string().optional(),
-            }),
+            schema: z.union([
+              z.object({
+                file: binaryFileSchema,
+                path: z.string().optional(),
+                destDir: z.string().optional(),
+              }),
+              z.object({
+                files: uploadedFilesSchema,
+                path: z.string().optional(),
+                destDir: z.string().optional(),
+              }),
+            ]),
           },
         },
       },
@@ -934,15 +984,14 @@ export const openApiRoutes: readonly RouteConfig[] = [
     request: {
       params: idParams,
       query: pathQuery.extend({
-        expiresIn: z.coerce
-          .number()
-          .int()
-          .min(60)
-          .max(900)
+        expiresIn: z
+          .string()
           .optional()
           .openapi({
+            type: "integer",
             param: { name: "expiresIn", in: "query" },
             example: 600,
+            description: "Clamped to the inclusive range 60–900 seconds.",
           }),
       }),
     },
@@ -1019,4 +1068,16 @@ export const openApiRoutes: readonly RouteConfig[] = [
       404: errorResponse("Session or file not found"),
     },
   }),
-];
+] as const;
+
+export function getOpenApiRoute(
+  operationId: string,
+): RegisteredOpenApiRoute {
+  const route = openApiRoutes.find(
+    (candidate) => candidate.operationId === operationId,
+  );
+  if (!route) {
+    throw new Error(`Unknown OpenAPI operation: ${operationId}`);
+  }
+  return route;
+}

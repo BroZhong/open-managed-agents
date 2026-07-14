@@ -38,6 +38,7 @@ function operationsOf(
       "delete",
       "options",
       "head",
+      "trace",
     ] as const) {
       if (pathItem?.[method])
         operations.push(`${method.toUpperCase()} ${path}`);
@@ -59,6 +60,7 @@ function operationIdsOf(
       "delete",
       "options",
       "head",
+      "trace",
     ] as const) {
       const operation = pathItem?.[method];
       if (operation?.operationId) operationIds.push(operation.operationId);
@@ -115,17 +117,91 @@ function runtimeOperations(): string[] {
     ...routers.flatMap((router) => router.routes),
   ];
 
-  return records
-    .filter((route) =>
-      ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"].includes(
-        route.method,
-      ),
-    )
-    .map((route) => `${route.method} ${normalizeHonoPath(route.path)}`)
-    .sort();
+  return [
+    ...new Set(
+      records
+        .filter((route) =>
+          [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS",
+            "HEAD",
+            "TRACE",
+          ].includes(route.method),
+        )
+        .map((route) => `${route.method} ${normalizeHonoPath(route.path)}`),
+    ),
+  ].sort();
+}
+
+function routerOperations(router: {
+  routes: Array<{ method: string; path: string }>;
+}): string[] {
+  return [
+    ...new Set(
+      router.routes
+        .filter((route) =>
+          [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS",
+            "HEAD",
+            "TRACE",
+          ].includes(route.method),
+        )
+        .map((route) => `${route.method} ${normalizeHonoPath(route.path)}`),
+    ),
+  ].sort();
 }
 
 describe("OpenAPI contract", () => {
+  it("is registered by every runtime route factory as its source of truth", () => {
+    const adapter = {} as never;
+    const routers = [
+      createApp({ apiKeyStore: adapter }),
+      authRoutes(adapter),
+      agentRoutes(adapter),
+      agentFileRoutes(adapter, adapter),
+      agentSkillRoutes(adapter, adapter, adapter),
+      skillRoutes(adapter, adapter),
+      apiKeyRoutes(adapter),
+      workspaceEntityRoutes(adapter),
+      sessionRoutes({
+        sessionStore: adapter,
+        agentStore: adapter,
+        workspaceStore: adapter,
+      }),
+      eventRoutes({
+        eventLogStore: adapter,
+        pendingEventStore: adapter,
+        sessionStore: adapter,
+      }),
+      messageRoutes({
+        eventLogStore: adapter,
+        pendingEventStore: adapter,
+        sessionStore: adapter,
+        eventStreamHub: adapter,
+        sessionRouter: adapter,
+      }),
+      workspaceRoutes({ sessionStore: adapter, artifactStore: adapter }),
+    ];
+
+    for (const router of routers) {
+      expect(router.getOpenAPI31Document).toBeTypeOf("function");
+      const document = router.getOpenAPI31Document({
+        openapi: "3.1.0",
+        info: { title: "Route contract", version: "test" },
+      });
+      expect(operationsOf(document)).toEqual(routerOperations(router));
+    }
+  });
+
   it("covers every current HTTP operation exactly once", () => {
     const document = createOpenApiDocument({
       serverUrl: "https://api.example.test",

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -20,6 +20,11 @@ import { workspaceEntityRoutes } from "./routes/workspaces.js";
 import { mcpCatalogRoutes } from "./routes/mcp-catalog.js";
 import { loopRoutes } from "./routes/loops.js";
 import { createOpenApiDocument } from "./openapi/document.js";
+import { getOpenApiRoute } from "./openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "./openapi/router.js";
 
 type Env = {
   Variables: {
@@ -50,20 +55,20 @@ export interface AppDeps {
   now?: () => Date;
 }
 
-export function createApp(deps: AppDeps) {
-  const app = new Hono<Env>();
+export function createApp(deps: AppDeps): OpenAPIHono<Env> {
+  const app = createContractRouter<Env>();
 
   // CORS middleware — allow all origins in dev
   app.use("*", cors());
 
   // Public machine-readable contract for documentation tools such as Apifox.
-  app.get("/openapi.json", (c) => {
+  registerContractRoute(app, getOpenApiRoute("getOpenApiDocument"), (c) => {
     c.header("Cache-Control", "public, max-age=300");
     return c.json(createOpenApiDocument());
   });
 
   // Health check — no auth required
-  app.get("/health", (c) => {
+  registerContractRoute(app, getOpenApiRoute("healthCheck"), (c) => {
     return c.json({ status: "ok" });
   });
 

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { EventLogIngressStore, PendingEventIngressStore, SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import { alignedChunkData } from "@oma-server/event-log";
@@ -6,6 +6,11 @@ import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { deriveTitleFromEventData } from "../lib/derive-title.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -56,12 +61,12 @@ const PENDING_USER_TYPES = new Set<AllowedUserType>([
   "user.custom_tool_result",
 ]);
 
-export function eventRoutes(deps: EventRouteDeps) {
-  const router = new Hono<Env>();
+export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/sessions/:id/events — Append user events
-  router.post("/v1/sessions/:id/events", async (c) => {
-    const sessionId = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("appendSessionEvents"), async (c) => {
+    const sessionId = c.req.param("id")!;
     const tenant = c.get("tenant");
 
     // Validate session exists and belongs to tenant
@@ -188,8 +193,8 @@ export function eventRoutes(deps: EventRouteDeps) {
   });
 
   // GET /v1/sessions/:id/events — List events or SSE stream
-  router.get("/v1/sessions/:id/events", async (c) => {
-    const sessionId = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("listSessionEvents"), async (c) => {
+    const sessionId = c.req.param("id")!;
     const tenant = c.get("tenant");
 
     // Validate session exists and belongs to tenant

@@ -24,6 +24,7 @@ interface ActiveBlock {
  */
 export class SdkEventTranslator {
   private firstTokenEmitted = false;
+  private spanStarted = false;
   private activeBlocks: Map<number, ActiveBlock> = new Map();
   private currentMessageId: string | null = null;
   private currentModel: string | null = null;
@@ -73,7 +74,21 @@ export class SdkEventTranslator {
    * Signal end of SDK stream, return any final events.
    */
   finalize(): SessionEvent[] {
-    return [];
+    if (!this.spanStarted) return [];
+    this.spanStarted = false;
+    return [
+      {
+        id: generateEventId(),
+        timestamp: generateTimestamp(),
+        type: "span.model_request_end",
+        usage: {
+          inputTokens: this.currentUsage.inputTokens,
+          outputTokens: 0,
+          cacheReadTokens: this.currentUsage.cacheReadTokens,
+          cacheWriteTokens: this.currentUsage.cacheWriteTokens,
+        },
+      },
+    ];
   }
 
   // ─── Private handlers ───────────────────────────────────────────────────────
@@ -83,6 +98,7 @@ export class SdkEventTranslator {
     model: string;
     usage?: SdkUsage;
   }): SessionEvent[] {
+    this.spanStarted = true;
     this.currentMessageId = msg.id;
     this.currentModel = msg.model;
     this.firstTokenEmitted = false;
@@ -292,6 +308,8 @@ export class SdkEventTranslator {
     delta: { stop_reason: string },
     usage: { output_tokens: number }
   ): SessionEvent[] {
+    if (!this.spanStarted) return [];
+    this.spanStarted = false;
     return [
       {
         id: generateEventId(),
