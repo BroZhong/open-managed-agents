@@ -247,6 +247,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       {
         name: "session-data",
         command: "supabase-mcp",
+        cwd: "/opt/oma-managed-mcp",
         env: {
           ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
           ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",
@@ -262,6 +263,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       mcpServers: {
         "session-data": {
           command: "supabase-mcp",
+          cwd: "/opt/oma-managed-mcp",
           env: {
             ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
             ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",

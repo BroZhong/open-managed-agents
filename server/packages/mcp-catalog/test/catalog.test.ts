@@ -35,6 +35,7 @@ describe("managed MCP catalog", () => {
       fileURLToPath(new URL(".", import.meta.url)),
       "../src/supabase-session-mcp.ts",
     );
+    const hostCwd = fileURLToPath(new URL("../src/", import.meta.url));
     expect(resolved).toEqual([
       {
         name: "session-data",
@@ -44,6 +45,7 @@ describe("managed MCP catalog", () => {
           expect.stringMatching(/^file:.*tsx.*loader\.mjs$/),
           entrypoint,
         ],
+        cwd: hostCwd,
         env: {
           ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
           ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",

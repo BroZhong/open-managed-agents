@@ -46,6 +46,7 @@ const RDS_CONNECTION = {
 const SUPABASE_SESSION_MCP = fileURLToPath(
   new URL("./supabase-session-mcp.ts", import.meta.url),
 );
+const SUPABASE_SESSION_MCP_CWD = fileURLToPath(new URL(".", import.meta.url));
 const TSX_IMPORT = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 const CATALOG: readonly PrivateManagedMcpCatalogEntry[] = [
@@ -76,6 +77,12 @@ const CATALOG: readonly PrivateManagedMcpCatalogEntry[] = [
       // facade, which exposes one tenant-scoped query tool.
       command: process.execPath,
       args: ["--import", TSX_IMPORT, SUPABASE_SESSION_MCP],
+      // Sandboxed Pi sessions expose a sandbox-only cwd (for example
+      // /home/user) to extensions. pi-mcp-adapter spawns stdio MCP processes
+      // on the Host, so an omitted cwd would make child_process report the
+      // misleading `spawn <valid node path> ENOENT`. Pin the child to this
+      // Host-owned module directory instead of inheriting the sandbox cwd.
+      cwd: SUPABASE_SESSION_MCP_CWD,
       env: {
         ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
         ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",

@@ -166,6 +166,7 @@ describe("Loop + managed Supabase MCP end to end", () => {
         expect.stringMatching(/^file:.*tsx.*loader\.mjs$/),
         expect.stringMatching(/supabase-session-mcp\.ts$/),
       ],
+      cwd: expect.stringMatching(/server\/packages\/mcp-catalog\/src\/?$/),
       env: {
         ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
         ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",
