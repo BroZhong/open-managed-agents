@@ -28,9 +28,17 @@ own token. Only non-secret vfs-cli defaults (if any) belong in the image.
 `story-seed` follows the same rule. `OPENGROVE_WW_BASE_URL` and
 `OPENGROVE_WW_ACCESS_TOKEN` are injected by the Host when the sandbox is
 created. The bearer token lives in the Kubernetes Secret and never in this
-image, the ConfigMap, a Skill, or an Agent record. The Host treats the WW pair
-as managed values, so Agent configuration cannot redirect the token to another
-endpoint.
+image, the ConfigMap, a Skill, or an Agent record. The Host injects the WW pair
+only for Agent ids in `DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS`; it is not a
+deployment-wide credential available to other tenants.
+
+This is still a general Bash sandbox. Code running inside an allowed Agent's
+sandbox can read its environment and can override variables for a child
+process. This integration keeps the bearer out of persisted Agent
+configuration and configuration APIs, and prevents cross-Agent injection; it
+does not hide the raw bearer from code inside the target sandbox. Strict
+non-disclosure requires a Host-side fixed-upstream proxy rather than an
+environment variable.
 
 ## How `story-seed` is resolved
 

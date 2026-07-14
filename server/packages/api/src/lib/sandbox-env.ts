@@ -1,8 +1,10 @@
 export interface SandboxEnvPolicy {
   /** Deployment defaults that an Agent may override per key. */
   defaultSandboxEnv?: Record<string, string>;
-  /** Host-managed values that stay authoritative over Agent configuration. */
-  managedSandboxEnv?: Record<string, string>;
+  /** Host-managed values scoped to explicitly allowed Agent ids. */
+  managedSandboxEnvByAgentId?: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
 }
 
 type HostEnv = Readonly<Record<string, string | undefined>>;
@@ -10,6 +12,12 @@ type HostEnv = Readonly<Record<string, string | undefined>>;
 function nonBlank(env: HostEnv, name: string): string | undefined {
   const value = env[name]?.trim();
   return value ? value : undefined;
+}
+
+function commaSeparated(env: HostEnv, name: string): string[] {
+  const value = nonBlank(env, name);
+  if (!value) return [];
+  return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
 }
 
 /**
@@ -31,7 +39,6 @@ export function adapterProcessEnvFromHost(
  */
 export function sandboxEnvPolicyFromHost(env: HostEnv): SandboxEnvPolicy {
   const defaultSandboxEnv: Record<string, string> = {};
-  const managedSandboxEnv: Record<string, string> = {};
 
   const vfsToken = nonBlank(env, "DEFAULT_SANDBOX_VFS_TOKEN");
   if (vfsToken) defaultSandboxEnv.VFS_TOKEN = vfsToken;
@@ -41,22 +48,41 @@ export function sandboxEnvPolicyFromHost(env: HostEnv): SandboxEnvPolicy {
     env,
     "DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN",
   );
+  const wwAgentIds = commaSeparated(
+    env,
+    "DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS",
+  );
 
-  if (Boolean(wwBaseUrl) !== Boolean(wwAccessToken)) {
+  const hasAnyWwConfig = Boolean(wwBaseUrl || wwAccessToken || wwAgentIds.length);
+  const hasCompleteWwConfig = Boolean(
+    wwBaseUrl && wwAccessToken && wwAgentIds.length,
+  );
+  if (hasAnyWwConfig && !hasCompleteWwConfig) {
     throw new Error(
-      "Managed OpenGrove WW sandbox configuration requires both " +
-        "DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL and " +
-        "DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN",
+      "Managed OpenGrove WW sandbox configuration requires " +
+        "DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL, " +
+        "DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN, and " +
+        "DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS",
     );
   }
 
-  if (wwBaseUrl && wwAccessToken) {
-    managedSandboxEnv.OPENGROVE_WW_BASE_URL = wwBaseUrl;
-    managedSandboxEnv.OPENGROVE_WW_ACCESS_TOKEN = wwAccessToken;
+  let managedSandboxEnvByAgentId:
+    | SandboxEnvPolicy["managedSandboxEnvByAgentId"]
+    | undefined;
+  if (wwBaseUrl && wwAccessToken && wwAgentIds.length > 0) {
+    managedSandboxEnvByAgentId = Object.fromEntries(
+      wwAgentIds.map((agentId) => [
+        agentId,
+        {
+          OPENGROVE_WW_BASE_URL: wwBaseUrl,
+          OPENGROVE_WW_ACCESS_TOKEN: wwAccessToken,
+        },
+      ]),
+    );
   }
 
   return {
     ...(Object.keys(defaultSandboxEnv).length > 0 ? { defaultSandboxEnv } : {}),
-    ...(Object.keys(managedSandboxEnv).length > 0 ? { managedSandboxEnv } : {}),
+    ...(managedSandboxEnvByAgentId ? { managedSandboxEnvByAgentId } : {}),
   };
 }

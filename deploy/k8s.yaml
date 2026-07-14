@@ -55,6 +55,9 @@ data:
   SANDBOX_TEMPLATE: "code-interpreter-vfscli"
   # Non-secret endpoint paired with the Host-managed WW bearer token below.
   DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://opengrove.creativefitting.cn"
+  # Comma-separated allowlist. The WW credential is injected only into these
+  # Agents' sandboxes, never deployment-wide across tenants.
+  DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_DAHfGLi_tD9TctXw9cEqo"
 ---
 apiVersion: apps/v1
 kind: Deployment

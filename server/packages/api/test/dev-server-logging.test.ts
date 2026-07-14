@@ -67,6 +67,7 @@ describe("development server startup logging", () => {
     const output = await captureStartupLog("true", {
       DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://ww.example.test",
       DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN: secret,
+      DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_story",
     });
 
     expect(output).not.toContain(secret);

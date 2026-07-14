@@ -384,8 +384,9 @@ async function main() {
   }
 
   // Deployment-owned CLI environment. Ordinary defaults remain overridable by
-  // an Agent; managed WW values stay authoritative so a Host-held bearer token
-  // cannot be redirected to an Agent-selected endpoint.
+  // an Agent; WW values are scoped to an explicit Agent-id allowlist and win
+  // over that Agent's persisted configuration. They remain visible to code in
+  // the allowed Bash sandbox, as required by the environment-variable contract.
   const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
