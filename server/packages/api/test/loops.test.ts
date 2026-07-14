@@ -82,6 +82,7 @@ describe("Agent Loops", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: "intervalMinutes must be an integer of at least 5",
+      code: "validation_error",
     });
   });
 

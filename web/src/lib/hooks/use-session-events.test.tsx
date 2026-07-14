@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
   InfiniteQueryObserver,
   QueryClient,
@@ -150,6 +150,9 @@ describe("useSessionEvents history replay", () => {
   });
 
   it("clears the previous Session projection and resume anchor on switch", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     const sseConnections: Array<{ url: string; lastEventId: string }> = [];
 
     vi.stubGlobal(
@@ -182,7 +185,10 @@ describe("useSessionEvents history replay", () => {
 
     const { result, rerender } = renderHook(
       ({ sessionId }) => useSessionEvents(sessionId),
-      { initialProps: { sessionId: "session_1" } },
+      {
+        initialProps: { sessionId: "session_1" },
+        wrapper: queryWrapper(queryClient),
+      },
     );
     await waitFor(() => expect(result.current.events[0]?.seq).toBe(100));
 
@@ -200,6 +206,9 @@ describe("useSessionEvents history replay", () => {
   });
 
   it("rejects an old Session frame before passive abort cleanup can fence it", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     let resolveOldRead:
       | ((value: { done: false; value: Uint8Array }) => void)
       | undefined;
@@ -255,7 +264,8 @@ describe("useSessionEvents history replay", () => {
     const { result, rerender } = renderHook(
       ({ sessionId }) => useSessionEvents(sessionId),
       {
-      initialProps: { sessionId: "session_1" },
+        initialProps: { sessionId: "session_1" },
+        wrapper: queryWrapper(queryClient),
       },
     );
     await waitFor(() => expect(result.current.events[0]?.seq).toBe(100));
@@ -323,19 +333,52 @@ describe("useSessionEvents history replay", () => {
     const session = sessionFixture("session_partial");
     queryClient.setQueryData(["sessions", session.id], session);
     queryClient.setQueryData(["sessions", "byAgent", session.agentId], [session]);
-    stubHistoryOnly([{
+    const runningEvent: SessionEvent = {
       seq: 50,
       type: "session.status_running",
       data: {},
       ts: "2026-07-14T00:00:01.000Z",
-    }], true);
+    };
+    let resolveSecondPage!: (response: Response) => void;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        if (headers?.Accept === "application/json") {
+          if (String(input).includes("after_seq=50")) {
+            return new Promise<Response>((resolve) => {
+              resolveSecondPage = resolve;
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [runningEvent], has_more: true }),
+          } as Response);
+        }
+
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.close(),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve({ ok: true, body } as Response);
+      }),
+    );
 
     const { result } = renderHook(() => useSessionEvents(session.id), {
       wrapper: queryWrapper(queryClient),
     });
 
-    await waitFor(() => expect(result.current.isConnected).toBe(true));
+    await waitFor(() => expect(resolveSecondPage).toBeTypeOf("function"));
     expect(result.current.status).toBe("idle");
+    expect(
+      queryClient.getQueryData<Session>(["sessions", session.id])?.status,
+    ).toBe("idle");
     expect(
       queryClient.getQueryData<Session[]>([
         "sessions",
@@ -343,6 +386,28 @@ describe("useSessionEvents history replay", () => {
         session.agentId,
       ])?.[0].status,
     ).toBe("idle");
+
+    await act(async () => {
+      resolveSecondPage({
+        ok: true,
+        json: async () => ({
+          data: [historicalEvent(51)],
+          has_more: false,
+        }),
+      } as Response);
+    });
+
+    await waitFor(() => expect(result.current.status).toBe("running"));
+    expect(
+      queryClient.getQueryData<Session>(["sessions", session.id])?.status,
+    ).toBe("running");
+    expect(
+      queryClient.getQueryData<Session[]>([
+        "sessions",
+        "byAgent",
+        session.agentId,
+      ])?.[0].status,
+    ).toBe("running");
   });
 
   it("does not revive a terminated Session from older status history", async () => {

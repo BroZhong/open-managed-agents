@@ -75,22 +75,22 @@ export function createApp(deps: AppDeps): OpenAPIHono<Env> {
   // Auth routes (register/login) — mounted at /auth/*, OUTSIDE the /v1/* auth
   // middleware so they are reachable unauthenticated.
   if (deps.userStore) {
-    app.route("", authRoutes(deps.userStore));
+    app.route("/", authRoutes(deps.userStore));
   }
 
   // Auth middleware on all /v1/* routes
   app.use("/v1/*", authMiddleware(deps.apiKeyStore));
 
   // Host-owned MCP catalog exposes metadata only; runtime definitions stay private.
-  app.route("", mcpCatalogRoutes());
+  app.route("/", mcpCatalogRoutes());
 
   // Mount agent routes
   if (deps.agentStore) {
-    app.route("", agentRoutes(deps.agentStore));
+    app.route("/", agentRoutes(deps.agentStore));
   }
 
   if (deps.agentStore && deps.loopStore) {
-    app.route("", loopRoutes({
+    app.route("/", loopRoutes({
       agentStore: deps.agentStore,
       loopStore: deps.loopStore,
       sessionRouter: deps.sessionRouter,
@@ -100,32 +100,32 @@ export function createApp(deps: AppDeps): OpenAPIHono<Env> {
 
   // Mount Agent Files routes (per-Agent editable persona/instruction docs)
   if (deps.agentFileStore && deps.agentStore) {
-    app.route("", agentFileRoutes(deps.agentFileStore, deps.agentStore));
+    app.route("/", agentFileRoutes(deps.agentFileStore, deps.agentStore));
   }
 
   // Mount Skill Library routes (tenant-scoped reusable Skills)
   if (deps.skillStore && deps.skillArtifactStore) {
-    app.route("", skillRoutes(deps.skillStore, deps.skillArtifactStore));
+    app.route("/", skillRoutes(deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount per-Agent Skill routes (equip = fork; unequip = delete fork; ADR-0004)
   if (deps.agentStore && deps.skillStore && deps.skillArtifactStore) {
-    app.route("", agentSkillRoutes(deps.agentStore, deps.skillStore, deps.skillArtifactStore));
+    app.route("/", agentSkillRoutes(deps.agentStore, deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount API key CRUD routes
   if (deps.fullApiKeyStore) {
-    app.route("", apiKeyRoutes(deps.fullApiKeyStore, deps.eventLogStore));
+    app.route("/", apiKeyRoutes(deps.fullApiKeyStore, deps.eventLogStore));
   }
 
   // Mount Workspace entity routes (create-named + list + get)
   if (deps.workspaceStore) {
-    app.route("", workspaceEntityRoutes(deps.workspaceStore));
+    app.route("/", workspaceEntityRoutes(deps.workspaceStore));
   }
 
   // Mount session routes
   if (deps.sessionStore && deps.agentStore && deps.workspaceStore) {
-    app.route("", sessionRoutes({
+    app.route("/", sessionRoutes({
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,
       workspaceStore: deps.workspaceStore,
@@ -136,7 +136,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<Env> {
 
   // Mount event routes
   if (deps.eventLogStore && deps.pendingEventStore && deps.sessionStore) {
-    app.route("", eventRoutes({
+    app.route("/", eventRoutes({
       eventLogStore: deps.eventLogStore,
       pendingEventStore: deps.pendingEventStore,
       sessionStore: deps.sessionStore,
@@ -149,7 +149,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<Env> {
 
   // Mount Workspace file proxy routes (list + preview/download through the Host)
   if (deps.sessionStore && deps.artifactStore) {
-    app.route("", workspaceRoutes({
+    app.route("/", workspaceRoutes({
       sessionStore: deps.sessionStore,
       artifactStore: deps.artifactStore,
       turnStreamStore: deps.turnStreamStore,
@@ -158,7 +158,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<Env> {
 
   // Mount message routes
   if (deps.eventLogStore && deps.pendingEventStore && deps.sessionStore && deps.eventStreamHub && deps.sessionRouter) {
-    app.route("", messageRoutes({
+    app.route("/", messageRoutes({
       eventLogStore: deps.eventLogStore,
       pendingEventStore: deps.pendingEventStore,
       sessionStore: deps.sessionStore,

@@ -43,7 +43,7 @@ export function createOpenApiDocument(
       title: "Open Managed Agents API",
       version: "0.1.0",
       description:
-        "HTTP API for managing Agents, Skills, Workspaces, Sessions, Events, API keys, and Workspace files.",
+        "HTTP API for managing Agents, managed MCP servers, Loops, Skills, Workspaces, Sessions, Events, API keys, and Workspace files.",
     },
     servers: [{ url: serverUrl }],
     security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
@@ -56,6 +56,15 @@ export function createOpenApiDocument(
       {
         name: "Agents",
         description: "Agent definitions and runtime configuration.",
+      },
+      {
+        name: "MCP Catalog",
+        description:
+          "Host-reviewed MCP servers that can be safely equipped on Agents.",
+      },
+      {
+        name: "Loops",
+        description: "Scheduled and on-demand recurring Agent work.",
       },
       {
         name: "Agents/Files",

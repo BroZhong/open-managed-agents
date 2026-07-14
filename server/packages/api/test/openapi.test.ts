@@ -8,6 +8,8 @@ import { agentRoutes } from "../src/routes/agents.js";
 import { apiKeyRoutes } from "../src/routes/api-keys.js";
 import { authRoutes } from "../src/routes/auth.js";
 import { eventRoutes } from "../src/routes/events.js";
+import { loopRoutes } from "../src/routes/loops.js";
+import { mcpCatalogRoutes } from "../src/routes/mcp-catalog.js";
 import { messageRoutes } from "../src/routes/messages.js";
 import { sessionRoutes } from "../src/routes/sessions.js";
 import { skillRoutes } from "../src/routes/skills.js";
@@ -88,6 +90,8 @@ function runtimeOperations(): string[] {
     agentSkillRoutes(adapter, adapter, adapter),
     skillRoutes(adapter, adapter),
     apiKeyRoutes(adapter),
+    mcpCatalogRoutes(),
+    loopRoutes({ agentStore: adapter, loopStore: adapter }),
     workspaceEntityRoutes(adapter),
     sessionRoutes({
       sessionStore: adapter,
@@ -171,6 +175,8 @@ describe("OpenAPI contract", () => {
       agentSkillRoutes(adapter, adapter, adapter),
       skillRoutes(adapter, adapter),
       apiKeyRoutes(adapter),
+      mcpCatalogRoutes(),
+      loopRoutes({ agentStore: adapter, loopStore: adapter }),
       workspaceEntityRoutes(adapter),
       sessionRoutes({
         sessionStore: adapter,
@@ -232,8 +238,39 @@ describe("OpenAPI contract", () => {
       "mock",
     ]);
     expect(schemas.Agent.properties).toHaveProperty("description");
+    expect(schemas.Agent.properties.mcpServers.items).toEqual({
+      $ref: "#/components/schemas/ManagedMcpServerRef",
+    });
+    expect(schemas.ManagedMcpServerRef.properties).not.toHaveProperty("url");
+    expect(schemas.ManagedMcpServerRef.properties).not.toHaveProperty("headers");
+    expect(schemas.ManagedMcpServerRef.additionalProperties).toBe(false);
+    expect(schemas.ManagedMcpServerRef.properties.name).toMatchObject({
+      minLength: 1,
+      maxLength: 64,
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    });
+    expect(
+      schemas.ManagedMcpServerRef.properties.description.maxLength,
+    ).toBe(500);
+    expect(schemas.CreateLoopInput.properties.name.pattern).toBe("\\S");
+    expect(schemas.CreateLoopInput.properties.prompt.pattern).toBe("\\S");
     expect(schemas.Session.properties).toHaveProperty("title");
     expect(schemas.Session.properties).toHaveProperty("workspaceId");
+    expect(schemas.Session.properties).toHaveProperty("loopId");
+    expect(document.paths?.["/v1/mcp-catalog"]?.get?.operationId).toBe(
+      "listManagedMcpCatalog",
+    );
+    expect(document.paths?.["/v1/agents/{agentId}/loops"]?.post?.operationId).toBe(
+      "createAgentLoop",
+    );
+    expect(document.paths?.["/v1/loops/{id}/run"]?.post?.operationId).toBe(
+      "runLoop",
+    );
+    expect(
+      document.paths?.["/v1/sessions"]?.get?.parameters?.map(
+        (parameter: any) => parameter.name,
+      ),
+    ).toEqual(expect.arrayContaining(["loop_id", "exclude_loop"]));
     expect(schemas.ApiKeyInfo.properties).toHaveProperty("revokedAt");
     expect(document.paths?.["/v1/api-keys/{id}"]?.delete?.operationId).toBe(
       "revokeApiKey",

@@ -10,10 +10,14 @@ import {
   ApiKeyRevokedSchema,
   ContentBlockSchema,
   CreateAgentInputSchema,
+  CreateLoopInputSchema,
   DeletedSchema,
   EquippedSkillSchema,
   ErrorSchema,
   EventListSchema,
+  LoopListSchema,
+  LoopSchema,
+  ManagedMcpCatalogSchema,
   PathResultSchema,
   SessionListSchema,
   SessionSchema,
@@ -25,6 +29,7 @@ import {
   SkillListSchema,
   SkillSchema,
   UpdateAgentInputSchema,
+  UpdateLoopInputSchema,
   UserEventSchema,
   WorkspaceArtifactListSchema,
   WorkspaceListSchema,
@@ -63,6 +68,10 @@ function publicRoute<const R extends RouteConfig>(config: R) {
 
 const idParams = z.object({
   id: z.string().openapi({ param: { name: "id", in: "path" } }),
+});
+
+const agentIdParams = z.object({
+  agentId: z.string().openapi({ param: { name: "agentId", in: "path" } }),
 });
 
 const agentFileParams = z.object({
@@ -199,6 +208,19 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   }),
 
   protectedRoute({
+    method: "get",
+    path: "/v1/mcp-catalog",
+    operationId: "listManagedMcpCatalog",
+    summary: "List Host-managed MCP catalog entries",
+    description:
+      "Returns safe metadata for MCP servers that may be equipped on an Agent. Runtime endpoints, commands, headers, and credentials are never exposed.",
+    tags: ["MCP Catalog"],
+    responses: {
+      200: jsonResponse(ManagedMcpCatalogSchema, "Managed MCP catalog"),
+    },
+  }),
+
+  protectedRoute({
     method: "post",
     path: "/v1/agents",
     operationId: "createAgent",
@@ -254,6 +276,77 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       200: jsonResponse(DeletedSchema, "Agent deleted"),
       404: errorResponse("Agent not found"),
+    },
+  }),
+
+  protectedRoute({
+    method: "get",
+    path: "/v1/agents/{agentId}/loops",
+    operationId: "listAgentLoops",
+    summary: "List an Agent's Loops",
+    tags: ["Loops"],
+    request: { params: agentIdParams },
+    responses: {
+      200: jsonResponse(LoopListSchema, "Agent Loops"),
+      404: errorResponse("Agent not found"),
+    },
+  }),
+  protectedRoute({
+    method: "post",
+    path: "/v1/agents/{agentId}/loops",
+    operationId: "createAgentLoop",
+    summary: "Create a Loop for an Agent",
+    tags: ["Loops"],
+    request: {
+      params: agentIdParams,
+      body: jsonBody(CreateLoopInputSchema),
+    },
+    responses: {
+      201: jsonResponse(LoopSchema, "Loop created"),
+      400: errorResponse("Invalid Loop configuration"),
+      404: errorResponse("Agent not found"),
+    },
+  }),
+  protectedRoute({
+    method: "get",
+    path: "/v1/loops/{id}",
+    operationId: "getLoop",
+    summary: "Get a Loop",
+    tags: ["Loops"],
+    request: { params: idParams },
+    responses: {
+      200: jsonResponse(LoopSchema, "Loop found"),
+      404: errorResponse("Loop not found"),
+    },
+  }),
+  protectedRoute({
+    method: "post",
+    path: "/v1/loops/{id}",
+    operationId: "updateLoop",
+    summary: "Update a Loop",
+    tags: ["Loops"],
+    request: {
+      params: idParams,
+      body: jsonBody(UpdateLoopInputSchema),
+    },
+    responses: {
+      200: jsonResponse(LoopSchema, "Loop updated"),
+      400: errorResponse("Invalid Loop configuration"),
+      404: errorResponse("Loop not found"),
+    },
+  }),
+  protectedRoute({
+    method: "post",
+    path: "/v1/loops/{id}/run",
+    operationId: "runLoop",
+    summary: "Run a Loop immediately",
+    description:
+      "Creates a Loop-owned Session immediately without changing the Loop's regular schedule.",
+    tags: ["Loops"],
+    request: { params: idParams },
+    responses: {
+      201: jsonResponse(SessionSchema, "Loop Session created"),
+      404: errorResponse("Loop not found"),
     },
   }),
 
@@ -693,6 +786,20 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
           .string()
           .optional()
           .openapi({ param: { name: "agent_id", in: "query" } }),
+        loop_id: z
+          .string()
+          .optional()
+          .openapi({ param: { name: "loop_id", in: "query" } }),
+        exclude_loop: z
+          .enum(["true", "false"], {
+            error: "exclude_loop must be true or false",
+          })
+          .optional()
+          .openapi({
+            param: { name: "exclude_loop", in: "query" },
+            description:
+              "Set to true to exclude Loop-owned Sessions. Cannot be combined with loop_id.",
+          }),
         status: SessionStatusSchema.optional().openapi({
           param: { name: "status", in: "query" },
         }),
@@ -700,6 +807,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     },
     responses: {
       200: jsonResponse(SessionListSchema, "Paginated Session list"),
+      400: errorResponse("Invalid Session list filters"),
     },
   }),
   protectedRoute({

@@ -20,7 +20,7 @@ test("accepts the repository's generated OpenAPI inventory", () => {
     ...operation,
   }));
 
-  assert.equal(desired.length, 48);
+  assert.equal(desired.length, 54);
   assert.deepEqual(createReconciliationPlan(desired, remote, 0), {
     deleteEndpoints: [],
   });

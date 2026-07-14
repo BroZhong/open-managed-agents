@@ -29,14 +29,39 @@ export const ToolConfigSchema = z
   })
   .openapi("ToolConfig");
 
-export const McpServerConfigSchema = z
+export const ManagedMcpServerRefSchema = z
   .object({
-    name: z.string(),
-    url: z.url(),
-    transport: z.enum(["sse", "streamable-http"]).optional(),
-    headers: z.record(z.string(), z.string()).optional(),
+    catalogId: z.string(),
+    name: z
+      .string()
+      .min(1, { error: "name must not be empty" })
+      .max(64, { error: "name must be at most 64 characters" })
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, {
+        error:
+          "name must use letters, numbers, dot, underscore, or hyphen",
+      }),
+    description: z
+      .string()
+      .max(500, { error: "description must be at most 500 characters" })
+      .optional(),
   })
-  .openapi("McpServerConfig");
+  .strict()
+  .openapi("ManagedMcpServerRef");
+
+export const ManagedMcpCatalogEntrySchema = z
+  .object({
+    id: z.string(),
+    defaultName: z.string(),
+    defaultDescription: z.string(),
+    transport: z.enum(["streamable-http", "stdio"]),
+    configurable: z.array(z.enum(["name", "description"])),
+    requiredEnv: z.array(z.string()),
+  })
+  .openapi("ManagedMcpCatalogEntry");
+
+export const ManagedMcpCatalogSchema = z
+  .object({ data: z.array(ManagedMcpCatalogEntrySchema) })
+  .openapi("ManagedMcpCatalog");
 
 export const AgentSandboxConfigSchema = z
   .object({
@@ -56,7 +81,7 @@ export const AgentSchema = z
     system: z.string(),
     runtime: RuntimeSchema,
     tools: z.array(ToolConfigSchema).optional(),
-    mcpServers: z.array(McpServerConfigSchema).optional(),
+    mcpServers: z.array(ManagedMcpServerRefSchema).optional(),
     skills: z.array(z.string()).optional(),
     sandbox: AgentSandboxConfigSchema.optional(),
     createdAt: DateTimeSchema,
@@ -82,10 +107,16 @@ export const CreateAgentInputSchema = z
     tools: z
       .array(ToolConfigSchema, { error: "tools must be an array" })
       .optional(),
-    mcpServers: z.array(McpServerConfigSchema).max(1).optional().openapi({
-      description:
-        "Only the Host-allowlisted rds-mcp configuration is accepted.",
-    }),
+    mcpServers: z
+      .array(ManagedMcpServerRefSchema, { error: "mcpServers must be an array" })
+      .max(2, {
+        error: "mcpServers may contain at most 2 managed connections",
+      })
+      .optional()
+      .openapi({
+        description:
+          "References to Host-reviewed MCP catalog entries. Runtime URLs, commands, headers, and credentials are never accepted or returned.",
+      }),
     skills: z
       .array(z.string(), { error: "skills must be an array" })
       .optional(),
@@ -205,6 +236,60 @@ export const SessionStatusSchema = z
   .enum(["idle", "running", "terminated"])
   .openapi("SessionStatus");
 
+const LoopNameSchema = z
+  .string({ error: "name must be a non-empty string" })
+  .regex(/\S/, { error: "name must be a non-empty string" })
+  .trim()
+  .min(1, { error: "name must be a non-empty string" });
+
+const LoopPromptSchema = z
+  .string({ error: "prompt must be a non-empty string" })
+  .regex(/\S/, { error: "prompt must be a non-empty string" })
+  .trim()
+  .min(1, { error: "prompt must be a non-empty string" });
+
+const LoopIntervalSchema = z
+  .number({ error: "intervalMinutes must be an integer of at least 5" })
+  .int({ error: "intervalMinutes must be an integer of at least 5" })
+  .min(5, { error: "intervalMinutes must be an integer of at least 5" });
+
+export const CreateLoopInputSchema = z
+  .object({
+    name: LoopNameSchema,
+    description: z
+      .string({ error: "description must be a string" })
+      .optional(),
+    prompt: LoopPromptSchema,
+    intervalMinutes: LoopIntervalSchema,
+    enabled: z.boolean({ error: "enabled must be a boolean" }).optional(),
+  })
+  .openapi("CreateLoopInput");
+
+export const UpdateLoopInputSchema = CreateLoopInputSchema.partial().openapi(
+  "UpdateLoopInput",
+);
+
+export const LoopSchema = z
+  .object({
+    id: z.string(),
+    tenantId: z.string(),
+    agentId: z.string(),
+    name: z.string(),
+    description: z.string().optional(),
+    prompt: z.string(),
+    intervalMinutes: z.number().int().min(5),
+    enabled: z.boolean(),
+    nextRunAt: DateTimeSchema,
+    lastRunAt: DateTimeSchema.optional(),
+    createdAt: DateTimeSchema,
+    updatedAt: DateTimeSchema,
+  })
+  .openapi("Loop");
+
+export const LoopListSchema = z
+  .object({ data: z.array(LoopSchema) })
+  .openapi("LoopList");
+
 export const SessionSchema = z
   .object({
     id: z.string().openapi({ example: "sess_abc123" }),
@@ -214,6 +299,7 @@ export const SessionSchema = z
     title: z.string().optional(),
     agent: AgentSchema,
     workspaceId: z.string(),
+    loopId: z.string().optional(),
     createdAt: DateTimeSchema,
     updatedAt: DateTimeSchema,
     terminatedAt: DateTimeSchema.optional(),

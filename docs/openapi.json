@@ -3,7 +3,7 @@
   "info": {
     "title": "Open Managed Agents API",
     "version": "0.1.0",
-    "description": "HTTP API for managing Agents, Skills, Workspaces, Sessions, Events, API keys, and Workspace files."
+    "description": "HTTP API for managing Agents, managed MCP servers, Loops, Skills, Workspaces, Sessions, Events, API keys, and Workspace files."
   },
   "servers": [
     {
@@ -30,6 +30,14 @@
     {
       "name": "Agents",
       "description": "Agent definitions and runtime configuration."
+    },
+    {
+      "name": "MCP Catalog",
+      "description": "Host-reviewed MCP servers that can be safely equipped on Agents."
+    },
+    {
+      "name": "Loops",
+      "description": "Scheduled and on-demand recurring Agent work."
     },
     {
       "name": "Agents/Files",
@@ -106,6 +114,65 @@
           "error"
         ]
       },
+      "ManagedMcpCatalog": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedMcpCatalogEntry"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ManagedMcpCatalogEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "defaultName": {
+            "type": "string"
+          },
+          "defaultDescription": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "streamable-http",
+              "stdio"
+            ]
+          },
+          "configurable": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "name",
+                "description"
+              ]
+            }
+          },
+          "requiredEnv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "defaultName",
+          "defaultDescription",
+          "transport",
+          "configurable",
+          "requiredEnv"
+        ]
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -140,7 +207,7 @@
           "mcpServers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/McpServerConfig"
+              "$ref": "#/components/schemas/ManagedMcpServerRef"
             }
           },
           "skills": {
@@ -204,34 +271,28 @@
           "inputSchema"
         ]
       },
-      "McpServerConfig": {
+      "ManagedMcpServerRef": {
         "type": "object",
         "properties": {
-          "name": {
+          "catalogId": {
             "type": "string"
           },
-          "url": {
+          "name": {
             "type": "string",
-            "format": "uri"
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
           },
-          "transport": {
+          "description": {
             "type": "string",
-            "enum": [
-              "sse",
-              "streamable-http"
-            ]
-          },
-          "headers": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
+            "maxLength": 500
           }
         },
         "required": [
-          "name",
-          "url"
-        ]
+          "catalogId",
+          "name"
+        ],
+        "additionalProperties": false
       },
       "AgentSandboxConfig": {
         "type": "object",
@@ -283,10 +344,10 @@
           "mcpServers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/McpServerConfig"
+              "$ref": "#/components/schemas/ManagedMcpServerRef"
             },
-            "maxItems": 1,
-            "description": "Only the Host-allowlisted rds-mcp configuration is accepted."
+            "maxItems": 2,
+            "description": "References to Host-reviewed MCP catalog entries. Runtime URLs, commands, headers, and credentials are never accepted or returned."
           },
           "skills": {
             "type": "array",
@@ -356,10 +417,10 @@
           "mcpServers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/McpServerConfig"
+              "$ref": "#/components/schemas/ManagedMcpServerRef"
             },
-            "maxItems": 1,
-            "description": "Only the Host-allowlisted rds-mcp configuration is accepted."
+            "maxItems": 2,
+            "description": "References to Host-reviewed MCP catalog entries. Runtime URLs, commands, headers, and credentials are never accepted or returned."
           },
           "skills": {
             "type": "array",
@@ -385,6 +446,207 @@
         "required": [
           "type",
           "id"
+        ]
+      },
+      "LoopList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Loop"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Loop": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "nextRunAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "lastRunAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "agentId",
+          "name",
+          "prompt",
+          "intervalMinutes",
+          "enabled",
+          "nextRunAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "CreateLoopInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "prompt",
+          "intervalMinutes"
+        ]
+      },
+      "UpdateLoopInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "sess_abc123"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "loopId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "terminatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "agentId",
+          "status",
+          "agent",
+          "workspaceId",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "SessionStatus": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "running",
+          "terminated"
         ]
       },
       "AgentFileList": {
@@ -830,69 +1092,6 @@
         },
         "required": [
           "data"
-        ]
-      },
-      "Session": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "example": "sess_abc123"
-          },
-          "tenantId": {
-            "type": "string"
-          },
-          "agentId": {
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/SessionStatus"
-          },
-          "title": {
-            "type": "string"
-          },
-          "agent": {
-            "$ref": "#/components/schemas/Agent"
-          },
-          "workspaceId": {
-            "type": "string"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "ISO 8601 timestamp",
-            "example": "2026-07-14T00:00:00.000Z"
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "ISO 8601 timestamp",
-            "example": "2026-07-14T00:00:00.000Z"
-          },
-          "terminatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "ISO 8601 timestamp",
-            "example": "2026-07-14T00:00:00.000Z"
-          }
-        },
-        "required": [
-          "id",
-          "tenantId",
-          "agentId",
-          "status",
-          "agent",
-          "workspaceId",
-          "createdAt",
-          "updatedAt"
-        ]
-      },
-      "SessionStatus": {
-        "type": "string",
-        "enum": [
-          "idle",
-          "running",
-          "terminated"
         ]
       },
       "SessionList": {
@@ -1353,6 +1552,38 @@
         }
       }
     },
+    "/v1/mcp-catalog": {
+      "get": {
+        "operationId": "listManagedMcpCatalog",
+        "summary": "List Host-managed MCP catalog entries",
+        "description": "Returns safe metadata for MCP servers that may be equipped on an Agent. Runtime endpoints, commands, headers, and credentials are never exposed.",
+        "tags": [
+          "MCP Catalog"
+        ],
+        "responses": {
+          "200": {
+            "description": "Managed MCP catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedMcpCatalog"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "post": {
         "operationId": "createAgent",
@@ -1612,6 +1843,298 @@
           },
           "404": {
             "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/loops": {
+      "get": {
+        "operationId": "listAgentLoops",
+        "summary": "List an Agent's Loops",
+        "tags": [
+          "Loops"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent Loops",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoopList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentLoop",
+        "summary": "Create a Loop for an Agent",
+        "tags": [
+          "Loops"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoopInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Loop created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Loop"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Loop configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/loops/{id}": {
+      "get": {
+        "operationId": "getLoop",
+        "summary": "Get a Loop",
+        "tags": [
+          "Loops"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Loop found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Loop"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Loop not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateLoop",
+        "summary": "Update a Loop",
+        "tags": [
+          "Loops"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLoopInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Loop updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Loop"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Loop configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Loop not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/loops/{id}/run": {
+      "post": {
+        "operationId": "runLoop",
+        "summary": "Run a Loop immediately",
+        "description": "Creates a Loop-owned Session immediately without changing the Loop's regular schedule.",
+        "tags": [
+          "Loops"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Loop Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Loop not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -3306,6 +3829,28 @@
           },
           {
             "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "loop_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Set to true to exclude Loop-owned Sessions. Cannot be combined with loop_id."
+            },
+            "required": false,
+            "description": "Set to true to exclude Loop-owned Sessions. Cannot be combined with loop_id.",
+            "name": "exclude_loop",
+            "in": "query"
+          },
+          {
+            "schema": {
               "$ref": "#/components/schemas/SessionStatus"
             },
             "required": false,
@@ -3320,6 +3865,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Session list filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

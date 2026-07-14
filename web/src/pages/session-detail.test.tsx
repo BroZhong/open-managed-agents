@@ -237,7 +237,7 @@ it("renders current Session token usage and updates its cache hit rate from SSE"
       new TextEncoder().encode(
         "event: span.model_request_end\n" +
           "id: 2\n" +
-          '{"usage":{"inputTokens":100,"outputTokens":30,"cacheReadTokens":80,"cacheWriteTokens":0}}\n\n',
+          'data: {"usage":{"inputTokens":100,"outputTokens":30,"cacheReadTokens":80,"cacheWriteTokens":0}}\n\n',
       ),
     );
   });
