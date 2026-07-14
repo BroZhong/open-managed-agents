@@ -215,6 +215,154 @@ describe("PiAgentAdapter (SDK)", () => {
     });
   });
 
+  describe("managed subagent usage", () => {
+    it("emits one independent canonical span per child alongside the parent span", async () => {
+      const parentScript: AgentSessionEvent[] = [
+        assistantStart,
+        assistantEnd(20, 3, 4, 1),
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (args): Promise<PiSessionLike> => {
+          let listener: ((event: AgentSessionEvent) => void) | undefined;
+          return {
+            subscribe(next) {
+              listener = next;
+              return () => {
+                listener = undefined;
+              };
+            },
+            async prompt() {
+              args.onSubagentUsage({
+                subagentId: "child-1",
+                input: 60,
+                output: 5,
+                cacheRead: 30,
+                cacheWrite: 10,
+              });
+              args.onSubagentUsage({
+                subagentId: "child-2",
+                input: 7,
+                output: 2,
+                cacheRead: 1,
+                cacheWrite: 2,
+              });
+              for (const event of parentScript) listener?.(event);
+            },
+            abort() {},
+            dispose() {},
+          };
+        },
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("delegate")));
+      const spans = events.filter(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent[];
+
+      expect(spans).toHaveLength(3);
+      expect(spans.map((span) => span.usage)).toEqual([
+        {
+          inputTokens: 100,
+          outputTokens: 5,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
+        },
+        {
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheReadTokens: 1,
+          cacheWriteTokens: 2,
+        },
+        {
+          inputTokens: 25,
+          outputTokens: 3,
+          cacheReadTokens: 4,
+          cacheWriteTokens: 1,
+        },
+      ]);
+      expect(new Set(spans.map((span) => span.id)).size).toBe(3);
+    });
+
+    it("retains provider-reported child usage when the parent prompt fails", async () => {
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (args): Promise<PiSessionLike> => ({
+          subscribe: () => () => {},
+          async prompt() {
+            args.onSubagentUsage({
+              subagentId: "child-before-failure",
+              input: 11,
+              output: 2,
+              cacheRead: 3,
+              cacheWrite: 4,
+            });
+            throw new Error("parent prompt failed");
+          },
+          abort() {},
+          dispose() {},
+        }),
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("fail later")));
+      expect(events.map((event) => event.type)).toEqual([
+        "span.model_request_end",
+        "session.error",
+      ]);
+      expect((events[0] as SpanModelRequestEndEvent).usage).toEqual({
+        inputTokens: 18,
+        outputTokens: 2,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 4,
+      });
+      expect(
+        (events[1] as SessionEvent & { error: { message: string } }).error.message,
+      ).toBe("parent prompt failed");
+    });
+
+    it("retains provider-reported child usage when the parent is aborted", async () => {
+      let settlePrompt: (() => void) | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (args): Promise<PiSessionLike> => ({
+          subscribe: () => () => {},
+          prompt() {
+            args.onSubagentUsage({
+              subagentId: "child-before-abort",
+              input: 12,
+              output: 3,
+              cacheRead: 4,
+              cacheWrite: 5,
+            });
+            return new Promise<void>((resolve) => {
+              settlePrompt = resolve;
+            });
+          },
+          abort() {
+            settlePrompt?.();
+          },
+          dispose() {},
+        }),
+      });
+      const controller = new AbortController();
+      const input = makeInput("abort later");
+      input.signal = controller.signal;
+
+      const eventsPromise = collectEvents(adapter.run(input));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.abort();
+      const events = await eventsPromise;
+      const spans = events.filter(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent[];
+
+      expect(spans).toHaveLength(1);
+      expect(spans[0]?.usage).toEqual({
+        inputTokens: 21,
+        outputTokens: 3,
+        cacheReadTokens: 4,
+        cacheWriteTokens: 5,
+      });
+    });
+  });
+
   describe("thinking turn", () => {
     const script: AgentSessionEvent[] = [
       assistantStart,

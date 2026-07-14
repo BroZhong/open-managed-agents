@@ -2,6 +2,8 @@
 -- Browser session-token requests deliberately leave api_key_id NULL: their
 -- usage remains visible per Session but is not charged to an API key.
 -- API keys are soft-revoked so their durable usage remains listable.
+-- Prod runs PG_ENSURE_SCHEMA=false, so apply this migration before deploying
+-- the server version that persists or aggregates attributed usage.
 
 ALTER TABLE oma.pending_events
   ADD COLUMN IF NOT EXISTS api_key_id TEXT;

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createManagedSubagentToolsExtension } from "../src/subagent-tool-bridge.js";
+import type {
+  ExtensionFactory,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import {
+  createManagedSubagentToolsExtension,
+  createManagedSubagentUsageExtension,
+  MANAGED_SUBAGENT_USAGE_EVENT,
+} from "../src/subagent-tool-bridge.js";
 
 type Handler = (event: { type: string }) => void;
 
@@ -20,7 +27,7 @@ class FakeEventBus {
 }
 
 function bind(
-  factory: ReturnType<typeof createManagedSubagentToolsExtension>,
+  factory: ExtensionFactory,
   events: FakeEventBus,
 ) {
   const handlers = new Map<string, Handler>();
@@ -56,6 +63,65 @@ describe("managed subagent Sandbox tool bridge", () => {
     handlersA.get("session_shutdown")!({ type: "session_shutdown" });
     expect(requestTools(eventsA, "after-shutdown")).toBeUndefined();
     expect(requestTools(eventsB, "still-live")).toBe(toolsB);
+  });
+
+  it("forwards complete child usage and removes the listener on shutdown", () => {
+    const events = new FakeEventBus();
+    const reported: unknown[] = [];
+    const handlers = bind(
+      createManagedSubagentUsageExtension((usage) => {
+        reported.push(usage);
+      }),
+      events,
+    );
+
+    events.emit(MANAGED_SUBAGENT_USAGE_EVENT, {
+      subagentId: "child-1",
+      input: 60,
+      output: 5,
+      cacheRead: 30,
+      cacheWrite: 10,
+    });
+    events.emit(MANAGED_SUBAGENT_USAGE_EVENT, {
+      subagentId: "malformed",
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+    });
+    events.emit(MANAGED_SUBAGENT_USAGE_EVENT, {
+      subagentId: "fractional",
+      input: 1.5,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+    });
+    events.emit(MANAGED_SUBAGENT_USAGE_EVENT, {
+      subagentId: "negative",
+      input: -1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+    });
+
+    expect(reported).toEqual([
+      {
+        subagentId: "child-1",
+        input: 60,
+        output: 5,
+        cacheRead: 30,
+        cacheWrite: 10,
+      },
+    ]);
+
+    handlers.get("session_shutdown")!({ type: "session_shutdown" });
+    events.emit(MANAGED_SUBAGENT_USAGE_EVENT, {
+      subagentId: "after-shutdown",
+      input: 1,
+      output: 1,
+      cacheRead: 1,
+      cacheWrite: 1,
+    });
+    expect(reported).toHaveLength(1);
   });
 });
 

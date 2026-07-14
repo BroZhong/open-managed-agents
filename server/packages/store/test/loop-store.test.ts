@@ -87,6 +87,40 @@ describe("PgLoopStore", () => {
     expect(await loops.dispatchDue(new Date("2026-07-14T00:05:00.000Z"), 10)).toEqual([]);
   });
 
+  it("attributes only run-now dispatches to their authenticating API key", async () => {
+    const start = new Date("2026-07-14T00:00:00.000Z");
+    const agent = await agents.create({
+      tenantId: "tenant_1",
+      name: "Session Analyst",
+      model: "openai-codex/gpt-5.5",
+      system: "Find concrete improvements.",
+      runtime: "pi-agent",
+    });
+    const loop = await loops.create({
+      tenantId: "tenant_1",
+      agentId: agent.id,
+      name: "Weekly Session Review",
+      prompt: "Analyze recent Sessions.",
+      intervalMinutes: 5,
+      enabled: true,
+      now: start,
+    });
+
+    const manual = await loops.dispatchNow(
+      loop.id,
+      "tenant_1",
+      new Date("2026-07-14T00:01:00.000Z"),
+      "key_loop_run",
+    );
+    expect((await pending.peek(manual!.session.id))?.apiKeyId).toBe("key_loop_run");
+
+    const [scheduled] = await loops.dispatchDue(
+      new Date("2026-07-14T00:05:00.000Z"),
+      1,
+    );
+    expect((await pending.peek(scheduled.session.id))?.apiKeyId).toBeUndefined();
+  });
+
   it("disables an orphaned Loop instead of failing every due poll", async () => {
     const start = new Date("2026-07-14T00:00:00.000Z");
     const agent = await agents.create({

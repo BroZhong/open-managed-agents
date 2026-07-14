@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
+import { summarizeTokenUsage } from "@/lib/token-usage";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
 
@@ -85,6 +86,90 @@ function stubHistoryOnly(history: SessionEvent[], hasMore = false) {
 }
 
 describe("useSessionEvents history replay", () => {
+  it("counts durable usage once across history replay and SSE reconnect", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const historicalUsage: SessionEvent = {
+      seq: 10,
+      type: "span.model_request_end",
+      data: {
+        usage: {
+          inputTokens: 120,
+          outputTokens: 30,
+          cacheReadTokens: 60,
+          cacheWriteTokens: 15,
+        },
+      },
+      ts: "2026-07-14T00:00:00.000Z",
+    };
+    const replayedUsageFrame =
+      "event: span.model_request_end\n" +
+      "id: 10\n" +
+      'data: {"usage":{"inputTokens":120,"outputTokens":30,"cacheReadTokens":60,"cacheWriteTokens":15}}\n\n';
+    const newUsageFrame =
+      "event: span.model_request_end\n" +
+      "id: 11\n" +
+      'data: {"usage":{"inputTokens":80,"outputTokens":20,"cacheReadTokens":20,"cacheWriteTokens":5}}\n\n';
+    const resumeAnchors: string[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        if (headers?.Accept === "application/json") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [historicalUsage], has_more: false }),
+          } as Response);
+        }
+
+        resumeAnchors.push(headers?.["Last-Event-ID"] ?? "missing");
+        const connectionNumber = resumeAnchors.length;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                connectionNumber === 1 ? replayedUsageFrame : newUsageFrame,
+              ),
+            );
+            if (connectionNumber === 1) {
+              controller.close();
+              return;
+            }
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.close(),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve({ ok: true, body } as Response);
+      }),
+    );
+
+    const { result } = renderHook(() => useSessionEvents("session_usage"), {
+      wrapper: queryWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(resumeAnchors).toHaveLength(2), {
+      timeout: 2500,
+    });
+    await waitFor(() =>
+      expect(result.current.events.map((event) => event.seq)).toEqual([10, 11]),
+    );
+
+    expect(resumeAnchors).toEqual(["10", "10"]);
+    expect(summarizeTokenUsage(result.current.events)).toEqual({
+      inputTokens: 200,
+      outputTokens: 50,
+      cacheReadTokens: 80,
+      cacheWriteTokens: 20,
+      totalTokens: 250,
+      cacheHitRate: 0.4,
+    });
+  });
+
   it("loads every history page then merges replay without gaps or duplicates", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

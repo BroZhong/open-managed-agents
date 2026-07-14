@@ -157,7 +157,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     const options = sdkSeam.resourceLoaderOptions[0];
     expect(options.noSkills).toBe(true);
     expect(options.additionalSkillPaths).toBeUndefined();
-    expect(options.extensionFactories).toHaveLength(2);
+    expect(options.extensionFactories).toHaveLength(3);
     expect(options.appendSystemPrompt).toEqual([
       "BASE",
       expect.stringContaining("<available_skills>"),
@@ -170,7 +170,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user");
   });
 
-  it("preserves native skillPaths when no ToolExecutor is injected", async () => {
+  it("preserves native skillPaths and installs no managed child bridge without a ToolExecutor", async () => {
     const nativeInput = input(false);
     nativeInput.agent.skillDescriptors = [];
     const events = await collect(new PiAgentAdapter().run(nativeInput));
@@ -182,6 +182,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       additionalSkillPaths: ["/skills/skill_abc"],
       noContextFiles: true,
     });
+    expect(sdkSeam.resourceLoaderOptions[0].extensionFactories).toBeUndefined();
     expect(sdkSeam.sessionOptions[0].cwd).toBe(process.cwd());
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe(process.cwd());
   });

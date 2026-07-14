@@ -838,6 +838,20 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
             if (input.signal?.aborted) resolve();
             else input.signal?.addEventListener("abort", () => resolve(), { once: true });
           });
+          // A stale generation may still flush provider accounting while its
+          // native abort settles. Lease loss is not a user interrupt, so this
+          // old attempt must not be allowed to charge the Session.
+          yield {
+            id: "stale_usage",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "span.model_request_end",
+            usage: {
+              inputTokens: 100,
+              outputTokens: 10,
+              cacheReadTokens: 50,
+              cacheWriteTokens: 0,
+            },
+          };
           return;
         }
         yield {
@@ -867,6 +881,14 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await stores.pendingEventStore.count(session.id)).toBe(1);
     expect((await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data
       .filter((event) => event.type === "session.turn_completed")).toHaveLength(0);
+    await expect(stores.eventLogStore.getUsage({ sessionId: session.id })).resolves.toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      cacheHitRate: null,
+    });
 
     rejectHeartbeat = false;
     await vi.waitFor(async () => {

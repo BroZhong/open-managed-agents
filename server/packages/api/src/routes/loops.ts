@@ -114,6 +114,7 @@ export function loopRoutes(deps: LoopRouteDeps): OpenAPIHono<Env> {
       c.req.param("id")!,
       tenant.tenantId,
       now(),
+      tenant.apiKeyId,
     );
     if (!dispatched) return c.json({ error: "Loop not found" }, 404);
     void deps.sessionRouter

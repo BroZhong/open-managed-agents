@@ -29,6 +29,9 @@ metadata:
 data:
   PORT: "3000"
   AUTH_DISABLED: "false"
+  # Public HTTPS origin advertised by GET /openapi.json and used by API docs.
+  # This is an origin only: do not append /openapi.json or another path.
+  PUBLIC_API_URL: "https://console.sandbox.brozhong.com"
   # PostgreSQL (internal RDS; oma schema; sslmode=disable)
   PG_HOST: "pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com"
   PG_PORT: "5432"

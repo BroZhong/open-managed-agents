@@ -121,6 +121,16 @@ rather than falling back to native tools. The package overlay checks the exact
 package version, pristine source SHA-256, and exact source anchors during the
 image build; an upstream source change fails the build.
 
+The same private EventBus carries provider-reported usage from every child
+assistant request (`input`, `output`, cache read, and cache write). A single
+child-session subscription covers the initial run and later resumes; the parent
+Pi Adapter validates each payload and emits one durable
+`span.model_request_end` Complete Event. The Host then attributes that event to
+the API key that accepted the Turn just like a parent-model request. This is an
+accounting bridge only: child text and tool activity remain summarized by the
+extension's normal parent `Agent` tool result. Its parent-side listener is also
+removed on `session_shutdown`, preserving the per-Turn lifecycle boundary.
+
 ### 4. MCP file materialization is a narrow Adapter bridge
 
 The Host remains the owner of persisted Agent configuration and credentials.

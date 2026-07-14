@@ -223,7 +223,12 @@ export class PgLoopStore implements LoopStore {
     }
   }
 
-  async dispatchNow(id: string, tenantId: string, now: Date): Promise<LoopDispatch | null> {
+  async dispatchNow(
+    id: string,
+    tenantId: string,
+    now: Date,
+    apiKeyId?: string,
+  ): Promise<LoopDispatch | null> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -237,7 +242,7 @@ export class PgLoopStore implements LoopStore {
         await client.query("COMMIT");
         return null;
       }
-      const dispatched = await this.dispatchLocked(client, rows[0], now, false);
+      const dispatched = await this.dispatchLocked(client, rows[0], now, false, apiKeyId);
       await client.query("COMMIT");
       return dispatched;
     } catch (error) {
@@ -253,6 +258,7 @@ export class PgLoopStore implements LoopStore {
     row: LoopRow,
     now: Date,
     advanceSchedule: boolean,
+    apiKeyId?: string,
   ): Promise<LoopDispatch | null> {
     const agentResult = await client.query<AgentRow>(
       `SELECT * FROM agents WHERE id = $1 AND tenant_id = $2`,
@@ -297,12 +303,13 @@ export class PgLoopStore implements LoopStore {
     );
     await client.query(
       `INSERT INTO pending_events
-        (id, session_id, type, data, session_thread_id, arrived_at)
-       VALUES ($1, $2, 'user.message', $3, 'sthr_primary', $4)`,
+        (id, session_id, type, data, session_thread_id, api_key_id, arrived_at)
+       VALUES ($1, $2, 'user.message', $3, 'sthr_primary', $4, $5)`,
       [
         `pending_${nanoid()}`,
         sessionId,
         JSON.stringify({ content: [{ type: "text", text: row.prompt }] }),
+        apiKeyId ?? null,
         now,
       ],
     );
