@@ -50,7 +50,7 @@ data:
   # Host-managed, tenant-scoped Supabase Sessions MCP. Credentials remain in
   # oma-secrets; its single tool executes a fixed bounded SELECT. This exact,
   # comma-separated tenant allowlist is mandatory and fails closed when empty.
-  OMA_SUPABASE_ALLOWED_TENANTS: "dev"
+  OMA_SUPABASE_ALLOWED_TENANTS: "c912f882-3c5c-4355-8b7e-ca6aaccf58bc"
   ALIYUN_REGION: "cn-hongkong"
   # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
   # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
