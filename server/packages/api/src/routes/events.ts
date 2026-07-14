@@ -189,7 +189,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       });
     }
 
-    return c.body(null, 202);
+    return c.json({ accepted: true as const, interrupted: false }, 202);
   });
 
   // GET /v1/sessions/:id/events — List events or SSE stream

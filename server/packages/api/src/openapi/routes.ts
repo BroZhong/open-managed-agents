@@ -856,7 +856,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "appendSessionEvents",
     summary: "Append User events to a Session",
     description:
-      "Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch. A normal 202 has no body; an interrupt returns the documented JSON acknowledgement.",
+      "Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch. Every accepted batch returns the same acknowledgement shape; interrupted is true only for user.interrupt.",
     tags: ["Sessions/Events"],
     request: {
       params: idParams,
@@ -864,8 +864,11 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     },
     responses: {
       202: jsonResponse(
-        z.object({ accepted: z.literal(true), interrupted: z.literal(true) }),
-        "Events accepted. The JSON body is present for an interrupt; other accepted batches return an empty body.",
+        z.object({
+          accepted: z.literal(true),
+          interrupted: z.boolean(),
+        }),
+        "Events accepted",
       ),
       400: errorResponse("Invalid or unsupported event batch"),
       404: errorResponse("Session not found"),

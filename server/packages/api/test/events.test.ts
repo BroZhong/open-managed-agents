@@ -444,6 +444,7 @@ describe("POST /v1/sessions/:id/events", () => {
     });
 
     expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: true, interrupted: false });
 
     // Verify message is in pending store
     const pending = await pendingEventStore.peek(session.id);
