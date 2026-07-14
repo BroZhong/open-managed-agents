@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+skills_root=${OMA_SKILLS_ROOT:-/skills}
+selected=
+
+for candidate in "$skills_root"/*/scripts/story-seed; do
+  [ -f "$candidate" ] || continue
+  if [ -z "$selected" ]; then
+    selected=$candidate
+    continue
+  fi
+  if ! cmp -s "$selected" "$candidate"; then
+    echo "story-seed: equipped Skill scripts differ: $selected and $candidate" >&2
+    exit 1
+  fi
+done
+
+if [ -z "$selected" ]; then
+  echo "story-seed: no equipped Skill provides scripts/story-seed under $skills_root" >&2
+  exit 127
+fi
+
+export STORY_SEED_WORKSPACE=${STORY_SEED_WORKSPACE:-/home/user}
+exec node "$selected" "$@"

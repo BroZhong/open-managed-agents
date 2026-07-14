@@ -24,7 +24,7 @@
 # Env knobs (all have sensible defaults):
 #   REGISTRY     target repo (default: brozhong HK personal ACR)
 #   TAG          image tag   (default: code-interpreter-vfscli-<VERSION>)
-#   VERSION      semantic bump used in the default tag (default: 0.3.0)
+#   VERSION      semantic bump used in the default tag (default: 0.4.1)
 #   BASE_IMAGE   ACS base    (default: HK VPC mirror; set cn-shanghai-vpc on vfs-dev)
 #   VFS_CLI_SRC  path to the linux/amd64 vfs-cli binary to stage into bin/
 set -euo pipefail
@@ -32,7 +32,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 REGISTRY="${REGISTRY:-crpi-egv1p3qc9sh5spft.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox}"
-VERSION="${VERSION:-0.3.0}"
+VERSION="${VERSION:-0.4.1}"
 TAG="${TAG:-code-interpreter-vfscli-${VERSION}}"
 BASE_IMAGE="${BASE_IMAGE:-registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
 PLATFORM="linux/amd64"
@@ -53,6 +53,11 @@ if [[ ! -x bin/vfs-cli ]]; then
   exit 1
 fi
 echo "==> vfs-cli: $(file -b bin/vfs-cli 2>/dev/null || echo present)"
+
+# The image ships only a generic launcher; the business script remains in each
+# Skill. Exercise the launcher against the repository's three identical Skill
+# copies before spending time on a Docker build.
+sh ./test-story-seed-launcher.sh
 
 # ── Build (cache-first) ──────────────────────────────────────────────────────
 # Local layer cache persisted under CACHE_DIR so a vfs-cli-only bump reuses the

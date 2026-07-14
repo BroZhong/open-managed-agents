@@ -47,7 +47,7 @@ spec:
         - name: oma-acr
       containers:
         - name: sandbox
-          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox:code-interpreter-vfscli-0.3.0
+          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox:code-interpreter-vfscli-0.4.1
           resources:
             requests:
               cpu: "1"

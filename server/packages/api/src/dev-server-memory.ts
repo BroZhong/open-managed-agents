@@ -21,10 +21,15 @@ import {
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
+import {
+  adapterProcessEnvFromHost,
+  sandboxEnvPolicyFromHost,
+} from "./lib/sandbox-env.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
+const adapterProcessEnv = adapterProcessEnvFromHost(process.env);
 
 // ─── Claude Code Adapter (spawns `claude` CLI) ──────────────────────────────
 
@@ -61,7 +66,7 @@ class DevClaudeCodeAdapter implements Adapter {
 
     const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnv,
     });
     child.stdin.end();
 
@@ -185,7 +190,7 @@ class DevCodexAdapter implements Adapter {
 
     const child = spawn("codex", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnv,
     });
     child.stdin.end();
 
@@ -260,13 +265,9 @@ async function main() {
   // In-memory dev mode has no S3 Workspace to hydrate from, so the
   // sandbox-backed ToolExecutor is intentionally not wired here. Use the full
   // dev server (S3 + SANDBOX_ENABLED=true) to exercise the kruise sandbox.
-  // Deployment-wide default sandbox env (parity with dev-server.ts): a shared
-  // CLI secret (today only VFS_TOKEN) auto-injected into every sandboxed Agent,
-  // sourced from env so it never lives in code or the Agent record.
-  const defaultSandboxEnv: Record<string, string> = {};
-  if (process.env.DEFAULT_SANDBOX_VFS_TOKEN) {
-    defaultSandboxEnv.VFS_TOKEN = process.env.DEFAULT_SANDBOX_VFS_TOKEN;
-  }
+  // Keep Host env translation identical to the full server even though the
+  // in-memory entrypoint has no real SandboxManager.
+  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
@@ -274,8 +275,7 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
-    defaultSandboxEnv:
-      Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
+    ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

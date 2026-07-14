@@ -16,6 +16,10 @@
 #                              slow/unreliable from CN build hosts). VFS_TOKEN is
 #                              NOT baked in — it is a per-Agent secret injected
 #                              at run time via sandbox.env.
+#   - story-seed on PATH     — a stable launcher that resolves the business
+#                              script from an equipped Skill projection and
+#                              executes it with Node. The business script stays
+#                              in the Skill; the image contains no forked copy.
 #   - python on a plain PATH — the base keeps python in /opt/venv/bin, which is
 #                              absent from e2b exec's non-login PATH, so bare
 #                              `python`/`pip` come back "command not found".
@@ -53,6 +57,11 @@ RUN ln -sf /opt/venv/bin/python  /usr/local/bin/python  && \
     chown -R "${SANDBOX_USER}:${SANDBOX_USER}" "${WORKSPACE_DIR}" && \
     chmod 0775 "${WORKSPACE_DIR}"
 
+# story-seed launcher — stable image infrastructure. It resolves the actual
+# script from /skills/<fork-id>/scripts/story-seed at run time.
+COPY story-seed-launcher /usr/local/bin/story-seed
+RUN chmod +x /usr/local/bin/story-seed && /bin/sh -n /usr/local/bin/story-seed
+
 # ── Frequently-changing layer last (vfs-cli binary) ──────────────────────────
 
 # vfs-cli — pre-shipped so the sandbox has it with no runtime download. Place
@@ -64,6 +73,10 @@ RUN chmod +x /usr/local/bin/vfs-cli
 # Build-time sanity check: the three things this image exists to provide must
 # all resolve on a plain PATH, and the workspace must be user-writable.
 RUN /usr/local/bin/vfs-cli version >/dev/null && \
+    command -v story-seed >/dev/null && \
+    command -v node >/dev/null && \
+    node --version >/dev/null && \
+    command -v cmp >/dev/null && \
     /usr/local/bin/python3 --version >/dev/null && \
     su -s /bin/sh "${SANDBOX_USER}" -c "touch ${WORKSPACE_DIR}/.write-probe && rm ${WORKSPACE_DIR}/.write-probe"
 

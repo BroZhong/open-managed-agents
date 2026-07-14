@@ -32,6 +32,10 @@ import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import {
+  adapterProcessEnvFromHost,
+  sandboxEnvPolicyFromHost,
+} from "./lib/sandbox-env.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -56,6 +60,7 @@ const directFetch: typeof fetch = proxyUrl
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
+const adapterProcessEnv = adapterProcessEnvFromHost(process.env);
 
 // ─── Claude Code Adapter (spawns `claude` CLI) ──────────────────────────────
 
@@ -85,7 +90,7 @@ class DevClaudeCodeAdapter implements Adapter {
 
     const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnv,
     });
     // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
     // unhandled 'error' event can never crash the Host process.
@@ -174,7 +179,7 @@ class DevCodexAdapter implements Adapter {
 
     const child = spawn("codex", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnv,
     });
     // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
     // unhandled 'error' event can never crash the Host process.
@@ -378,15 +383,10 @@ async function main() {
     );
   }
 
-  // Deployment-wide default sandbox env, sourced from server config (a K8s
-  // Secret → env), so a shared CLI secret is auto-injected into every sandboxed
-  // Agent without living in code or the Agent record. Today the only key is
-  // VFS_TOKEN (for the vfs-cli baked into the custom sandbox image); the Agent's
-  // own sandbox.env still wins per key.
-  const defaultSandboxEnv: Record<string, string> = {};
-  if (process.env.DEFAULT_SANDBOX_VFS_TOKEN) {
-    defaultSandboxEnv.VFS_TOKEN = process.env.DEFAULT_SANDBOX_VFS_TOKEN;
-  }
+  // Deployment-owned CLI environment. Ordinary defaults remain overridable by
+  // an Agent; managed WW values stay authoritative so a Host-held bearer token
+  // cannot be redirected to an Agent-selected endpoint.
+  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
@@ -396,8 +396,7 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     sandboxManager,
-    defaultSandboxEnv:
-      Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
+    ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

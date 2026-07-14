@@ -10,7 +10,8 @@
 #     --from-literal=SUPABASE_SERVICE_KEY=... \
 #     --from-literal=E2B_DOMAIN=... \
 #     --from-literal=E2B_API_KEY=... \
-#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=...
+#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=... \
+#     --from-literal=OPENGROVE_WW_ACCESS_TOKEN=...
 #
 # The sandbox is mandatory (issue #54): SANDBOX_ENABLED=true below + the E2B_*
 # secrets are what make Agent runs execute inside a sandbox. A sandboxed Agent
@@ -52,6 +53,8 @@ data:
   # E2B templateID = the SandboxSet name in the sandbox-system namespace
   # (see deploy/sandbox/README.md). The code-interpreter warm pool.
   SANDBOX_TEMPLATE: "code-interpreter-vfscli"
+  # Non-secret endpoint paired with the Host-managed WW bearer token below.
+  DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://opengrove.creativefitting.cn"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -110,6 +113,12 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
             - name: RDS_MCP_APIKEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
+            # story-seed receives the WW credential only when a sandbox is
+            # created. The value stays out of the image, ConfigMap, Agent row,
+            # and repository; SessionRouter treats it as Host-managed so an
+            # Agent cannot pair it with a different endpoint.
+            - name: DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: OPENGROVE_WW_ACCESS_TOKEN } }
           volumeMounts:
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:

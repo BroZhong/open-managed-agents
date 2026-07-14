@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 
 const API_PACKAGE_DIR = fileURLToPath(new URL("../", import.meta.url));
 
-async function captureStartupLog(authDisabled: "true" | "false"): Promise<string> {
+async function captureStartupLog(
+  authDisabled: "true" | "false",
+  extraEnv: Record<string, string> = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -13,6 +16,7 @@ async function captureStartupLog(authDisabled: "true" | "false"): Promise<string
         cwd: API_PACKAGE_DIR,
         env: {
           ...process.env,
+          ...extraEnv,
           AUTH_DISABLED: authDisabled,
           PORT: "0",
         },
@@ -57,4 +61,14 @@ describe("development server startup logging", () => {
     },
     20_000,
   );
+
+  it("does not expose Host-managed sandbox credentials", async () => {
+    const secret = "ww-token-must-not-be-logged";
+    const output = await captureStartupLog("true", {
+      DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://ww.example.test",
+      DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN: secret,
+    });
+
+    expect(output).not.toContain(secret);
+  }, 20_000);
 });
