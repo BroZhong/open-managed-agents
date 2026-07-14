@@ -6,17 +6,39 @@ function sameId(actual, expected) {
   return actual !== undefined && String(actual) === String(expected);
 }
 
-function domainHostname(value) {
+function documentationOrigin(value) {
   if (typeof value !== "string" || value.trim() === "") return null;
   const raw = value.trim();
   const candidate = raw.includes("://")
     ? raw
     : `https://${raw.includes(".") ? raw : `${raw}.apifox.cn`}`;
+  let parsed;
   try {
-    return new URL(candidate).hostname.toLowerCase();
+    parsed = new URL(candidate);
   } catch {
     throw new Error(`Apifox returned an invalid documentation domain: ${raw}`);
   }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(`Apifox returned an unsafe documentation domain: ${raw}`);
+  }
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.apifox\.cn$/.test(
+      parsed.hostname.toLowerCase(),
+    )
+  ) {
+    throw new Error(
+      "The configured documentation site must expose an Apifox system domain",
+    );
+  }
+  return parsed.origin;
 }
 
 export function verifyDocumentationSite(
@@ -35,6 +57,15 @@ export function verifyDocumentationSite(
   if (site.isPrivate !== false) {
     throw new Error("The configured Apifox documentation site is not publicly visible");
   }
+  if (site.status !== 1) {
+    throw new Error("The configured Apifox documentation site is not published");
+  }
+  if (site.visibilitySettings?.type !== "PUBLIC") {
+    throw new Error("The configured Apifox documentation site is not publicly visible");
+  }
+  if (site.isMockData !== false) {
+    throw new Error("Apifox did not return an authoritative documentation site");
+  }
 
   let configuredUrl;
   try {
@@ -48,22 +79,34 @@ export function verifyDocumentationSite(
   if (configuredUrl.username || configuredUrl.password) {
     throw new Error("APIFOX_DOCS_URL must not contain embedded credentials");
   }
+  if (configuredUrl.port) {
+    throw new Error("APIFOX_DOCS_URL must use the default HTTPS port");
+  }
+  if (
+    configuredUrl.pathname !== "/" ||
+    configuredUrl.search ||
+    configuredUrl.hash
+  ) {
+    throw new Error("APIFOX_DOCS_URL must be the documentation site origin");
+  }
 
-  const allowedHosts = new Set(
-    [site.sysDomain, site.customDomain, site.domainName]
-      .map(domainHostname)
-      .filter(Boolean),
-  );
-  if (allowedHosts.size === 0) {
+  if (site.isSystemDomainEnabled !== true) {
     throw new Error(
-      "The configured Apifox documentation site has no published system or custom domain",
+      "The configured Apifox documentation site has no enabled system domain",
     );
   }
-  if (!allowedHosts.has(configuredUrl.hostname.toLowerCase())) {
+  const systemOrigin = documentationOrigin(site.sysDomain);
+  if (!systemOrigin) {
+    throw new Error(
+      "The configured Apifox documentation site has no enabled system domain",
+    );
+  }
+  if (configuredUrl.origin !== systemOrigin) {
     throw new Error(
       "APIFOX_DOCS_URL does not belong to the configured Apifox documentation site",
     );
   }
+
   return configuredUrl.href;
 }
 

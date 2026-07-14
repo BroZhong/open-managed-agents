@@ -55,14 +55,14 @@ PUBLIC_API_URL=https://api.example.com
 
 1. 登录 [Apifox Web](https://app.apifox.com/)，为本服务创建一个专用 HTTP API 项目。不要在该项目中混放人工维护的其他 API；精确同步会删除远端契约中不存在的资源。
 2. 在 Apifox 账户设置中创建 API Access Token，并记下项目 ID。
-3. 在项目的“分享文档 -> 发布文档站”中配置可见性并点击“立即发布”。复制文档站 ID 和公开地址。
+3. 在项目的“分享文档 -> 发布文档站”中配置可见性并点击“立即发布”。复制公开地址，并通过 `apifox docs-site list --project <PROJECT_ID>` 读取真正的文档站 ID；不要把项目 ID 当作文档站 ID。
 4. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中创建 Repository secrets：`APIFOX_ACCESS_TOKEN`、`APIFOX_PROJECT_ID`。
 5. 创建 Repository variables：
    - `PUBLIC_API_URL`：可选，部署后的公网 HTTPS API origin，例如 `https://api.example.com`；不要带 `/openapi.json`。不填时仍可发布文档，但在线调试不可用；配置 Runner 时必填。
    - `APIFOX_EXPECTED_PROJECT_NAME`：必填，专用项目的精确名称；导入前会与项目 ID 一起校验。
    - `APIFOX_EXPECTED_TEAM_ID`：可选，项目所属团队 ID；建议填写以防同名项目误配。
    - `APIFOX_DOCS_SITE_ID`：上一步已发布文档站的 ID。
-   - `APIFOX_DOCS_URL`：必填，已发布站点的完整 HTTPS 地址；工作流会实际访问并要求返回成功。
+   - `APIFOX_DOCS_URL`：必填，已发布站点的 Apifox 系统域名 HTTPS origin；保持“系统访问地址”启用。工作流会实际访问并要求返回成功。
    - `APIFOX_MAX_ENDPOINT_DELETIONS`：可选，单次允许删除的旧 endpoint 数，默认 `10`；大规模有意删除时经审核后临时调高。
    - `APIFOX_RUNNER_ID`：可选；商业专业版中已经部署并启动的通用 Runner ID。
    - `APIFOX_RUNNER_TYPE`：可选且依赖 Runner ID；团队 Runner 使用默认值 `TSHGR`，组织 Runner 填 `OSHGR`。
@@ -70,7 +70,7 @@ PUBLIC_API_URL=https://api.example.com
 7. 若已部署公网 API，在 API 部署环境中把 `PUBLIC_API_URL` 设置为同一个 origin。
 8. 在 `main` 分支手动运行一次 `Sync OpenAPI to Apifox`。以后 API 契约合并到 `main` 且契约 CI 通过后会自动同步。
 
-Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布命令；创建配置不等于完成首次公开发布。因此首次“立即发布”保留为 UI 操作。工作流会核对文档站 ID、项目 ID、公开可见性和已发布的系统/自定义域名，确认 `APIFOX_DOCS_URL` 属于该站点，再实际请求 URL；重定向后的最终 URL 也会重新核对。这样不会把任意返回 2xx 的页面误报为在线文档。已发布站点会实时反映 Apifox 项目内文档的变化。
+Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布命令；创建配置不等于完成首次公开发布。因此首次“立即发布”保留为 UI 操作。工作流会严格核对文档站 ID、项目 ID、发布状态、公开可见性和系统域名，要求 `APIFOX_DOCS_URL` 是该站点的精确 `*.apifox.cn` HTTPS origin。自定义域名可以另行对外展示，但 CI 固定验证 Apifox 系统域名，以免请求不受信任的 DNS 目标。可达性检查不跟随重定向，并限制响应大小、类型与最小内容长度，避免把任意页面误报为在线文档。已发布站点会实时反映 Apifox 项目内文档的变化。
 
 参考：[发布文档站](https://docs.apifox.com/publish-documentation-site)。
 

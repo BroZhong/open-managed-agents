@@ -211,7 +211,9 @@ function listEndpoints(projectId, token) {
         "--page",
         String(page),
         "--page-size",
-        "500",
+        // Keep each CLI JSON envelope comfortably below constrained child
+        // process output buffers while still following meta.nextPage exactly.
+        "20",
       ],
       token,
     );

@@ -245,20 +245,30 @@ jobs:
             --project "$APIFOX_PROJECT_ID" \
             --site "$APIFOX_DOCS_SITE_ID" \
             --url "$APIFOX_DOCS_URL"
-          if ! effective_url="$(curl --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' \
+          if ! response_meta="$(curl --fail --silent --show-error \
+            --proto '=https' --max-redirs 0 --max-filesize 5242880 \
             --retry 3 --connect-timeout 10 --max-time 60 \
             --output "$RUNNER_TEMP/apifox-docs-site.html" \
-            --write-out '%{url_effective}' \
+            --write-out $'%{http_code}\n%{content_type}' \
             "$APIFOX_DOCS_URL")"; then
             echo "::error::The published Apifox documentation URL is not publicly reachable: $APIFOX_DOCS_URL"
             exit 1
           fi
-          node .github/scripts/apifox-docs-site.mjs \
-            --site-file "$site_file" \
-            --project "$APIFOX_PROJECT_ID" \
-            --site "$APIFOX_DOCS_SITE_ID" \
-            --url "$effective_url"
+          http_status="${response_meta%%$'\n'*}"
+          content_type="${response_meta#*$'\n'}"
+          if [[ "$http_status" != "200" ]]; then
+            echo "::error::The published Apifox documentation URL returned HTTP $http_status instead of 200."
+            exit 1
+          fi
+          if [[ "$content_type" != text/html* ]]; then
+            echo "::error::The published Apifox documentation URL did not return HTML."
+            exit 1
+          fi
+          html_bytes="$(wc -c < "$RUNNER_TEMP/apifox-docs-site.html")"
+          if (( html_bytes < 1000 )); then
+            echo "::error::The published Apifox documentation response is unexpectedly small."
+            exit 1
+          fi
           {
             echo "### Apifox documentation site"
             echo "Verified published site ID: \`$APIFOX_DOCS_SITE_ID\`"
