@@ -27,6 +27,7 @@ export default function SessionDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
+  const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
 
   // Remove optimistic events once real ones arrive via SSE
   useEffect(() => {
@@ -60,9 +61,9 @@ export default function SessionDetailPage() {
   const displayEvents = useMemo(() => {
     if (unconfirmedEvents.length === 0) return events;
     // Only show optimistic messages in conversation if agent is NOT running
-    if (status === "running") return events;
+    if (effectiveTurnStatus === "running") return events;
     return [...events, ...unconfirmedEvents];
-  }, [events, unconfirmedEvents, status]);
+  }, [events, unconfirmedEvents, effectiveTurnStatus]);
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -80,7 +81,11 @@ export default function SessionDetailPage() {
   );
 
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
-  const effectiveStatus = status === "running" ? "running" : (session?.status ?? "idle");
+  const effectiveStatus = session?.status === "terminated"
+    ? "terminated"
+    : effectiveTurnStatus === "running"
+      ? "running"
+      : (session?.status ?? "idle");
   const inputDisabled = isPending;
 
   if (sessionLoading) {
@@ -179,13 +184,15 @@ export default function SessionDetailPage() {
               <ConversationView
                 events={displayEvents}
                 activeDeltas={activeDeltas}
-                sessionStatus={status}
+                sessionStatus={effectiveTurnStatus}
               />
             </div>
             <MessageInput
               onSend={handleSend}
               disabled={inputDisabled}
-              pendingMessages={status === "running" ? unconfirmedEvents : []}
+              pendingMessages={
+                effectiveTurnStatus === "running" ? unconfirmedEvents : []
+              }
               skills={equippedSkills}
             />
           </div>
@@ -208,7 +215,7 @@ export default function SessionDetailPage() {
                   <WorkspacePanel
                     sessionId={id}
                     refreshKey={fileChange.nonce}
-                    turnStatus={status === "running" ? "running" : "idle"}
+                    turnStatus={effectiveTurnStatus}
                   />
                 </div>
               </div>
@@ -224,7 +231,7 @@ export default function SessionDetailPage() {
           <WorkspacePanel
             sessionId={id}
             refreshKey={fileChange.nonce}
-            turnStatus={status === "running" ? "running" : "idle"}
+            turnStatus={effectiveTurnStatus}
           />
         </div>
       )}

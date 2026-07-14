@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  useMutationState,
+} from "@tanstack/react-query";
 import { apiFetch, apiUpload } from "@/lib/api";
 
 export interface Skill {
@@ -60,12 +65,43 @@ export interface EquippedSkill {
   updatedAt: string;
 }
 
+function agentSkillWriteKey(agentId: string, action: "equip" | "unequip") {
+  return ["agents", agentId, "skills", "write", action] as const;
+}
+
+export function usePendingAgentSkillWrites(agentId: string) {
+  const equippingSkillIds = useMutationState<string>({
+    filters: {
+      mutationKey: agentSkillWriteKey(agentId, "equip"),
+      status: "pending",
+      exact: true,
+    },
+    select: (mutation) => mutation.state.variables as string,
+  });
+  const unequippingForkIds = useMutationState<string>({
+    filters: {
+      mutationKey: agentSkillWriteKey(agentId, "unequip"),
+      status: "pending",
+      exact: true,
+    },
+    select: (mutation) => mutation.state.variables as string,
+  });
+  return {
+    equippingSkillIds,
+    unequippingForkIds,
+    isPending: equippingSkillIds.length + unequippingForkIds.length > 0,
+  };
+}
+
 /** The Agent's equipped Skills (its forks). */
 export function useAgentSkills(agentId: string) {
   return useQuery({
     queryKey: ["agents", agentId, "skills"],
-    queryFn: () =>
-      apiFetch<{ data: EquippedSkill[] }>(`/v1/agents/${agentId}/skills`).then((r) => r.data),
+    queryFn: ({ signal }) =>
+      apiFetch<{ data: EquippedSkill[] }>(
+        `/v1/agents/${agentId}/skills`,
+        { signal },
+      ).then((r) => r.data),
     enabled: !!agentId,
   });
 }
@@ -73,15 +109,30 @@ export function useAgentSkills(agentId: string) {
 /** Equip a Library Skill onto an Agent (forks it). */
 export function useEquipSkill(agentId: string) {
   const queryClient = useQueryClient();
+  const queryKey = ["agents", agentId, "skills"] as const;
   return useMutation({
+    mutationKey: agentSkillWriteKey(agentId, "equip"),
     mutationFn: (skillId: string) =>
       apiFetch<EquippedSkill>(`/v1/agents/${agentId}/skills`, {
         method: "POST",
         body: JSON.stringify({ skillId }),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents", agentId, "skills"] });
-      queryClient.invalidateQueries({ queryKey: ["agents", agentId] });
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey, exact: true });
+    },
+    onSuccess: async (fork) => {
+      await queryClient.cancelQueries(
+        { queryKey, exact: true },
+        { revert: false },
+      );
+      queryClient.setQueryData<EquippedSkill[]>(queryKey, (current = []) => [
+        ...current.filter((skill) => skill.sourceSkillId !== fork.sourceSkillId),
+        fork,
+      ]);
+      void queryClient.invalidateQueries({
+        queryKey: ["agents", agentId],
+        exact: true,
+      });
     },
   });
 }
@@ -89,12 +140,26 @@ export function useEquipSkill(agentId: string) {
 /** Unequip a Skill from an Agent (deletes the Agent's fork). */
 export function useUnequipSkill(agentId: string) {
   const queryClient = useQueryClient();
+  const queryKey = ["agents", agentId, "skills"] as const;
   return useMutation({
+    mutationKey: agentSkillWriteKey(agentId, "unequip"),
     mutationFn: (forkId: string) =>
       apiFetch<{ type: string }>(`/v1/agents/${agentId}/skills/${forkId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agents", agentId, "skills"] });
-      queryClient.invalidateQueries({ queryKey: ["agents", agentId] });
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey, exact: true });
+    },
+    onSuccess: async (_result, forkId) => {
+      await queryClient.cancelQueries(
+        { queryKey, exact: true },
+        { revert: false },
+      );
+      queryClient.setQueryData<EquippedSkill[]>(queryKey, (current = []) =>
+        current.filter((skill) => skill.id !== forkId),
+      );
+      void queryClient.invalidateQueries({
+        queryKey: ["agents", agentId],
+        exact: true,
+      });
     },
   });
 }

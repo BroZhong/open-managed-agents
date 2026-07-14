@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { AuthProvider } from "@/lib/auth";
 import { Sidebar } from "@/components/sidebar";
+import SessionDetailPage from "@/pages/session-detail";
 import type { Agent } from "@/lib/hooks/use-agents";
 import type { Session } from "@/lib/hooks/use-sessions";
 import type { Workspace } from "@/lib/hooks/use-workspaces";
@@ -21,6 +22,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
 function SessionRoute() {
@@ -68,6 +70,218 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
+  it("keeps live Session status consistent between header and sidebar", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const agent: Agent = {
+      id: "agent_live",
+      tenantId: "tenant_1",
+      name: "Live Agent",
+      model: "test/model",
+      system: "test",
+      runtime: "pi-agent",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const session: Session = {
+      id: "session_live",
+      agentId: agent.id,
+      status: "idle",
+      title: "Current chat",
+      workspaceId: "workspace_live",
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        model: agent.model,
+        runtime: agent.runtime,
+      },
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { gcTime: Infinity, retry: false, staleTime: Infinity },
+      },
+    });
+    queryClient.setQueryData(["sessions", session.id], session);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id], [session]);
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["agents", agent.id, "skills"], []);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    queryClient.setQueryData(["workspaces"], []);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        if (headers?.Accept === "application/json") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [] }),
+          } as Response);
+        }
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                "event: session.status_running\nid: 1\ndata: {}\n\n",
+              ),
+            );
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.close(),
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve({ ok: true, body } as Response);
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/sessions/${session.id}`]}>
+            <Routes>
+              <Route
+                path="/sessions/:id"
+                element={
+                  <>
+                    <Sidebar />
+                    <SessionDetailPage />
+                  </>
+                }
+              />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("running")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: `${session.title}running` }),
+    ).toBeTruthy();
+  });
+
+  it("does not let an older in-flight Session list overwrite live status", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const agent: Agent = {
+      id: "agent_race",
+      tenantId: "tenant_1",
+      name: "Race Agent",
+      model: "test/model",
+      system: "test",
+      runtime: "pi-agent",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const idleSession: Session = {
+      id: "session_race",
+      agentId: agent.id,
+      status: "idle",
+      title: "Racing chat",
+      workspaceId: "workspace_race",
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        model: agent.model,
+        runtime: agent.runtime,
+      },
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { gcTime: Infinity, retry: false, staleTime: Infinity },
+      },
+    });
+    queryClient.setQueryData(["sessions", idleSession.id], idleSession);
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["agents", agent.id, "skills"], []);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    queryClient.setQueryData(["workspaces"], []);
+
+    let resolveOlderList!: (response: Response) => void;
+    const olderList = new Promise<Response>((resolve) => {
+      resolveOlderList = resolve;
+    });
+    let listRequests = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (url.includes(`/v1/sessions?agent_id=${agent.id}`)) {
+        listRequests++;
+        if (listRequests === 1) return olderList;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            data: [{ ...idleSession, status: "running" }],
+          }),
+        } as Response);
+      }
+      if (headers?.Accept === "application/json") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ data: [] }),
+        } as Response);
+      }
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(
+            "event: session.status_running\nid: 1\ndata: {}\n\n",
+          ));
+          init?.signal?.addEventListener(
+            "abort",
+            () => controller.close(),
+            { once: true },
+          );
+        },
+      });
+      return Promise.resolve({ ok: true, body } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/sessions/${idleSession.id}`]}>
+            <Routes>
+              <Route
+                path="/sessions/:id"
+                element={
+                  <>
+                    <Sidebar />
+                    <SessionDetailPage />
+                  </>
+                }
+              />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(listRequests).toBe(1));
+    expect(await screen.findByText("running")).toBeTruthy();
+    resolveOlderList({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [idleSession] }),
+    } as Response);
+
+    expect(await screen.findByRole("link", {
+      name: `${idleSession.title}running`,
+    })).toBeTruthy();
+    expect(listRequests).toBeGreaterThanOrEqual(2);
+  });
+
   it("nests and paginates Loop-created Sessions under their Loop instead of loose Sessions", async () => {
     const agent: Agent = {
       id: "agent_loop",

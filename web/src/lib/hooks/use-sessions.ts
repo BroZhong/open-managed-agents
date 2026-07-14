@@ -31,8 +31,8 @@ export function useSessions(status?: string) {
   const params = status ? `?status=${status}` : "";
   return useQuery({
     queryKey: ["sessions", status ?? "all"],
-    queryFn: () =>
-      apiFetch<SessionsResponse>(`/v1/sessions${params}`).then((r) => r.data),
+    queryFn: ({ signal }) =>
+      apiFetch<SessionsResponse>(`/v1/sessions${params}`, { signal }).then((r) => r.data),
   });
 }
 
@@ -40,8 +40,11 @@ export function useSessions(status?: string) {
 export function useAgentSessions(agentId: string) {
   return useQuery({
     queryKey: ["sessions", "byAgent", agentId],
-    queryFn: () =>
-      apiFetch<SessionsResponse>(`/v1/sessions?agent_id=${agentId}&exclude_loop=true`).then((r) => r.data),
+    queryFn: ({ signal }) =>
+      apiFetch<SessionsResponse>(
+        `/v1/sessions?agent_id=${agentId}&exclude_loop=true`,
+        { signal },
+      ).then((r) => r.data),
     enabled: !!agentId,
   });
 }
@@ -49,7 +52,7 @@ export function useAgentSessions(agentId: string) {
 export function useSession(id: string) {
   return useQuery({
     queryKey: ["sessions", id],
-    queryFn: () => apiFetch<Session>(`/v1/sessions/${id}`),
+    queryFn: ({ signal }) => apiFetch<Session>(`/v1/sessions/${id}`, { signal }),
     enabled: !!id,
   });
 }
@@ -58,12 +61,13 @@ export function useLoopSessions(loopId: string, enabled = true) {
   const query = useInfiniteQuery({
     queryKey: ["sessions", "byLoop", loopId],
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => {
+    queryFn: ({ pageParam, signal }) => {
       const cursor = pageParam
         ? `&cursor=${encodeURIComponent(pageParam)}`
         : "";
       return apiFetch<SessionsResponse>(
         `/v1/sessions?loop_id=${encodeURIComponent(loopId)}&limit=50${cursor}`,
+        { signal },
       );
     },
     getNextPageParam: (lastPage) =>

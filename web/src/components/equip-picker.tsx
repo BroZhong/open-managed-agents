@@ -6,6 +6,7 @@ import {
   useAgentSkills,
   useEquipSkill,
   useUnequipSkill,
+  usePendingAgentSkillWrites,
   type EquippedSkill,
 } from "@/lib/hooks/use-skills";
 import { type Agent } from "@/lib/hooks/use-agents";
@@ -20,9 +21,16 @@ import { SkillFilesEditor } from "@/components/skill-files-editor";
  */
 export function EquipPicker({ agent }: { agent: Agent }) {
   const { data: library, isLoading } = useSkills();
-  const { data: equipped } = useAgentSkills(agent.id);
+  const {
+    data: equipped,
+    isLoading: equippedLoading,
+    isFetching: equippedFetching,
+    isError: equippedError,
+    refetch: refetchEquipped,
+  } = useAgentSkills(agent.id);
   const equip = useEquipSkill(agent.id);
   const unequip = useUnequipSkill(agent.id);
+  const pendingWrites = usePendingAgentSkillWrites(agent.id);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   // Map Library Skill id → the Agent's fork of it (if equipped).
@@ -31,7 +39,8 @@ export function EquipPicker({ agent }: { agent: Agent }) {
     if (f.sourceSkillId) forkBySource.set(f.sourceSkillId, f);
   }
 
-  const busy = equip.isPending || unequip.isPending;
+  const saving = pendingWrites.isPending || equip.isPending || unequip.isPending;
+  const busy = saving || equipped === undefined;
 
   function toggle(libraryId: string) {
     const fork = forkBySource.get(libraryId);
@@ -43,10 +52,23 @@ export function EquipPicker({ agent }: { agent: Agent }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-[var(--color-fg)]">Skills</h2>
-        {busy && <span className="text-xs text-neutral-400">Saving…</span>}
+        {saving && <span className="text-xs text-neutral-400">Saving…</span>}
       </div>
 
-      {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
+      {(isLoading || equippedLoading || (equipped === undefined && equippedFetching)) && (
+        <p className="text-sm text-neutral-400">Loading…</p>
+      )}
+      {equippedError && !equippedFetching && (
+        <div className="flex items-center justify-between text-sm text-red-600">
+          <span>Could not load equipped Skills.</span>
+          <button
+            className="rounded px-2 py-1 text-xs font-medium hover:bg-red-50"
+            onClick={() => void refetchEquipped()}
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {library?.length === 0 && !isLoading && (
         <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-sm text-neutral-400">
           No Skills in the Library yet. Upload one from the entry page to equip it here.
@@ -56,7 +78,11 @@ export function EquipPicker({ agent }: { agent: Agent }) {
       <div className="space-y-2">
         {library?.map((skill) => {
           const fork = forkBySource.get(skill.id);
-          const on = !!fork;
+          const equipping = pendingWrites.equippingSkillIds.includes(skill.id);
+          const unequipping = fork
+            ? pendingWrites.unequippingForkIds.includes(fork.id)
+            : false;
+          const on = equipping || (!!fork && !unequipping);
           const isOpen = expanded === skill.id;
           return (
             <div
@@ -72,6 +98,7 @@ export function EquipPicker({ agent }: { agent: Agent }) {
                 <button
                   onClick={() => toggle(skill.id)}
                   disabled={busy}
+                  aria-pressed={on}
                   className="flex flex-1 items-start gap-3 text-left"
                 >
                   <span
@@ -95,9 +122,10 @@ export function EquipPicker({ agent }: { agent: Agent }) {
                     )}
                   </span>
                 </button>
-                {on && (
+                {on && fork && (
                   <button
                     aria-label={isOpen ? "Collapse editor" : "Edit equipped Skill"}
+                    disabled={busy}
                     className="shrink-0 rounded p-1 text-neutral-400 hover:text-[var(--color-fg)]"
                     onClick={() => setExpanded(isOpen ? null : skill.id)}
                   >

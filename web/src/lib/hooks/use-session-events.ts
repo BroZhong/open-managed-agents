@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useReducer, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { SessionEvent } from "@/lib/types";
+import type { Session } from "@/lib/hooks/use-sessions";
 import {
   initialSessionEventStreamState,
   parseSessionSseFrame,
@@ -18,7 +20,41 @@ export interface WorkspaceFileChange {
   deleted: string[];
 }
 
+function projectStatusIntoSessionCollection(
+  value: unknown,
+  sessionId: string,
+  status: Session["status"],
+): unknown {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const projected = projectStatusIntoSessionCollection(item, sessionId, status);
+      changed ||= projected !== item;
+      return projected;
+    });
+    return changed ? next : value;
+  }
+  if (!value || typeof value !== "object") return value;
+
+  const record = value as Record<string, unknown>;
+  if (record.id === sessionId && typeof record.status === "string") {
+    if (record.status === "terminated") return value;
+    return record.status === status ? value : { ...record, status };
+  }
+
+  let projected = value;
+  for (const key of ["data", "pages"] as const) {
+    if (!(key in record)) continue;
+    const child = projectStatusIntoSessionCollection(record[key], sessionId, status);
+    if (child !== record[key]) {
+      projected = { ...(projected as Record<string, unknown>), [key]: child };
+    }
+  }
+  return projected;
+}
+
 export function useSessionEvents(sessionId: string) {
+  const queryClient = useQueryClient();
   const [{ events, activeDeltas }, dispatch] = useReducer(
     sessionEventStreamReducer,
     initialSessionEventStreamState,
@@ -51,6 +87,85 @@ export function useSessionEvents(sessionId: string) {
   // 30s, resets to 1s once a connection is successfully established.
   const backoffRef = useRef(1000);
 
+  const projectStatus = useCallback((nextStatus: "idle" | "running") => {
+    const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
+    if (session?.status === "terminated") return;
+
+    const fetchingSessionQueries = queryClient.getQueryCache().findAll({
+      predicate: (query) => {
+        if (query.state.fetchStatus !== "fetching") return false;
+        const { queryKey } = query;
+        return queryKey[0] === "sessions" && (
+          queryKey[1] === sessionId ||
+          queryKey[1] === "all" ||
+          queryKey[1] === "byAgent" ||
+          queryKey[1] === "byLoop"
+        );
+      },
+    });
+    const fetchMoreQueries = fetchingSessionQueries.filter(
+      (query) => query.state.fetchMeta?.fetchMore,
+    );
+    for (const query of fetchMoreQueries) {
+      const pending = query.promise;
+      if (!pending) continue;
+      // Infinite-query pagination captures the old pages when it starts and
+      // writes them all back with the new page. Preserve the user's request,
+      // then restore the status projection after that write completes.
+      void pending.then(() => {
+        queryClient.setQueryData(
+          query.queryKey,
+          (value) => projectStatusIntoSessionCollection(
+            value,
+            sessionId,
+            nextStatus,
+          ),
+        );
+      }, () => undefined);
+    }
+
+    const inFlightQueries = fetchingSessionQueries.filter(
+      (query) => !query.state.fetchMeta?.fetchMore,
+    );
+    if (inFlightQueries.length > 0) {
+      void Promise.all(inFlightQueries.map((query) =>
+        queryClient.cancelQueries(
+          { queryKey: query.queryKey, exact: true },
+          { revert: false },
+        )
+      )).then(() => Promise.all(inFlightQueries.map((query) =>
+        queryClient.refetchQueries({
+          queryKey: query.queryKey,
+          exact: true,
+          type: "active",
+        })
+      )));
+    }
+
+    setStatus(nextStatus);
+    queryClient.setQueryData<Session>(["sessions", sessionId], (current) =>
+      current && current.status !== "terminated"
+        ? { ...current, status: nextStatus }
+        : current,
+    );
+    queryClient.setQueriesData(
+      {
+        predicate: ({ queryKey }) =>
+          queryKey[0] === "sessions" &&
+          (
+            queryKey[1] === "all" ||
+            queryKey[1] === "byAgent" ||
+            queryKey[1] === "byLoop"
+          ),
+      },
+      (value) => projectStatusIntoSessionCollection(
+        value,
+        sessionId,
+        nextStatus,
+      ),
+    );
+  }, [queryClient, sessionId]);
+
   const addEvent = useCallback((event: SessionEvent) => {
     // Every id-bearing frame is a persisted Complete Event and therefore part
     // of durable history. Workspace file changes additionally refresh the file
@@ -69,13 +184,15 @@ export function useSessionEvents(sessionId: string) {
       return;
     }
 
-    if (event.type === "session.status_running") setStatus("running");
+    if (event.type === "session.status_running") {
+      projectStatus("running");
+    }
     if (event.type === "session.status_idle") {
-      setStatus("idle");
+      projectStatus("idle");
       // Backstop: refetch the tree once on turn end (no incremental hint).
       setFileChange((prev) => ({ nonce: prev.nonce + 1, changed: [], deleted: [] }));
     }
-  }, []);
+  }, [projectStatus]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -146,8 +263,8 @@ export function useSessionEvents(sessionId: string) {
       }
     }
 
-    // Initial connect: load full history (JSON mode) to render past
-    // conversation, seed the resume anchor, then open the live SSE.
+    // Initial connect: load the first history page (JSON mode) to render past
+    // conversation, seed the resume anchor, then let SSE backfill any remainder.
     async function connect() {
       const token = localStorage.getItem(STORAGE_KEY);
 
@@ -170,18 +287,23 @@ export function useSessionEvents(sessionId: string) {
       const historyData = await historyRes.json();
       const historicalEvents: SessionEvent[] =
         historyData.data || historyData || [];
+      const historyIsComplete = historyData.has_more !== true;
       dispatch({ type: "history.loaded", events: historicalEvents });
 
-      // Derive status from historical events
-      for (let i = historicalEvents.length - 1; i >= 0; i--) {
-        const evt = historicalEvents[i];
-        if (evt.type === "session.status_running") {
-          setStatus("running");
-          break;
-        }
-        if (evt.type === "session.status_idle") {
-          setStatus("idle");
-          break;
+      // A partial first page cannot determine current status. The SSE backfill
+      // starts at its last seq and will project the missing, authoritative
+      // transition. Only a complete history is safe to derive from directly.
+      if (historyIsComplete) {
+        for (let i = historicalEvents.length - 1; i >= 0; i--) {
+          const evt = historicalEvents[i];
+          if (evt.type === "session.status_running") {
+            projectStatus("running");
+            break;
+          }
+          if (evt.type === "session.status_idle") {
+            projectStatus("idle");
+            break;
+          }
         }
       }
 
@@ -239,7 +361,7 @@ export function useSessionEvents(sessionId: string) {
       abortController.abort();
       setIsConnected(false);
     };
-  }, [sessionId, addEvent]);
+  }, [sessionId, addEvent, projectStatus]);
 
   return { events, activeDeltas, status, isConnected, fileChange };
 }
