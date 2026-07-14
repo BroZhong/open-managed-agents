@@ -137,9 +137,14 @@ Every managed Turn receives an explicit file, including
 loads only that validated file, discards its `imports`, and does not merge the
 generic global, Pi global, shared project, or Pi project configurations. The
 extension's pre-`session_start` registration phase is forced to an empty config
-and cannot discover or register ambient direct tools. The image build checks the
-exact package version, pristine SHA-256 values for both patched files, and unique
-source anchors, so an upstream change fails closed.
+and cannot discover or register ambient direct tools. Because that intentionally
+empty early phase also prevents the generic gateway's static description from
+listing per-Turn servers, the Adapter appends a Host-owned discovery instruction
+containing only their validated names. It tells the model to connect/list first
+and then call the exact prefixed tool identifier returned by the gateway;
+connection definitions and secrets remain excluded from the prompt. The image
+build checks the exact package version, pristine SHA-256 values for both patched
+files, and unique source anchors, so an upstream change fails closed.
 
 The file contains placeholders, never resolved secret values. It is removed on
 normal completion, abort, prompt failure, and extension-startup failure. The

@@ -28,6 +28,7 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
+import { mcpGatewayToolName } from "./mcp-gateway.js";
 import { resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
 import { createManagedSubagentToolsExtension } from "./subagent-tool-bridge.js";
@@ -63,7 +64,8 @@ export interface PiResourceLoaderOptions {
   /**
    * Instruction text appended to Pi's system prompt, in order: the Agent's
    * `system` first (previously discarded — now wired through), then any
-   * Host-assembled `appendSystemPrompt` entries (e.g. Agent Files).
+   * Host-assembled `appendSystemPrompt` entries (e.g. Agent Files), followed
+   * by the managed-MCP discovery contract when servers are configured.
    */
   appendSystemPrompt: string[];
   /** Equipped-Skill root directories the Host provides (`additionalSkillPaths`). */
@@ -106,14 +108,20 @@ export interface SessionFactoryArgs {
 /**
  * Assemble the per-run() Pi resource-loader options from an Agent's config.
  * The Agent's `system` (historically discarded) leads the appended prompt,
- * followed by any Host-assembled `appendSystemPrompt` entries; equipped Skill
- * directories become `additionalSkillPaths`. Empty/whitespace-only entries are
- * dropped so a blank system prompt does not inject an empty block.
+ * followed by any Host-assembled `appendSystemPrompt` entries and the managed
+ * MCP discovery contract; equipped Skill directories become
+ * `additionalSkillPaths`. Empty/whitespace-only entries are dropped so a blank
+ * system prompt does not inject an empty block.
  */
 export function buildResourceLoaderOptions(
   agent: AdapterInput["agent"],
 ): PiResourceLoaderOptions {
-  const appendSystemPrompt = [agent.system, ...(agent.appendSystemPrompt ?? [])]
+  const mcpSection = buildManagedMcpPromptSection(agent.mcpServers);
+  const appendSystemPrompt = [
+    agent.system,
+    ...(agent.appendSystemPrompt ?? []),
+    mcpSection,
+  ]
     .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
   return {
     appendSystemPrompt,
@@ -121,6 +129,35 @@ export function buildResourceLoaderOptions(
     skillDescriptors: agent.skillDescriptors ?? [],
     noContextFiles: true,
   };
+}
+
+/**
+ * Tell the model how to discover exact proxy-tool identifiers for this Turn's
+ * Host-managed MCP servers. The extension registers its generic `mcp` gateway
+ * before per-Turn config is available, so its static description cannot safely
+ * enumerate these server names. Without this Host-owned hint, models tend to
+ * guess an unprefixed remote name that the gateway correctly rejects.
+ *
+ * Only already-resolved server names cross into the prompt. Connection
+ * definitions, environment placeholders, and secrets remain confined to the
+ * mode-0600 config file below.
+ */
+export function buildManagedMcpPromptSection(
+  servers: AdapterInput["agent"]["mcpServers"],
+): string {
+  const names = [
+    ...new Set((servers ?? []).map(({ name }) => name).filter(Boolean)),
+  ];
+  if (names.length === 0) return "";
+
+  return [
+    "<managed_mcp>",
+    `Configured MCP servers: ${names.map((name) => JSON.stringify(name)).join(", ")}.`,
+    `Default tool-id prefixes: ${names.map((name) => `${JSON.stringify(name)} -> ${JSON.stringify(mcpGatewayToolName(name, ""))}`).join(", ")}.`,
+    "Use the `mcp` gateway for these servers. Before the first remote call to a server, call `mcp` with `connect` set to its exact configured name; the result lists the callable prefixed tool identifiers and their schemas.",
+    "Call a remote tool only with the exact `tool` identifier returned by that result, pass its arguments as a JSON string in `args`, and set `server` to the exact configured name. Do not guess or strip the server prefix.",
+    "</managed_mcp>",
+  ].join("\n");
 }
 
 /**

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
+import {
+  buildManagedMcpPromptSection,
+  PiAgentAdapter,
+} from "../src/pi-agent-adapter.js";
 import type {
   PiSessionLike,
   SessionFactoryArgs,
@@ -959,6 +962,39 @@ describe("PiAgentAdapter (SDK)", () => {
       expect(opts?.appendSystemPrompt).toEqual(["You are helpful."]);
       expect(opts?.additionalSkillPaths).toEqual([]);
       expect(opts?.noContextFiles).toBe(true);
+    });
+
+    it("tells the model to discover exact managed MCP proxy identifiers", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      const input = makeInput("review recent sessions");
+      input.agent.mcpServers = [
+        { name: "session-data", command: "node", args: ["server.js"] },
+      ];
+
+      await collectEvents(adapter.run(input));
+
+      expect(opts?.appendSystemPrompt).toEqual([
+        "You are helpful.",
+        expect.stringMatching(/<managed_mcp>[\s\S]*"session-data"/),
+      ]);
+      const section = opts?.appendSystemPrompt[1] ?? "";
+      expect(section).toContain("`connect`");
+      expect(section).toContain('"session-data" -> "session_data_"');
+      expect(section).toContain("exact `tool` identifier");
+      expect(section).toContain("Do not guess or strip the server prefix");
+      expect(section).not.toContain("server.js");
+    });
+
+    it("does not inject an MCP prompt section without configured servers", () => {
+      expect(buildManagedMcpPromptSection(undefined)).toBe("");
     });
 
     it("assembles appendSystemPrompt (system first) + skillPaths per run()", async () => {

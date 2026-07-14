@@ -78,7 +78,8 @@ describe("live five-minute Loop + Supabase MCP", () => {
       body: JSON.stringify({
         name: "Five-minute live Session review",
         prompt: [
-          "Call session-data.query_recent_sessions for exactly the last 7 days.",
+          "Use the configured session-data MCP to query Sessions from exactly the last 7 days.",
+          "Follow the managed MCP discovery instructions and use the exact tool identifier returned by its gateway.",
           "Review returned Session and event patterns, including errors, retries, and incomplete outcomes.",
           "Then produce the required evidence-backed Agent optimization recommendations.",
         ].join(" "),
@@ -112,6 +113,10 @@ describe("live five-minute Loop + Supabase MCP", () => {
     const toolResult = events.data.find(
       (event) => event.type === "agent.mcp_tool_result",
     );
+    expect(toolResult?.data).toMatchObject({
+      serverName: "session-data",
+      isError: false,
+    });
     const resultText = (
       toolResult?.data as { content?: Array<{ text?: string }> } | undefined
     )?.content?.map((block) => block.text ?? "").join("") ?? "";
