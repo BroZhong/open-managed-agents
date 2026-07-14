@@ -10,7 +10,7 @@ const MAX_EVENT_DATA_CHARS = 2_000;
 const MAX_QUERY_RESPONSE_BYTES = 25_000_000;
 export const MAX_TOOL_RESULT_BYTES = 48 * 1_024;
 const SENSITIVE_CONFIG_NAME =
-  /(?:secret|password|passwd|token|api[_-]?key|private[_-]?key|credential)/i;
+  /(?:^|_)(?:secret|secrets|token|api_key|private_key|credential|credentials|password|passwd|pass)$/i;
 const MIN_SUBSTRING_REDACTION_CHARS = 8;
 
 export interface RecentSessionsInput {
@@ -338,7 +338,6 @@ function postgresMetaQueryUrl(connectionString: string): string {
 
 interface InfrastructureRedactionPlan {
   substringValues: string[];
-  exactValues: string[];
 }
 
 function buildInfrastructureRedactionPlan(
@@ -346,24 +345,27 @@ function buildInfrastructureRedactionPlan(
   configList: Array<{ name?: string; value?: string }>,
 ): InfrastructureRedactionPlan {
   const sensitiveConfigValues = configList
-    .filter((item) => SENSITIVE_CONFIG_NAME.test(item.name ?? ""))
+    .filter((item) => {
+      const normalizedName = (item.name ?? "").replaceAll("-", "_");
+      // Alibaba returns "-" for unconfigured secret fields. It is a sentinel,
+      // not a credential, and must never redact ordinary punctuation.
+      return item.value !== "-" && SENSITIVE_CONFIG_NAME.test(normalizedName);
+    })
     .map((item) => item.value ?? "")
     .filter(Boolean);
-  const explicit = [...new Set(explicitValues.filter(Boolean))];
-  const substringValues = new Set([
-    ...explicit.filter((value) => value.length >= MIN_SUBSTRING_REDACTION_CHARS),
-    // A sensitive config name is an authoritative signal. Even a short value
-    // must be removed from free text such as Authorization headers and URLs.
+  const values = [...new Set([
+    ...explicitValues.filter(Boolean),
     ...sensitiveConfigValues,
-  ]);
+  ])];
+  if (values.some((value) => value.length < MIN_SUBSTRING_REDACTION_CHARS)) {
+    // Short credentials cannot be globally removed without corrupting common
+    // values (for example "6" in a timestamp), while boundary matching can
+    // leak prefixed/suffixed forms. Refuse the read instead.
+    throw new SafeReaderError("Supabase secret configuration is unsafe");
+  }
   return {
-    substringValues: [...substringValues]
+    substringValues: values
       .sort((left, right) => right.length - left.length),
-    exactValues: explicit.filter(
-      (value) =>
-        value.length < MIN_SUBSTRING_REDACTION_CHARS &&
-        !substringValues.has(value),
-    ),
   };
 }
 
@@ -376,12 +378,6 @@ function redactInfrastructure(
       (current, secret) => current.split(secret).join("[REDACTED]"),
       value,
     );
-    for (const secret of plan.exactValues) {
-      if (redacted === secret) return "[REDACTED]";
-      redacted = redacted
-        .split(JSON.stringify(secret))
-        .join(JSON.stringify("[REDACTED]"));
-    }
     return redacted;
   }
   if (Array.isArray(value)) {

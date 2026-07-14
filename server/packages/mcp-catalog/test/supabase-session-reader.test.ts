@@ -232,12 +232,15 @@ describe("tenant-scoped Supabase Session reader", () => {
       configList: [
         { name: "JWT_EXPIRY", value: "3600" },
         { name: "ENABLED", value: "true" },
+        { name: "GOTRUE_PASSWORD_MIN_LENGTH", value: "6" },
+        { name: "GOTRUE_EXTERNAL_GITHUB_TOKEN_URL", value: "-" },
         { name: "SMTP_PASSWORD", value: "long-sensitive-password" },
-        { name: "API_TOKEN", value: "tok" },
+        { name: "API_TOKEN", value: "tok-sensitive-123" },
       ],
       response: [{
         id: "session-3600-true",
         title: "2026-07-14 telemetry",
+        created_at: "2026-07-14T15:03:15.764+08:00",
         events: [{
           seq: 1,
           data: [
@@ -245,10 +248,13 @@ describe("tenant-scoped Supabase Session reader", () => {
               expiry: "3600",
               enabled: "true",
               password: "long-sensitive-password",
-              token: "tok",
+              token: "tok-sensitive-123",
             }),
-            "Authorization: Bearer tok",
-            "https://example.test/callback?api_key=tok",
+            "Authorization: Bearer prefix-tok-sensitive-123",
+            "https://example.test/callback?api_key=tok-sensitive-123",
+            "Authorization: Bearer 6",
+            "recorded_at=2026-07-14T15:03:15.764+08:00",
+            "unset=-",
           ].join("\n"),
         }],
       }],
@@ -260,15 +266,34 @@ describe("tenant-scoped Supabase Session reader", () => {
       event_limit_per_session: 1,
     });
     const serialized = JSON.stringify(result);
+    const returnedData = (result.sessions[0] as {
+      events: Array<{ data: string }>;
+    }).events[0]!.data;
 
     expect(serialized).toContain("session-3600-true");
     expect(serialized).toContain("2026-07-14 telemetry");
+    expect(serialized).toContain("2026-07-14T15:03:15.764+08:00");
     expect(serialized).toContain("3600");
     expect(serialized).toContain("true");
+    expect(serialized).toContain("Bearer 6");
+    expect(serialized).toContain("unset=-");
     expect(serialized).not.toContain("long-sensitive-password");
-    expect(serialized).not.toContain("tok");
-    expect(serialized).toContain("Authorization: Bearer [REDACTED]");
+    expect(returnedData).not.toContain("tok-sensitive-123");
+    expect(serialized).toContain("Authorization: Bearer prefix-[REDACTED]");
     expect(serialized).toContain("api_key=[REDACTED]");
+  });
+
+  it("fails closed instead of heuristically redacting a short real secret", async () => {
+    const { reader } = readerFixture({
+      configList: [{ name: "API_TOKEN", value: "tok" }],
+      response: [{
+        id: "session-1",
+        events: [{ data: "Authorization: Bearer prefix-tok" }],
+      }],
+    });
+
+    await expect(reader.queryRecentSessions({ days: 7 }))
+      .rejects.toThrow("Supabase secret configuration is unsafe");
   });
 
   it.each([
