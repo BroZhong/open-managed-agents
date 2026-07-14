@@ -75,21 +75,31 @@ jobs:
             echo "::error::APIFOX_RUNNER_TYPE must be TSHGR (team Runner) or OSHGR (organization Runner)."
             exit 1
           fi
-      - name: Set the deployed API server URL
+      - name: Prepare optional deployed API server metadata
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
           APIFOX_RUNNER_ID: ${{ vars.APIFOX_RUNNER_ID }}
           APIFOX_RUNNER_TYPE: ${{ vars.APIFOX_RUNNER_TYPE }}
         run: |
-          if [[ ! "$PUBLIC_API_URL" =~ ^https://[^[:space:]]+$ ]]; then
-            echo "::error::Set the PUBLIC_API_URL repository variable to the deployed HTTPS API origin (for example, https://api.example.com)."
-            exit 1
+          cp docs/openapi.json "$RUNNER_TEMP/openapi.json"
+          if [[ -n "$PUBLIC_API_URL" ]]; then
+            public_api_url="$(node .github/scripts/apifox-public-api-url.mjs "$PUBLIC_API_URL")"
+            jq --arg url "$public_api_url" '.servers[0].url = $url' \
+              "$RUNNER_TEMP/openapi.json" > "$RUNNER_TEMP/openapi-with-server.json"
+            mv "$RUNNER_TEMP/openapi-with-server.json" "$RUNNER_TEMP/openapi.json"
+          else
+            echo "::notice::PUBLIC_API_URL is not configured; publishing documentation without a live public Try-it server."
+            jq 'del(.servers)' "$RUNNER_TEMP/openapi.json" \
+              > "$RUNNER_TEMP/openapi-without-server.json"
+            mv "$RUNNER_TEMP/openapi-without-server.json" "$RUNNER_TEMP/openapi.json"
           fi
-          jq --arg url "${PUBLIC_API_URL%/}" '.servers[0].url = $url' \
-            docs/openapi.json > "$RUNNER_TEMP/openapi.json"
           if [[ -n "$APIFOX_RUNNER_ID" ]]; then
+            if [[ -z "${public_api_url:-}" ]]; then
+              echo "::error::PUBLIC_API_URL is required when APIFOX_RUNNER_ID enables remote scheduled imports."
+              exit 1
+            fi
             runner_type="${APIFOX_RUNNER_TYPE:-TSHGR}"
-            jq --arg sourceUrl "${PUBLIC_API_URL%/}/openapi.json" \
+            jq --arg sourceUrl "$public_api_url/openapi.json" \
               --arg runOn "$runner_type" \
               --argjson runnerId "$APIFOX_RUNNER_ID" \
               '.sourceUrl = $sourceUrl | .runOn = $runOn | .runnerId = $runnerId' \
@@ -99,7 +109,18 @@ jobs:
             echo "Apifox Runner is not configured; immediate CI import remains enabled."
           fi
       - name: Validate OpenAPI
-        run: npx --yes --package=@redocly/cli@2.39.0 redocly lint "$RUNNER_TEMP/openapi.json"
+        env:
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+        run: |
+          if [[ -n "$PUBLIC_API_URL" ]]; then
+            npx --yes --package=@redocly/cli@2.39.0 redocly lint "$RUNNER_TEMP/openapi.json"
+          else
+            # OpenAPI permits an omitted servers array. Redocly's recommended
+            # profile treats it as an error, so skip only that opinionated rule
+            # for documentation-only publishing.
+            npx --yes --package=@redocly/cli@2.39.0 redocly lint \
+              --skip-rule no-empty-servers "$RUNNER_TEMP/openapi.json"
+          fi
       - name: Verify the dedicated Apifox project before import
         env:
           APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}

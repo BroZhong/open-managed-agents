@@ -37,13 +37,15 @@ node --test .github/scripts/apifox-*.test.mjs
 GET https://<API 域名>/openapi.json
 ```
 
-此端点不需要 API key，并返回 `Cache-Control: public, max-age=300`。部署时设置：
+此端点不需要 API key，并返回 `Cache-Control: public, max-age=300`。若要让文档中的在线调试请求真实后端，部署时设置：
 
 ```bash
 PUBLIC_API_URL=https://api.example.com
 ```
 
-这样 OpenAPI 的 `servers[0].url` 会指向真实 API 地址。当前 Kubernetes Service 是集群内的 `ClusterIP`；若要让 Apifox 云端从 URL 拉取，还需要配置公网 Ingress、域名和 TLS。不要只暴露文档而意外放开原本受保护的 `/v1/*` 接口。
+这样 OpenAPI 的 `servers[0].url` 会指向真实 API 地址。合法值必须是公网 HTTPS origin，例如 `https://api.example.com` 或 `https://api.example.com:8443`；不能包含 `/openapi.json` 等路径、查询参数、fragment、内嵌用户名密码，也不能使用 localhost、特殊用途域名或私网/保留 IP。末尾 `/` 会被规范化。暂时不配置时，同步工作流会从发布用 OpenAPI 中移除 `servers`，因此仍可在线预览文档但不会展示一个虚假的 localhost 调试地址；配置 Runner 远端拉取时则必须提供该值。
+
+当前 Kubernetes Service 是集群内的 `ClusterIP`；若要让 Apifox 云端从 URL 拉取或启用在线调试，还需要配置公网 Ingress、域名和 TLS。不要只暴露文档而意外放开原本受保护的 `/v1/*` 接口。
 
 也可以在 Apifox 中手动用 `https://<API 域名>/openapi.json` 新建定时导入。该 URL 必须直接返回 OpenAPI JSON/YAML，而不是 Swagger UI HTML。免费版每 3 小时可拉取一次，但需要有写权限的用户打开 Apifox 客户端和项目；商业专业版可用 Runner 实现无人值守拉取。内网服务可使用 Runner，或者只使用 CI 文件导入。
 
@@ -56,7 +58,7 @@ PUBLIC_API_URL=https://api.example.com
 3. 在项目的“分享文档 -> 发布文档站”中配置可见性并点击“立即发布”。复制文档站 ID 和公开地址。
 4. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中创建 Repository secrets：`APIFOX_ACCESS_TOKEN`、`APIFOX_PROJECT_ID`。
 5. 创建 Repository variables：
-   - `PUBLIC_API_URL`：部署后的 HTTPS API origin，例如 `https://api.example.com`；不要带 `/openapi.json`。
+   - `PUBLIC_API_URL`：可选，部署后的公网 HTTPS API origin，例如 `https://api.example.com`；不要带 `/openapi.json`。不填时仍可发布文档，但在线调试不可用；配置 Runner 时必填。
    - `APIFOX_EXPECTED_PROJECT_NAME`：必填，专用项目的精确名称；导入前会与项目 ID 一起校验。
    - `APIFOX_EXPECTED_TEAM_ID`：可选，项目所属团队 ID；建议填写以防同名项目误配。
    - `APIFOX_DOCS_SITE_ID`：上一步已发布文档站的 ID。
@@ -65,7 +67,7 @@ PUBLIC_API_URL=https://api.example.com
    - `APIFOX_RUNNER_ID`：可选；商业专业版中已经部署并启动的通用 Runner ID。
    - `APIFOX_RUNNER_TYPE`：可选且依赖 Runner ID；团队 Runner 使用默认值 `TSHGR`，组织 Runner 填 `OSHGR`。
 6. 可选：若需要完全无人值守的远端定时拉取，在 Apifox 商业专业版的“团队资源 -> 通用 Runner”中部署并启动 Runner，再填写上面两个 Runner 变量。
-7. 在 API 部署环境中把 `PUBLIC_API_URL` 设置为同一个 origin。
+7. 若已部署公网 API，在 API 部署环境中把 `PUBLIC_API_URL` 设置为同一个 origin。
 8. 在 `main` 分支手动运行一次 `Sync OpenAPI to Apifox`。以后 API 契约合并到 `main` 且契约 CI 通过后会自动同步。
 
 Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布命令；创建配置不等于完成首次公开发布。因此首次“立即发布”保留为 UI 操作。工作流会核对文档站 ID、项目 ID、公开可见性和已发布的系统/自定义域名，确认 `APIFOX_DOCS_URL` 属于该站点，再实际请求 URL；重定向后的最终 URL 也会重新核对。这样不会把任意返回 2xx 的页面误报为在线文档。已发布站点会实时反映 Apifox 项目内文档的变化。
@@ -78,7 +80,7 @@ Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布
 
 - 自动运行时，checkout 已通过 `OpenAPI contract` 的准确 commit SHA。
 - 手动运行时，也会重新执行生成一致性、Hono route inventory 和 Redocly 校验。
-- 使用临时 OpenAPI 文件把 `servers[0].url` 替换为 `PUBLIC_API_URL`，不会修改仓库中的确定性产物。
+- 配置了 `PUBLIC_API_URL` 时，使用临时 OpenAPI 文件替换 `servers[0].url`；未配置时保留生成产物并继续发布文档，不会修改仓库中的确定性产物。
 - 普通 CLI 导入立即更新新增和修改的接口；安全 reconciler 在确认没有缺失 endpoint、没有重复 method/path 后清理已删除接口，并在操作后验证远端集合与本地完全一致。
 - 配置了商业版 Runner 时，`docs/apifox-auto-import.json` 会创建远端定时同步，启用覆盖与删除不再匹配的 schema、folder 等项目资源；同名配置漂移时会重建。未配置 Runner 时跳过此增强步骤，不影响 HTTP endpoint 的精确 CI 同步。
 - 最后检查指定文档站已经发布，并从 GitHub Runner 实际访问公开 URL。
