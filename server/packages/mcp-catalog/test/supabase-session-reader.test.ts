@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { Buffer } from "node:buffer";
 import {
   buildRecentSessionsSql,
   createSupabaseSessionReader,
   loadSupabaseSessionEnvironment,
+  MAX_TOOL_RESULT_BYTES,
   type RdsAiClientFactory,
 } from "../src/supabase-session-reader.js";
 
@@ -20,6 +22,7 @@ function fakeCloud(options?: {
     regionId: string;
   }>;
   authError?: Error;
+  configList?: Array<{ name?: string; value?: string }>;
 }) {
   const describeAppInstances = vi.fn(async () => ({
     body: {
@@ -38,6 +41,7 @@ function fakeCloud(options?: {
       body: {
         instanceName: INFRASTRUCTURE.instanceName,
         apiKeys: { serviceKey: INFRASTRUCTURE.serviceKey },
+        configList: options?.configList,
       },
     };
   });
@@ -122,6 +126,7 @@ describe("tenant-scoped Supabase Session reader", () => {
     expect(body.query.trimStart()).toMatch(/^WITH\s/i);
     expect(body.query).toContain("FROM oma.sessions");
     expect(body.query).toContain("FROM oma.events");
+    expect(body.query).toContain("LEFT(s.title, 500) AS title");
     expect(body.query).toContain("E'tenant\\\\path'' OR TRUE --'");
     expect(body.query).toContain("2 * INTERVAL '1 day'");
     expect(body.query).toContain("LIMIT 3");
@@ -137,8 +142,133 @@ describe("tenant-scoped Supabase Session reader", () => {
       window_days: 2,
       session_limit: 3,
       event_limit_per_session: 4,
+      response_truncation: {
+        applied: false,
+        sessions_available: 1,
+        sessions_returned: 1,
+        sessions_omitted: 0,
+        events_available: 1,
+        events_returned: 1,
+        events_omitted: 0,
+      },
       sessions: [{ id: "session-1" }],
     });
+  });
+
+  it("fits oversized results as valid JSON while preserving newest Session suffixes", async () => {
+    const sourceSessions = Array.from({ length: 12 }, (_, sessionIndex) => ({
+      id: `session-${sessionIndex}`,
+      title: `Session ${sessionIndex}`,
+      created_at: new Date(Date.UTC(2026, 6, 14, 12, 0, sessionIndex)).toISOString(),
+      events: Array.from({ length: 12 }, (_, eventIndex) => ({
+        seq: eventIndex + 1,
+        ts: new Date(Date.UTC(2026, 6, 14, 12, sessionIndex, eventIndex)).toISOString(),
+        type: "agent.message",
+        data: "x".repeat(2_000),
+      })),
+    }));
+    const { reader } = readerFixture({ response: sourceSessions });
+
+    const result = await reader.queryRecentSessions({
+      days: 7,
+      session_limit: 12,
+      event_limit_per_session: 12,
+    });
+    const serialized = JSON.stringify(result);
+
+    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+      MAX_TOOL_RESULT_BYTES,
+    );
+    expect(JSON.parse(serialized)).toEqual(result);
+    expect(result.sessions).toHaveLength(12);
+    expect(result.response_truncation).toMatchObject({
+      applied: true,
+      max_output_bytes: MAX_TOOL_RESULT_BYTES,
+      sessions_available: 12,
+      sessions_returned: 12,
+      sessions_omitted: 0,
+      events_available: 144,
+      events_omitted: 144 - result.response_truncation.events_returned,
+      policy: "newest_sessions_recent_event_round_robin",
+    });
+    expect(result.response_truncation.events_returned).toBeGreaterThan(0);
+    expect(result.response_truncation.events_returned).toBeLessThan(144);
+    for (const [sessionIndex, session] of result.sessions.entries()) {
+      const returnedEvents = (session as { events: Array<{ seq: number }> }).events;
+      expect(returnedEvents.length).toBeGreaterThan(0);
+      expect(returnedEvents.map((event) => event.seq)).toEqual(
+        sourceSessions[sessionIndex]!.events
+          .slice(-returnedEvents.length)
+          .map((event) => event.seq),
+      );
+    }
+  });
+
+  it("budgets multi-byte MCP output by UTF-8 bytes", async () => {
+    const response = Array.from({ length: 6 }, (_, sessionIndex) => ({
+      id: `session-${sessionIndex}`,
+      events: Array.from({ length: 20 }, (_, eventIndex) => ({
+        seq: eventIndex + 1,
+        ts: new Date(Date.UTC(2026, 6, 14, 12, sessionIndex, eventIndex)).toISOString(),
+        type: "agent.message",
+        data: "证据😀".repeat(500),
+      })),
+    }));
+    const { reader } = readerFixture({ response });
+
+    const result = await reader.queryRecentSessions({
+      days: 7,
+      session_limit: 6,
+      event_limit_per_session: 20,
+    });
+
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8"))
+      .toBeLessThanOrEqual(MAX_TOOL_RESULT_BYTES);
+    expect(result.response_truncation.applied).toBe(true);
+  });
+
+  it("redacts only sensitive auth config values without mangling common short data", async () => {
+    const { reader } = readerFixture({
+      configList: [
+        { name: "JWT_EXPIRY", value: "3600" },
+        { name: "ENABLED", value: "true" },
+        { name: "SMTP_PASSWORD", value: "long-sensitive-password" },
+        { name: "API_TOKEN", value: "tok" },
+      ],
+      response: [{
+        id: "session-3600-true",
+        title: "2026-07-14 telemetry",
+        events: [{
+          seq: 1,
+          data: [
+            JSON.stringify({
+              expiry: "3600",
+              enabled: "true",
+              password: "long-sensitive-password",
+              token: "tok",
+            }),
+            "Authorization: Bearer tok",
+            "https://example.test/callback?api_key=tok",
+          ].join("\n"),
+        }],
+      }],
+    });
+
+    const result = await reader.queryRecentSessions({
+      days: 7,
+      session_limit: 1,
+      event_limit_per_session: 1,
+    });
+    const serialized = JSON.stringify(result);
+
+    expect(serialized).toContain("session-3600-true");
+    expect(serialized).toContain("2026-07-14 telemetry");
+    expect(serialized).toContain("3600");
+    expect(serialized).toContain("true");
+    expect(serialized).not.toContain("long-sensitive-password");
+    expect(serialized).not.toContain("tok");
+    expect(serialized).toContain("Authorization: Bearer [REDACTED]");
+    expect(serialized).toContain("api_key=[REDACTED]");
   });
 
   it.each([

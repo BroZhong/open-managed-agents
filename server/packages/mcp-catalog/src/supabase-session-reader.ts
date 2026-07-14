@@ -2,11 +2,16 @@ import RdsAiPackage, {
   DescribeAppInstancesRequest,
   DescribeInstanceAuthInfoRequest,
 } from "@alicloud/rdsai20250507";
+import { Buffer } from "node:buffer";
 
 const INSTANCE_PAGE_SIZE = 50;
 const MAX_INSTANCE_PAGES = 20;
 const MAX_EVENT_DATA_CHARS = 2_000;
 const MAX_QUERY_RESPONSE_BYTES = 25_000_000;
+export const MAX_TOOL_RESULT_BYTES = 48 * 1_024;
+const SENSITIVE_CONFIG_NAME =
+  /(?:secret|password|passwd|token|api[_-]?key|private[_-]?key|credential)/i;
+const MIN_SUBSTRING_REDACTION_CHARS = 8;
 
 export interface RecentSessionsInput {
   days?: number;
@@ -48,7 +53,7 @@ interface RdsAiClientLike {
         anonKey?: string;
         serviceKey?: string;
       };
-      configList?: Array<{ value?: string }>;
+      configList?: Array<{ name?: string; value?: string }>;
     };
   }>;
 }
@@ -77,6 +82,17 @@ export interface RecentSessionsResult {
   session_limit: number;
   event_limit_per_session: number;
   event_data_truncated_at_chars: number;
+  response_truncation: {
+    applied: boolean;
+    max_output_bytes: number;
+    sessions_available: number;
+    sessions_returned: number;
+    sessions_omitted: number;
+    events_available: number;
+    events_returned: number;
+    events_omitted: number;
+    policy: "newest_sessions_recent_event_round_robin";
+  };
   sessions: unknown[];
 }
 
@@ -195,7 +211,7 @@ WITH recent_sessions AS (
     s.id,
     s.agent_id,
     s.status,
-    s.title,
+    LEFT(s.title, 500) AS title,
     s.created_at,
     s.updated_at
   FROM oma.sessions AS s
@@ -320,26 +336,206 @@ function postgresMetaQueryUrl(connectionString: string): string {
   return url.toString();
 }
 
-function redactInfrastructure(value: unknown, secrets: string[]): unknown {
+interface InfrastructureRedactionPlan {
+  substringValues: string[];
+  exactValues: string[];
+}
+
+function buildInfrastructureRedactionPlan(
+  explicitValues: string[],
+  configList: Array<{ name?: string; value?: string }>,
+): InfrastructureRedactionPlan {
+  const sensitiveConfigValues = configList
+    .filter((item) => SENSITIVE_CONFIG_NAME.test(item.name ?? ""))
+    .map((item) => item.value ?? "")
+    .filter(Boolean);
+  const explicit = [...new Set(explicitValues.filter(Boolean))];
+  const substringValues = new Set([
+    ...explicit.filter((value) => value.length >= MIN_SUBSTRING_REDACTION_CHARS),
+    // A sensitive config name is an authoritative signal. Even a short value
+    // must be removed from free text such as Authorization headers and URLs.
+    ...sensitiveConfigValues,
+  ]);
+  return {
+    substringValues: [...substringValues]
+      .sort((left, right) => right.length - left.length),
+    exactValues: explicit.filter(
+      (value) =>
+        value.length < MIN_SUBSTRING_REDACTION_CHARS &&
+        !substringValues.has(value),
+    ),
+  };
+}
+
+function redactInfrastructure(
+  value: unknown,
+  plan: InfrastructureRedactionPlan,
+): unknown {
   if (typeof value === "string") {
-    return secrets
-      .filter(Boolean)
-      .sort((left, right) => right.length - left.length)
-      .reduce(
-        (redacted, secret) => secret
-          ? redacted.split(secret).join("[REDACTED]")
-          : redacted,
-        value,
-      );
+    let redacted = plan.substringValues.reduce(
+      (current, secret) => current.split(secret).join("[REDACTED]"),
+      value,
+    );
+    for (const secret of plan.exactValues) {
+      if (redacted === secret) return "[REDACTED]";
+      redacted = redacted
+        .split(JSON.stringify(secret))
+        .join(JSON.stringify("[REDACTED]"));
+    }
+    return redacted;
   }
-  if (Array.isArray(value)) return value.map((entry) => redactInfrastructure(entry, secrets));
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactInfrastructure(entry, plan));
+  }
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
       key,
-      redactInfrastructure(entry, secrets),
+      redactInfrastructure(entry, plan),
     ]));
   }
   return value;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function sessionEvents(session: unknown): unknown[] {
+  const events = asRecord(session)?.events;
+  return Array.isArray(events) ? events : [];
+}
+
+interface RecentSessionsResultBase {
+  window_days: number;
+  session_limit: number;
+  event_limit_per_session: number;
+  event_data_truncated_at_chars: number;
+}
+
+interface EventReference {
+  sessionIndex: number;
+  eventIndex: number;
+}
+
+function recentEventRoundRobin(sessions: unknown[]): EventReference[] {
+  const eventsBySession = sessions.map(sessionEvents);
+  const maxEvents = Math.max(0, ...eventsBySession.map((events) => events.length));
+  const references: EventReference[] = [];
+  for (let offset = 1; offset <= maxEvents; offset++) {
+    for (let sessionIndex = 0; sessionIndex < eventsBySession.length; sessionIndex++) {
+      const eventIndex = eventsBySession[sessionIndex]!.length - offset;
+      if (eventIndex >= 0) references.push({ sessionIndex, eventIndex });
+    }
+  }
+  return references;
+}
+
+/**
+ * Fit a complete JSON object under pi-mcp-adapter's model-facing text guard.
+ * Sessions already arrive newest-first. Event references are admitted one
+ * recent suffix layer per Session at a time, so cross-Session analysis keeps
+ * broad evidence before any single long Session consumes the whole budget.
+ */
+export function fitRecentSessionsResultToBudget(
+  base: RecentSessionsResultBase,
+  sourceSessions: unknown[],
+  maxBytes = MAX_TOOL_RESULT_BYTES,
+): RecentSessionsResult {
+  const sessionsAvailable = sourceSessions.length;
+  const eventsAvailable = sourceSessions.reduce<number>(
+    (total, session) => total + sessionEvents(session).length,
+    0,
+  );
+
+  const buildCandidate = (
+    sessionCount: number,
+    eventReferences: EventReference[],
+    eventCount: number,
+  ): RecentSessionsResult => {
+    const selectedIndexes = Array.from(
+      { length: sessionCount },
+      () => new Set<number>(),
+    );
+    for (const reference of eventReferences.slice(0, eventCount)) {
+      selectedIndexes[reference.sessionIndex]?.add(reference.eventIndex);
+    }
+    const sessions = sourceSessions.slice(0, sessionCount).map((session, index) => {
+      const record = asRecord(session);
+      if (!record) return session;
+      const events = sessionEvents(session);
+      return {
+        ...record,
+        events: events.filter((_, eventIndex) =>
+          selectedIndexes[index]?.has(eventIndex)
+        ),
+      };
+    });
+    const eventsReturned = selectedIndexes.reduce(
+      (total, indexes) => total + indexes.size,
+      0,
+    );
+    return {
+      ...base,
+      response_truncation: {
+        applied:
+          sessionCount < sessionsAvailable || eventsReturned < eventsAvailable,
+        max_output_bytes: maxBytes,
+        sessions_available: sessionsAvailable,
+        sessions_returned: sessionCount,
+        sessions_omitted: sessionsAvailable - sessionCount,
+        events_available: eventsAvailable,
+        events_returned: eventsReturned,
+        events_omitted: eventsAvailable - eventsReturned,
+        policy: "newest_sessions_recent_event_round_robin",
+      },
+      sessions,
+    };
+  };
+
+  const byteLength = (result: RecentSessionsResult) =>
+    Buffer.byteLength(JSON.stringify(result), "utf8");
+  const fullReferences = recentEventRoundRobin(sourceSessions);
+  const full = buildCandidate(
+    sessionsAvailable,
+    fullReferences,
+    fullReferences.length,
+  );
+  if (byteLength(full) <= maxBytes) return full;
+
+  let lowSessions = 0;
+  let highSessions = sessionsAvailable;
+  while (lowSessions < highSessions) {
+    const candidateCount = Math.ceil((lowSessions + highSessions) / 2);
+    const candidate = buildCandidate(candidateCount, [], 0);
+    if (byteLength(candidate) <= maxBytes) {
+      lowSessions = candidateCount;
+    } else {
+      highSessions = candidateCount - 1;
+    }
+  }
+
+  const selectedSessions = sourceSessions.slice(0, lowSessions);
+  const selectedReferences = recentEventRoundRobin(selectedSessions);
+  let lowEvents = 0;
+  let highEvents = selectedReferences.length;
+  while (lowEvents < highEvents) {
+    const candidateCount = Math.ceil((lowEvents + highEvents) / 2);
+    const candidate = buildCandidate(
+      lowSessions,
+      selectedReferences,
+      candidateCount,
+    );
+    if (byteLength(candidate) <= maxBytes) {
+      lowEvents = candidateCount;
+    } else {
+      highEvents = candidateCount - 1;
+    }
+  }
+
+  return buildCandidate(lowSessions, selectedReferences, lowEvents);
 }
 
 async function readBoundedResponseText(response: Response): Promise<string> {
@@ -430,7 +626,7 @@ export function createSupabaseSessionReader(options: SupabaseSessionReaderOption
         const parsed = JSON.parse(responseText) as unknown;
         if (!Array.isArray(parsed)) throw new SafeReaderError("Supabase session query returned invalid data");
 
-        const infrastructureValues = [
+        const redactionPlan = buildInfrastructureRedactionPlan([
           credentials.accessKeyId,
           credentials.accessKeySecret,
           instance.instanceName,
@@ -439,15 +635,17 @@ export function createSupabaseSessionReader(options: SupabaseSessionReaderOption
           serviceKey,
           authResponse.body?.apiKeys?.anonKey ?? "",
           authResponse.body?.jwtSecret ?? "",
-          ...(authResponse.body?.configList ?? []).map((item) => item.value ?? ""),
-        ];
-        return {
+        ], authResponse.body?.configList ?? []);
+        const redactedSessions = redactInfrastructure(
+          parsed,
+          redactionPlan,
+        ) as unknown[];
+        return fitRecentSessionsResultToBudget({
           window_days: validated.days,
           session_limit: validated.session_limit,
           event_limit_per_session: validated.event_limit_per_session,
           event_data_truncated_at_chars: MAX_EVENT_DATA_CHARS,
-          sessions: redactInfrastructure(parsed, infrastructureValues) as unknown[],
-        };
+        }, redactedSessions);
       } catch (error) {
         if (error instanceof SafeReaderError) throw error;
         throw new SafeReaderError("Supabase session query failed");
