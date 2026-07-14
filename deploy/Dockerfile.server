@@ -25,6 +25,7 @@ COPY adapter/packages/tool-executor-local/package.json ./adapter/packages/tool-e
 COPY server/pnpm-workspace.yaml server/package.json server/pnpm-lock.yaml ./server/
 COPY server/packages/api/package.json ./server/packages/api/
 COPY server/packages/event-log/package.json ./server/packages/event-log/
+COPY server/packages/mcp-catalog/package.json ./server/packages/mcp-catalog/
 COPY server/packages/redis/package.json ./server/packages/redis/
 COPY server/packages/sandbox/package.json ./server/packages/sandbox/
 COPY server/packages/session-router/package.json ./server/packages/session-router/
@@ -36,6 +37,7 @@ RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
  && cd /app/server && pnpm install --no-frozen-lockfile
 
 COPY deploy/patch-tintinweb-pi-subagents.mjs /tmp/patch-tintinweb-pi-subagents.mjs
+COPY deploy/patch-pi-mcp-adapter.mjs /tmp/patch-pi-mcp-adapter.mjs
 
 # Pi extensions used by every managed Pi runtime. Install them with Pi's own
 # package manager (rather than merely adding npm dependencies) so the generated
@@ -52,6 +54,8 @@ RUN PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
  && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
       /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
       npm:pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION} \
+ && node /tmp/patch-pi-mcp-adapter.mjs \
+      /opt/pi-agent-seed/npm/node_modules/pi-mcp-adapter \
  && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
       /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
       npm:@tintinweb/pi-subagents@${PI_SUBAGENTS_VERSION} \

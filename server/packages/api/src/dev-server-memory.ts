@@ -20,6 +20,7 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -296,6 +297,13 @@ async function main() {
     console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
   }
 
+  const loopScheduler = new LoopScheduler({
+    loopStore: stores.loopStore,
+    sessionRouter,
+    pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000),
+  });
+  loopScheduler.start();
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -307,6 +315,7 @@ async function main() {
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     workspaceStore: stores.workspaceStore,
+    loopStore: stores.loopStore,
     userStore: stores.userStore,
     eventStreamHub,
     sessionRouter,
@@ -323,6 +332,7 @@ async function main() {
 
   const shutdown = createGracefulShutdown({
     server: httpServer,
+    stopBackgroundWork: () => loopScheduler.stop(),
     waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {},

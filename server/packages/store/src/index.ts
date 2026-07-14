@@ -2,6 +2,8 @@ export type {
   Agent,
   AgentToolConfig,
   AgentMcpServerConfig,
+  ManagedMcpServerRef,
+  LegacyHttpMcpServerConfig,
   AgentSandboxConfig,
   Session,
   SessionStatus,
@@ -11,6 +13,8 @@ export type {
   PaginatedResult,
   Runtime,
   Workspace,
+  Loop,
+  LoopDispatch,
 } from "./types.js";
 
 export type {
@@ -46,6 +50,12 @@ export type {
   SessionStoreCreateInput,
   SessionStoreListOpts,
 } from "./interfaces/session-store.js";
+
+export type {
+  LoopStore,
+  LoopStoreCreateInput,
+  LoopStoreUpdateInput,
+} from "./interfaces/loop-store.js";
 
 export type {
   EventLogStore,
@@ -111,6 +121,7 @@ export {
   PgApiKeyStore,
   PgUserStore,
   PgWorkspaceMetadataStore,
+  PgLoopStore,
 } from "./postgres/index.js";
 
 export type {

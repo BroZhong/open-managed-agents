@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AgentStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
+import { publicSession } from "../lib/public-projection.js";
 
 type Env = {
   Variables: {
@@ -67,7 +68,7 @@ export function sessionRoutes(deps: SessionRouteDeps) {
       workspaceId: workspace.id,
     });
 
-    return c.json(session, 201);
+    return c.json(publicSession(session), 201);
   });
 
   // GET /v1/sessions — List sessions
@@ -77,6 +78,14 @@ export function sessionRoutes(deps: SessionRouteDeps) {
     const cursor = c.req.query("cursor") || undefined;
     const agentId = c.req.query("agent_id") || undefined;
     const status = c.req.query("status") || undefined;
+    const loopId = c.req.query("loop_id") || undefined;
+    const excludeLoop = c.req.query("exclude_loop");
+    if (excludeLoop !== undefined && excludeLoop !== "true" && excludeLoop !== "false") {
+      return c.json({ error: "exclude_loop must be true or false" }, 400);
+    }
+    if (loopId && excludeLoop === "true") {
+      return c.json({ error: "loop_id and exclude_loop=true cannot be combined" }, 400);
+    }
 
     let limit = 50;
     if (limitParam) {
@@ -91,10 +100,12 @@ export function sessionRoutes(deps: SessionRouteDeps) {
       cursor,
       agentId,
       status: status as any,
+      loopId,
+      withoutLoop: excludeLoop === "true",
     });
 
     const response: Record<string, unknown> = {
-      data: result.data,
+      data: result.data.map(publicSession),
       has_more: result.hasMore,
     };
 
@@ -115,7 +126,7 @@ export function sessionRoutes(deps: SessionRouteDeps) {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    return c.json(session);
+    return c.json(publicSession(session));
   });
 
   // DELETE /v1/sessions/:id — Terminate session

@@ -6,12 +6,26 @@ export interface AgentToolConfig {
   inputSchema: Record<string, unknown>;
 }
 
-export interface AgentMcpServerConfig {
+/**
+ * A reference to a Host-reviewed MCP connection. Runtime command/URL details
+ * are deliberately absent: the Host resolves them from its managed catalog on
+ * every Turn, so an Agent definition can never smuggle in a Host command.
+ */
+export interface ManagedMcpServerRef {
+  catalogId: string;
+  name: string;
+  description?: string;
+}
+
+/** Legacy persisted RDS entries remain readable while the console migrates them. */
+export interface LegacyHttpMcpServerConfig {
   name: string;
   url: string;
   transport?: "sse" | "streamable-http";
   headers?: Record<string, string>;
 }
+
+export type AgentMcpServerConfig = ManagedMcpServerRef | LegacyHttpMcpServerConfig;
 
 export interface AgentSandboxConfig {
   enabled: boolean;
@@ -81,9 +95,35 @@ export interface Session {
   agent: Agent;
   /** The Workspace this Session is bound to. Immutable after creation. */
   workspaceId: string;
+  /** Set only for Sessions automatically created by a Loop trigger. */
+  loopId?: string;
   createdAt: Date;
   updatedAt: Date;
   terminatedAt?: Date;
+}
+
+/**
+ * An Agent-owned recurring instruction. Each trigger creates a fresh Session;
+ * prior Loop Sessions remain immutable history under the same Loop.
+ */
+export interface Loop {
+  id: string;
+  tenantId: string;
+  agentId: string;
+  name: string;
+  description?: string;
+  prompt: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  nextRunAt: Date;
+  lastRunAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface LoopDispatch {
+  loop: Loop;
+  session: Session;
 }
 
 export interface StoredEvent {

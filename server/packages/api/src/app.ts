@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -17,6 +17,8 @@ import { eventRoutes } from "./routes/events.js";
 import { messageRoutes } from "./routes/messages.js";
 import { workspaceRoutes } from "./routes/workspace.js";
 import { workspaceEntityRoutes } from "./routes/workspaces.js";
+import { mcpCatalogRoutes } from "./routes/mcp-catalog.js";
+import { loopRoutes } from "./routes/loops.js";
 
 type Env = {
   Variables: {
@@ -35,6 +37,7 @@ export interface AppDeps {
   eventLogStore?: EventLogIngressStore;
   pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
+  loopStore?: LoopStore;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
@@ -42,6 +45,8 @@ export interface AppDeps {
   /** Override the SSE keepalive cadence in focused tests. */
   sseHeartbeatIntervalMs?: number;
   sessionRouter?: SessionRouter;
+  /** Deterministic clock seam for Loop API tests. */
+  now?: () => Date;
 }
 
 export function createApp(deps: AppDeps) {
@@ -64,9 +69,21 @@ export function createApp(deps: AppDeps) {
   // Auth middleware on all /v1/* routes
   app.use("/v1/*", authMiddleware(deps.apiKeyStore));
 
+  // Host-owned MCP catalog exposes metadata only; runtime definitions stay private.
+  app.route("", mcpCatalogRoutes());
+
   // Mount agent routes
   if (deps.agentStore) {
     app.route("", agentRoutes(deps.agentStore));
+  }
+
+  if (deps.agentStore && deps.loopStore) {
+    app.route("", loopRoutes({
+      agentStore: deps.agentStore,
+      loopStore: deps.loopStore,
+      sessionRouter: deps.sessionRouter,
+      now: deps.now,
+    }));
   }
 
   // Mount Agent Files routes (per-Agent editable persona/instruction docs)

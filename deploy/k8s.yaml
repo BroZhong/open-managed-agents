@@ -4,10 +4,14 @@
 # the oma-secrets Secret, never baked into the image.
 #
 # Create the secret first (values NOT committed):
+# Omit ALIYUN_SUPABASE_INSTANCE when instance discovery is unambiguous.
 #   kubectl -n oma-infra create secret generic oma-secrets \
 #     --from-literal=PG_PASSWORD=... \
 #     --from-literal=REDIS_PASSWORD=... \
 #     --from-literal=SUPABASE_SERVICE_KEY=... \
+#     --from-literal=ALIYUN_ACCESS_KEY_ID=... \
+#     --from-literal=ALIYUN_ACCESS_KEY_SECRET=... \
+#     --from-literal=ALIYUN_SUPABASE_INSTANCE=... \
 #     --from-literal=E2B_DOMAIN=... \
 #     --from-literal=E2B_API_KEY=... \
 #     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=...
@@ -43,6 +47,11 @@ data:
   # Supabase Storage (S3 artifacts) — VPC endpoint, bucket workspace
   S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"
   S3_BUCKET: "workspace"
+  # Host-managed, tenant-scoped Supabase Sessions MCP. Credentials remain in
+  # oma-secrets; its single tool executes a fixed bounded SELECT. This exact,
+  # comma-separated tenant allowlist is mandatory and fails closed when empty.
+  OMA_SUPABASE_ALLOWED_TENANTS: "dev"
+  ALIYUN_REGION: "cn-hongkong"
   # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
   # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
   OMA_PROXY_URL: "http://10.0.200.134:7890"
@@ -97,6 +106,19 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: REDIS_PASSWORD } }
             - name: SUPABASE_SERVICE_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: SUPABASE_SERVICE_KEY } }
+            # Deployment-scoped credentials for the managed Aliyun RDS
+            # Supabase Sessions MCP. Tenant and query shape are injected and
+            # fixed by the Host; the Agent cannot supply SQL or an endpoint.
+            # Other launch environments may use the documented
+            # ALIBABA_CLOUD_* aliases; this deployment keeps ALIYUN_*.
+            - name: ALIYUN_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_ACCESS_KEY_ID } }
+            - name: ALIYUN_ACCESS_KEY_SECRET
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_ACCESS_KEY_SECRET } }
+            # Optional: set only when more than one running Supabase instance
+            # is discoverable. Omitting the Secret key keeps discovery enabled.
+            - name: ALIYUN_SUPABASE_INSTANCE
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_SUPABASE_INSTANCE, optional: true } }
             # E2B sandbox endpoint + key (issue #54) — never baked into the image.
             - name: E2B_DOMAIN
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }

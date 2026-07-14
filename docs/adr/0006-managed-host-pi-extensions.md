@@ -14,7 +14,8 @@ a stateless translator that touches no infrastructure. Three Pi extensions now
 provide Host-resident network/orchestration capability:
 
 - `pi-web-access` performs public web search and content retrieval;
-- `pi-mcp-adapter` connects to an administrator-approved remote MCP server;
+- `pi-mcp-adapter` connects to an administrator-approved HTTP or stdio MCP
+  server;
 - `@tintinweb/pi-subagents` creates child Pi sessions for delegated reasoning.
 
 These extensions are discovered by Pi's `DefaultResourceLoader` and execute in
@@ -44,11 +45,43 @@ The initial controls are:
 
 - Web access is read-only public-network retrieval and receives no per-Agent
   secret configuration.
-- MCP accepts only the exact managed `rds-mcp` URL, transport, and
-  `Authorization: Bearer ${RDS_MCP_APIKEY}` placeholder. The API rejects all
-  other endpoints and headers, preventing Agent-authored SSRF and arbitrary Host
-  environment interpolation. The real credential exists only in the Host
-  environment.
+- MCP accepts only references from a Host-owned catalog. An Agent persists a
+  catalog id plus configurable presentation metadata (`name` and optional
+  `description`); it cannot persist a command, arguments, URL, headers, working
+  directory, or environment-variable placeholders. The API rejects unknown ids
+  and extra connection fields. This prevents Agent-authored command execution,
+  SSRF, and arbitrary Host environment interpolation. Existing exact-match
+  `rds-mcp` records remain internally readable and resolvable as a migration
+  compatibility shape, but create/update requests cannot write that legacy
+  URL/header form. Public Agent and Session responses project those rows back to
+  the safe catalog reference and never return the stored connection details.
+- The initial catalog contains the exact managed `rds-mcp` HTTP connection and
+  the Aliyun RDS Supabase Sessions stdio connection. The latter is a
+  version-pinned Host facade over the same Alibaba Cloud discovery credentials
+  as the interactive Codex MCP, but it does not launch that upstream server:
+  upstream instance connection performs `GRANT` and may install an arbitrary-SQL
+  function, which is unsuitable for an unattended Loop. The facade exposes one
+  `query_recent_sessions` tool, obtains instance metadata and credentials through
+  the read-only Alibaba Cloud describe APIs, and sends one fixed `SELECT` to the
+  instance's postgres-meta endpoint. Tool input can change only bounded day,
+  Session, and per-Session event limits; it cannot provide SQL, schema/table,
+  tenant, endpoint, or instance identity. The Host injects `OMA_TENANT_ID` from
+  the running Agent plus `${ALIYUN_ACCESS_KEY_ID}`,
+  `${ALIYUN_ACCESS_KEY_SECRET}`, and `${ALIYUN_REGION}`. The stdio environment
+  also carries the Codex-wrapper aliases `${ALIBABA_CLOUD_ACCESS_KEY_ID}` and
+  `${ALIBABA_CLOUD_ACCESS_KEY_SECRET}`; the reader uses either alias only when
+  its corresponding `ALIYUN_*` value is empty. An optional
+  deployment-owned `${ALIYUN_SUPABASE_INSTANCE}` disambiguates multiple running
+  instances. The deployment must also explicitly include the authenticated
+  Tenant in the comma-separated `${OMA_SUPABASE_ALLOWED_TENANTS}` value. A
+  missing/empty value fails closed: the catalog omits the Supabase entry, Agent
+  create/update rejects its catalog id, and per-Turn resolution independently
+  refuses to inject the deployment credentials. Results are bounded, event
+  payloads are truncated, and infrastructure identifiers/credentials are
+  redacted. The public catalog
+  endpoint exposes descriptive metadata, transport, configurable fields, and
+  required environment-variable names, but never the connection definition or
+  any resolved value.
 - The subagent extension's three default Agent types are disabled and scheduling
   is off. The deployment publishes one `storyboard-stage` type whose
   authoritative frontmatter pins the model, requests all seven tools, and forces
@@ -92,9 +125,21 @@ image build; an upstream source change fails the build.
 
 The Host remains the owner of persisted Agent configuration and credentials.
 Until `pi-mcp-adapter` exposes an in-memory configuration API, the Pi Adapter may
-translate the already-validated `agent.mcpServers` value into a per-Turn,
-mode-`0600` temporary file and set the extension's public `mcp-config` flag on
-that Turn's isolated resource loader.
+resolve each persisted catalog reference into the current Host-owned connection,
+translate that already-validated value into a per-Turn, mode-`0600` temporary
+file, and set the extension's public `mcp-config` flag on that Turn's isolated
+resource loader. Resolving per Turn means a catalog security correction takes
+effect without rewriting historical Agent records.
+
+Every managed Turn receives an explicit file, including
+`{ "mcpServers": {} }` when its Agent has no Managed MCP Connections. The pinned
+`pi-mcp-adapter@2.11.0` source overlay makes a supplied override exclusive: it
+loads only that validated file, discards its `imports`, and does not merge the
+generic global, Pi global, shared project, or Pi project configurations. The
+extension's pre-`session_start` registration phase is forced to an empty config
+and cannot discover or register ambient direct tools. The image build checks the
+exact package version, pristine SHA-256 values for both patched files, and unique
+source anchors, so an upstream change fails closed.
 
 The file contains placeholders, never resolved secret values. It is removed on
 normal completion, abort, prompt failure, and extension-startup failure. The
@@ -132,17 +177,32 @@ Host-readable Skill paths without managed descriptors.
 - `ToolExecutor` remains the sole Workspace/Sandbox boundary, but is no longer
   claimed to mediate unrelated Host web/MCP network tools. Child Agents cross
   the same boundary through the exact same per-Turn definitions.
-- The managed RDS policy is duplicated at the API and console presentation
-  boundaries. Exact-match tests are required at both boundaries; if a second
-  managed MCP resource is added, expose a Host-owned catalog instead of adding
-  more duplicated constants.
+- The MCP allowlist is centralized in a Host-owned catalog instead of duplicated
+  between API validation and console presentation. Tests must prove that public
+  catalog output omits private connection fields and that persisted references
+  resolve only to exact catalog definitions.
+- The interactive `@aliyun-rds/supabase-mcp-server` remains mutation-capable and
+  is deliberately not the runtime behind this catalog entry. The managed facade
+  makes the unattended capability structurally read-only: no arbitrary SQL is
+  accepted, the only SQL template contains `SELECT`/CTEs, redirects are denied,
+  and the tenant is Host-bound per Turn. Prompt wording and Codex-client approval
+  metadata remain non-boundaries; the facade and downstream Tenant predicate are
+  the actual boundary. Changes to its fixed query, describe APIs, endpoint, or
+  exposed tools require a new threat-model review.
+- Catalog credentials are deployment-scoped capabilities. The online alpha
+  exposes the Aliyun Supabase entry only to exact Tenant ids in
+  `OMA_SUPABASE_ALLOWED_TENANTS`; listing, API acceptance, and runtime resolution
+  all enforce the same fail-closed policy. A future multi-tenant deployment
+  should replace this static allowlist with per-tenant credentials and policy.
 - Child Agent tool calls are summarized inside the parent `Agent` tool result;
   end-to-end evidence must prove both repeated delegation and the resulting
   Sandbox/remote artifacts.
 - Replace the version-pinned subagent source overlay when upstream exposes a
   supported child `customTools` provider.
 - Replace the temporary-file bridge if `pi-mcp-adapter` gains a supported
-  in-memory configuration API.
+  in-memory configuration API. Replace its version-pinned source overlay only
+  when that API also guarantees exclusive managed configuration and disables
+  ambient early direct-tool discovery.
 - Replace the managed Skill input transform if Pi exposes a native Skill command
   expander that accepts content through an abstract read capability instead of
   Host `readFileSync`.

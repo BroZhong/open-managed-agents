@@ -28,6 +28,7 @@ export class InMemorySessionStore implements SessionStore {
       status: "idle",
       agent: structuredClone(input.agent),
       workspaceId: input.workspaceId,
+      loopId: input.loopId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -47,10 +48,18 @@ export class InMemorySessionStore implements SessionStore {
     const cursor = opts?.cursor;
     const agentId = opts?.agentId;
     const status = opts?.status;
+    const loopId = opts?.loopId;
+    const withoutLoop = opts?.withoutLoop;
 
     let filtered = this.sessions.filter((s) => s.tenantId === tenantId);
     if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
     if (status) filtered = filtered.filter((s) => s.status === status);
+    if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
+    if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
+
+    if (loopId) {
+      filtered = filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    }
 
     if (cursor) {
       const idx = filtered.findIndex((s) => s.id === cursor);
@@ -103,5 +112,13 @@ export class InMemorySessionStore implements SessionStore {
     session.terminatedAt = new Date();
     session.updatedAt = new Date();
     return session;
+  }
+
+  /** Internal compensation hook used by the in-memory Loop transaction. */
+  async delete(id: string): Promise<boolean> {
+    const index = this.sessions.findIndex((session) => session.id === id);
+    if (index < 0) return false;
+    this.sessions.splice(index, 1);
+    return true;
   }
 }

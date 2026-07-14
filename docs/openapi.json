@@ -214,6 +214,212 @@
         }
       }
     },
+    "/v1/mcp-catalog": {
+      "get": {
+        "operationId": "listMcpCatalog",
+        "summary": "List Host-managed MCP connections",
+        "description": "Returns safe connection metadata available to the authenticated Tenant only. Runtime commands, URLs, headers, and credentials are resolved by the Host and are not exposed by this endpoint. The Supabase entry is omitted unless the deployment explicitly allowlists this Tenant.",
+        "tags": ["MCP"],
+        "responses": {
+          "200": {
+            "description": "Host-managed MCP catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/ManagedMcpCatalogEntry" }
+                    }
+                  },
+                  "required": ["data"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/loops": {
+      "get": {
+        "operationId": "listAgentLoops",
+        "summary": "List an Agent's Loops",
+        "tags": ["Loops"],
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Loops owned by the Agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Loop" }
+                    }
+                  },
+                  "required": ["data"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentLoop",
+        "summary": "Create a Loop for an Agent",
+        "description": "Creates a recurring instruction. Each trigger creates a fresh Session linked to this Loop. The minimum interval is five minutes.",
+        "tags": ["Loops"],
+        "parameters": [
+          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateLoopInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Loop created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Loop" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/loops/{id}": {
+      "get": {
+        "operationId": "getLoop",
+        "summary": "Get a Loop",
+        "tags": ["Loops"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Loop found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Loop" }
+              }
+            }
+          },
+          "404": {
+            "description": "Loop not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateLoop",
+        "summary": "Update a Loop",
+        "tags": ["Loops"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateLoopInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Loop updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Loop" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Loop not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/loops/{id}/run": {
+      "post": {
+        "operationId": "runLoop",
+        "summary": "Run a Loop immediately",
+        "description": "Creates a fresh Session linked to the Loop, queues the Loop prompt as its first user message, and starts the Agent Turn.",
+        "tags": ["Loops"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": {
+            "description": "Loop Session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Session" }
+              }
+            }
+          },
+          "404": {
+            "description": "Loop not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "post": {
         "operationId": "createSession",
@@ -229,6 +435,14 @@
                   "agent": {
                     "type": "string",
                     "description": "Agent ID to bind this session to"
+                  },
+                  "workspace_id": {
+                    "type": "string",
+                    "description": "Optional existing or caller-chosen Workspace ID. The Host creates it idempotently when absent."
+                  },
+                  "workspace_name": {
+                    "type": "string",
+                    "description": "Optional name used when the Host creates the Workspace."
                   }
                 },
                 "required": ["agent"]
@@ -287,6 +501,18 @@
             "name": "status",
             "in": "query",
             "schema": { "type": "string", "enum": ["idle", "running", "terminated"] }
+          },
+          {
+            "name": "loop_id",
+            "in": "query",
+            "description": "Return only Sessions created by this Loop",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "exclude_loop",
+            "in": "query",
+            "description": "Exclude Loop-owned Sessions before pagination; true cannot be combined with loop_id",
+            "schema": { "type": "boolean", "default": false }
           }
         ],
         "responses": {
@@ -303,6 +529,14 @@
                   },
                   "required": ["data", "has_more"]
                 }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid exclude_loop value or loop_id/exclude_loop conflict",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
           }
@@ -703,18 +937,57 @@
         },
         "required": ["name", "inputSchema"]
       },
-      "McpServerConfig": {
+      "ManagedMcpServerRef": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "url": { "type": "string", "format": "uri" },
-          "transport": { "type": "string", "enum": ["sse", "streamable-http"] },
-          "headers": {
-            "type": "object",
-            "additionalProperties": { "type": "string" }
+          "catalogId": {
+            "type": "string",
+            "description": "ID returned by GET /v1/mcp-catalog",
+            "example": "aliyun-rds-supabase"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "description": "Configurable name for this Agent's MCP connection"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Configurable human-readable description for this Agent's MCP connection"
           }
         },
-        "required": ["name", "url"]
+        "required": ["catalogId", "name"],
+        "additionalProperties": false
+      },
+      "ManagedMcpCatalogEntry": {
+        "type": "object",
+        "description": "Safe metadata for a Host-reviewed MCP connection. Connection and credential details are intentionally omitted.",
+        "properties": {
+          "id": { "type": "string", "example": "aliyun-rds-supabase" },
+          "defaultName": { "type": "string", "example": "aliyun-rds-supabase" },
+          "defaultDescription": {
+            "type": "string",
+            "example": "Read recent tenant-scoped Sessions and bounded events from Alibaba Cloud Supabase."
+          },
+          "transport": { "type": "string", "enum": ["streamable-http", "stdio"] },
+          "configurable": {
+            "type": "array",
+            "description": "Agent-level metadata fields callers may customize",
+            "items": { "type": "string", "enum": ["name", "description"] },
+            "minItems": 2,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "example": ["name", "description"]
+          },
+          "requiredEnv": {
+            "type": "array",
+            "description": "Names of environment variables the Host must provide. Values are never returned.",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["id", "defaultName", "defaultDescription", "transport", "configurable", "requiredEnv"]
       },
       "AgentSandboxConfig": {
         "type": "object",
@@ -774,7 +1047,8 @@
           },
           "mcpServers": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/McpServerConfig" }
+            "description": "Host-managed references currently available to the authenticated Tenant",
+            "items": { "$ref": "#/components/schemas/ManagedMcpServerRef" }
           },
           "skills": {
             "type": "array",
@@ -797,7 +1071,8 @@
           },
           "mcpServers": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/McpServerConfig" }
+            "description": "Host-managed references currently available to the authenticated Tenant",
+            "items": { "$ref": "#/components/schemas/ManagedMcpServerRef" }
           },
           "skills": {
             "type": "array",
@@ -821,7 +1096,8 @@
           },
           "mcpServers": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/McpServerConfig" }
+            "description": "Host-managed references; private connection details are never returned",
+            "items": { "$ref": "#/components/schemas/ManagedMcpServerRef" }
           },
           "skills": {
             "type": "array",
@@ -833,19 +1109,75 @@
         },
         "required": ["id", "tenantId", "name", "model", "system", "runtime", "createdAt", "updatedAt"]
       },
+      "CreateLoopInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "prompt": { "type": "string", "minLength": 1 },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5,
+            "description": "Recurring interval in minutes"
+          },
+          "enabled": { "type": "boolean", "default": true }
+        },
+        "required": ["name", "prompt", "intervalMinutes"]
+      },
+      "UpdateLoopInput": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "prompt": { "type": "string", "minLength": 1 },
+          "intervalMinutes": { "type": "integer", "minimum": 5 },
+          "enabled": { "type": "boolean" }
+        }
+      },
+      "Loop": {
+        "type": "object",
+        "description": "An Agent-owned recurring instruction. Each trigger creates a fresh Session linked by loopId.",
+        "properties": {
+          "id": { "type": "string", "example": "loop_abc123" },
+          "tenantId": { "type": "string" },
+          "agentId": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "prompt": { "type": "string" },
+          "intervalMinutes": { "type": "integer", "minimum": 5 },
+          "enabled": { "type": "boolean" },
+          "nextRunAt": { "type": "string", "format": "date-time" },
+          "lastRunAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "tenantId", "agentId", "name", "prompt", "intervalMinutes", "enabled", "nextRunAt", "createdAt", "updatedAt"]
+      },
       "Session": {
         "type": "object",
         "properties": {
           "id": { "type": "string", "example": "sess_abc123" },
           "tenantId": { "type": "string" },
           "agentId": { "type": "string" },
+          "title": {
+            "type": "string",
+            "description": "Optional snapshot derived from the first user message, or the Loop name for Loop-created Sessions"
+          },
+          "workspaceId": {
+            "type": "string",
+            "description": "Immutable Workspace bound to this Session"
+          },
+          "loopId": {
+            "type": "string",
+            "description": "Present only when this Session was automatically created by a Loop trigger"
+          },
           "status": { "type": "string", "enum": ["idle", "running", "terminated"] },
           "agent": { "$ref": "#/components/schemas/Agent" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
           "terminatedAt": { "type": "string", "format": "date-time" }
         },
-        "required": ["id", "tenantId", "agentId", "status", "agent", "createdAt", "updatedAt"]
+        "required": ["id", "tenantId", "agentId", "status", "agent", "workspaceId", "createdAt", "updatedAt"]
       },
       "UserEvent": {
         "type": "object",

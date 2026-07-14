@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryAgentStore } from "@oma-server/store-memory";
@@ -37,6 +37,10 @@ import type {
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+
+beforeEach(() => {
+  process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
+});
 
 // ─── In-memory EventLogStore ────────────────────────────────────────────────
 
@@ -1249,7 +1253,16 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       { "SKILL.md": "late body" },
     );
 
-    const seen: Array<{ system: string; body?: string; mcpNames: string[] }> = [];
+    const seen: Array<{
+      system: string;
+      body?: string;
+      mcpConnections: Array<{
+        name: string;
+        command?: string;
+        tenantId?: string;
+        entrypoint?: string;
+      }>;
+    }> = [];
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
         const root = input.agent.skillPaths?.[0];
@@ -1259,7 +1272,16 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         seen.push({
           system: input.agent.system,
           body,
-          mcpNames: input.agent.mcpServers?.map((server) => server.name) ?? [],
+          mcpConnections: input.agent.mcpServers?.map((server) => ({
+            name: server.name,
+            ...( "command" in server
+              ? {
+                  command: server.command,
+                  tenantId: server.env?.OMA_TENANT_ID,
+                  entrypoint: server.args?.at(-1),
+                }
+              : {}),
+          })) ?? [],
         });
         yield {
           id: "live-agent-config",
@@ -1290,10 +1312,9 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       skills: [skill.id],
       mcpServers: [
         {
-          name: "rds-mcp",
-          url: "https://campaign.welltop.tech/agent/mcp/rds",
-          transport: "streamable-http",
-          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+          catalogId: "aliyun-rds-supabase",
+          name: "session-data",
+          description: "Read recent Session data",
         },
       ],
     });
@@ -1302,8 +1323,17 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
 
     expect(sandboxClient.created).toHaveLength(1);
     expect(seen).toEqual([
-      { system: "old system", body: undefined, mcpNames: [] },
-      { system: "new system", body: "late body", mcpNames: ["rds-mcp"] },
+      { system: "old system", body: undefined, mcpConnections: [] },
+      {
+        system: "new system",
+        body: "late body",
+        mcpConnections: [{
+          name: "session-data",
+          command: process.execPath,
+          tenantId: "tenant_1",
+          entrypoint: expect.stringMatching(/supabase-session-mcp\.ts$/),
+        }],
+      },
     ]);
   });
 });

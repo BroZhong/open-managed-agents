@@ -13,8 +13,12 @@ An **Agent** whose turns run inside an isolated sandbox environment. In the onli
 _Avoid_: sandbox agent, isolated agent, Kubernetes agent
 
 **Session**:
-A conversation and work history for a single **Agent**. A Session contains one or more **Turns** and keeps the Agent's working state between turns when the Agent is sandboxed. An Agent owns many Sessions; a Session belongs to exactly one Agent. The console is entered through an Agent, and its Sessions are listed within it.
+A conversation and work history for a single **Agent**. A Session contains one or more **Turns** and keeps the Agent's working state between turns when the Agent is sandboxed. An Agent owns many Sessions; a Session belongs to exactly one Agent. A Session may also be created by one **Loop**, in which case it is listed under that Loop and still belongs to the Loop's Agent. The console is entered through an Agent, and its Sessions are listed within it.
 _Avoid_: chat, thread, run
+
+**Loop**:
+An Agent-owned recurring instruction. On each due interval the Host creates a fresh **Workspace** and **Session**, links the Session to the Loop, durably records the Loop's prompt as the Session's first pending input, and then starts its first **Turn**. Every scheduled occurrence creates a new Session; a Loop does not reuse a previous Session or Workspace. Missed intervals coalesce into one occurrence when scheduling resumes, and a manual run does not move the recurring cadence. The console nests the Sessions created by a Loop beneath that Loop on the Agent page.
+_Avoid_: cron job, scheduled Session (the Loop is the schedule; each occurrence creates a Session)
 
 **Turn**:
 One user message and the Agent execution that responds to it within a **Session**.
@@ -44,16 +48,24 @@ _Avoid_: marketplace, catalog, registry
 To fork a **Library Skill** onto an **Agent**: the Host snapshots the Library Skill's files into a new **Agent Skill** (a **Skill Fork**) that the Agent's Sessions load. Equipping copies the Skill at that moment; later Library edits do not propagate to the fork. Unequipping removes the Agent's fork, not the Library Skill.
 _Avoid_: install, add, attach, link (equip is a copy, not a reference)
 
+**Managed MCP Connection**:
+An Agent-scoped reference to an entry in the Host-owned **MCP Catalog**. The Agent may configure presentation metadata such as the connection's name and description, but never its executable, URL, headers, or environment-variable placeholders. The Host resolves the reference into its version-pinned runtime connection for each Turn; credentials stay in the Host environment and are never persisted in the Agent.
+_Avoid_: custom MCP server, MCP config (users select a managed capability, not arbitrary connection details)
+
+**MCP Catalog**:
+The Host-owned allowlist of **Managed MCP Connections** available to Agents. Its public representation exposes safe metadata only; executable paths, endpoints, headers, and credential values remain private deployment configuration. Adding or changing an entry is a code/deployment and threat-model change, not an Agent edit.
+_Avoid_: marketplace, MCP registry, user catalog
+
 **Skill Fork**:
 The Agent-owned copy produced when a **Library Skill** is equipped onto an **Agent**. The fork has its own id and records the `source_skill_id` it was forked from. From then on the two are independent: editing the Library Skill never changes the fork, and editing the fork on the Agent's page never changes the Library Skill. This is why an Agent can preview and edit its equipped Skills freely, and why deleting a Library Skill leaves already-equipped Agents unaffected.
 _Avoid_: link, alias, reference (a fork is a copy, not a pointer)
 
 **User**:
-A human who signs in to the web console with a username and password. Registration requires a valid invite code. Each User is paired one-to-one with a **Tenant** created at registration time; a User has exactly one Tenant and a Tenant has exactly one User. A User's login produces a session token that resolves to that same **Tenant**, so everything the User sees (Agents, Sessions, Skills, API keys) is scoped to their Tenant.
+A human who signs in to the web console with a username and password. Registration requires a valid invite code. Each User is paired one-to-one with a **Tenant** created at registration time; a User has exactly one Tenant and a Tenant has exactly one User. A User's login produces a session token that resolves to that same **Tenant**, so everything the User sees (Agents, Loops, Sessions, Skills, API keys) is scoped to their Tenant.
 _Avoid_: account, member, person
 
 **Tenant**:
-The isolation boundary that owns everything in the system — **Agents**, **Sessions**, **Skills**, **API keys**. Historically a Tenant was an implicit identifier with no record of its own. It is now created together with a **User** at registration (one-to-one). A request reaches a Tenant through one of two credentials that both resolve to the same `tenantId`: an **API key** (`x-api-key`, for machines) or a **User**'s session token (`Authorization: Bearer`, for humans). API keys a User creates while signed in belong to that User's Tenant.
+The isolation boundary that owns everything in the system — **Agents**, **Loops**, **Sessions**, **Skills**, **API keys**. Historically a Tenant was an implicit identifier with no record of its own. It is now created together with a **User** at registration (one-to-one). A request reaches a Tenant through one of two credentials that both resolve to the same `tenantId`: an **API key** (`x-api-key`, for machines) or a **User**'s session token (`Authorization: Bearer`, for humans). API keys a User creates while signed in belong to that User's Tenant.
 _Avoid_: org, organization, workspace, account
 
 ## Sandbox provisioning

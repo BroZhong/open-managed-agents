@@ -1,30 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
-export interface McpServerConfig {
+export interface ManagedMcpServerRef {
+  catalogId: string;
   name: string;
-  url: string;
-  transport?: "sse" | "streamable-http";
-  headers?: Record<string, string>;
-}
-
-export const MANAGED_RDS_MCP_SERVER: McpServerConfig = {
-  name: "rds-mcp",
-  url: "https://campaign.welltop.tech/agent/mcp/rds",
-  transport: "streamable-http",
-  headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
-};
-
-/** Only this exact Host-reviewed MCP connection is manageable in the console. */
-export function isManagedRdsMcpServer(config: McpServerConfig): boolean {
-  const headers = config.headers ?? {};
-  return (
-    config.name === MANAGED_RDS_MCP_SERVER.name &&
-    config.url === MANAGED_RDS_MCP_SERVER.url &&
-    config.transport === MANAGED_RDS_MCP_SERVER.transport &&
-    Object.keys(headers).length === 1 &&
-    headers.Authorization === MANAGED_RDS_MCP_SERVER.headers?.Authorization
-  );
+  description?: string;
 }
 
 export interface Agent {
@@ -43,7 +23,7 @@ export interface Agent {
   /** Equipped Skill ids (by reference into the tenant Skill Library). */
   skills?: string[];
   /** MCP connections configured for this Agent (not a tenant-wide library). */
-  mcpServers?: McpServerConfig[];
+  mcpServers?: ManagedMcpServerRef[];
   sandbox?: {
     enabled: boolean;
     image?: string;
@@ -60,7 +40,7 @@ export interface AgentMutationBody {
   system: string;
   runtime: string;
   skills?: string[];
-  mcpServers?: McpServerConfig[];
+  mcpServers?: ManagedMcpServerRef[];
   sandbox?: Agent["sandbox"];
 }
 

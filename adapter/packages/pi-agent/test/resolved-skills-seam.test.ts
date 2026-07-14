@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import type {
   AdapterInput,
   SessionEvent,
@@ -15,6 +15,7 @@ const sdkSeam = vi.hoisted(() => ({
   }>,
   mcpConfigPath: undefined as string | undefined,
   mcpConfig: undefined as unknown,
+  mcpConfigMode: undefined as number | undefined,
   lifecycle: [] as string[],
   failBindExtensions: false,
 }));
@@ -55,6 +56,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
       if (typeof configPath === "string") {
         sdkSeam.mcpConfigPath = configPath;
         sdkSeam.mcpConfig = JSON.parse(readFileSync(configPath, "utf8"));
+        sdkSeam.mcpConfigMode = statSync(configPath).mode & 0o777;
       }
       let listener: ((event: Record<string, unknown>) => void) | undefined;
       return {
@@ -141,6 +143,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     sdkSeam.sessionOptions.length = 0;
     sdkSeam.mcpConfigPath = undefined;
     sdkSeam.mcpConfig = undefined;
+    sdkSeam.mcpConfigMode = undefined;
     sdkSeam.lifecycle.length = 0;
     sdkSeam.failBindExtensions = false;
   });
@@ -220,6 +223,49 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
           transport: "streamable-http",
           headers: {
             Authorization: "Bearer ${RDS_MCP_APIKEY}",
+          },
+        },
+      },
+    });
+    expect(sdkSeam.mcpConfigPath).toBeDefined();
+    expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
+  });
+
+  it("blocks ambient MCP discovery with an empty isolated config when the Agent has no MCP servers", async () => {
+    const events = await collect(new PiAgentAdapter().run(input(true)));
+
+    expect(events.some((event) => event.type === "session.error")).toBe(false);
+    expect(sdkSeam.mcpConfig).toEqual({ mcpServers: {} });
+    expect(sdkSeam.mcpConfigMode).toBe(0o600);
+    expect(sdkSeam.mcpConfigPath).toBeDefined();
+    expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
+  });
+
+  it("projects a managed stdio MCP command and environment into the isolated Pi config", async () => {
+    const configured = input(true);
+    configured.agent.mcpServers = [
+      {
+        name: "session-data",
+        command: "supabase-mcp",
+        env: {
+          ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
+          ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",
+          ALIYUN_REGION: "${ALIYUN_REGION}",
+        },
+      },
+    ];
+
+    const events = await collect(new PiAgentAdapter().run(configured));
+
+    expect(events.some((event) => event.type === "session.error")).toBe(false);
+    expect(sdkSeam.mcpConfig).toEqual({
+      mcpServers: {
+        "session-data": {
+          command: "supabase-mcp",
+          env: {
+            ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
+            ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",
+            ALIYUN_REGION: "${ALIYUN_REGION}",
           },
         },
       },

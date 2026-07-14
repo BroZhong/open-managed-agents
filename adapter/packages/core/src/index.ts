@@ -6,6 +6,8 @@ export type {
   // Config
   ToolConfig,
   McpServerConfig,
+  HttpMcpServerConfig,
+  StdioMcpServerConfig,
   // Message
   UserMessage,
   SkillDescriptor,

@@ -9,6 +9,7 @@ import { InMemoryPendingEventStore } from "./pending-event-store.js";
 import { InMemoryApiKeyStore } from "./api-key-store.js";
 import { InMemoryUserStore } from "./user-store.js";
 import { InMemoryWorkspaceMetadataStore } from "./workspace-metadata-store.js";
+import { InMemoryLoopStore } from "./loop-store.js";
 
 export { InMemoryAgentStore } from "./agent-store.js";
 export { InMemoryAgentFileStore } from "./agent-file-store.js";
@@ -21,6 +22,7 @@ export { InMemoryPendingEventStore } from "./pending-event-store.js";
 export { InMemoryApiKeyStore } from "./api-key-store.js";
 export { InMemoryUserStore } from "./user-store.js";
 export { InMemoryWorkspaceMetadataStore } from "./workspace-metadata-store.js";
+export { InMemoryLoopStore } from "./loop-store.js";
 
 export interface MemoryStores {
   agentStore: InMemoryAgentStore;
@@ -34,6 +36,7 @@ export interface MemoryStores {
   apiKeyStore: InMemoryApiKeyStore;
   userStore: InMemoryUserStore;
   workspaceStore: InMemoryWorkspaceMetadataStore;
+  loopStore: InMemoryLoopStore;
 }
 
 export function createMemoryStores(): MemoryStores {
@@ -51,8 +54,16 @@ export function createMemoryStores(): MemoryStores {
       return Boolean(session && session.status !== "terminated");
     },
   );
+  const agentStore = new InMemoryAgentStore();
+  const workspaceStore = new InMemoryWorkspaceMetadataStore();
+  const loopStore = new InMemoryLoopStore(
+    agentStore,
+    sessionStore,
+    workspaceStore,
+    pendingEventStore,
+  );
   return {
-    agentStore: new InMemoryAgentStore(),
+    agentStore,
     agentFileStore: new InMemoryAgentFileStore(),
     skillStore: new InMemorySkillStore(),
     skillArtifactStore: new InMemorySkillArtifactStore(),
@@ -62,6 +73,7 @@ export function createMemoryStores(): MemoryStores {
     pendingEventStore,
     apiKeyStore: new InMemoryApiKeyStore(),
     userStore: new InMemoryUserStore(),
-    workspaceStore: new InMemoryWorkspaceMetadataStore(),
+    workspaceStore,
+    loopStore,
   };
 }

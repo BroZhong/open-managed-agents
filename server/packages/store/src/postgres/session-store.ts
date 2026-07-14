@@ -13,6 +13,7 @@ interface SessionRow {
   title: string | null;
   agent: Agent;
   workspace_id: string;
+  loop_id: string | null;
   created_at: Date;
   updated_at: Date;
   terminated_at: Date | null;
@@ -35,6 +36,7 @@ function rowToSession(row: SessionRow): Session {
     title: row.title ?? undefined,
     agent: reviveAgent(row.agent),
     workspaceId: row.workspace_id,
+    loopId: row.loop_id ?? undefined,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
     terminatedAt: row.terminated_at ? new Date(row.terminated_at) : undefined,
@@ -48,10 +50,10 @@ export class PgSessionStore implements SessionStore {
     const now = new Date();
     const id = `sess_${nanoid()}`;
     const { rows } = await this.pool.query<SessionRow>(
-      `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO sessions (id, tenant_id, agent_id, status, agent, workspace_id, loop_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [id, input.tenantId, input.agentId, "idle", JSON.stringify(input.agent), input.workspaceId, now, now],
+      [id, input.tenantId, input.agentId, "idle", JSON.stringify(input.agent), input.workspaceId, input.loopId ?? null, now, now],
     );
     return rowToSession(rows[0]);
   }
@@ -65,10 +67,6 @@ export class PgSessionStore implements SessionStore {
     const limit = opts?.limit ?? 20;
     const params: unknown[] = [tenantId];
     let where = `tenant_id = $1`;
-    if (opts?.cursor) {
-      params.push(opts.cursor);
-      where += ` AND id > $${params.length}`;
-    }
     if (opts?.agentId) {
       params.push(opts.agentId);
       where += ` AND agent_id = $${params.length}`;
@@ -77,9 +75,37 @@ export class PgSessionStore implements SessionStore {
       params.push(opts.status);
       where += ` AND status = $${params.length}`;
     }
+    if (opts?.loopId) {
+      params.push(opts.loopId);
+      where += ` AND loop_id = $${params.length}`;
+    }
+    if (opts?.withoutLoop) {
+      where += ` AND loop_id IS NULL`;
+    }
+    if (opts?.cursor) {
+      if (opts.loopId) {
+        const cursor = await this.pool.query<Pick<SessionRow, "created_at">>(
+          `SELECT created_at FROM sessions
+           WHERE tenant_id = $1 AND loop_id = $2 AND id = $3`,
+          [tenantId, opts.loopId, opts.cursor],
+        );
+        if (!cursor.rows[0]) return { data: [], hasMore: false };
+        params.push(cursor.rows[0].created_at);
+        const createdAtParam = params.length;
+        params.push(opts.cursor);
+        where += ` AND (created_at < $${createdAtParam}
+          OR (created_at = $${createdAtParam} AND id < $${params.length}))`;
+      } else {
+        params.push(opts.cursor);
+        where += ` AND id > $${params.length}`;
+      }
+    }
     params.push(limit + 1);
+    const order = opts?.loopId
+      ? "created_at DESC, id DESC"
+      : "id ASC";
     const { rows } = await this.pool.query<SessionRow>(
-      `SELECT * FROM sessions WHERE ${where} ORDER BY id ASC LIMIT $${params.length}`,
+      `SELECT * FROM sessions WHERE ${where} ORDER BY ${order} LIMIT $${params.length}`,
       params,
     );
 

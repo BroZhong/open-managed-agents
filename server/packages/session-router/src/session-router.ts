@@ -11,6 +11,10 @@ import type {
   SkillStore,
   SkillArtifactStore,
 } from "@oma-server/store";
+import {
+  ManagedMcpResolutionError,
+  resolveManagedMcpServers,
+} from "@oma-server/mcp-catalog";
 import { PendingEventClaimLostError } from "@oma-server/store";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
@@ -1079,10 +1083,14 @@ export class SessionRouter {
         data: runningEvent.data,
       });
 
-      // A Session stores an Agent snapshot for historical identity, but mutable
-      // Agent configuration is resolved per turn so system/tools/runtime and
-      // equipped-Skill membership edits apply to existing conversations.
-      const currentAgent = await this.resolveCurrentAgent(agentConfig);
+      // Ordinary conversations resolve mutable Agent configuration per Turn.
+      // A Loop occurrence is different: ADR-0007 makes the Agent snapshot
+      // captured in the same dispatch transaction part of that occurrence.
+      // Recovery must therefore use the durable Session snapshot even if the
+      // Agent changes after commit but before the pending input is claimed.
+      const currentAgent = claimedSession.loopId
+        ? claimedSession.agent
+        : await this.resolveCurrentAgent(agentConfig);
       if (leaseLost) return;
 
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
@@ -1204,22 +1212,66 @@ export class SessionRouter {
       const skillPaths = equippedSkills.map(({ id }) => `/skills/${id}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
 
-      const adapterInput = this.buildAdapterInput(
-        sessionId,
-        turnId,
-        promotedEvent,
-        currentAgent,
-        priorEvents,
-        sandbox,
-        appendSystemPrompt,
-        skillPaths,
-        skillDescriptors,
-        currentAgent.model,
-        // Thread the per-turn abort signal so the adapter can wire it to its
-        // runtime's native cancel (issue #84) — a user interrupt then unwedges a
-        // hung turn instead of locking the session forever.
-        turnController.signal,
-      );
+      let adapterInput: AdapterInput;
+      try {
+        adapterInput = this.buildAdapterInput(
+          sessionId,
+          turnId,
+          promotedEvent,
+          currentAgent,
+          priorEvents,
+          sandbox,
+          appendSystemPrompt,
+          skillPaths,
+          skillDescriptors,
+          currentAgent.model,
+          // Thread the per-turn abort signal so the adapter can wire it to its
+          // runtime's native cancel (issue #84) — a user interrupt then unwedges a
+          // hung turn instead of locking the session forever.
+          turnController.signal,
+        );
+      } catch (error) {
+        if (!(error instanceof ManagedMcpResolutionError)) throw error;
+        // Catalog/tenant refusals are durable policy decisions, not transient
+        // Adapter failures. Record one terminal Turn and acknowledge its input;
+        // retaining it would make every recovery scan retry forever.
+        const managedMcpError = {
+          message: "A managed MCP connection is unavailable for this Tenant",
+          code: "managed_mcp_unavailable",
+        };
+        const stored = await this.eventLogStore.append(sessionId, {
+          type: "session.error",
+          data: { error: managedMcpError },
+          sessionThreadId: "sthr_primary",
+          idempotencyKey: this.turnKey(
+            pendingEvent.id,
+            "managed_mcp_unavailable",
+          ),
+          pendingFence,
+        });
+        this.eventStreamHub.publish(sessionId, {
+          type: stored.type,
+          seq: stored.seq,
+          data: stored.data,
+        });
+        if (this.turnStreamStore) {
+          await this.turnStreamStore.reclaim(turnId);
+          if (!await this.setActiveTurnFenced(sessionId, {
+            turnId,
+            status: "idle",
+          })) {
+            leaseLost = true;
+            return;
+          }
+        }
+        if (!await this.completeTurn(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          pendingFence,
+        )) return;
+        continue;
+      }
 
       // The Adapter is a pure translator: it runs directly and routes any tool
       // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
@@ -1497,7 +1549,9 @@ export class SessionRouter {
         model,
         system: agentConfig.system,
         tools: agentConfig.tools,
-        mcpServers: agentConfig.mcpServers,
+        mcpServers: resolveManagedMcpServers(agentConfig.mcpServers, {
+          tenantId: agentConfig.tenantId,
+        }),
         skills: agentConfig.skills,
         // Per-call Host injections (ADR-0002): assembled Agent Files and the
         // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<id>`

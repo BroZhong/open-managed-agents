@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
 export interface Session {
@@ -9,6 +14,8 @@ export interface Session {
   title?: string;
   /** The Workspace this Session is bound to (used to group by workspace). */
   workspaceId: string;
+  /** Present when this Session was created by a scheduled Loop. */
+  loopId?: string;
   agent: { id: string; name: string; model: string; runtime: string };
   createdAt: string;
   updatedAt: string;
@@ -34,7 +41,7 @@ export function useAgentSessions(agentId: string) {
   return useQuery({
     queryKey: ["sessions", "byAgent", agentId],
     queryFn: () =>
-      apiFetch<SessionsResponse>(`/v1/sessions?agent_id=${agentId}`).then((r) => r.data),
+      apiFetch<SessionsResponse>(`/v1/sessions?agent_id=${agentId}&exclude_loop=true`).then((r) => r.data),
     enabled: !!agentId,
   });
 }
@@ -45,6 +52,29 @@ export function useSession(id: string) {
     queryFn: () => apiFetch<Session>(`/v1/sessions/${id}`),
     enabled: !!id,
   });
+}
+
+export function useLoopSessions(loopId: string, enabled = true) {
+  const query = useInfiniteQuery({
+    queryKey: ["sessions", "byLoop", loopId],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => {
+      const cursor = pageParam
+        ? `&cursor=${encodeURIComponent(pageParam)}`
+        : "";
+      return apiFetch<SessionsResponse>(
+        `/v1/sessions?loop_id=${encodeURIComponent(loopId)}&limit=50${cursor}`,
+      );
+    },
+    getNextPageParam: (lastPage) =>
+      lastPage.has_more ? lastPage.next_cursor : undefined,
+    enabled: Boolean(loopId) && enabled,
+    refetchInterval: 15_000,
+  });
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.data),
+  };
 }
 
 /**

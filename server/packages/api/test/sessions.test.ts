@@ -90,6 +90,7 @@ class InMemorySessionStore implements SessionStore {
       status: "idle",
       agent: structuredClone(input.agent),
       workspaceId: input.workspaceId,
+      loopId: input.loopId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -109,10 +110,14 @@ class InMemorySessionStore implements SessionStore {
     const cursor = opts?.cursor;
     const agentId = opts?.agentId;
     const status = opts?.status;
+    const loopId = opts?.loopId;
+    const withoutLoop = opts?.withoutLoop;
 
     let filtered = this.sessions.filter((s) => s.tenantId === tenantId);
     if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
     if (status) filtered = filtered.filter((s) => s.status === status);
+    if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
+    if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
 
     if (cursor) {
       const idx = filtered.findIndex((s) => s.id === cursor);
@@ -543,6 +548,38 @@ describe("GET /v1/sessions", () => {
     expect(body.data[0].agentId).toBe(agent1.id);
   });
 
+  it("excludes Loop-owned Sessions before pagination when requested", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+    for (let index = 0; index < 3; index++) {
+      await sessionStore.create({
+        tenantId: "dev",
+        agentId: agent.id,
+        agent,
+        workspaceId: `ws_loop_${index}`,
+        loopId: "loop_review",
+      });
+    }
+    const loose = await sessionStore.create({
+      tenantId: "dev",
+      agentId: agent.id,
+      agent,
+      workspaceId: "ws_loose",
+    });
+
+    const res = await app.request(
+      `/v1/sessions?agent_id=${agent.id}&exclude_loop=true&limit=1`,
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual([expect.objectContaining({ id: loose.id })]);
+  });
+
   it("filters by status", async () => {
     const { app, agentStore, sessionStore } = createTestApp();
     const agent = await agentStore.create({
@@ -685,6 +722,49 @@ describe("GET /v1/sessions/:id", () => {
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toBe("Session not found");
+  });
+});
+
+describe("public Session projection", () => {
+  it("never exposes a legacy managed MCP connection from Session snapshots", async () => {
+    const { app, agentStore } = createTestApp();
+    const agent = await agentStore.create({
+      tenantId: "dev",
+      name: "Legacy MCP Agent",
+      model: "claude-3",
+      system: "sys",
+      runtime: "claude-code",
+    });
+    agent.mcpServers = [{
+      name: "rds-mcp",
+      url: "https://campaign.welltop.tech/agent/mcp/rds",
+      transport: "streamable-http",
+      headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+    }];
+
+    const createdResponse = await app.request("/v1/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent.id }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = await createdResponse.json();
+
+    const listedResponse = await app.request("/v1/sessions");
+    const listed = await listedResponse.json();
+    const fetchedResponse = await app.request(`/v1/sessions/${created.id}`);
+    const fetched = await fetchedResponse.json();
+
+    for (const session of [created, listed.data[0], fetched]) {
+      expect(session.agent.mcpServers).toEqual([{
+        catalogId: "rds-mcp",
+        name: "rds-mcp",
+      }]);
+      const serialized = JSON.stringify(session);
+      expect(serialized).not.toContain("campaign.welltop.tech");
+      expect(serialized).not.toContain("Authorization");
+      expect(serialized).not.toContain("RDS_MCP_APIKEY");
+    }
   });
 });
 

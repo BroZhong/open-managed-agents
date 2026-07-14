@@ -64,6 +64,40 @@ function toolResult(
   } as unknown as SessionEvent;
 }
 
+function mcpToolUse(
+  toolUseId: string,
+  serverName: string,
+  name: string,
+  input: Record<string, unknown>,
+): SessionEvent {
+  return {
+    id: "sevt_mcp_tu",
+    timestamp: "2026-01-01T00:00:02.000Z",
+    type: "agent.mcp_tool_use",
+    toolUseId,
+    serverName,
+    name,
+    input,
+  } as unknown as SessionEvent;
+}
+
+function mcpToolResult(
+  toolUseId: string,
+  serverName: string,
+  text: string,
+  isError = false,
+): SessionEvent {
+  return {
+    id: "sevt_mcp_tr",
+    timestamp: "2026-01-01T00:00:03.000Z",
+    type: "agent.mcp_tool_result",
+    toolUseId,
+    serverName,
+    content: [{ type: "text", text }],
+    isError,
+  } as unknown as SessionEvent;
+}
+
 describe("eventLogToAgentMessages", () => {
   it("maps user.message → { role: 'user' }", () => {
     const messages = eventLogToAgentMessages([userMessage("hello")]);
@@ -113,6 +147,56 @@ describe("eventLogToAgentMessages", () => {
       { type: "text", text: "file1.ts\nfile2.ts" },
     ]);
     expect(result.isError).toBe(false);
+  });
+
+  it("replays canonical MCP events through Pi's generic gateway on the next turn", () => {
+    const messages = eventLogToAgentMessages([
+      userMessage("review recent sessions"),
+      agentMessage("I will query the session data."),
+      mcpToolUse(
+        "mcp_tc_1",
+        "session-data",
+        "query_recent_sessions",
+        { days: 7 },
+      ),
+      mcpToolResult(
+        "mcp_tc_1",
+        "session-data",
+        '{"sessions":[]}',
+        true,
+      ),
+      agentMessage("The query failed."),
+      userMessage("try again"),
+    ]);
+
+    expect(messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "assistant",
+      "user",
+    ]);
+
+    const assistant = messages[1] as AssistantMessage;
+    expect(assistant.content).toContainEqual({
+      type: "toolCall",
+      id: "mcp_tc_1",
+      name: "mcp",
+      arguments: {
+        tool: "session_data_query_recent_sessions",
+        args: '{"days":7}',
+        server: "session-data",
+      },
+    });
+
+    const result = messages[2] as ToolResultMessage;
+    expect(result).toMatchObject({
+      role: "toolResult",
+      toolCallId: "mcp_tc_1",
+      toolName: "mcp",
+      content: [{ type: "text", text: '{"sessions":[]}' }],
+      isError: true,
+    });
   });
 
   it("preserves isError on tool results", () => {

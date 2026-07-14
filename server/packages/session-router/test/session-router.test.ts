@@ -188,6 +188,7 @@ class InMemorySessionStore implements SessionStore {
       status: "idle",
       agent: structuredClone(input.agent),
       workspaceId: input.workspaceId,
+      loopId: input.loopId,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -365,6 +366,64 @@ describe("SessionRouter", () => {
 
       // Verify pending queue is empty
       expect(await pendingEventStore.count(session.id)).toBe(0);
+    });
+
+    it("handles a revoked managed MCP connection once without poisoning the pending queue", async () => {
+      const originalAllowlist = process.env.OMA_SUPABASE_ALLOWED_TENANTS;
+      process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
+      let adapterRuns = 0;
+      const adapter: Adapter = {
+        async *run(): AsyncIterable<SessionEvent> {
+          adapterRuns += 1;
+        },
+      };
+      const { eventLogStore, pendingEventStore, sessionStore, router } =
+        createTestDeps(adapter);
+      const agent: Agent = {
+        ...testAgent,
+        mcpServers: [{
+          catalogId: "aliyun-rds-supabase",
+          name: "session-data",
+        }],
+      };
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: agent.id,
+        agent,
+        workspaceId: "ws_revoked_mcp",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "analyze" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      delete process.env.OMA_SUPABASE_ALLOWED_TENANTS;
+      try {
+        await router.handleNewEvent(session.id, session.agent);
+
+        expect(adapterRuns).toBe(0);
+        expect(await pendingEventStore.count(session.id)).toBe(0);
+        expect((await sessionStore.getById(session.id))?.status).toBe("idle");
+        const events = await eventLogStore.getEvents(session.id, { limit: 50 });
+        expect(events.data.map((event) => event.type)).toEqual([
+          "user.message",
+          "session.status_running",
+          "session.error",
+          "session.status_idle",
+          "session.turn_completed",
+        ]);
+        expect(events.data[2]?.data).toMatchObject({
+          error: { code: "managed_mcp_unavailable" },
+        });
+        expect((await router.recoverPendingEvents()).recovered).toEqual([]);
+      } finally {
+        if (originalAllowlist === undefined) {
+          delete process.env.OMA_SUPABASE_ALLOWED_TENANTS;
+        } else {
+          process.env.OMA_SUPABASE_ALLOWED_TENANTS = originalAllowlist;
+        }
+      }
     });
   });
 
@@ -991,6 +1050,37 @@ describe("SessionRouter", () => {
 
       await runOneTurn(router, sessionStore, pendingEventStore, session.id, session.agent);
       expect(models[0]).toBe("claude-3");
+    });
+
+    it("keeps a Loop-created Session on the Agent snapshot captured at dispatch", async () => {
+      const models: string[] = [];
+      const adapter = createModelCapturingAdapter(models);
+      const eventLogStore = new InMemoryEventLogStore();
+      const pendingEventStore = new InMemoryPendingEventStore();
+      const sessionStore = new InMemorySessionStore();
+      const eventStreamHub = new InProcessEventStreamHub();
+      const agentStore = createFakeAgentStore({ ...testAgent });
+      const router = new SessionRouter({
+        eventLogStore,
+        pendingEventStore,
+        sessionStore,
+        eventStreamHub,
+        resolveAdapter: () => adapter,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        agentStore: agentStore as any,
+      });
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: { ...testAgent },
+        workspaceId: "ws_loop",
+        loopId: "loop_1",
+      });
+
+      agentStore.setModel("claude-opus-4-8");
+      await runOneTurn(router, sessionStore, pendingEventStore, session.id, session.agent);
+
+      expect(models).toEqual(["claude-3"]);
     });
   });
 });

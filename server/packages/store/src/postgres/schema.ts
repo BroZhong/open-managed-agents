@@ -31,6 +31,23 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
 );
 CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 
+CREATE TABLE IF NOT EXISTS ${s}.loops (
+  id                TEXT PRIMARY KEY,
+  tenant_id         TEXT NOT NULL,
+  agent_id          TEXT NOT NULL,
+  name              TEXT NOT NULL,
+  description       TEXT,
+  prompt            TEXT NOT NULL,
+  interval_minutes  INTEGER NOT NULL CHECK (interval_minutes >= 5),
+  enabled           BOOLEAN NOT NULL,
+  next_run_at       TIMESTAMPTZ NOT NULL,
+  last_run_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL,
+  updated_at        TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS loops_tenant_agent_idx ON ${s}.loops (tenant_id, agent_id, created_at);
+CREATE INDEX IF NOT EXISTS loops_due_idx ON ${s}.loops (next_run_at) WHERE enabled = true;
+
 -- Agent Files are small editable markdown documents (IDENTITY, SOUL, USER,
 -- MEMORY) that shape an Agent's persona/instructions, isolated per
 -- (tenant_id, agent_id). They are part of the Agent, never a Session's
@@ -98,13 +115,16 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   title          TEXT,
   agent          JSONB NOT NULL,
   workspace_id   TEXT NOT NULL,
+  loop_id        TEXT,
   created_at     TIMESTAMPTZ NOT NULL,
   updated_at     TIMESTAMPTZ NOT NULL,
   terminated_at  TIMESTAMPTZ
 );
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);
+CREATE INDEX IF NOT EXISTS sessions_loop_id_idx ON ${s}.sessions (tenant_id, loop_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS ${s}.event_counters (
   session_id  TEXT PRIMARY KEY,

@@ -26,12 +26,22 @@ export interface ToolConfig {
   inputSchema: Record<string, unknown>;
 }
 
-export interface McpServerConfig {
+export interface HttpMcpServerConfig {
   name: string;
   url: string;
   transport?: "sse" | "streamable-http";
   headers?: Record<string, string>;
 }
+
+export interface StdioMcpServerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+export type McpServerConfig = HttpMcpServerConfig | StdioMcpServerConfig;
 
 // ─── User message ────────────────────────────────────────────────────────────
 

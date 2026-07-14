@@ -32,6 +32,7 @@ import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { LoopScheduler } from "./lib/loop-scheduler.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
 // egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
@@ -418,6 +419,13 @@ async function main() {
     console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
   }
 
+  const loopScheduler = new LoopScheduler({
+    loopStore: stores.loopStore,
+    sessionRouter,
+    pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000),
+  });
+  loopScheduler.start();
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -429,6 +437,7 @@ async function main() {
     eventLogStore: stores.eventLogStore,
     pendingEventStore,
     workspaceStore: stores.workspaceStore,
+    loopStore: stores.loopStore,
     userStore: stores.userStore,
     artifactStore,
     eventStreamHub,
@@ -446,6 +455,7 @@ async function main() {
 
   const shutdown = createGracefulShutdown({
     server: httpServer,
+    stopBackgroundWork: () => loopScheduler.stop(),
     waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {

@@ -4,6 +4,8 @@ type ShutdownLogger = Pick<Console, "info" | "warn" | "error">;
 
 export interface GracefulShutdownDeps {
   server: ServerType;
+  /** Stop schedulers before waiting for active Turns so no new work is created. */
+  stopBackgroundWork?: () => Promise<void>;
   /** Returns true when every active Session drainer has settled. */
   waitForIdle: (timeoutMs: number) => Promise<boolean>;
   /** Close durable/transient stores after no Turn can use them. */
@@ -39,9 +41,10 @@ function bounded<T>(promise: Promise<T>, timeoutMs: number, timeoutValue: T): Pr
 /**
  * Build one idempotent signal handler lifecycle.
  *
- * Ordering matters: `server.close` first refuses new HTTP connections; active
- * Session Turns then get a bounded grace period; only after that are remaining
- * sockets forced closed and PostgreSQL/Redis resources released.
+ * Ordering matters: `server.close` first refuses new HTTP connections;
+ * background producers stop and active Session Turns drain within one shared
+ * grace deadline; only after that are remaining sockets forced closed and
+ * PostgreSQL/Redis resources released.
  */
 export function createGracefulShutdown(deps: GracefulShutdownDeps) {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -56,6 +59,8 @@ export function createGracefulShutdown(deps: GracefulShutdownDeps) {
 
     shutdownPromise = (async () => {
       logger.info(`Received ${signal}; stopping HTTP and draining active Turns`);
+      const deadline = Date.now() + timeoutMs;
+      const remainingMs = () => Math.max(0, deadline - Date.now());
 
       // Calling close immediately stops the listener from accepting new work.
       // The callback may wait for long-lived SSE connections, so it is not the
@@ -69,9 +74,33 @@ export function createGracefulShutdown(deps: GracefulShutdownDeps) {
         }
       });
 
+      if (deps.stopBackgroundWork) {
+        let stopped = false;
+        try {
+          stopped = await bounded(
+            deps.stopBackgroundWork().then(() => true),
+            remainingMs(),
+            false,
+          );
+        } catch (error) {
+          logger.error("Failed to stop background work:", error);
+          stopped = true;
+        }
+        if (!stopped) {
+          logger.warn(
+            `Graceful shutdown timed out stopping background work after ${timeoutMs}ms`,
+          );
+        }
+      }
+
       let drained = false;
       try {
-        drained = await bounded(deps.waitForIdle(timeoutMs), timeoutMs, false);
+        const drainTimeoutMs = remainingMs();
+        drained = await bounded(
+          deps.waitForIdle(drainTimeoutMs),
+          drainTimeoutMs,
+          false,
+        );
       } catch (error) {
         logger.error("Failed while waiting for active Turns to drain:", error);
       }
@@ -87,7 +116,11 @@ export function createGracefulShutdown(deps: GracefulShutdownDeps) {
         closeAllConnections?: () => void;
       };
       forceClosable.closeAllConnections?.();
-      await bounded(serverClosed, Math.min(timeoutMs, MAX_HTTP_CLOSE_WAIT_MS), false);
+      await bounded(
+        serverClosed,
+        Math.min(remainingMs(), MAX_HTTP_CLOSE_WAIT_MS),
+        false,
+      );
 
       await deps.closeResources();
     })();

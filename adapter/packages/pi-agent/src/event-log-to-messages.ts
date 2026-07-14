@@ -8,6 +8,10 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import type { ContentBlock, SessionEvent } from "@open-managed-agents/adapter-core";
+import {
+  MCP_GATEWAY_TOOL_NAME,
+  mcpGatewayArguments,
+} from "./mcp-gateway.js";
 
 /**
  * Rebuild a structured Pi conversation history (`Message[]`) from the canonical
@@ -95,8 +99,7 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
         break;
       }
 
-      case "agent.tool_use":
-      case "agent.mcp_tool_use": {
+      case "agent.tool_use": {
         if (!pendingAssistant) pendingAssistant = { content: [] };
         pendingAssistant.content.push({
           type: "toolCall",
@@ -110,14 +113,44 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
         break;
       }
 
-      case "agent.tool_result":
-      case "agent.mcp_tool_result": {
+      case "agent.mcp_tool_use": {
+        if (!pendingAssistant) pendingAssistant = { content: [] };
+        pendingAssistant.content.push({
+          type: "toolCall",
+          id: record.toolUseId ?? "",
+          name: MCP_GATEWAY_TOOL_NAME,
+          arguments: mcpGatewayArguments(
+            record.serverName ?? "",
+            record.name ?? "",
+            record.input && typeof record.input === "object"
+              ? record.input
+              : {},
+          ),
+        });
+        break;
+      }
+
+      case "agent.tool_result": {
         // A tool result closes the assistant turn that requested it.
         flushAssistant();
         const result: ToolResultMessage = {
           role: "toolResult",
           toolCallId: record.toolUseId ?? "",
           toolName: record.name ?? "",
+          content: normalizeResultContent(pickContent(record)),
+          isError: record.isError ?? false,
+          timestamp: 0,
+        };
+        messages.push(result);
+        break;
+      }
+
+      case "agent.mcp_tool_result": {
+        flushAssistant();
+        const result: ToolResultMessage = {
+          role: "toolResult",
+          toolCallId: record.toolUseId ?? "",
+          toolName: MCP_GATEWAY_TOOL_NAME,
           content: normalizeResultContent(pickContent(record)),
           isError: record.isError ?? false,
           timestamp: 0,
@@ -142,6 +175,7 @@ interface EventRecord {
   content?: ContentBlock[];
   data?: { content?: ContentBlock[] };
   toolUseId?: string;
+  serverName?: string;
   name?: string;
   input?: Record<string, unknown>;
   isError?: boolean;

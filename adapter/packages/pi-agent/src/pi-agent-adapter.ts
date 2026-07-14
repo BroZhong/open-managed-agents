@@ -176,13 +176,11 @@ interface MaterializedMcpConfig {
  */
 function materializeMcpConfig(
   servers: AdapterInput["agent"]["mcpServers"],
-): MaterializedMcpConfig | undefined {
-  if (!servers || servers.length === 0) return undefined;
-
+): MaterializedMcpConfig {
   const dir = mkdtempSync(join(tmpdir(), "oma-pi-mcp-"));
   const path = join(dir, "mcp.json");
   const mcpServers = Object.fromEntries(
-    servers.map(({ name, ...definition }) => [name, definition]),
+    (servers ?? []).map(({ name, ...definition }) => [name, definition]),
   );
   writeFileSync(path, `${JSON.stringify({ mcpServers }, null, 2)}\n`, {
     encoding: "utf8",
@@ -242,7 +240,9 @@ export class PiAgentAdapter implements Adapter {
         resourceLoaderOptions,
       });
 
-      const translator = new PiEventTranslator();
+      const translator = new PiEventTranslator(
+        input.agent.mcpServers?.map(({ name }) => name) ?? [],
+      );
 
       // Bridge the push-based subscribe() into a pull queue. The listener
       // enqueues each SDK event; the async generator below drains it. Only the
@@ -410,11 +410,9 @@ export class PiAgentAdapter implements Adapter {
       // session_start. Set the per-Turn value on this loader's isolated runtime
       // instead of mutating process.argv/process.env (both are shared across
       // concurrent Agents).
-      if (mcpConfig) {
-        resourceLoader
-          .getExtensions()
-          .runtime.flagValues.set("mcp-config", mcpConfig.path);
-      }
+      resourceLoader
+        .getExtensions()
+        .runtime.flagValues.set("mcp-config", mcpConfig.path);
 
       // Seed the rebuilt structured history into an in-memory SessionManager
       // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
@@ -466,7 +464,7 @@ export class PiAgentAdapter implements Adapter {
             try {
               await active.dispose();
             } finally {
-              mcpConfig?.cleanup();
+              mcpConfig.cleanup();
             }
           }
         },
@@ -478,7 +476,7 @@ export class PiAgentAdapter implements Adapter {
         // Startup failure is the primary error; best-effort disposal must not
         // replace it with a secondary cleanup failure.
       } finally {
-        mcpConfig?.cleanup();
+        mcpConfig.cleanup();
       }
       throw error;
     }

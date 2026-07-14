@@ -68,6 +68,151 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
+  it("nests and paginates Loop-created Sessions under their Loop instead of loose Sessions", async () => {
+    const agent: Agent = {
+      id: "agent_loop",
+      tenantId: "tenant_1",
+      name: "Session Analyst",
+      model: "test/model",
+      system: "test",
+      runtime: "pi-agent",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const loop = {
+      id: "loop_weekly",
+      tenantId: "tenant_1",
+      agentId: agent.id,
+      name: "Weekly Session Review",
+      prompt: "Analyze Sessions",
+      intervalMinutes: 5,
+      enabled: true,
+      nextRunAt: "2026-07-14T00:05:00.000Z",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const sessionAgent = {
+      id: agent.id,
+      name: agent.name,
+      model: agent.model,
+      runtime: agent.runtime,
+    };
+    const scheduled: Session = {
+      id: "session_scheduled",
+      agentId: agent.id,
+      loopId: loop.id,
+      status: "idle",
+      title: "Scheduled Review",
+      workspaceId: "workspace_scheduled",
+      agent: sessionAgent,
+      createdAt: "2026-07-14T00:05:00.000Z",
+      updatedAt: "2026-07-14T00:05:00.000Z",
+    };
+    const loose: Session = {
+      ...scheduled,
+      id: "session_loose",
+      loopId: undefined,
+      title: "Loose Session",
+      workspaceId: "workspace_loose",
+    };
+    const olderScheduled: Session = {
+      ...scheduled,
+      id: "session_scheduled_older",
+      title: "Older Scheduled Review",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { gcTime: Infinity, retry: false, staleTime: Infinity },
+      },
+    });
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id], [scheduled, loose]);
+    queryClient.setQueryData(["sessions", "byLoop", loop.id], {
+      pages: [{
+        data: [scheduled],
+        has_more: true,
+        next_cursor: scheduled.id,
+      }],
+      pageParams: [undefined],
+    });
+    queryClient.setQueryData(["loops", "byAgent", agent.id], [loop]);
+    queryClient.setQueryData(["workspaces"], []);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/v1/loops/${loop.id}`) && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ ...loop, enabled: false }),
+        } as Response;
+      }
+      if (url.endsWith(`/v1/loops/${loop.id}/run`) && init?.method === "POST") {
+        return {
+          ok: true,
+          status: 201,
+          text: async () => JSON.stringify(olderScheduled),
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          data: [olderScheduled],
+          has_more: false,
+        }),
+      } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/agents/${agent.id}`]}>
+            <Routes>
+              <Route path="/agents/:id" element={<Sidebar />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    const agentLink = screen.getByRole("link", { name: agent.name });
+    const loopsToggle = screen.getByRole("button", { name: "loops" });
+    expect(
+      agentLink.compareDocumentPosition(loopsToggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Scheduled Reviewidle" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: loop.name }));
+    expect(screen.getAllByRole("link", { name: "Scheduled Reviewidle" })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "Loose Sessionidle" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Load older Sessions" }));
+    expect(
+      await screen.findByRole("link", { name: "Older Scheduled Reviewidle" }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: `Loop actions for ${loop.name}`,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause Loop" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).endsWith(`/v1/loops/${loop.id}`)
+      && init?.method === "POST"
+      && String(init.body) === JSON.stringify({ enabled: false })
+    )).toBe(true));
+    expect(await screen.findByText("paused")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: `Loop actions for ${loop.name}`,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Start now" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).endsWith(`/v1/loops/${loop.id}/run`)
+      && init?.method === "POST"
+    )).toBe(true));
+  });
+
   it("keeps the Agent context while linked and newly created Sessions load", async () => {
     const agent: Agent = {
       id: "agent_1",

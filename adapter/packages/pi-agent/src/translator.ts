@@ -4,6 +4,7 @@ import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { identifyMcpInvocation } from "./mcp-gateway.js";
 
 /**
  * Translate Pi SDK `AgentSessionEvent`s (from `session.subscribe()`) into the
@@ -23,6 +24,15 @@ export class PiEventTranslator {
   private textAccumulator = "";
   private thinkingAccumulator = "";
   private pendingProviderError: string | undefined;
+  private readonly mcpServerNames: string[];
+  private readonly mcpToolCalls = new Map<
+    string,
+    { serverName: string; name: string }
+  >();
+
+  constructor(mcpServerNames: readonly string[] = []) {
+    this.mcpServerNames = [...new Set(mcpServerNames.filter(Boolean))];
+  }
 
   processEvent(event: AgentSessionEvent): SessionEvent[] {
     const events: SessionEvent[] = [];
@@ -177,18 +187,36 @@ export class PiEventTranslator {
             } as SessionEvent);
             const toolCall = ame.toolCall;
             if (toolCall) {
-              events.push({
-                id: generateEventId(),
-                timestamp: generateTimestamp(),
-                type: "agent.tool_use",
-                toolUseId: toolCall.id,
-                name: toolCall.name,
-                input:
-                  typeof toolCall.arguments === "object" &&
-                  toolCall.arguments !== null
-                    ? (toolCall.arguments as Record<string, unknown>)
-                    : {},
-              } as SessionEvent);
+              const input = asRecord(toolCall.arguments);
+              const mcpInvocation = identifyMcpInvocation(
+                toolCall.name,
+                input,
+                this.mcpServerNames,
+              );
+              if (mcpInvocation) {
+                this.mcpToolCalls.set(toolCall.id, {
+                  serverName: mcpInvocation.serverName,
+                  name: mcpInvocation.name,
+                });
+                events.push({
+                  id: generateEventId(),
+                  timestamp: generateTimestamp(),
+                  type: "agent.mcp_tool_use",
+                  toolUseId: toolCall.id,
+                  serverName: mcpInvocation.serverName,
+                  name: mcpInvocation.name,
+                  input: mcpInvocation.input,
+                } as SessionEvent);
+              } else {
+                events.push({
+                  id: generateEventId(),
+                  timestamp: generateTimestamp(),
+                  type: "agent.tool_use",
+                  toolUseId: toolCall.id,
+                  name: toolCall.name,
+                  input,
+                } as SessionEvent);
+              }
             }
             break;
           }
@@ -201,19 +229,32 @@ export class PiEventTranslator {
         // matching `agent.tool_use` carries in its `toolUseId`. This makes the
         // event log self-describing — `toolCall.id` ↔ `toolResult.toolCallId`
         // survives a history rebuild — and lets consumers link result→use by id.
-        events.push({
+        const mcpInvocation = this.mcpToolCalls.get(event.toolCallId);
+        this.mcpToolCalls.delete(event.toolCallId);
+        const result = {
           id: generateEventId(),
           timestamp: generateTimestamp(),
-          type: "agent.tool_result",
           toolUseId: event.toolCallId,
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: normalizeResult(event.result),
             },
           ],
           isError: event.isError ?? false,
-        } as SessionEvent);
+        };
+        if (mcpInvocation) {
+          events.push({
+            ...result,
+            type: "agent.mcp_tool_result",
+            serverName: mcpInvocation.serverName,
+          } as SessionEvent);
+        } else {
+          events.push({
+            ...result,
+            type: "agent.tool_result",
+          } as SessionEvent);
+        }
         break;
       }
 
@@ -280,6 +321,13 @@ export class PiEventTranslator {
       } as SessionEvent,
     ];
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
 }
 
 /**
