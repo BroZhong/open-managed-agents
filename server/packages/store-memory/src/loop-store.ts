@@ -130,16 +130,25 @@ export class InMemoryLoopStore implements LoopStore {
     });
   }
 
-  dispatchNow(id: string, tenantId: string, now: Date): Promise<LoopDispatch | null> {
+  dispatchNow(
+    id: string,
+    tenantId: string,
+    now: Date,
+    apiKeyId?: string,
+  ): Promise<LoopDispatch | null> {
     return this.withDispatchLock(async () => {
       const loop = this.loops.find(
         (candidate) => candidate.id === id && candidate.tenantId === tenantId,
       );
-      return loop ? this.dispatch(loop, now) : null;
+      return loop ? this.dispatch(loop, now, apiKeyId) : null;
     });
   }
 
-  private async dispatch(loop: Loop, now: Date): Promise<LoopDispatch | null> {
+  private async dispatch(
+    loop: Loop,
+    now: Date,
+    apiKeyId?: string,
+  ): Promise<LoopDispatch | null> {
     const agent = await this.agentStore.getById(loop.agentId);
     if (!agent || agent.tenantId !== loop.tenantId) {
       loop.enabled = false;
@@ -163,6 +172,7 @@ export class InMemoryLoopStore implements LoopStore {
         type: "user.message",
         data: { content: [{ type: "text", text: loop.prompt }] },
         sessionThreadId: "sthr_primary",
+        ...(apiKeyId ? { apiKeyId } : {}),
       });
       const committed = await this.sessionStore.getById(session.id);
       if (!committed) throw new Error(`Loop dispatch Session ${session.id} disappeared`);

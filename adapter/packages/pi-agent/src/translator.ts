@@ -261,7 +261,12 @@ export class PiEventTranslator {
       case "message_end": {
         if (event.message.role === "assistant") {
           const message = event.message as {
-            usage?: { input: number; output: number };
+            usage?: {
+              input: number;
+              output: number;
+              cacheRead?: number;
+              cacheWrite?: number;
+            };
             stopReason?: string;
             errorMessage?: string;
           };
@@ -273,8 +278,11 @@ export class PiEventTranslator {
               timestamp: generateTimestamp(),
               type: "span.model_request_end",
               usage: {
-                inputTokens: usage.input,
+                inputTokens:
+                  usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0),
                 outputTokens: usage.output,
+                cacheReadTokens: usage.cacheRead ?? 0,
+                cacheWriteTokens: usage.cacheWrite ?? 0,
               },
             } as SessionEvent);
           }

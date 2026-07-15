@@ -8,11 +8,14 @@
     "dev:full": "tsx watch src/dev-server.ts",
     "dev:memory": "tsx watch src/dev-server-memory.ts",
     "start": "node --import tsx src/index.ts",
+    "openapi:generate": "tsx src/openapi/generate.ts",
+    "openapi:check": "tsx src/openapi/generate.ts --check && redocly lint ../../../docs/openapi.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.7.0",
+    "hono": "^4.12.23",
+    "@hono/zod-openapi": "^1.4.0",
     "@hono/node-server": "^1.13.0",
     "bcryptjs": "^2.4.3",
     "jose": "^5.9.0",
@@ -26,9 +29,11 @@
     "@oma-server/session-router": "workspace:*",
     "@open-managed-agents/adapter-core": "file:../../../adapter/packages/core",
     "@open-managed-agents/adapter-mock": "file:../../../adapter/packages/mock",
-    "@open-managed-agents/adapter-pi-agent": "file:../../../adapter/packages/pi-agent"
+    "@open-managed-agents/adapter-pi-agent": "file:../../../adapter/packages/pi-agent",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@redocly/cli": "^2.39.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",

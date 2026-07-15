@@ -668,6 +668,27 @@ describe("GET /v1/agents", () => {
     // Just verifying the request succeeds - the limit is capped internally
   });
 
+  it("preserves tolerant parsing for legacy limit values", async () => {
+    const { app, agentStore } = createTestApp();
+    for (let i = 0; i < 2; i++) {
+      await agentStore.create({
+        tenantId: "dev",
+        name: `Agent ${i}`,
+        model: "claude-3",
+        system: "sys",
+        runtime: "claude-code",
+      });
+    }
+
+    const invalid = await app.request("/v1/agents?limit=abc");
+    expect(invalid.status).toBe(200);
+    expect((await invalid.json()).data).toHaveLength(2);
+
+    const decimal = await app.request("/v1/agents?limit=1.5");
+    expect(decimal.status).toBe(200);
+    expect((await decimal.json()).data).toHaveLength(1);
+  });
+
   it("supports cursor pagination", async () => {
     const { app, agentStore } = createTestApp();
     for (let i = 0; i < 5; i++) {
@@ -788,6 +809,32 @@ describe("POST /v1/agents/:id (update)", () => {
     expect(body.name).toBe("Updated Agent");
     expect(body.model).toBe("claude-3");
     expect(body.runtime).toBe("claude-code");
+  });
+
+  it("enforces the documented update types before persisting changes", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "You are helpful",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tools: "not-an-array",
+        sandbox: "not-an-object",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await agentStore.getById(created.id)).toMatchObject({
+      tools: undefined,
+      sandbox: undefined,
+    });
   });
 
   it("returns a safe managed reference for a persisted legacy RDS connection", async () => {

@@ -5,6 +5,8 @@
     "dev": "pnpm --filter @oma-server/api dev",
     "dev:full": "pnpm --filter @oma-server/api dev:full",
     "dev:memory": "pnpm --filter @oma-server/api dev:memory",
+    "openapi:generate": "pnpm --filter @oma-server/api openapi:generate",
+    "openapi:check": "pnpm --filter @oma-server/api openapi:check",
     "test": "pnpm --filter @oma-server/api test",
     "typecheck": "pnpm --filter @oma-server/api typecheck"
   },

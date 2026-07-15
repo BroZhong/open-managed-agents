@@ -1,7 +1,12 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { ArtifactStore, Session, SessionStore } from "@oma-server/store";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { TenantContext } from "../types.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -54,8 +59,8 @@ function joinPath(dir: string, name: string): string {
  * so files created by any means (including shell/bash) show up in the listing.
  * Contents are proxied through the Host — never presigned URLs. See ADR-0002 §5.
  */
-export function workspaceRoutes(deps: WorkspaceRouteDeps) {
-  const router = new Hono<Env>();
+export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   async function resolveSession(
     sessionId: string,
@@ -82,9 +87,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
 
   // PUT /v1/sessions/:id/workspace/files/content — write (create or overwrite).
   //   body: { path: string, content: string }
-  router.put("/v1/sessions/:id/workspace/files/content", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("writeWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) return c.json({ error: "Session not found" }, 404);
 
     if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
@@ -108,9 +113,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
   });
 
   // DELETE /v1/sessions/:id/workspace/files/content?path=… — delete one file.
-  router.delete("/v1/sessions/:id/workspace/files/content", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("deleteWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) return c.json({ error: "Session not found" }, 404);
 
     if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
@@ -133,9 +138,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
   //   body: { from: string, to: string }
   //   ArtifactStore has no `move`, so this is get→put→delete, preserving
   //   contentType so a rename never drops the file's MIME.
-  router.post("/v1/sessions/:id/workspace/files/rename", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("renameWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) return c.json({ error: "Session not found" }, 404);
 
     if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
@@ -175,9 +180,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
   //   `destDir` combined with the uploaded filename. Writes are proxied through
   //   the Host (never presigned PUT — ADR-0006 §2). Media contentType is taken
   //   from the upload so a later signed GET returns the right MIME.
-  router.post("/v1/sessions/:id/workspace/files/upload", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("uploadWorkspaceFiles"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) return c.json({ error: "Session not found" }, 404);
 
     if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
@@ -233,9 +238,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
   const MIN_EXPIRES = 60;
   const MAX_EXPIRES = 900;
   const DEFAULT_EXPIRES = 600;
-  router.get("/v1/sessions/:id/workspace/preview-url", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createWorkspacePreviewUrl"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) return c.json({ error: "Session not found" }, 404);
 
     const path = c.req.query("path");
@@ -282,9 +287,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
   });
 
   // GET /v1/sessions/:id/workspace/files — list the Workspace file tree.
-  router.get("/v1/sessions/:id/workspace/files", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listWorkspaceFiles"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) {
       return c.json({ error: "Session not found" }, 404);
     }
@@ -311,9 +316,9 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
 
   // GET /v1/sessions/:id/workspace/files/* — preview / download a single file.
   // `?download=1` sets Content-Disposition: attachment.
-  router.get("/v1/sessions/:id/workspace/files/*", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("getWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id"), tenant);
+    const session = await resolveSession(c.req.param("id")!, tenant);
     if (!session) {
       return c.json({ error: "Session not found" }, 404);
     }
@@ -356,7 +361,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps) {
     }
 
     return c.body(artifact.body as unknown as ArrayBuffer, 200, headers);
-  });
+  }, { runtimePath: "/v1/sessions/:id/workspace/files/:path{.+}" });
 
   return router;
 }

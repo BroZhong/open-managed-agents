@@ -1,8 +1,13 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AgentStore, LoopStore } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession } from "../lib/public-projection.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = { Variables: { tenant: TenantContext } };
 
@@ -37,22 +42,22 @@ function validateLoopBody(body: Record<string, unknown>, partial = false): strin
   }
 }
 
-export function loopRoutes(deps: LoopRouteDeps) {
-  const router = new Hono<Env>();
+export function loopRoutes(deps: LoopRouteDeps): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
   const now = deps.now ?? (() => new Date());
 
-  router.get("/v1/agents/:agentId/loops", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listAgentLoops"), async (c) => {
     const tenant = c.get("tenant");
-    const agent = await deps.agentStore.getById(c.req.param("agentId"));
+    const agent = await deps.agentStore.getById(c.req.param("agentId")!);
     if (!agent || agent.tenantId !== tenant.tenantId) {
       return c.json({ error: "Agent not found" }, 404);
     }
     return c.json({ data: await deps.loopStore.list(tenant.tenantId, agent.id) });
   });
 
-  router.post("/v1/agents/:agentId/loops", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createAgentLoop"), async (c) => {
     const tenant = c.get("tenant");
-    const agent = await deps.agentStore.getById(c.req.param("agentId"));
+    const agent = await deps.agentStore.getById(c.req.param("agentId")!);
     if (!agent || agent.tenantId !== tenant.tenantId) {
       return c.json({ error: "Agent not found" }, 404);
     }
@@ -73,18 +78,18 @@ export function loopRoutes(deps: LoopRouteDeps) {
     return c.json(loop, 201);
   });
 
-  router.get("/v1/loops/:id", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("getLoop"), async (c) => {
     const tenant = c.get("tenant");
-    const loop = await deps.loopStore.getById(c.req.param("id"));
+    const loop = await deps.loopStore.getById(c.req.param("id")!);
     if (!loop || loop.tenantId !== tenant.tenantId) {
       return c.json({ error: "Loop not found" }, 404);
     }
     return c.json(loop);
   });
 
-  router.post("/v1/loops/:id", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("updateLoop"), async (c) => {
     const tenant = c.get("tenant");
-    const loop = await deps.loopStore.getById(c.req.param("id"));
+    const loop = await deps.loopStore.getById(c.req.param("id")!);
     if (!loop || loop.tenantId !== tenant.tenantId) {
       return c.json({ error: "Loop not found" }, 404);
     }
@@ -103,12 +108,13 @@ export function loopRoutes(deps: LoopRouteDeps) {
     return c.json(updated!);
   });
 
-  router.post("/v1/loops/:id/run", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("runLoop"), async (c) => {
     const tenant = c.get("tenant");
     const dispatched = await deps.loopStore.dispatchNow(
-      c.req.param("id"),
+      c.req.param("id")!,
       tenant.tenantId,
       now(),
+      tenant.apiKeyId,
     );
     if (!dispatched) return c.json({ error: "Loop not found" }, 404);
     void deps.sessionRouter

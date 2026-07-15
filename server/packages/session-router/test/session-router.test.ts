@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SessionRouter } from "../src/session-router.js";
+import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type {
   TurnStreamStore,
@@ -11,6 +11,7 @@ import type {
   EventLogStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
+  EventLogUsageScope,
   PendingEventStore,
   PendingEvent,
   PendingEventEnqueueInput,
@@ -21,6 +22,7 @@ import type {
   SessionStatus,
   StoredEvent,
   PaginatedResult,
+  TokenUsageSummary,
   Agent,
 } from "@oma-server/store";
 import type {
@@ -34,6 +36,12 @@ import type {
 class InMemoryEventLogStore implements EventLogStore {
   private events: Map<string, StoredEvent[]> = new Map();
   private seqCounters: Map<string, number> = new Map();
+  private usageEvents: Array<{
+    sessionId: string;
+    apiKeyId?: string;
+    type: string;
+    data: unknown;
+  }> = [];
 
   async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
     const currentSeq = this.seqCounters.get(sessionId) ?? 0;
@@ -52,6 +60,12 @@ class InMemoryEventLogStore implements EventLogStore {
     const sessionEvents = this.events.get(sessionId) ?? [];
     sessionEvents.push(stored);
     this.events.set(sessionId, sessionEvents);
+    this.usageEvents.push({
+      sessionId,
+      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
+      type: event.type,
+      data: event.data,
+    });
 
     return stored;
   }
@@ -70,6 +84,34 @@ class InMemoryEventLogStore implements EventLogStore {
 
     return { data, hasMore };
   }
+
+  async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    const count = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+    for (const event of this.usageEvents) {
+      const inScope = "sessionId" in scope
+        ? event.sessionId === scope.sessionId
+        : event.apiKeyId === scope.apiKeyId;
+      if (!inScope || event.type !== "span.model_request_end") continue;
+      const data = event.data as { usage?: Record<string, unknown> };
+      inputTokens += count(data.usage?.inputTokens);
+      outputTokens += count(data.usage?.outputTokens);
+      cacheReadTokens += count(data.usage?.cacheReadTokens);
+      cacheWriteTokens += count(data.usage?.cacheWriteTokens);
+    }
+    return {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens: inputTokens + outputTokens,
+      cacheHitRate: inputTokens === 0 ? null : cacheReadTokens / inputTokens,
+    };
+  }
 }
 
 // ─── In-memory PendingEventStore ─────────────────────────────────────────────
@@ -85,6 +127,7 @@ class InMemoryPendingEventStore implements PendingEventStore {
       type: event.type,
       data: event.data,
       sessionThreadId: event.sessionThreadId,
+      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
       arrivedAt: new Date(),
     };
     const queue = this.queues.get(sessionId) ?? [];
@@ -277,7 +320,13 @@ const testAgent: Agent = {
   updatedAt: new Date(),
 };
 
-function createTestDeps(adapter: Adapter) {
+function createTestDeps(
+  adapter: Adapter,
+  routerOptions: Pick<
+    SessionRouterDeps,
+    "interruptedAdapterDrainTimeoutMs" | "interruptedAdapterDrainMaxEvents"
+  > = {},
+) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
   const sessionStore = new InMemorySessionStore();
@@ -289,6 +338,7 @@ function createTestDeps(adapter: Adapter) {
     sessionStore,
     eventStreamHub,
     resolveAdapter: () => adapter,
+    ...routerOptions,
   });
 
   return { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, router };
@@ -424,6 +474,44 @@ describe("SessionRouter", () => {
           process.env.OMA_SUPABASE_ALLOWED_TENANTS = originalAllowlist;
         }
       }
+    });
+
+    it("attributes durable model usage to the API key that queued the Turn", async () => {
+      const adapter = createMockAdapter([{
+        id: "evt_usage",
+        timestamp: "2024-01-01T00:00:00.000Z",
+        type: "span.model_request_end",
+        usage: {
+          inputTokens: 80,
+          outputTokens: 20,
+          cacheReadTokens: 32,
+          cacheWriteTokens: 4,
+        },
+      }]);
+      const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+        apiKeyId: "key_usage",
+      });
+
+      await router.handleNewEvent(session.id, testAgent);
+
+      await expect(eventLogStore.getUsage({ apiKeyId: "key_usage" })).resolves.toEqual({
+        inputTokens: 80,
+        outputTokens: 20,
+        cacheReadTokens: 32,
+        cacheWriteTokens: 4,
+        totalTokens: 100,
+        cacheHitRate: 0.4,
+      });
     });
   });
 
@@ -602,6 +690,312 @@ describe("SessionRouter", () => {
   });
 
   describe("interrupt", () => {
+    it("persists and publishes only model usage emitted while an interrupted adapter settles", async () => {
+      let adapterStarted!: () => void;
+      const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
+      const adapter: Adapter = {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          adapterStarted();
+          await new Promise<void>((resolve) => {
+            if (input.signal?.aborted) resolve();
+            else input.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+
+          // Runtimes may flush buffered output while their native abort settles.
+          // None of it is durable after a user interrupt; only the provider's
+          // final accounting event survives.
+          yield {
+            id: "post_abort_stream",
+            timestamp: "2024-01-01T00:00:01.000Z",
+            type: "agent.message_stream_start",
+          };
+          yield {
+            id: "post_abort_chunk",
+            timestamp: "2024-01-01T00:00:02.000Z",
+            type: "agent.message_chunk",
+            text: "discard me",
+          };
+          yield {
+            id: "post_abort_tool",
+            timestamp: "2024-01-01T00:00:03.000Z",
+            type: "agent.tool_use",
+            toolUseId: "tool_after_abort",
+            name: "bash",
+            input: { command: "discard me" },
+          };
+          yield {
+            id: "post_abort_error",
+            timestamp: "2024-01-01T00:00:04.000Z",
+            type: "session.error",
+            error: { message: "discard me", code: "post_abort" },
+          };
+          yield {
+            id: "post_abort_message",
+            timestamp: "2024-01-01T00:00:05.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "discard me" }],
+          };
+          yield {
+            id: "post_abort_usage",
+            timestamp: "2024-01-01T00:00:06.000Z",
+            type: "span.model_request_end",
+            usage: {
+              inputTokens: 100,
+              outputTokens: 10,
+              cacheReadTokens: 60,
+              cacheWriteTokens: 5,
+            },
+          };
+        },
+      };
+      const {
+        pendingEventStore,
+        sessionStore,
+        eventLogStore,
+        eventStreamHub,
+        router,
+      } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_interrupt_usage",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "stop after accounting" }] },
+        sessionThreadId: "sthr_primary",
+        apiKeyId: "key_interrupt_usage",
+      });
+
+      const frames: string[] = [];
+      const { stream, unsubscribe } = eventStreamHub.subscribe(session.id, {
+        includeChunks: true,
+      });
+      const reader = stream.getReader();
+      const collectFrames = (async () => {
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            frames.push(value);
+          }
+        } catch {
+          // unsubscribe closes the reader
+        }
+      })();
+
+      const processing = router.handleNewEvent(session.id, testAgent);
+      await didStart;
+      router.interrupt(session.id);
+      await processing;
+      unsubscribe();
+      await collectFrames;
+
+      const stored = await eventLogStore.getEvents(session.id, { limit: 100 });
+      expect(stored.data.map((event) => event.type)).toEqual([
+        "user.message",
+        "session.status_running",
+        "span.model_request_end",
+        "session.status_idle",
+        "session.turn_completed",
+      ]);
+      await expect(eventLogStore.getUsage({ sessionId: session.id })).resolves.toEqual({
+        inputTokens: 100,
+        outputTokens: 10,
+        cacheReadTokens: 60,
+        cacheWriteTokens: 5,
+        totalTokens: 110,
+        cacheHitRate: 0.6,
+      });
+      await expect(eventLogStore.getUsage({ apiKeyId: "key_interrupt_usage" })).resolves
+        .toEqual({
+          inputTokens: 100,
+          outputTokens: 10,
+          cacheReadTokens: 60,
+          cacheWriteTokens: 5,
+          totalTokens: 110,
+          cacheHitRate: 0.6,
+        });
+      expect(frames.filter((frame) => frame.includes("span.model_request_end"))).toHaveLength(1);
+      expect(frames.some((frame) => frame.includes("post_abort_chunk"))).toBe(false);
+      expect(frames.some((frame) => frame.includes("post_abort_tool"))).toBe(false);
+      expect(frames.some((frame) => frame.includes("post_abort_error"))).toBe(false);
+      expect(frames.some((frame) => frame.includes("post_abort_message"))).toBe(false);
+    });
+
+    it("stops an interrupted drain on timeout without awaiting a hung iterator return", async () => {
+      let adapterStarted!: () => void;
+      const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
+      let iteratorReturnCalled = false;
+      const adapter: Adapter = {
+        run(): AsyncIterable<SessionEvent> {
+          return {
+            [Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
+              return {
+                next(): Promise<IteratorResult<SessionEvent>> {
+                  adapterStarted();
+                  return new Promise<IteratorResult<SessionEvent>>(() => {});
+                },
+                return(): Promise<IteratorResult<SessionEvent>> {
+                  iteratorReturnCalled = true;
+                  return new Promise<IteratorResult<SessionEvent>>(() => {});
+                },
+              };
+            },
+          };
+        },
+      };
+      const { pendingEventStore, sessionStore, router } = createTestDeps(adapter, {
+        interruptedAdapterDrainTimeoutMs: 20,
+      });
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_interrupt_timeout",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "stop promptly" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      const processing = router.handleNewEvent(session.id, testAgent);
+      await didStart;
+      router.interrupt(session.id);
+
+      let settleTimeout: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        processing.then(() => "settled" as const),
+        new Promise<"timed-out">((resolve) => {
+          settleTimeout = setTimeout(() => resolve("timed-out"), 250);
+        }),
+      ]);
+      if (settleTimeout) clearTimeout(settleTimeout);
+      expect(outcome).toBe("settled");
+      expect(iteratorReturnCalled).toBe(true);
+    });
+
+    it("caps a synchronously noisy interrupted drain by event count", async () => {
+      let adapterStarted!: () => void;
+      const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
+      let postAbortEvents = 0;
+      const adapter: Adapter = {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          adapterStarted();
+          await new Promise<void>((resolve) => {
+            if (input.signal?.aborted) resolve();
+            else input.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          while (true) {
+            postAbortEvents++;
+            yield {
+              id: `noisy_${postAbortEvents}`,
+              timestamp: "2024-01-01T00:00:00.000Z",
+              type: "session.error",
+              error: { message: "discard me", code: "noisy_post_abort" },
+            };
+          }
+        },
+      };
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter, {
+        interruptedAdapterDrainTimeoutMs: 1_000,
+        interruptedAdapterDrainMaxEvents: 3,
+      });
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_interrupt_event_cap",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "stop noisy adapter" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      const processing = router.handleNewEvent(session.id, testAgent);
+      await didStart;
+      router.interrupt(session.id);
+      await processing;
+
+      expect(postAbortEvents).toBe(3);
+      const events = await eventLogStore.getEvents(session.id, { limit: 100 });
+      expect(events.data.map((event) => event.type)).toEqual([
+        "user.message",
+        "session.status_running",
+        "session.status_idle",
+        "session.turn_completed",
+      ]);
+    });
+
+    it("does not persist settlement usage when the Session is terminated", async () => {
+      let adapterStarted!: () => void;
+      const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
+      let abortObserved!: () => void;
+      const didObserveAbort = new Promise<void>((resolve) => { abortObserved = resolve; });
+      let releaseSettlement!: () => void;
+      const settlementGate = new Promise<void>((resolve) => { releaseSettlement = resolve; });
+      const adapter: Adapter = {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          adapterStarted();
+          await new Promise<void>((resolve) => {
+            if (input.signal?.aborted) resolve();
+            else input.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          abortObserved();
+          await settlementGate;
+          yield {
+            id: "usage_after_terminate",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "span.model_request_end",
+            usage: {
+              inputTokens: 90,
+              outputTokens: 9,
+              cacheReadTokens: 45,
+              cacheWriteTokens: 0,
+            },
+          };
+        },
+      };
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_terminated_usage",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "terminate" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      const processing = router.handleNewEvent(session.id, testAgent);
+      await didStart;
+      // AbortSignal.reason remains the original user-interrupt reason forever.
+      // A subsequent termination must still revoke the accounting drain before
+      // the delayed Adapter settlement is released.
+      router.interrupt(session.id);
+      await didObserveAbort;
+      await sessionStore.terminate(session.id);
+      await router.terminateSession(session.id);
+      releaseSettlement();
+      await processing;
+
+      const events = await eventLogStore.getEvents(session.id, { limit: 100 });
+      expect(events.data.map((event) => event.type)).not.toContain("span.model_request_end");
+      await expect(eventLogStore.getUsage({ sessionId: session.id })).resolves.toEqual({
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        cacheHitRate: null,
+      });
+    });
+
     it("aborts the adapter run", async () => {
       const events: SessionEvent[] = [
         {

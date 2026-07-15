@@ -1,10 +1,15 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AgentStore, Runtime } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import {
   normalizeManagedMcpRefs,
 } from "@oma-server/mcp-catalog";
 import { publicAgent } from "../lib/public-projection.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -14,11 +19,11 @@ type Env = {
 
 const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
 
-export function agentRoutes(agentStore: AgentStore) {
-  const router = new Hono<Env>();
+export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/agents — Create agent
-  router.post("/v1/agents", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createAgent"), async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
@@ -80,7 +85,7 @@ export function agentRoutes(agentStore: AgentStore) {
   });
 
   // GET /v1/agents — List agents
-  router.get("/v1/agents", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listAgents"), async (c) => {
     const tenant = c.get("tenant");
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor");
@@ -111,8 +116,8 @@ export function agentRoutes(agentStore: AgentStore) {
   });
 
   // GET /v1/agents/:id — Get agent
-  router.get("/v1/agents/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("getAgent"), async (c) => {
+    const id = c.req.param("id")!;
     const agent = await agentStore.getById(id);
 
     if (!agent) {
@@ -129,8 +134,8 @@ export function agentRoutes(agentStore: AgentStore) {
   });
 
   // POST /v1/agents/:id — Update agent
-  router.post("/v1/agents/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("updateAgent"), async (c) => {
+    const id = c.req.param("id")!;
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
@@ -189,8 +194,8 @@ export function agentRoutes(agentStore: AgentStore) {
   });
 
   // DELETE /v1/agents/:id — Delete agent
-  router.delete("/v1/agents/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("deleteAgent"), async (c) => {
+    const id = c.req.param("id")!;
 
     // Verify agent exists and belongs to tenant
     const existing = await agentStore.getById(id);

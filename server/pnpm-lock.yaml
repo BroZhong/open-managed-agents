@@ -13,6 +13,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.23)
+      '@hono/zod-openapi':
+        specifier: ^1.4.0
+        version: 1.4.0(hono@4.12.23)(zod@4.4.3)
       '@oma-server/event-log':
         specifier: workspace:*
         version: link:../event-log
@@ -42,12 +45,12 @@ importers:
         version: file:../adapter/packages/mock
       '@open-managed-agents/adapter-pi-agent':
         specifier: file:../../../adapter/packages/pi-agent
-        version: file:../adapter/packages/pi-agent(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)
+        version: file:../adapter/packages/pi-agent(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
       hono:
-        specifier: ^4.7.0
+        specifier: ^4.12.23
         version: 4.12.23
       jose:
         specifier: ^5.9.0
@@ -55,7 +58,13 @@ importers:
       undici:
         specifier: ^6.21.0
         version: 6.27.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
+      '@redocly/cli':
+        specifier: ^2.39.0
+        version: 2.39.0
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6
@@ -292,6 +301,11 @@ packages:
     peerDependenciesMeta:
       zod:
         optional: true
+
+  '@asteasolutions/zod-to-openapi@8.5.0':
+    resolution: {integrity: sha512-SABbKiObg5dLRiTFnqiW1WWwGcg1BJfmHtT2asIBnBHg6Smy/Ms2KHc650+JI4Hw7lSkdiNebEGXpwoxfben8Q==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@aws-crypto/sha256-browser@5.2.0':
     resolution: {integrity: sha512-AXfN/lGotSQwu6HNcEsIASo7kWXZ5HYWvfOmSNKDsEqC4OashTp8alTmaz+F7TC2L083SFv5RdB+qU3Vs1kZqw==}
@@ -756,6 +770,19 @@ packages:
     peerDependencies:
       hono: ^4
 
+  '@hono/zod-openapi@1.4.0':
+    resolution: {integrity: sha512-AFchqR1N/NxfI4hUOSGI2/g8zLROxA1OE7Oh5JJFlTaGxhrdRyH+93gd0tIBpb0z8s9r8hUoNnaOBfHbdb4NMw==}
+    engines: {node: '>=16.0.0'}
+    peerDependencies:
+      hono: '>=4.10.0'
+      zod: ^4.0.0
+
+  '@hono/zod-validator@0.8.0':
+    resolution: {integrity: sha512-5uS4S1/LKtZQYvD4BtpPUFkOv8d1wNxHHrChm26buMiEYc1FrHWvDUaKVBwkiVtvSExHSpLGDvcnpI2Copyj9w==}
+    peerDependencies:
+      hono: '>=4.10.0'
+      zod: ^3.25.0 || ^4.0.0
+
   '@ioredis/commands@1.10.0':
     resolution: {integrity: sha512-UmeW7z4LfctwoQ5wkhVzgq8tXkreED2xZGpX+Bg+zA+WJFZCT6c062AfCK/Dfk81xZnnwdhJCUMkitihRaoC2Q==}
 
@@ -899,6 +926,11 @@ packages:
 
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
+
+  '@redocly/cli@2.39.0':
+    resolution: {integrity: sha512-xA0Z9YMEhlzbpn/BVErlE2UzuKfahp9llBwEnVtAYuhWdF8UCIm+cgYX8f/gHQIJ/TKwB93awAewTOgEsbZFZw==}
+    engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
+    hasBin: true
 
   '@rollup/rollup-android-arm-eabi@4.61.0':
     resolution: {integrity: sha512-dnxczajOqt0gesZlN5pGQ1s1imQVrsmCw5G2Ci4oM+0WvNz3pyRnlWrT7McoZIb8VlFwCawdmbWRmxRn7HI+VQ==}
@@ -1746,6 +1778,9 @@ packages:
   openapi-typescript-helpers@0.0.15:
     resolution: {integrity: sha512-opyTPaunsklCBpTK8JGef6mfPhLSnyy5a0IN9vKtx3+4aExf+KxEqYwIy3hqkedXIB97u357uLMJsOnm3GVjsw==}
 
+  openapi3-ts@4.6.0:
+    resolution: {integrity: sha512-a4sfn6L2sIShhtzJqmjGrARvxAW/3F2BJDdyRVvNF9VhAsZSh5hSyI3a9TNvmzBxXmq66nY5LNT5bQcBxYAZZg==}
+
   p-retry@4.6.2:
     resolution: {integrity: sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ==}
     engines: {node: '>=8'}
@@ -2266,6 +2301,9 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
 
   '@alicloud/credentials@2.4.5':
@@ -2397,11 +2435,16 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@anthropic-ai/sdk@0.91.1(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.91.1(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 3.25.76
+      zod: 4.4.3
+
+  '@asteasolutions/zod-to-openapi@8.5.0(zod@4.4.3)':
+    dependencies:
+      openapi3-ts: 4.6.0
+      zod: 4.4.3
 
   '@aws-crypto/sha256-browser@5.2.0':
     dependencies:
@@ -2647,9 +2690,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@earendil-works/pi-agent-core@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)':
+  '@earendil-works/pi-agent-core@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       ignore: 7.0.5
       typebox: 1.1.38
       yaml: 2.9.0
@@ -2661,17 +2704,17 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)':
+  '@earendil-works/pi-ai@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@anthropic-ai/sdk': 0.91.1(zod@3.25.76)
+      '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
-      '@google/genai': 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))
+      '@google/genai': 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@mistralai/mistralai': 2.2.6(@opentelemetry/api@1.9.0)
       '@opentelemetry/api': 1.9.0
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2
       https-proxy-agent: 7.0.6
-      openai: 6.26.0(ws@8.21.0)(zod@3.25.76)
+      openai: 6.26.0(ws@8.21.0)(zod@4.4.3)
       partial-json: 0.1.7
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -2682,10 +2725,10 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)':
+  '@earendil-works/pi-coding-agent@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-agent-core': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-tui': 0.80.3
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -2873,14 +2916,14 @@ snapshots:
   '@esbuild/win32-x64@0.28.0':
     optional: true
 
-  '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))':
+  '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
       google-auth-library: 10.9.0
       p-retry: 4.6.2
       protobufjs: 7.6.5
       ws: 8.21.0
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -2889,6 +2932,19 @@ snapshots:
   '@hono/node-server@1.19.14(hono@4.12.23)':
     dependencies:
       hono: 4.12.23
+
+  '@hono/zod-openapi@1.4.0(hono@4.12.23)(zod@4.4.3)':
+    dependencies:
+      '@asteasolutions/zod-to-openapi': 8.5.0(zod@4.4.3)
+      '@hono/zod-validator': 0.8.0(hono@4.12.23)(zod@4.4.3)
+      hono: 4.12.23
+      openapi3-ts: 4.6.0
+      zod: 4.4.3
+
+  '@hono/zod-validator@0.8.0(hono@4.12.23)(zod@4.4.3)':
+    dependencies:
+      hono: 4.12.23
+      zod: 4.4.3
 
   '@ioredis/commands@1.10.0': {}
 
@@ -2948,8 +3004,8 @@ snapshots:
     dependencies:
       '@opentelemetry/semantic-conventions': 1.41.1
       ws: 8.21.0
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
     transitivePeerDependencies:
@@ -2978,6 +3034,29 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
+    dependencies:
+      '@hono/node-server': 1.19.14(hono@4.12.23)
+      ajv: 8.20.0
+      ajv-formats: 3.0.1(ajv@8.20.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.1.0
+      express: 5.2.1
+      express-rate-limit: 8.5.2(express@5.2.1)
+      hono: 4.12.23
+      jose: 6.2.3
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
+    transitivePeerDependencies:
+      - supports-color
+    optional: true
+
   '@open-managed-agents/adapter-core@file:../adapter/packages/core':
     dependencies:
       nanoid: 5.1.11
@@ -2986,10 +3065,10 @@ snapshots:
     dependencies:
       '@open-managed-agents/adapter-core': file:../adapter/packages/core
 
-  '@open-managed-agents/adapter-pi-agent@file:../adapter/packages/pi-agent(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)':
+  '@open-managed-agents/adapter-pi-agent@file:../adapter/packages/pi-agent(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)
-      '@earendil-works/pi-coding-agent': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(ws@8.21.0)(zod@3.25.76)
+      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-coding-agent': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@open-managed-agents/adapter-core': file:../adapter/packages/core
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -3023,6 +3102,8 @@ snapshots:
   '@protobufjs/pool@1.1.0': {}
 
   '@protobufjs/utf8@1.1.1': {}
+
+  '@redocly/cli@2.39.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.61.0':
     optional: true
@@ -3869,16 +3950,20 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.26.0(ws@8.21.0)(zod@3.25.76):
+  openai@6.26.0(ws@8.21.0)(zod@4.4.3):
     optionalDependencies:
       ws: 8.21.0
-      zod: 3.25.76
+      zod: 4.4.3
 
   openapi-fetch@0.14.1:
     dependencies:
       openapi-typescript-helpers: 0.0.15
 
   openapi-typescript-helpers@0.0.15: {}
+
+  openapi3-ts@4.6.0:
+    dependencies:
+      yaml: 2.9.0
 
   p-retry@4.6.2:
     dependencies:
@@ -4368,4 +4453,10 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
+  zod-to-json-schema@3.25.2(zod@4.4.3):
+    dependencies:
+      zod: 4.4.3
+
   zod@3.25.76: {}
+
+  zod@4.4.3: {}

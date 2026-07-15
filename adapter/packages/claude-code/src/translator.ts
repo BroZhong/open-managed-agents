@@ -3,7 +3,7 @@ import {
   generateTimestamp,
   type SessionEvent,
 } from "@open-managed-agents/adapter-core";
-import type { SdkMessage, SdkContentBlock } from "./sdk-types.js";
+import type { SdkMessage, SdkContentBlock, SdkUsage } from "./sdk-types.js";
 
 /**
  * State for an active content block being streamed.
@@ -24,9 +24,15 @@ interface ActiveBlock {
  */
 export class SdkEventTranslator {
   private firstTokenEmitted = false;
+  private spanStarted = false;
   private activeBlocks: Map<number, ActiveBlock> = new Map();
   private currentMessageId: string | null = null;
   private currentModel: string | null = null;
+  private currentUsage = {
+    inputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
 
   /**
    * Track which tool_use IDs are MCP tools so we can emit the correct
@@ -68,15 +74,42 @@ export class SdkEventTranslator {
    * Signal end of SDK stream, return any final events.
    */
   finalize(): SessionEvent[] {
-    return [];
+    if (!this.spanStarted) return [];
+    this.spanStarted = false;
+    return [
+      {
+        id: generateEventId(),
+        timestamp: generateTimestamp(),
+        type: "span.model_request_end",
+        usage: {
+          inputTokens: this.currentUsage.inputTokens,
+          outputTokens: 0,
+          cacheReadTokens: this.currentUsage.cacheReadTokens,
+          cacheWriteTokens: this.currentUsage.cacheWriteTokens,
+        },
+      },
+    ];
   }
 
   // ─── Private handlers ───────────────────────────────────────────────────────
 
-  private handleMessageStart(msg: { id: string; model: string }): SessionEvent[] {
+  private handleMessageStart(msg: {
+    id: string;
+    model: string;
+    usage?: SdkUsage;
+  }): SessionEvent[] {
+    this.spanStarted = true;
     this.currentMessageId = msg.id;
     this.currentModel = msg.model;
     this.firstTokenEmitted = false;
+    const cacheReadTokens = msg.usage?.cache_read_input_tokens ?? 0;
+    const cacheWriteTokens = msg.usage?.cache_creation_input_tokens ?? 0;
+    this.currentUsage = {
+      inputTokens:
+        (msg.usage?.input_tokens ?? 0) + cacheReadTokens + cacheWriteTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    };
 
     return [
       {
@@ -275,14 +308,18 @@ export class SdkEventTranslator {
     delta: { stop_reason: string },
     usage: { output_tokens: number }
   ): SessionEvent[] {
+    if (!this.spanStarted) return [];
+    this.spanStarted = false;
     return [
       {
         id: generateEventId(),
         timestamp: generateTimestamp(),
         type: "span.model_request_end",
         usage: {
-          inputTokens: 0,
+          inputTokens: this.currentUsage.inputTokens,
           outputTokens: usage.output_tokens,
+          cacheReadTokens: this.currentUsage.cacheReadTokens,
+          cacheWriteTokens: this.currentUsage.cacheWriteTokens,
         },
       },
     ];

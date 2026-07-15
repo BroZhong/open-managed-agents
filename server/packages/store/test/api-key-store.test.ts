@@ -52,19 +52,40 @@ describe("PgApiKeyStore", () => {
     expect(validated).toBeNull();
   });
 
-  it("should delete an API key", async () => {
+  it("should revoke an API key while retaining it for historical usage", async () => {
     const { rawKey, apiKey } = await store.create("tenant1", "My Key");
 
-    const deleted = await store.delete(apiKey.id);
-    expect(deleted).toBe(true);
+    const revoked = await store.revoke("tenant1", apiKey.id);
+    expect(revoked).toBe(true);
 
     const validated = await store.validate(rawKey);
     expect(validated).toBeNull();
+    await expect(store.findByKeyHash(apiKey.keyHash)).resolves.toBeNull();
+    const listed = await store.list("tenant1");
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ id: apiKey.id, revokedAt: expect.any(Date) });
+    await expect(store.revoke("tenant1", apiKey.id)).resolves.toBe(false);
   });
 
-  it("should return false when deleting non-existent key", async () => {
-    const deleted = await store.delete("apikey_nonexistent");
-    expect(deleted).toBe(false);
+  it("should return false when revoking a non-existent key", async () => {
+    const revoked = await store.revoke("tenant1", "apikey_nonexistent");
+    expect(revoked).toBe(false);
+  });
+
+  it("must not revoke another tenant's API key", async () => {
+    const { rawKey, apiKey } = await store.create("tenant2", "Their Key");
+
+    await expect(store.revoke("tenant1", apiKey.id)).resolves.toBe(false);
+    await expect(store.validate(rawKey)).resolves.toMatchObject({ id: apiKey.id });
+  });
+
+  it("returns both tenant and key identity for request attribution", async () => {
+    const { apiKey } = await store.create("tenant1", "Attributed Key");
+
+    await expect(store.findByKeyHash(apiKey.keyHash)).resolves.toEqual({
+      tenantId: "tenant1",
+      apiKeyId: apiKey.id,
+    });
   });
 
   it("should list keys for a tenant", async () => {

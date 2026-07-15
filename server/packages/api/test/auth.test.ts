@@ -4,6 +4,7 @@ import { createApp } from "../src/app.js";
 import {
   InMemoryUserStore,
   InMemoryApiKeyStore,
+  InMemoryEventLogStore,
 } from "@oma-server/store-memory";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -32,10 +33,12 @@ afterEach(() => {
 function build() {
   const userStore = new InMemoryUserStore();
   const apiKeyStore = new InMemoryApiKeyStore();
+  const eventLogStore = new InMemoryEventLogStore();
   const app = createApp({
     apiKeyStore,
     fullApiKeyStore: apiKeyStore,
     userStore,
+    eventLogStore,
   });
   return { app, userStore, apiKeyStore };
 }

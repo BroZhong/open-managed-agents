@@ -31,7 +31,11 @@ import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { mcpGatewayToolName } from "./mcp-gateway.js";
 import { resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
-import { createManagedSubagentToolsExtension } from "./subagent-tool-bridge.js";
+import {
+  createManagedSubagentToolsExtension,
+  createManagedSubagentUsageExtension,
+  type ManagedSubagentUsage,
+} from "./subagent-tool-bridge.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 
 /**
@@ -103,6 +107,8 @@ export interface SessionFactoryArgs {
    * the factory args so the adapter-seam test can assert them directly.
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
+  /** Receives each provider-reported child model request exactly once. */
+  onSubagentUsage(usage: ManagedSubagentUsage): void;
 }
 
 /**
@@ -203,6 +209,24 @@ interface MaterializedMcpConfig {
   cleanup(): void;
 }
 
+type PiRunQueueItem =
+  | { source: "parent"; event: AgentSessionEvent }
+  | { source: "subagent"; usage: ManagedSubagentUsage };
+
+function subagentUsageEvent(usage: ManagedSubagentUsage): SessionEvent {
+  return {
+    id: generateEventId(),
+    timestamp: generateTimestamp(),
+    type: "span.model_request_end",
+    usage: {
+      inputTokens: usage.input + usage.cacheRead + usage.cacheWrite,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
+    },
+  };
+}
+
 /**
  * Render the Agent-owned MCP list into the standard config shape consumed by
  * `pi-mcp-adapter`. The file is deliberately per Turn: two Agents may use the
@@ -268,6 +292,12 @@ export class PiAgentAdapter implements Adapter {
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
 
+      // The child extension reports usage while prompt() is running, outside
+      // the parent AgentSession subscription. Merge both push sources into one
+      // ordered queue so already-reported child usage drains before a later
+      // parent failure or abort closes the turn.
+      const queue = new EventQueue<PiRunQueueItem>();
+
       session = await this.createSession({
         input,
         prompt,
@@ -275,6 +305,9 @@ export class PiAgentAdapter implements Adapter {
         model,
         hasToolExecutor,
         resourceLoaderOptions,
+        onSubagentUsage(usage) {
+          queue.push({ source: "subagent", usage });
+        },
       });
 
       const translator = new PiEventTranslator(
@@ -286,9 +319,8 @@ export class PiAgentAdapter implements Adapter {
       // settlement of session.prompt() ends the queue: agent_end is an inner
       // agent-loop boundary, and Pi may compact + continue even after an
       // agent_end whose willRetry flag is false.
-      const queue = new EventQueue<AgentSessionEvent>();
       const unsubscribe = session.subscribe((event) => {
-        queue.push(event);
+        queue.push({ source: "parent", event });
       });
 
       // Wire the router's per-turn abort signal to Pi's native cancel (issue
@@ -332,8 +364,12 @@ export class PiAgentAdapter implements Adapter {
           },
         );
 
-        for await (const event of queue) {
-          for (const e of translator.processEvent(event)) yield e;
+        for await (const item of queue) {
+          if (item.source === "subagent") {
+            yield subagentUsageEvent(item.usage);
+            continue;
+          }
+          for (const e of translator.processEvent(item.event)) yield e;
         }
         // A provider failure is final only now, after prompt() has settled and
         // every retry/compaction continuation event has drained. A later
@@ -423,12 +459,14 @@ export class PiAgentAdapter implements Adapter {
         // shared capability registry.
         eventBus: createEventBus(),
         appendSystemPrompt,
-        // @tintinweb/pi-subagents creates a second SDK session. Give its
-        // pinned bridge access to this parent's exact Sandbox-backed tool
-        // definitions over this Turn's private EventBus for concurrency.
+        // The pinned @tintinweb/pi-subagents child path requires this parent's
+        // exact managed tools and fails closed when they are absent. Install
+        // both its capability responder and its independent usage listener only
+        // on that managed path; a native Pi run gets neither EventBus surface.
         ...(customTools
           ? {
               extensionFactories: [
+                createManagedSubagentUsageExtension(args.onSubagentUsage),
                 createManagedSubagentToolsExtension(customTools),
                 createManagedSkillCommandExtension(skillDescriptors),
               ],

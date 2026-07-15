@@ -21,6 +21,7 @@ export type {
   // Span events
   SpanModelRequestStartEvent,
   SpanModelFirstTokenEvent,
+  TokenUsage,
   SpanModelRequestEndEvent,
   SpanEvent,
   // Canonical events

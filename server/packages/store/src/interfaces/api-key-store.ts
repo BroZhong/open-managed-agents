@@ -9,5 +9,5 @@ export interface ApiKeyStore {
   create(tenantId: string, name: string): Promise<ApiKeyCreateResult>;
   validate(rawKey: string): Promise<ApiKey | null>;
   list(tenantId: string): Promise<ApiKey[]>;
-  delete(id: string): Promise<boolean>;
+  revoke(tenantId: string, id: string): Promise<boolean>;
 }

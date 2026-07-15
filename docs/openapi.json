@@ -3,36 +3,1580 @@
   "info": {
     "title": "Open Managed Agents API",
     "version": "0.1.0",
-    "description": "API for managing AI agents, sessions, and event streams."
+    "description": "HTTP API for managing Agents, managed MCP servers, Loops, Skills, Workspaces, Sessions, Events, API keys, and Workspace files."
   },
   "servers": [
     {
-      "url": "http://localhost:3000",
-      "description": "Local dev server"
+      "url": "http://localhost:3000"
     }
   ],
   "security": [
     {
       "ApiKeyAuth": []
+    },
+    {
+      "BearerAuth": []
     }
   ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "Service health and metadata."
+    },
+    {
+      "name": "Authentication",
+      "description": "User registration and Tenant session tokens."
+    },
+    {
+      "name": "Agents",
+      "description": "Agent definitions and runtime configuration."
+    },
+    {
+      "name": "MCP Catalog",
+      "description": "Host-reviewed MCP servers that can be safely equipped on Agents."
+    },
+    {
+      "name": "Loops",
+      "description": "Scheduled and on-demand recurring Agent work."
+    },
+    {
+      "name": "Agents/Files",
+      "description": "Editable Agent Files that shape identity and instructions."
+    },
+    {
+      "name": "Agents/Skills",
+      "description": "Skill Forks equipped on an Agent."
+    },
+    {
+      "name": "Skills",
+      "description": "Tenant Skill Library and Skill metadata."
+    },
+    {
+      "name": "Skills/Files",
+      "description": "Files contained in a Skill directory."
+    },
+    {
+      "name": "API Keys",
+      "description": "Tenant API credentials and their token usage."
+    },
+    {
+      "name": "Workspaces",
+      "description": "Tenant-owned Workspace metadata."
+    },
+    {
+      "name": "Sessions",
+      "description": "Agent Sessions bound to Workspaces."
+    },
+    {
+      "name": "Sessions/Usage",
+      "description": "Aggregated token usage for a Session."
+    },
+    {
+      "name": "Sessions/Events",
+      "description": "Durable user input and Complete Events, with optional live Deltas."
+    },
+    {
+      "name": "Sessions/Messages",
+      "description": "Legacy same-request streaming messages."
+    },
+    {
+      "name": "Sessions/Workspace Files",
+      "description": "File operations within a Session's Workspace."
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Tenant API key issued by POST /v1/api-keys."
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Tenant session token issued by POST /auth/login."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "ManagedMcpCatalog": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedMcpCatalogEntry"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ManagedMcpCatalogEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "defaultName": {
+            "type": "string"
+          },
+          "defaultDescription": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "streamable-http",
+              "stdio"
+            ]
+          },
+          "configurable": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "name",
+                "description"
+              ]
+            }
+          },
+          "requiredEnv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "defaultName",
+          "defaultDescription",
+          "transport",
+          "configurable",
+          "requiredEnv"
+        ]
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "agent_abc123"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "system": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolConfig"
+            }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedMcpServerRef"
+            }
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/AgentSandboxConfig"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "name",
+          "model",
+          "system",
+          "runtime",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "Runtime": {
+        "type": "string",
+        "enum": [
+          "claude-code",
+          "codex",
+          "pi-agent",
+          "mock"
+        ]
+      },
+      "ToolConfig": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "name",
+          "inputSchema"
+        ]
+      },
+      "ManagedMcpServerRef": {
+        "type": "object",
+        "properties": {
+          "catalogId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "catalogId",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "AgentSandboxConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "image": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "CreateAgentInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "system": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolConfig"
+            }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedMcpServerRef"
+            },
+            "maxItems": 2,
+            "description": "References to Host-reviewed MCP catalog entries. Runtime URLs, commands, headers, and credentials are never accepted or returned."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/AgentSandboxConfig"
+          }
+        },
+        "required": [
+          "name",
+          "model",
+          "system",
+          "runtime"
+        ]
+      },
+      "AgentList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Agent"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "UpdateAgentInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "system": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolConfig"
+            }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedMcpServerRef"
+            },
+            "maxItems": 2,
+            "description": "References to Host-reviewed MCP catalog entries. Runtime URLs, commands, headers, and credentials are never accepted or returned."
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/AgentSandboxConfig"
+          }
+        }
+      },
+      "DeletedResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ]
+      },
+      "LoopList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Loop"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Loop": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "nextRunAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "lastRunAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "agentId",
+          "name",
+          "prompt",
+          "intervalMinutes",
+          "enabled",
+          "nextRunAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "CreateLoopInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "prompt",
+          "intervalMinutes"
+        ]
+      },
+      "UpdateLoopInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "description": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "intervalMinutes": {
+            "type": "integer",
+            "minimum": 5
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "sess_abc123"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "loopId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "terminatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "agentId",
+          "status",
+          "agent",
+          "workspaceId",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "SessionStatus": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "running",
+          "terminated"
+        ]
+      },
+      "AgentFileList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentFileSummary"
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "AgentFileSummary": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "$ref": "#/components/schemas/AgentFileName"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "filename",
+          "updatedAt"
+        ]
+      },
+      "AgentFileName": {
+        "type": "string",
+        "enum": [
+          "IDENTITY",
+          "SOUL",
+          "USER",
+          "MEMORY"
+        ]
+      },
+      "AgentFile": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AgentFileSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "EquippedSkill": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "sourceSkillId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "sourceSkillId",
+          "updatedAt"
+        ]
+      },
+      "Skill": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "ownerType": {
+            "$ref": "#/components/schemas/SkillOwnerType"
+          },
+          "ownerId": {
+            "type": "string"
+          },
+          "sourceSkillId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "name",
+          "description",
+          "ownerType",
+          "ownerId",
+          "updatedAt"
+        ]
+      },
+      "SkillOwnerType": {
+        "type": "string",
+        "enum": [
+          "library",
+          "agent"
+        ]
+      },
+      "SkillList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillSummary"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "SkillSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "updatedAt"
+        ]
+      },
+      "SkillDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Skill"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "files"
+            ]
+          }
+        ]
+      },
+      "SkillFileList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "SkillFileContent": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      },
+      "ApiKeyList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyInfo"
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "ApiKeyInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "revokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Revocation time, or null while the key is active.",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "createdAt",
+          "revokedAt",
+          "usage"
+        ]
+      },
+      "TokenUsage": {
+        "type": "object",
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cache_hit_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "cache_read_tokens / input_tokens; null when input_tokens is zero."
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cache_read_tokens",
+          "cache_write_tokens",
+          "total_tokens",
+          "cache_hit_rate"
+        ]
+      },
+      "ApiKeyCreateResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "key": {
+            "type": "string",
+            "description": "Raw key returned once at creation time. Store it securely."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "createdAt",
+          "key"
+        ]
+      },
+      "ApiKeyRevoked": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "api_key_revoked"
+            ]
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ]
+      },
+      "Workspace": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "createdAt"
+        ]
+      },
+      "WorkspaceList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Workspace"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SessionList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "SessionUsage": {
+        "type": "object",
+        "properties": {
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage"
+          }
+        },
+        "required": [
+          "usage"
+        ]
+      },
+      "UserEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/UserEventType"
+          },
+          "data": {
+            "description": "Payload varies by event type."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "UserEventType": {
+        "type": "string",
+        "enum": [
+          "user.message",
+          "user.interrupt",
+          "user.tool_confirmation",
+          "user.custom_tool_result",
+          "user.define_outcome"
+        ]
+      },
+      "EventList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredEvent"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "StoredEvent": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          },
+          "data": {},
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "sessionThreadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "seq",
+          "type",
+          "ts",
+          "sessionThreadId"
+        ]
+      },
+      "ContentBlock": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TextBlock"
+          },
+          {
+            "$ref": "#/components/schemas/ImageBlock"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "text": "#/components/schemas/TextBlock",
+            "image": "#/components/schemas/ImageBlock"
+          }
+        }
+      },
+      "TextBlock": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ]
+      },
+      "ImageBlock": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "image"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "base64"
+                ]
+              },
+              "mediaType": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "mediaType",
+              "data"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "source"
+        ]
+      },
+      "PathResult": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "WorkspaceArtifactList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceArtifact"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "WorkspaceArtifact": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "updated_at"
+        ]
+      }
+    },
+    "parameters": {}
+  },
   "paths": {
     "/health": {
       "get": {
         "operationId": "healthCheck",
         "summary": "Health check",
-        "tags": ["System"],
+        "tags": [
+          "System"
+        ],
         "security": [],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "Server is healthy",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "status": { "type": "string", "example": "ok" }
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "Get the machine-readable OpenAPI contract",
+        "tags": [
+          "System"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "operationId": "registerUser",
+        "summary": "Register a User and create their Tenant",
+        "tags": [
+          "Authentication"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9_-]{3,32}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8
+                  },
+                  "inviteCode": {
+                    "type": "string"
                   }
+                },
+                "required": [
+                  "username",
+                  "password",
+                  "inviteCode"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Registration succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "token"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid username or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Registration is closed or invite code is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Username is already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "loginUser",
+        "summary": "Log in and issue a Tenant session token",
+        "tags": [
+          "Authentication"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "token"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mcp-catalog": {
+      "get": {
+        "operationId": "listManagedMcpCatalog",
+        "summary": "List Host-managed MCP catalog entries",
+        "description": "Returns safe metadata for MCP servers that may be equipped on an Agent. Runtime endpoints, commands, headers, and credentials are never exposed.",
+        "tags": [
+          "MCP Catalog"
+        ],
+        "responses": {
+          "200": {
+            "description": "Managed MCP catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedMcpCatalog"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -43,8 +1587,10 @@
     "/v1/agents": {
       "post": {
         "operationId": "createAgent",
-        "summary": "Create agent",
-        "tags": ["Agents"],
+        "summary": "Create an Agent",
+        "tags": [
+          "Agents"
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -60,15 +1606,29 @@
             "description": "Agent created",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Agent" }
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid Agent configuration",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -76,33 +1636,48 @@
       },
       "get": {
         "operationId": "listAgents",
-        "summary": "List agents",
-        "tags": ["Agents"],
+        "summary": "List Agents",
+        "tags": [
+          "Agents"
+        ],
         "parameters": [
           {
+            "schema": {
+              "type": "integer",
+              "example": 50,
+              "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50."
+            },
+            "required": false,
+            "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
             "name": "limit",
-            "in": "query",
-            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+            "in": "query"
           },
           {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
             "name": "cursor",
-            "in": "query",
-            "schema": { "type": "string" }
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Paginated list of agents",
+            "description": "Paginated Agent list",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Agent" } },
-                    "has_more": { "type": "boolean" },
-                    "next_cursor": { "type": "string" }
-                  },
-                  "required": ["data", "has_more"]
+                  "$ref": "#/components/schemas/AgentList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -113,25 +1688,48 @@
     "/v1/agents/{id}": {
       "get": {
         "operationId": "getAgent",
-        "summary": "Get agent",
-        "tags": ["Agents"],
+        "summary": "Get an Agent",
+        "tags": [
+          "Agents"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "responses": {
           "200": {
             "description": "Agent found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Agent" }
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "Agent not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -139,10 +1737,19 @@
       },
       "post": {
         "operationId": "updateAgent",
-        "summary": "Update agent",
-        "tags": ["Agents"],
+        "summary": "Update an Agent",
+        "tags": [
+          "Agents"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -159,23 +1766,39 @@
             "description": "Agent updated",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Agent" }
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid Agent configuration",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "Agent not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -183,10 +1806,19 @@
       },
       "delete": {
         "operationId": "deleteAgent",
-        "summary": "Delete agent",
-        "tags": ["Agents"],
+        "summary": "Delete an Agent",
+        "tags": [
+          "Agents"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "responses": {
           "200": {
@@ -194,46 +1826,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": { "type": "string", "example": "agent_deleted" },
-                    "id": { "type": "string" }
-                  }
+                  "$ref": "#/components/schemas/DeletedResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/mcp-catalog": {
-      "get": {
-        "operationId": "listMcpCatalog",
-        "summary": "List Host-managed MCP connections",
-        "description": "Returns safe connection metadata available to the authenticated Tenant only. Runtime commands, URLs, headers, and credentials are resolved by the Host and are not exposed by this endpoint. The Supabase entry is omitted unless the deployment explicitly allowlists this Tenant.",
-        "tags": ["MCP"],
-        "responses": {
-          "200": {
-            "description": "Host-managed MCP catalog",
+            "description": "Agent not found",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/ManagedMcpCatalogEntry" }
-                    }
-                  },
-                  "required": ["data"]
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -245,24 +1858,36 @@
       "get": {
         "operationId": "listAgentLoops",
         "summary": "List an Agent's Loops",
-        "tags": ["Loops"],
+        "tags": [
+          "Loops"
+        ],
         "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          }
         ],
         "responses": {
           "200": {
-            "description": "Loops owned by the Agent",
+            "description": "Agent Loops",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/Loop" }
-                    }
-                  },
-                  "required": ["data"]
+                  "$ref": "#/components/schemas/LoopList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -271,7 +1896,9 @@
             "description": "Agent not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -280,16 +1907,26 @@
       "post": {
         "operationId": "createAgentLoop",
         "summary": "Create a Loop for an Agent",
-        "description": "Creates a recurring instruction. Each trigger creates a fresh Session linked to this Loop. The minimum interval is five minutes.",
-        "tags": ["Loops"],
+        "tags": [
+          "Loops"
+        ],
         "parameters": [
-          { "name": "agentId", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateLoopInput" }
+              "schema": {
+                "$ref": "#/components/schemas/CreateLoopInput"
+              }
             }
           }
         },
@@ -298,15 +1935,29 @@
             "description": "Loop created",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Loop" }
+                "schema": {
+                  "$ref": "#/components/schemas/Loop"
+                }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid Loop configuration",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -314,7 +1965,9 @@
             "description": "Agent not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -325,16 +1978,37 @@
       "get": {
         "operationId": "getLoop",
         "summary": "Get a Loop",
-        "tags": ["Loops"],
+        "tags": [
+          "Loops"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "responses": {
           "200": {
             "description": "Loop found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Loop" }
+                "schema": {
+                  "$ref": "#/components/schemas/Loop"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -342,7 +2016,9 @@
             "description": "Loop not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -351,15 +2027,26 @@
       "post": {
         "operationId": "updateLoop",
         "summary": "Update a Loop",
-        "tags": ["Loops"],
+        "tags": [
+          "Loops"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UpdateLoopInput" }
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLoopInput"
+              }
             }
           }
         },
@@ -368,15 +2055,29 @@
             "description": "Loop updated",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Loop" }
+                "schema": {
+                  "$ref": "#/components/schemas/Loop"
+                }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid Loop configuration",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -384,7 +2085,9 @@
             "description": "Loop not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -395,17 +2098,38 @@
       "post": {
         "operationId": "runLoop",
         "summary": "Run a Loop immediately",
-        "description": "Creates a fresh Session linked to the Loop, queues the Loop prompt as its first user message, and starts the Agent Turn.",
-        "tags": ["Loops"],
+        "description": "Creates a Loop-owned Session immediately without changing the Loop's regular schedule.",
+        "tags": [
+          "Loops"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "responses": {
           "201": {
             "description": "Loop Session created",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -413,57 +2137,50 @@
             "description": "Loop not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
         }
       }
     },
-    "/v1/sessions": {
-      "post": {
-        "operationId": "createSession",
-        "summary": "Create session",
-        "tags": ["Sessions"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "agent": {
-                    "type": "string",
-                    "description": "Agent ID to bind this session to"
-                  },
-                  "workspace_id": {
-                    "type": "string",
-                    "description": "Optional existing or caller-chosen Workspace ID. The Host creates it idempotently when absent."
-                  },
-                  "workspace_name": {
-                    "type": "string",
-                    "description": "Optional name used when the Host creates the Workspace."
-                  }
-                },
-                "required": ["agent"]
-              }
-            }
+    "/v1/agents/{id}/files": {
+      "get": {
+        "operationId": "listAgentFiles",
+        "summary": "List an Agent's Files",
+        "tags": [
+          "Agents/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
           }
-        },
+        ],
         "responses": {
-          "201": {
-            "description": "Session created",
+          "200": {
+            "description": "Agent File metadata",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
+                "schema": {
+                  "$ref": "#/components/schemas/AgentFileList"
+                }
               }
             }
           },
-          "400": {
-            "description": "Validation error",
+          "401": {
+            "description": "Missing or invalid tenant credential",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -471,146 +2188,96 @@
             "description": "Agent not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "operationId": "listSessions",
-        "summary": "List sessions",
-        "tags": ["Sessions"],
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "agent_id",
-            "in": "query",
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "schema": { "type": "string", "enum": ["idle", "running", "terminated"] }
-          },
-          {
-            "name": "loop_id",
-            "in": "query",
-            "description": "Return only Sessions created by this Loop",
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "exclude_loop",
-            "in": "query",
-            "description": "Exclude Loop-owned Sessions before pagination; true cannot be combined with loop_id",
-            "schema": { "type": "boolean", "default": false }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Paginated list of sessions",
-            "content": {
-              "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Session" } },
-                    "has_more": { "type": "boolean" },
-                    "next_cursor": { "type": "string" }
-                  },
-                  "required": ["data", "has_more"]
+                  "$ref": "#/components/schemas/Error"
                 }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid exclude_loop value or loop_id/exclude_loop conflict",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
               }
             }
           }
         }
       }
     },
-    "/v1/sessions/{id}": {
+    "/v1/agents/{id}/files/{filename}": {
       "get": {
-        "operationId": "getSession",
-        "summary": "Get session",
-        "tags": ["Sessions"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        "operationId": "getAgentFile",
+        "summary": "Read an Agent File",
+        "tags": [
+          "Agents/Files"
         ],
-        "responses": {
-          "200": {
-            "description": "Session found",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
-              }
-            }
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
-              }
-            }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "filename",
+            "in": "path"
           }
-        }
-      },
-      "delete": {
-        "operationId": "terminateSession",
-        "summary": "Terminate session",
-        "tags": ["Sessions"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
           "200": {
-            "description": "Session terminated",
+            "description": "Agent File content",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": { "type": "string", "example": "session_terminated" },
-                    "id": { "type": "string" }
-                  }
+                  "$ref": "#/components/schemas/AgentFile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "Agent or Agent File not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
         }
-      }
-    },
-    "/v1/sessions/{id}/messages": {
+      },
       "post": {
-        "operationId": "sendMessage",
-        "summary": "Send message and stream response (SSE)",
-        "description": "Sends a user message to the session and returns a Server-Sent Events stream. The stream ends when session.status_idle is received.",
-        "tags": ["Messages"],
+        "operationId": "upsertAgentFile",
+        "summary": "Create or replace an Agent File",
+        "tags": [
+          "Agents/Files"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/AgentFileName"
+            },
+            "required": true,
+            "name": "filename",
+            "in": "path"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -620,36 +2287,1646 @@
                 "type": "object",
                 "properties": {
                   "content": {
-                    "oneOf": [
-                      { "type": "string", "minLength": 1 },
-                      {
-                        "type": "array",
-                        "items": { "$ref": "#/components/schemas/ContentBlock" },
-                        "minItems": 1
-                      }
-                    ],
-                    "description": "Message content — plain string or array of content blocks"
+                    "type": "string"
                   }
                 },
-                "required": ["content"]
+                "required": [
+                  "content"
+                ]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "SSE stream of session events",
+            "description": "Agent File stored",
             "content": {
-              "text/event-stream": {
-                "schema": { "type": "string" }
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentFile"
+                }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid Agent File name or content",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAgentFile",
+        "summary": "Delete an Agent File",
+        "tags": [
+          "Agents/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "filename",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent File deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "agent_file_deleted"
+                      ]
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "filename": {
+                      "$ref": "#/components/schemas/AgentFileName"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "agentId",
+                    "filename"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent or Agent File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}/skills": {
+      "get": {
+        "operationId": "listAgentSkills",
+        "summary": "List an Agent's equipped Skill Forks",
+        "tags": [
+          "Agents/Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Equipped Skill Forks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EquippedSkill"
+                      }
+                    },
+                    "has_more": {
+                      "type": "boolean",
+                      "enum": [
+                        false
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "has_more"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "equipAgentSkill",
+        "summary": "Equip a Library Skill by creating a Skill Fork",
+        "tags": [
+          "Agents/Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "skillId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "skillId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing Skill Fork returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Skill Fork created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "skillId is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent or Library Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}/skills/{skillId}": {
+      "delete": {
+        "operationId": "unequipAgentSkill",
+        "summary": "Unequip and delete an Agent's Skill Fork",
+        "tags": [
+          "Agents/Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "skillId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill unequipped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "skill_unequipped"
+                      ]
+                    },
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "skillId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "agentId",
+                    "skillId"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent or Skill Fork not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills": {
+      "post": {
+        "operationId": "uploadSkills",
+        "summary": "Upload one or more Library Skills",
+        "description": "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths.",
+        "tags": [
+          "Skills"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "paths": {
+                    "type": "string",
+                    "example": "[\"my-skill/SKILL.md\"]"
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "paths",
+                  "files"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Library Skills created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Skill"
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid multipart Skill tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listSkills",
+        "summary": "List Library Skills",
+        "tags": [
+          "Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 50,
+              "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50."
+            },
+            "required": false,
+            "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated Library Skill list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills/{id}": {
+      "get": {
+        "operationId": "getSkill",
+        "summary": "Get Skill metadata and file paths",
+        "tags": [
+          "Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateSkill",
+        "summary": "Update Skill metadata",
+        "tags": [
+          "Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Skill updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Skill metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSkill",
+        "summary": "Delete a Library Skill",
+        "tags": [
+          "Skills"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills/{id}/files": {
+      "get": {
+        "operationId": "listSkillFiles",
+        "summary": "List a Skill's file paths",
+        "tags": [
+          "Skills/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill file paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFileList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills/{id}/files/content": {
+      "get": {
+        "operationId": "getSkillFileContent",
+        "summary": "Read a Skill text file",
+        "tags": [
+          "Skills/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "src/index.ts"
+            },
+            "required": true,
+            "name": "path",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill file content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFileContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or missing path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "putSkillFileContent",
+        "summary": "Create or replace a Skill text file",
+        "tags": [
+          "Skills/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillFileContent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Skill file stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFileContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSkillFileContent",
+        "summary": "Delete a Skill file",
+        "tags": [
+          "Skills/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "src/index.ts"
+            },
+            "required": true,
+            "name": "path",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill file deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "skill_file_deleted"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "path"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or missing path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/skills/{id}/files/rename": {
+      "post": {
+        "operationId": "renameSkillFile",
+        "summary": "Rename or move a Skill file",
+        "tags": [
+          "Skills/Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Skill file renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "skill_file_renamed"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "from",
+                    "to"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid source or destination path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Skill or source file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/api-keys": {
+      "get": {
+        "operationId": "listApiKeys",
+        "summary": "List API keys and their token usage",
+        "tags": [
+          "API Keys"
+        ],
+        "responses": {
+          "200": {
+            "description": "API keys with cumulative usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Token usage service is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createApiKey",
+        "summary": "Create an API key",
+        "description": "The raw key is returned only once.",
+        "tags": [
+          "API Keys"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API key created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreateResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid key name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/api-keys/{id}": {
+      "delete": {
+        "operationId": "revokeApiKey",
+        "summary": "Revoke an API key",
+        "description": "Stops authentication immediately while retaining the key identity and historical token usage for auditability.",
+        "tags": [
+          "API Keys"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API key revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyRevoked"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "API key not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces": {
+      "post": {
+        "operationId": "createWorkspace",
+        "summary": "Create or idempotently return a Workspace",
+        "tags": [
+          "Workspaces"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "deprecated": true
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Workspace created or returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Workspace metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listWorkspaces",
+        "summary": "List Workspaces",
+        "tags": [
+          "Workspaces"
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant Workspaces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "get": {
+        "operationId": "getWorkspace",
+        "summary": "Get a Workspace",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateWorkspace",
+        "summary": "Rename a Workspace",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Workspace name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "post": {
+        "operationId": "createSession",
+        "summary": "Create a Session",
+        "tags": [
+          "Sessions"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "workspace_id": {
+                    "type": "string"
+                  },
+                  "workspace_name": {
+                    "type": "string"
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "deprecated": true
+                  },
+                  "workspaceName": {
+                    "type": "string",
+                    "deprecated": true
+                  }
+                },
+                "required": [
+                  "agent"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Session input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listSessions",
+        "summary": "List Sessions",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "example": 50,
+              "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50."
+            },
+            "required": false,
+            "description": "Positive values are capped at 100; invalid or non-positive values use the default of 50.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "agent_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "loop_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Set to true to exclude Loop-owned Sessions. Cannot be combined with loop_id."
+            },
+            "required": false,
+            "description": "Set to true to exclude Loop-owned Sessions. Cannot be combined with loop_id.",
+            "name": "exclude_loop",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/SessionStatus"
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated Session list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Session list filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "operationId": "getSession",
+        "summary": "Get a Session",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -657,7 +3934,120 @@
             "description": "Session not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "terminateSession",
+        "summary": "Terminate a Session",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session terminated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/usage": {
+      "get": {
+        "operationId": "getSessionUsage",
+        "summary": "Get a Session's live token usage",
+        "description": "Aggregates durable model-request usage for the Session. cache_hit_rate is cache_read_tokens / input_tokens and is null when input_tokens is zero.",
+        "tags": [
+          "Sessions/Usage"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current Session token usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionUsage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Token usage service is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -666,12 +4056,21 @@
     },
     "/v1/sessions/{id}/events": {
       "post": {
-        "operationId": "appendEvents",
-        "summary": "Append user events",
-        "description": "Append one or more user events to the session. Supported types: user.message, user.interrupt, user.tool_confirmation, user.custom_tool_result, user.define_outcome.",
-        "tags": ["Events"],
+        "operationId": "appendSessionEvents",
+        "summary": "Append User events to a Session",
+        "description": "Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch. Every accepted batch returns the same acknowledgement shape; interrupted is true only for user.interrupt.",
+        "tags": [
+          "Sessions/Events"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
         ],
         "requestBody": {
           "required": true,
@@ -682,11 +4081,15 @@
                 "properties": {
                   "events": {
                     "type": "array",
-                    "items": { "$ref": "#/components/schemas/UserEvent" },
+                    "items": {
+                      "$ref": "#/components/schemas/UserEvent"
+                    },
                     "minItems": 1
                   }
                 },
-                "required": ["events"]
+                "required": [
+                  "events"
+                ]
               }
             }
           }
@@ -699,18 +4102,41 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "accepted": { "type": "boolean" },
-                    "interrupted": { "type": "boolean" }
-                  }
+                    "accepted": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "interrupted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "accepted",
+                    "interrupted"
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid or unsupported event batch",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -718,69 +4144,126 @@
             "description": "Session not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Session is terminated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
         }
       },
       "get": {
-        "operationId": "getEvents",
-        "summary": "Get events (JSON or SSE stream)",
-        "description": "When Accept: text/event-stream, returns a live SSE stream. Otherwise returns paginated JSON. Use replay=1 or Last-Event-ID header to replay historical events before live stream.",
-        "tags": ["Events"],
+        "operationId": "listSessionEvents",
+        "summary": "List Complete Events or open an SSE stream",
+        "description": "Send Accept: text/event-stream for live delivery. Last-Event-ID or replay=1 enables durable replay; include=chunks includes live Deltas.",
+        "tags": [
+          "Sessions/Events"
+        ],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
           {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer"
+            },
+            "required": false,
             "name": "after_seq",
-            "in": "query",
-            "description": "Return events after this sequence number (JSON mode)",
-            "schema": { "type": "integer" }
+            "in": "query"
           },
           {
+            "schema": {
+              "type": "integer"
+            },
+            "required": false,
             "name": "limit",
-            "in": "query",
-            "description": "Max events to return (JSON mode)",
-            "schema": { "type": "integer", "default": 50 }
+            "in": "query"
           },
           {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
             "name": "replay",
-            "in": "query",
-            "description": "Set to 1 to replay historical events before live stream (SSE mode)",
-            "schema": { "type": "string", "enum": ["1"] }
+            "in": "query"
           },
           {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
             "name": "include",
-            "in": "query",
-            "description": "Set to 'chunks' to include streaming chunk events (SSE mode)",
-            "schema": { "type": "string", "enum": ["chunks"] }
+            "in": "query"
           },
           {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "Accept",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
             "name": "Last-Event-ID",
-            "in": "header",
-            "description": "Resume from this event ID (SSE mode)",
-            "schema": { "type": "string" }
+            "in": "header"
           }
         ],
         "responses": {
           "200": {
-            "description": "Events (JSON or SSE depending on Accept header)",
+            "description": "Complete Event page or Server-Sent Event stream",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Accel-Buffering": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/StoredEvent" }
-                    },
-                    "has_more": { "type": "boolean" }
-                  },
-                  "required": ["data", "has_more"]
+                  "$ref": "#/components/schemas/EventList"
                 }
               },
               "text/event-stream": {
-                "schema": { "type": "string" }
+                "schema": {
+                  "type": "string",
+                  "description": "SSE frames containing event, id, and JSON data fields.",
+                  "example": "event: agent.message\nid: 42\ndata: {\"content\":[{\"type\":\"text\",\"text\":\"Hello\"}]}\n\n"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -788,43 +4271,34 @@
             "description": "Session not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
         }
       }
     },
-    "/v1/api-keys": {
-      "get": {
-        "operationId": "listApiKeys",
-        "summary": "List API keys",
-        "tags": ["API Keys"],
-        "responses": {
-          "200": {
-            "description": "List of API keys (secrets are not returned)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/ApiKeyInfo" }
-                    },
-                    "has_more": { "type": "boolean" }
-                  },
-                  "required": ["data", "has_more"]
-                }
-              }
-            }
-          }
-        }
-      },
+    "/v1/sessions/{id}/messages": {
       "post": {
-        "operationId": "createApiKey",
-        "summary": "Create API key",
-        "tags": ["API Keys"],
+        "operationId": "sendSessionMessage",
+        "summary": "Send a message and stream the Turn response",
+        "description": "Legacy same-request SSE interface. New clients should append user.message through /events.",
+        "deprecated": true,
+        "tags": [
+          "Sessions/Messages"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -832,71 +4306,783 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "name": { "type": "string" }
+                  "content": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/ContentBlock"
+                        },
+                        "minItems": 1
+                      }
+                    ]
+                  }
                 },
-                "required": ["name"]
+                "required": [
+                  "content"
+                ]
               }
             }
           }
         },
         "responses": {
-          "201": {
-            "description": "API key created (raw key only returned once)",
+          "200": {
+            "description": "Server-Sent Event stream for this Turn",
             "content": {
-              "application/json": {
+              "text/event-stream": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": { "type": "string" },
-                    "name": { "type": "string" },
-                    "key": { "type": "string", "description": "Full API key — only returned at creation time" },
-                    "prefix": { "type": "string" },
-                    "createdAt": { "type": "string", "format": "date-time" }
-                  },
-                  "required": ["id", "name", "key", "prefix", "createdAt"]
+                  "type": "string",
+                  "description": "SSE frames for the Turn."
                 }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Message content is empty or invalid",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Session is terminated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
         }
       }
     },
-    "/v1/api-keys/{id}": {
-      "delete": {
-        "operationId": "deleteApiKey",
-        "summary": "Delete API key",
-        "tags": ["API Keys"],
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+    "/v1/sessions/{id}/workspace/files/content": {
+      "put": {
+        "operationId": "writeWorkspaceFile",
+        "summary": "Create or replace a Workspace text file",
+        "tags": [
+          "Sessions/Workspace Files"
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "content"
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Key deleted",
+            "description": "Workspace file stored",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "type": { "type": "string", "example": "api_key_deleted" },
-                    "id": { "type": "string" }
-                  }
+                  "$ref": "#/components/schemas/PathResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path or content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "Session not found",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Error" }
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Workspace is locked while the Agent is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWorkspaceFile",
+        "summary": "Delete a Workspace file",
+        "tags": [
+          "Sessions/Workspace Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "src/index.ts"
+            },
+            "required": true,
+            "name": "path",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace file deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "workspace_file_deleted"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "path"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or missing path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Workspace is locked while the Agent is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/workspace/files/rename": {
+      "post": {
+        "operationId": "renameWorkspaceFile",
+        "summary": "Rename or move a Workspace file",
+        "tags": [
+          "Sessions/Workspace Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace file renamed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "workspace_file_renamed"
+                      ]
+                    },
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "from",
+                    "to"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid source or destination path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or source file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Workspace is locked while the Agent is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/workspace/files/upload": {
+      "post": {
+        "operationId": "uploadWorkspaceFiles",
+        "summary": "Upload Workspace files",
+        "description": "For one file, path may name the exact target. Otherwise each uploaded filename is joined to destDir.",
+        "tags": [
+          "Sessions/Workspace Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "format": "binary"
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "destDir": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "file"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "binary"
+                        },
+                        "minItems": 1
+                      },
+                      "path": {
+                        "type": "string"
+                      },
+                      "destDir": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "files"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Uploaded file paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PathResult"
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid multipart body or target path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Workspace is locked while the Agent is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/workspace/preview-url": {
+      "get": {
+        "operationId": "createWorkspacePreviewUrl",
+        "summary": "Create a signed Workspace file preview URL",
+        "tags": [
+          "Sessions/Workspace Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "src/index.ts"
+            },
+            "required": true,
+            "name": "path",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 600,
+              "description": "Clamped to the inclusive range 60–900 seconds."
+            },
+            "required": false,
+            "description": "Clamped to the inclusive range 60–900 seconds.",
+            "name": "expiresIn",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed read URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "expiresIn": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "expiresIn"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Storage adapter cannot create a reachable signed URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/workspace/files": {
+      "get": {
+        "operationId": "listWorkspaceFiles",
+        "summary": "List Workspace files",
+        "tags": [
+          "Sessions/Workspace Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "prefix",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace file metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceArtifactList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid prefix",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/workspace/files/{path}": {
+      "get": {
+        "operationId": "getWorkspaceFile",
+        "summary": "Preview or download a Workspace file",
+        "description": "path is a greedy Workspace-relative path and may contain '/'. The Hono runtime adapts this OpenAPI path template to its wildcard route.",
+        "tags": [
+          "Sessions/Workspace Files"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "renders/preview.png"
+            },
+            "required": true,
+            "name": "path",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "required": false,
+            "name": "download",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes; the actual Content-Type is the stored media type",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid file path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
@@ -904,317 +5090,5 @@
       }
     }
   },
-  "components": {
-    "securitySchemes": {
-      "ApiKeyAuth": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-api-key",
-        "description": "API key for tenant authentication. Set AUTH_DISABLED=true in dev to bypass."
-      }
-    },
-    "schemas": {
-      "Error": {
-        "type": "object",
-        "properties": {
-          "error": { "type": "string" }
-        },
-        "required": ["error"]
-      },
-      "Runtime": {
-        "type": "string",
-        "enum": ["claude-code", "codex", "pi-agent"]
-      },
-      "ToolConfig": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "inputSchema": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        },
-        "required": ["name", "inputSchema"]
-      },
-      "ManagedMcpServerRef": {
-        "type": "object",
-        "properties": {
-          "catalogId": {
-            "type": "string",
-            "description": "ID returned by GET /v1/mcp-catalog",
-            "example": "aliyun-rds-supabase"
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
-            "description": "Configurable name for this Agent's MCP connection"
-          },
-          "description": {
-            "type": "string",
-            "maxLength": 500,
-            "description": "Configurable human-readable description for this Agent's MCP connection"
-          }
-        },
-        "required": ["catalogId", "name"],
-        "additionalProperties": false
-      },
-      "ManagedMcpCatalogEntry": {
-        "type": "object",
-        "description": "Safe metadata for a Host-reviewed MCP connection. Connection and credential details are intentionally omitted.",
-        "properties": {
-          "id": { "type": "string", "example": "aliyun-rds-supabase" },
-          "defaultName": { "type": "string", "example": "aliyun-rds-supabase" },
-          "defaultDescription": {
-            "type": "string",
-            "example": "Read recent tenant-scoped Sessions and bounded events from Alibaba Cloud Supabase."
-          },
-          "transport": { "type": "string", "enum": ["streamable-http", "stdio"] },
-          "configurable": {
-            "type": "array",
-            "description": "Agent-level metadata fields callers may customize",
-            "items": { "type": "string", "enum": ["name", "description"] },
-            "minItems": 2,
-            "maxItems": 2,
-            "uniqueItems": true,
-            "example": ["name", "description"]
-          },
-          "requiredEnv": {
-            "type": "array",
-            "description": "Names of environment variables the Host must provide. Values are never returned.",
-            "items": { "type": "string" }
-          }
-        },
-        "required": ["id", "defaultName", "defaultDescription", "transport", "configurable", "requiredEnv"]
-      },
-      "AgentSandboxConfig": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "image": {
-            "type": "string",
-            "example": "open-managed-agents/sandbox:latest"
-          },
-          "env": {
-            "type": "object",
-            "additionalProperties": { "type": "string" },
-            "description": "Environment variables injected into the Agent sandbox at create time (e.g. a CLI token). Never enters the model context or event log.",
-            "example": { "VFS_TOKEN": "<token>" }
-          }
-        },
-        "required": ["enabled"]
-      },
-      "ContentBlock": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "type": { "type": "string", "const": "text" },
-              "text": { "type": "string" }
-            },
-            "required": ["type", "text"]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "type": { "type": "string", "const": "image" },
-              "source": {
-                "type": "object",
-                "properties": {
-                  "type": { "type": "string", "const": "base64" },
-                  "mediaType": { "type": "string" },
-                  "data": { "type": "string" }
-                },
-                "required": ["type", "mediaType", "data"]
-              }
-            },
-            "required": ["type", "source"]
-          }
-        ]
-      },
-      "CreateAgentInput": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string" },
-          "model": { "type": "string", "example": "claude-sonnet-4-6-20250514" },
-          "system": { "type": "string", "description": "System prompt" },
-          "runtime": { "$ref": "#/components/schemas/Runtime" },
-          "tools": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/ToolConfig" }
-          },
-          "mcpServers": {
-            "type": "array",
-            "description": "Host-managed references currently available to the authenticated Tenant",
-            "items": { "$ref": "#/components/schemas/ManagedMcpServerRef" }
-          },
-          "skills": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "sandbox": { "$ref": "#/components/schemas/AgentSandboxConfig" }
-        },
-        "required": ["name", "model", "system", "runtime"]
-      },
-      "UpdateAgentInput": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string" },
-          "model": { "type": "string" },
-          "system": { "type": "string" },
-          "runtime": { "$ref": "#/components/schemas/Runtime" },
-          "tools": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/ToolConfig" }
-          },
-          "mcpServers": {
-            "type": "array",
-            "description": "Host-managed references currently available to the authenticated Tenant",
-            "items": { "$ref": "#/components/schemas/ManagedMcpServerRef" }
-          },
-          "skills": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "sandbox": { "$ref": "#/components/schemas/AgentSandboxConfig" }
-        }
-      },
-      "Agent": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "example": "agent_abc123" },
-          "tenantId": { "type": "string" },
-          "name": { "type": "string" },
-          "model": { "type": "string" },
-          "system": { "type": "string" },
-          "runtime": { "$ref": "#/components/schemas/Runtime" },
-          "tools": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/ToolConfig" }
-          },
-          "mcpServers": {
-            "type": "array",
-            "description": "Host-managed references; private connection details are never returned",
-            "items": { "$ref": "#/components/schemas/ManagedMcpServerRef" }
-          },
-          "skills": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "sandbox": { "$ref": "#/components/schemas/AgentSandboxConfig" },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
-        },
-        "required": ["id", "tenantId", "name", "model", "system", "runtime", "createdAt", "updatedAt"]
-      },
-      "CreateLoopInput": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "description": { "type": "string" },
-          "prompt": { "type": "string", "minLength": 1 },
-          "intervalMinutes": {
-            "type": "integer",
-            "minimum": 5,
-            "description": "Recurring interval in minutes"
-          },
-          "enabled": { "type": "boolean", "default": true }
-        },
-        "required": ["name", "prompt", "intervalMinutes"]
-      },
-      "UpdateLoopInput": {
-        "type": "object",
-        "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "description": { "type": "string" },
-          "prompt": { "type": "string", "minLength": 1 },
-          "intervalMinutes": { "type": "integer", "minimum": 5 },
-          "enabled": { "type": "boolean" }
-        }
-      },
-      "Loop": {
-        "type": "object",
-        "description": "An Agent-owned recurring instruction. Each trigger creates a fresh Session linked by loopId.",
-        "properties": {
-          "id": { "type": "string", "example": "loop_abc123" },
-          "tenantId": { "type": "string" },
-          "agentId": { "type": "string" },
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "prompt": { "type": "string" },
-          "intervalMinutes": { "type": "integer", "minimum": 5 },
-          "enabled": { "type": "boolean" },
-          "nextRunAt": { "type": "string", "format": "date-time" },
-          "lastRunAt": { "type": "string", "format": "date-time" },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
-        },
-        "required": ["id", "tenantId", "agentId", "name", "prompt", "intervalMinutes", "enabled", "nextRunAt", "createdAt", "updatedAt"]
-      },
-      "Session": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "example": "sess_abc123" },
-          "tenantId": { "type": "string" },
-          "agentId": { "type": "string" },
-          "title": {
-            "type": "string",
-            "description": "Optional snapshot derived from the first user message, or the Loop name for Loop-created Sessions"
-          },
-          "workspaceId": {
-            "type": "string",
-            "description": "Immutable Workspace bound to this Session"
-          },
-          "loopId": {
-            "type": "string",
-            "description": "Present only when this Session was automatically created by a Loop trigger"
-          },
-          "status": { "type": "string", "enum": ["idle", "running", "terminated"] },
-          "agent": { "$ref": "#/components/schemas/Agent" },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" },
-          "terminatedAt": { "type": "string", "format": "date-time" }
-        },
-        "required": ["id", "tenantId", "agentId", "status", "agent", "workspaceId", "createdAt", "updatedAt"]
-      },
-      "UserEvent": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": ["user.message", "user.interrupt", "user.tool_confirmation", "user.custom_tool_result", "user.define_outcome"]
-          },
-          "data": {
-            "type": "object",
-            "description": "Event payload — schema varies by type"
-          }
-        },
-        "required": ["type", "data"]
-      },
-      "StoredEvent": {
-        "type": "object",
-        "properties": {
-          "sessionId": { "type": "string" },
-          "seq": { "type": "integer" },
-          "type": { "type": "string" },
-          "data": {},
-          "ts": { "type": "string", "format": "date-time" },
-          "sessionThreadId": { "type": "string" }
-        },
-        "required": ["sessionId", "seq", "type", "data", "ts", "sessionThreadId"]
-      },
-      "ApiKeyInfo": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
-          "prefix": { "type": "string", "description": "First few characters of the key for identification" },
-          "createdAt": { "type": "string", "format": "date-time" }
-        },
-        "required": ["id", "name", "prefix", "createdAt"]
-      }
-    }
-  }
+  "webhooks": {}
 }

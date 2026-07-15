@@ -23,7 +23,18 @@ describe("SdkEventTranslator", () => {
 
   describe("text-only turn", () => {
     const messages: SdkMessage[] = [
-      { type: "message_start", message: { id: "msg_001", model: "claude-sonnet-4-20250514" } },
+      {
+        type: "message_start",
+        message: {
+          id: "msg_001",
+          model: "claude-sonnet-4-20250514",
+          usage: {
+            input_tokens: 60,
+            cache_read_input_tokens: 30,
+            cache_creation_input_tokens: 10,
+          },
+        },
+      },
       { type: "content_block_start", index: 0, content_block: { type: "text" } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " world" } },
@@ -78,7 +89,12 @@ describe("SdkEventTranslator", () => {
       const events = processAll(messages);
       const endEvent = events.find((e) => e.type === "span.model_request_end") as any;
       expect(endEvent).toBeDefined();
-      expect(endEvent.usage).toEqual({ inputTokens: 0, outputTokens: 10 });
+      expect(endEvent.usage).toEqual({
+        inputTokens: 100,
+        outputTokens: 10,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 10,
+      });
     });
 
     it("emits events in correct order", () => {

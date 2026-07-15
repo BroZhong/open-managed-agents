@@ -115,7 +115,14 @@ export interface AgentMcpToolUseEvent extends SessionEvent {
 
 export interface SpanModelRequestEndEvent extends SessionEvent {
   type: "span.model_request_end";
-  data: { usage: { inputTokens: number; outputTokens: number } };
+  data: {
+    usage: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+    };
+  };
 }
 
 export type TypedSessionEvent =

@@ -1,0 +1,109 @@
+name: Usage accounting
+
+on:
+  pull_request:
+    paths:
+      - "adapter/**"
+      - "deploy/Dockerfile.server"
+      - "deploy/Dockerfile.web"
+      - "deploy/k8s.yaml"
+      - "deploy/migrations/**"
+      - "deploy/patch-*.mjs"
+      - "deploy/*.test.mjs"
+      - "server/packages/api/**"
+      - "server/packages/session-router/**"
+      - "server/packages/store/**"
+      - "server/packages/store-memory/**"
+      - "server/pnpm-lock.yaml"
+      - "web/src/**"
+      - "web/pnpm-lock.yaml"
+      - ".github/workflows/usage-accounting.yml"
+  push:
+    branches: [main]
+    paths:
+      - "adapter/**"
+      - "deploy/Dockerfile.server"
+      - "deploy/Dockerfile.web"
+      - "deploy/k8s.yaml"
+      - "deploy/migrations/**"
+      - "deploy/patch-*.mjs"
+      - "deploy/*.test.mjs"
+      - "server/packages/api/**"
+      - "server/packages/session-router/**"
+      - "server/packages/store/**"
+      - "server/packages/store-memory/**"
+      - "server/pnpm-lock.yaml"
+      - "web/src/**"
+      - "web/pnpm-lock.yaml"
+      - ".github/workflows/usage-accounting.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+      - run: pnpm --dir server install --frozen-lockfile
+      - name: Test durable attribution and aggregation
+        run: >-
+          pnpm --dir server --workspace-concurrency=1
+          --filter @oma-server/store
+          --filter @oma-server/store-memory
+          --filter @oma-server/session-router
+          --filter @oma-server/api test
+      - name: Type-check the accounting path
+        run: >-
+          pnpm --dir server --workspace-concurrency=1
+          --filter @oma-server/store
+          --filter @oma-server/store-memory
+          --filter @oma-server/session-router
+          --filter @oma-server/api typecheck
+
+  adapter-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: adapter/pnpm-lock.yaml
+      - run: pnpm --dir adapter install --frozen-lockfile
+      - name: Test provider usage translation
+        run: pnpm --dir adapter test
+      - name: Type-check adapters
+        run: pnpm --dir adapter typecheck
+      - name: Test deployment overlays and migration inventory
+        run: node --test deploy/*.test.mjs
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - name: Test usage presentation and live event reduction
+        run: pnpm --dir web test -- --maxWorkers=1
+      - name: Build Web console
+        run: pnpm --dir web build

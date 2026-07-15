@@ -233,6 +233,114 @@ describe("PgEventLogStore", () => {
     expect(result.hasMore).toBe(false);
   });
 
+  it("aggregates durable model usage independently by Session and API key", async () => {
+    await store.append("sess_1", {
+      type: "span.model_request_end",
+      data: {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadTokens: 40,
+          cacheWriteTokens: 10,
+        },
+      },
+      sessionThreadId: "thread_1",
+      apiKeyId: "apikey_1",
+    });
+    await store.append("sess_1", {
+      type: "span.model_request_end",
+      data: {
+        usage: {
+          inputTokens: 50,
+          outputTokens: 5,
+          cacheReadTokens: 10,
+          cacheWriteTokens: 0,
+        },
+      },
+      sessionThreadId: "thread_1",
+      apiKeyId: "apikey_2",
+    });
+    await store.append("sess_2", {
+      type: "span.model_request_end",
+      data: {
+        usage: {
+          inputTokens: 25,
+          outputTokens: 3,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      },
+      sessionThreadId: "thread_1",
+      apiKeyId: "apikey_1",
+    });
+
+    await expect(store.getUsage({ sessionId: "sess_1" })).resolves.toEqual({
+      inputTokens: 150,
+      outputTokens: 25,
+      cacheReadTokens: 50,
+      cacheWriteTokens: 10,
+      totalTokens: 175,
+      cacheHitRate: 1 / 3,
+    });
+    await expect(store.getUsage({ apiKeyId: "apikey_1" })).resolves.toEqual({
+      inputTokens: 125,
+      outputTokens: 23,
+      cacheReadTokens: 40,
+      cacheWriteTokens: 10,
+      totalTokens: 148,
+      cacheHitRate: 0.32,
+    });
+    const byKey = await store.getUsageByApiKeyIds(["apikey_1", "apikey_2", "apikey_empty"]);
+    expect(byKey.get("apikey_1")).toEqual({
+      inputTokens: 125,
+      outputTokens: 23,
+      cacheReadTokens: 40,
+      cacheWriteTokens: 10,
+      totalTokens: 148,
+      cacheHitRate: 0.32,
+    });
+    expect(byKey.get("apikey_2")).toEqual({
+      inputTokens: 50,
+      outputTokens: 5,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 0,
+      totalTokens: 55,
+      cacheHitRate: 0.2,
+    });
+    expect(byKey.get("apikey_empty")).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      cacheHitRate: null,
+    });
+  });
+
+  it("returns a null cache hit rate when no input tokens were recorded", async () => {
+    await store.append("sess_1", {
+      type: "span.model_request_end",
+      data: {
+        usage: {
+          inputTokens: 0,
+          outputTokens: 7,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      },
+      sessionThreadId: "thread_1",
+    });
+
+    await expect(store.getUsage({ sessionId: "sess_1" })).resolves.toEqual({
+      inputTokens: 0,
+      outputTokens: 7,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 7,
+      cacheHitRate: null,
+    });
+  });
+
   it("does not swallow a non-unique SQL failure merely because an idempotency key exists", async () => {
     const failure = Object.assign(new Error("statement timeout"), { code: "57014" });
     let lookedUpExisting = false;

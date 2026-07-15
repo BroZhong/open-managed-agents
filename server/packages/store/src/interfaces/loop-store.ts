@@ -35,6 +35,15 @@ export interface LoopStore {
    * Session, and first pending user Turn before advancing its schedule.
    */
   dispatchDue(now: Date, limit: number): Promise<LoopDispatch[]>;
-  /** Create one Session immediately without changing the recurring cadence. */
-  dispatchNow(id: string, tenantId: string, now: Date): Promise<LoopDispatch | null>;
+  /**
+   * Create one Session immediately without changing the recurring cadence.
+   * When the request was authenticated with an API key, retain that key on
+   * the first pending Turn so downstream token usage can be attributed.
+   */
+  dispatchNow(
+    id: string,
+    tenantId: string,
+    now: Date,
+    apiKeyId?: string,
+  ): Promise<LoopDispatch | null>;
 }

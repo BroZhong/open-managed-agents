@@ -29,22 +29,24 @@ export class InMemoryApiKeyStore implements ApiKeyStore {
 
   async validate(rawKey: string): Promise<ApiKey | null> {
     const hash = hashKey(rawKey);
-    return this.keys.find((k) => k.keyHash === hash) ?? null;
+    return this.keys.find((k) => k.keyHash === hash && k.revokedAt === undefined) ?? null;
   }
 
-  async findByKeyHash(keyHash: string): Promise<{ tenantId: string } | null> {
-    const key = this.keys.find((k) => k.keyHash === keyHash);
-    return key ? { tenantId: key.tenantId } : null;
+  async findByKeyHash(keyHash: string): Promise<{ tenantId: string; apiKeyId: string } | null> {
+    const key = this.keys.find((k) => k.keyHash === keyHash && k.revokedAt === undefined);
+    return key ? { tenantId: key.tenantId, apiKeyId: key.id } : null;
   }
 
   async list(tenantId: string): Promise<ApiKey[]> {
     return this.keys.filter((k) => k.tenantId === tenantId);
   }
 
-  async delete(id: string): Promise<boolean> {
-    const idx = this.keys.findIndex((k) => k.id === id);
-    if (idx < 0) return false;
-    this.keys.splice(idx, 1);
+  async revoke(tenantId: string, id: string): Promise<boolean> {
+    const key = this.keys.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === id && candidate.revokedAt === undefined,
+    );
+    if (!key) return false;
+    key.revokedAt = new Date();
     return true;
   }
 }

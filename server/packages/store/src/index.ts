@@ -8,6 +8,7 @@ export type {
   Session,
   SessionStatus,
   StoredEvent,
+  TokenUsageSummary,
   ApiKey,
   User,
   PaginatedResult,
@@ -16,6 +17,11 @@ export type {
   Loop,
   LoopDispatch,
 } from "./types.js";
+
+export {
+  summarizeTokenUsage,
+  type TokenUsageCounts,
+} from "./token-usage.js";
 
 export type {
   AgentStore,
@@ -62,6 +68,7 @@ export type {
   EventLogIngressStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
+  EventLogUsageScope,
 } from "./interfaces/event-log-store.js";
 
 export type {
