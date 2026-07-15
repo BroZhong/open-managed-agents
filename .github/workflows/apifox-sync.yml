@@ -46,6 +46,8 @@ jobs:
           APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
           APIFOX_EXPECTED_PROJECT_NAME: ${{ vars.APIFOX_EXPECTED_PROJECT_NAME }}
           APIFOX_EXPECTED_TEAM_ID: ${{ vars.APIFOX_EXPECTED_TEAM_ID }}
+          APIFOX_MAX_ENDPOINT_DELETIONS: ${{ vars.APIFOX_MAX_ENDPOINT_DELETIONS }}
+          APIFOX_MAX_SCHEMA_DELETIONS: ${{ vars.APIFOX_MAX_SCHEMA_DELETIONS }}
           APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
           APIFOX_DOCS_URL: ${{ vars.APIFOX_DOCS_URL }}
           APIFOX_RUNNER_ID: ${{ vars.APIFOX_RUNNER_ID }}
@@ -57,6 +59,14 @@ jobs:
           fi
           if [[ -n "$APIFOX_EXPECTED_TEAM_ID" && ! "$APIFOX_EXPECTED_TEAM_ID" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::APIFOX_EXPECTED_TEAM_ID must be a positive integer when configured."
+            exit 1
+          fi
+          if [[ -n "$APIFOX_MAX_ENDPOINT_DELETIONS" && ! "$APIFOX_MAX_ENDPOINT_DELETIONS" =~ ^[0-9]+$ ]]; then
+            echo "::error::APIFOX_MAX_ENDPOINT_DELETIONS must be a non-negative integer when configured."
+            exit 1
+          fi
+          if [[ -n "$APIFOX_MAX_SCHEMA_DELETIONS" && ! "$APIFOX_MAX_SCHEMA_DELETIONS" =~ ^[0-9]+$ ]]; then
+            echo "::error::APIFOX_MAX_SCHEMA_DELETIONS must be a non-negative integer when configured."
             exit 1
           fi
           if [[ ! "$APIFOX_DOCS_URL" =~ ^https://[^[:space:]]+$ ]]; then
@@ -127,6 +137,8 @@ jobs:
           APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
           APIFOX_EXPECTED_PROJECT_NAME: ${{ vars.APIFOX_EXPECTED_PROJECT_NAME }}
           APIFOX_EXPECTED_TEAM_ID: ${{ vars.APIFOX_EXPECTED_TEAM_ID }}
+          APIFOX_MAX_ENDPOINT_DELETIONS: ${{ vars.APIFOX_MAX_ENDPOINT_DELETIONS }}
+          APIFOX_MAX_SCHEMA_DELETIONS: ${{ vars.APIFOX_MAX_SCHEMA_DELETIONS }}
         run: |
           project_file="$RUNNER_TEMP/apifox-project.json"
           npx --yes apifox-cli@2.2.7 project get "$APIFOX_PROJECT_ID" \
@@ -153,16 +165,14 @@ jobs:
           APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
           APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
         run: >-
-          npx --yes apifox-cli@2.2.7 import
-          --project "$APIFOX_PROJECT_ID"
-          --format openapi
-          --file "$RUNNER_TEMP/openapi.json"
-          --access-token "$APIFOX_ACCESS_TOKEN"
-      - name: Reconcile the exact HTTP endpoint inventory
+          node .github/scripts/apifox-import.mjs
+          --spec "$RUNNER_TEMP/openapi.json"
+      - name: Reconcile the exact endpoint and schema inventory
         env:
           APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
           APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
           APIFOX_MAX_ENDPOINT_DELETIONS: ${{ vars.APIFOX_MAX_ENDPOINT_DELETIONS }}
+          APIFOX_MAX_SCHEMA_DELETIONS: ${{ vars.APIFOX_MAX_SCHEMA_DELETIONS }}
         run: >-
           node .github/scripts/apifox-reconcile.mjs
           --spec "$RUNNER_TEMP/openapi.json"

@@ -191,3 +191,48 @@ spec:
   ports:
     - port: 80
       targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oma-console
+  namespace: oma-infra
+  annotations:
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80},{"HTTPS": 443}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: console.sandbox.brozhong.com
+      http:
+        paths:
+          # Machine-readable API contracts must bypass the Web SPA fallback.
+          - path: /openapi.json
+            pathType: Exact
+            backend:
+              service:
+                name: oma-server
+                port: { number: 3000 }
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: oma-server
+                port: { number: 3000 }
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: oma-server
+                port: { number: 3000 }
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: oma-server
+                port: { number: 3000 }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oma-web
+                port: { number: 80 }

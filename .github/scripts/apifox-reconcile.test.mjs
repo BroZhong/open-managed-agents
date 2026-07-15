@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   assertSafeTargetInventory,
+  createPreflightDeletionPlan,
   createReconciliationPlan,
+  createSchemaDeletionPlan,
   operationsFromOpenApi,
+  schemaNamesFromOpenApi,
 } from "./apifox-reconcile.mjs";
 
 const requiredOperations = [
@@ -39,6 +42,17 @@ test("extracts HTTP operations from an OpenAPI document", () => {
     { method: "GET", path: "/health" },
     { method: "GET", path: "/widgets/{id}" },
   ]);
+});
+
+test("extracts sorted schema names from an OpenAPI document", () => {
+  assert.deepEqual(
+    schemaNamesFromOpenApi({
+      paths: {},
+      components: { schemas: { Zebra: {}, Alpha: {} } },
+    }),
+    ["Alpha", "Zebra"],
+  );
+  assert.deepEqual(schemaNamesFromOpenApi({ paths: {} }), []);
 });
 
 test("plans only unmatched endpoint deletions after a complete import", () => {
@@ -78,6 +92,53 @@ test("preflight blocks a non-empty unrelated project before import", () => {
         { id: 1, method: "GET", path: "/someone-elses-api" },
       ]),
     /not an empty or previously managed project/i,
+  );
+});
+
+test("preflight enforces the deletion limit before the import API can delete", () => {
+  const remote = [
+    { id: 1, method: "GET", path: "/health" },
+    { id: 2, method: "GET", path: "/openapi.json" },
+    { id: 3, method: "GET", path: "/old-a" },
+    { id: 4, method: "GET", path: "/old-b" },
+  ];
+
+  assert.deepEqual(createPreflightDeletionPlan(requiredOperations, remote, 2), {
+    deleteEndpoints: [
+      { id: 3, method: "GET", path: "/old-a" },
+      { id: 4, method: "GET", path: "/old-b" },
+    ],
+  });
+  assert.throws(
+    () => createPreflightDeletionPlan(requiredOperations, remote, 1),
+    /exceeds the safety limit/i,
+  );
+});
+
+test("preflight and reconciliation bound schema deletion by name", () => {
+  const desired = ["CurrentA", "CurrentB"];
+  const remote = [
+    { id: 1, name: "CurrentA" },
+    { id: 2, name: "CurrentB" },
+    { id: 3, name: "Obsolete" },
+  ];
+
+  assert.deepEqual(createSchemaDeletionPlan(desired, remote, 1), {
+    deleteSchemas: [{ id: 3, name: "Obsolete" }],
+  });
+  assert.throws(
+    () => createSchemaDeletionPlan(desired, remote, 0),
+    /schema deletion plan.*exceeds the safety limit/i,
+  );
+  assert.throws(
+    () =>
+      createSchemaDeletionPlan(
+        [...desired, "Missing"],
+        remote,
+        1,
+        { requireComplete: true },
+      ),
+    /missing desired schemas.*Missing/i,
   );
 });
 

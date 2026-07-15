@@ -21,7 +21,10 @@ test("the public OpenAPI endpoint bypasses the Web SPA fallback", () => {
   const dockerfile = readFileSync(new URL("deploy/Dockerfile.web", root), "utf8");
   const manifest = readFileSync(new URL("deploy/k8s.yaml", root), "utf8");
 
-  assert.match(dockerfile, /location = \/openapi\.json/);
-  assert.match(dockerfile, /proxy_pass http:\/\/oma-server:3000\/openapi\.json/);
+  assert.doesNotMatch(dockerfile, /proxy_pass/);
+  assert.match(
+    manifest,
+    /path: \/openapi\.json\s+pathType: Exact\s+backend:\s+service:\s+name: oma-server\s+port: \{ number: 3000 \}/,
+  );
   assert.match(manifest, /PUBLIC_API_URL: "https:\/\/console\.sandbox\.brozhong\.com"/);
 });

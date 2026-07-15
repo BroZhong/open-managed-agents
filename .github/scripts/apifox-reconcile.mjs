@@ -66,6 +66,15 @@ export function operationsFromOpenApi(document) {
   );
 }
 
+export function schemaNamesFromOpenApi(document) {
+  const schemas = document?.components?.schemas;
+  if (schemas === undefined) return [];
+  if (!schemas || typeof schemas !== "object" || Array.isArray(schemas)) {
+    throw new Error("OpenAPI components.schemas must be an object");
+  }
+  return Object.keys(schemas).sort((left, right) => left.localeCompare(right));
+}
+
 function validateInventories(desiredOperations, remoteEndpoints) {
   const desired = desiredOperations.map(normalizeOperation);
   const remote = remoteEndpoints.map((endpoint) => {
@@ -104,15 +113,107 @@ export function assertSafeTargetInventory(desiredOperations, remoteEndpoints) {
   }
 }
 
+function unmatchedRemoteEndpoints(desiredKeys, remote) {
+  return remote
+    .filter((endpoint) => !desiredKeys.has(operationKey(endpoint)))
+    .sort((left, right) =>
+      displayOperation(left).localeCompare(displayOperation(right)),
+    );
+}
+
+function assertDeletionLimit(deleteEndpoints, maxDeletions) {
+  if (!Number.isSafeInteger(maxDeletions) || maxDeletions < 0) {
+    throw new Error("Deletion safety limit must be a non-negative integer");
+  }
+  if (deleteEndpoints.length > maxDeletions) {
+    throw new Error(
+      `Deletion plan (${deleteEndpoints.length}) exceeds the safety limit (${maxDeletions}): ${deleteEndpoints
+        .slice(0, 20)
+        .map(displayOperation)
+        .join(", ")}`,
+    );
+  }
+}
+
+export function createPreflightDeletionPlan(
+  desiredOperations,
+  remoteEndpoints,
+  maxDeletions,
+) {
+  const { desiredKeys, remote } = validateInventories(
+    desiredOperations,
+    remoteEndpoints,
+  );
+  const deleteEndpoints = unmatchedRemoteEndpoints(desiredKeys, remote);
+  assertDeletionLimit(deleteEndpoints, maxDeletions);
+  return { deleteEndpoints };
+}
+
+function validateSchemaInventories(desiredSchemaNames, remoteSchemas) {
+  const desired = desiredSchemaNames.map((name) => {
+    if (typeof name !== "string" || name.trim() === "") {
+      throw new Error("Every desired schema must have a non-empty name");
+    }
+    return name;
+  });
+  const remote = remoteSchemas.map((schema) => {
+    if (!Number.isSafeInteger(schema?.id) || schema.id <= 0) {
+      throw new Error("Every remote schema must have a positive integer id");
+    }
+    if (typeof schema.name !== "string" || schema.name.trim() === "") {
+      throw new Error("Every remote schema must have a non-empty name");
+    }
+    return schema;
+  });
+  const desiredNames = new Set(desired);
+  const remoteNames = new Set();
+  for (const schema of remote) {
+    if (remoteNames.has(schema.name)) {
+      throw new Error(`Duplicate remote schema: ${schema.name}`);
+    }
+    remoteNames.add(schema.name);
+  }
+  return { desired, desiredNames, remote, remoteNames };
+}
+
+export function createSchemaDeletionPlan(
+  desiredSchemaNames,
+  remoteSchemas,
+  maxDeletions,
+  { requireComplete = false } = {},
+) {
+  if (!Number.isSafeInteger(maxDeletions) || maxDeletions < 0) {
+    throw new Error("Schema deletion safety limit must be a non-negative integer");
+  }
+  const { desired, desiredNames, remote, remoteNames } =
+    validateSchemaInventories(desiredSchemaNames, remoteSchemas);
+  if (requireComplete) {
+    const missing = desired.filter((name) => !remoteNames.has(name));
+    if (missing.length > 0) {
+      throw new Error(
+        `Remote project is missing desired schemas after import: ${missing.join(", ")}`,
+      );
+    }
+  }
+  const deleteSchemas = remote
+    .filter((schema) => !desiredNames.has(schema.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (deleteSchemas.length > maxDeletions) {
+    throw new Error(
+      `Schema deletion plan (${deleteSchemas.length}) exceeds the safety limit (${maxDeletions}): ${deleteSchemas
+        .slice(0, 20)
+        .map((schema) => schema.name)
+        .join(", ")}`,
+    );
+  }
+  return { deleteSchemas };
+}
+
 export function createReconciliationPlan(
   desiredOperations,
   remoteEndpoints,
   maxDeletions,
 ) {
-  if (!Number.isSafeInteger(maxDeletions) || maxDeletions < 0) {
-    throw new Error("Deletion safety limit must be a non-negative integer");
-  }
-
   const { desired, desiredKeys, remote, remoteKeys } = validateInventories(
     desiredOperations,
     remoteEndpoints,
@@ -129,19 +230,8 @@ export function createReconciliationPlan(
     );
   }
 
-  const deleteEndpoints = remote
-    .filter((endpoint) => !desiredKeys.has(operationKey(endpoint)))
-    .sort((left, right) =>
-      displayOperation(left).localeCompare(displayOperation(right)),
-    );
-  if (deleteEndpoints.length > maxDeletions) {
-    throw new Error(
-      `Deletion plan (${deleteEndpoints.length}) exceeds the safety limit (${maxDeletions}): ${deleteEndpoints
-        .slice(0, 20)
-        .map(displayOperation)
-        .join(", ")}`,
-    );
-  }
+  const deleteEndpoints = unmatchedRemoteEndpoints(desiredKeys, remote);
+  assertDeletionLimit(deleteEndpoints, maxDeletions);
 
   return { deleteEndpoints };
 }
@@ -224,6 +314,24 @@ function listEndpoints(projectId, token) {
   return endpoints;
 }
 
+function listSchemas(projectId, token) {
+  const raw = runApifox(["schema", "list", "--project", projectId], token);
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw new Error("Apifox schema list did not return JSON");
+  }
+  if (
+    payload?.success !== true ||
+    !Array.isArray(payload.data) ||
+    String(payload.context?.projectId) !== String(projectId)
+  ) {
+    throw new Error("Apifox schema list has an invalid envelope");
+  }
+  return payload.data;
+}
+
 function parseArguments(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
@@ -248,19 +356,32 @@ function main() {
       process.env.APIFOX_MAX_ENDPOINT_DELETIONS ||
       "10",
   );
+  const maxSchemaDeletions = Number(
+    args.get("max-schema-deletions") ||
+      process.env.APIFOX_MAX_SCHEMA_DELETIONS ||
+      "10",
+  );
   if (!specPath || !projectId || !token) {
     throw new Error(
-      "Usage: APIFOX_ACCESS_TOKEN=... node apifox-reconcile.mjs --spec openapi.json --project ID [--max-deletions N]",
+      "Usage: APIFOX_ACCESS_TOKEN=... node apifox-reconcile.mjs --spec openapi.json --project ID [--max-deletions N] [--max-schema-deletions N]",
     );
   }
 
   const document = JSON.parse(readFileSync(resolve(specPath), "utf8"));
   const desired = operationsFromOpenApi(document);
+  const desiredSchemas = schemaNamesFromOpenApi(document);
   const before = listEndpoints(projectId, token);
+  const schemasBefore = listSchemas(projectId, token);
   if (mode === "preflight") {
     assertSafeTargetInventory(desired, before);
+    const plan = createPreflightDeletionPlan(desired, before, maxDeletions);
+    const schemaPlan = createSchemaDeletionPlan(
+      desiredSchemas,
+      schemasBefore,
+      maxSchemaDeletions,
+    );
     console.log(
-      `Verified safe Apifox target inventory before import (${before.length} existing endpoints).`,
+      `Verified safe Apifox target inventory before import (${before.length} existing endpoints, ${schemasBefore.length} schemas; ${plan.deleteEndpoints.length} endpoint and ${schemaPlan.deleteSchemas.length} schema deletions planned).`,
     );
     return;
   }
@@ -280,13 +401,37 @@ function main() {
     );
   }
 
+  const schemaPlan = createSchemaDeletionPlan(
+    desiredSchemas,
+    schemasBefore,
+    maxSchemaDeletions,
+    { requireComplete: true },
+  );
+  for (const schema of schemaPlan.deleteSchemas) {
+    console.log(`Deleting unmatched schema: ${schema.name}`);
+    runApifox(
+      ["schema", "delete", String(schema.id), "--project", projectId],
+      token,
+    );
+  }
+
   const after = listEndpoints(projectId, token);
+  const schemasAfter = listSchemas(projectId, token);
   const verification = createReconciliationPlan(desired, after, 0);
   if (verification.deleteEndpoints.length !== 0) {
     throw new Error("Apifox endpoint reconciliation did not converge");
   }
+  const schemaVerification = createSchemaDeletionPlan(
+    desiredSchemas,
+    schemasAfter,
+    0,
+    { requireComplete: true },
+  );
+  if (schemaVerification.deleteSchemas.length !== 0) {
+    throw new Error("Apifox schema reconciliation did not converge");
+  }
   console.log(
-    `Verified exact Apifox HTTP inventory: ${desired.length} operations.`,
+    `Verified exact Apifox inventory: ${desired.length} HTTP operations and ${desiredSchemas.length} schemas.`,
   );
 }
 

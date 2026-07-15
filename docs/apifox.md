@@ -12,7 +12,7 @@ API route contract 或模型变更
   -> Apifox 已发布的文档站实时展示项目内容
 ```
 
-GitHub Actions 会先核对项目 ID、项目名称（可选再核对团队 ID），并要求目标项目为空或已包含本服务的两个哨兵接口；通过后才把生成文件推送到 Apifox。导入后它会分页核对远端 HTTP endpoint，确认导入完整后删除 contract 中已不存在的 endpoint，再次读取并断言集合完全一致。这条免费路径不依赖 Runner。默认一次最多删除 10 个 endpoint，超过时工作流会先失败。若团队使用商业专业版并配置自托管 Runner，工作流还会确保存在一个指向远端 `/openapi.json` 的定时导入设置，用于无人值守同步 schema、folder 等其他资源。
+GitHub Actions 会先核对项目 ID、项目名称（可选再核对团队 ID），并要求目标项目为空或已包含本服务的两个哨兵接口；通过后才把生成文件推送到 Apifox。工作流使用 Apifox 官方 Open API 的覆盖模式更新所有同 method/path 接口和同名数据模型，并删除 contract 中不再存在的资源。导入前会分别对当前 HTTP endpoint 和 schema 清单执行删除上限检查；导入后还会校验官方返回的 created/updated/failed/ignored 计数，再断言远端 endpoint/schema 集合完全一致。这条即时同步路径不依赖 Runner。两类资源默认各允许删除 10 个，超过时工作流会先失败。若团队另行配置自托管 Runner，工作流还会确保存在一个指向远端 `/openapi.json` 的定时导入设置，作为独立的周期同步保障。
 
 ## 本地生成与校验
 
@@ -49,7 +49,7 @@ PUBLIC_API_URL=https://api.example.com
 
 也可以在 Apifox 中手动用 `https://<API 域名>/openapi.json` 新建定时导入。该 URL 必须直接返回 OpenAPI JSON/YAML，而不是 Swagger UI HTML。免费版每 3 小时可拉取一次，但需要有写权限的用户打开 Apifox 客户端和项目；商业专业版可用 Runner 实现无人值守拉取。内网服务可使用 Runner，或者只使用 CI 文件导入。
 
-参考：[导入设置](https://docs.apifox.com/import-settings)、[Apifox CLI](https://docs.apifox.com/doc-5637756)。
+参考：[导入 OpenAPI 开放 API](https://s.apifox.cn/apidoc/docs-site/4478210/api-173409873)、[导入设置](https://docs.apifox.com/import-settings)、[Apifox CLI](https://docs.apifox.com/doc-5637756)。
 
 ## 一次性配置 Apifox 和 GitHub
 
@@ -64,6 +64,7 @@ PUBLIC_API_URL=https://api.example.com
    - `APIFOX_DOCS_SITE_ID`：上一步已发布文档站的 ID。
    - `APIFOX_DOCS_URL`：必填，已发布站点的 Apifox 系统域名 HTTPS origin；保持“系统访问地址”启用。工作流会实际访问并要求返回成功。
    - `APIFOX_MAX_ENDPOINT_DELETIONS`：可选，单次允许删除的旧 endpoint 数，默认 `10`；大规模有意删除时经审核后临时调高。
+   - `APIFOX_MAX_SCHEMA_DELETIONS`：可选，单次允许删除的旧 schema 数，默认 `10`；与 endpoint 删除上限独立。
    - `APIFOX_RUNNER_ID`：可选；商业专业版中已经部署并启动的通用 Runner ID。
    - `APIFOX_RUNNER_TYPE`：可选且依赖 Runner ID；团队 Runner 使用默认值 `TSHGR`，组织 Runner 填 `OSHGR`。
 6. 可选：若需要完全无人值守的远端定时拉取，在 Apifox 商业专业版的“团队资源 -> 通用 Runner”中部署并启动 Runner，再填写上面两个 Runner 变量。
@@ -81,23 +82,22 @@ Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布
 - 自动运行时，checkout 已通过 `OpenAPI contract` 的准确 commit SHA。
 - 手动运行时，也会重新执行生成一致性、Hono route inventory 和 Redocly 校验。
 - 配置了 `PUBLIC_API_URL` 时，使用临时 OpenAPI 文件替换 `servers[0].url`；未配置时保留生成产物并继续发布文档，不会修改仓库中的确定性产物。
-- 普通 CLI 导入立即更新新增和修改的接口；安全 reconciler 在确认没有缺失 endpoint、没有重复 method/path 后清理已删除接口，并在操作后验证远端集合与本地完全一致。
-- 配置了商业版 Runner 时，`docs/apifox-auto-import.json` 会创建远端定时同步，启用覆盖与删除不再匹配的 schema、folder 等项目资源；同名配置漂移时会重建。未配置 Runner 时跳过此增强步骤，不影响 HTTP endpoint 的精确 CI 同步。
+- 官方 Open API 导入显式使用 `OVERWRITE_EXISTING` 覆盖接口和数据模型，并启用 `deleteUnmatchedResources`；工作流要求 created+updated 数分别等于本地 operation/schema 数，且 failed/ignored 均为零，避免“新增成功、旧接口未更新”的假绿。
+- 安全 reconciler 会在导入前限制计划删除的 endpoint 数，在导入后确认没有缺失或重复的 method/path，并验证远端集合与本地完全一致。
+- 配置了 Runner 时，`docs/apifox-auto-import.json` 会额外创建远端定时同步；同名配置漂移时会重建。未配置 Runner 时跳过这个周期保障，不影响官方 Open API 的即时精确同步。
 - 最后检查指定文档站已经发布，并从 GitHub Runner 实际访问公开 URL。
 
-仓库的可选定时导入配置使用 180 分钟间隔。Runner 必须保持 Started；未配置或离线期间，CI 仍会精确同步 HTTP endpoint，但由 `deleteUnmatchedResources` 清理的孤立 schema、folder、响应组件等项目资源会等待 Runner 恢复。免费团队也可以在 Apifox 客户端中配置每 3 小时拉取一次，以客户端打开为前提完成这类全项目清理。
+仓库的可选定时导入配置使用 180 分钟间隔。Runner 必须保持 Started；未配置或离线期间，CI 仍会通过官方 Open API 精确覆盖 endpoint/schema 并清理不匹配资源。免费团队也可以在 Apifox 客户端中配置每 3 小时拉取一次，作为项目打开时的额外周期保障。
 
-本地手动导入时，不要直接导入仓库中指向 localhost 的 `servers`。可以先生成临时文件：
+本地手动导入时，不要直接导入仓库中指向 localhost 的 `servers`。可以先生成临时文件，再调用与 CI 相同且显式覆盖冲突的脚本：
 
 ```bash
 jq --arg url "${PUBLIC_API_URL%/}" '.servers[0].url = $url' \
   docs/openapi.json > /tmp/openapi.json
 
-npx --yes apifox-cli@2.2.7 import \
-  --project "$APIFOX_PROJECT_ID" \
-  --format openapi \
-  --file /tmp/openapi.json \
-  --access-token "$APIFOX_ACCESS_TOKEN"
+APIFOX_PROJECT_ID="$APIFOX_PROJECT_ID" \
+APIFOX_ACCESS_TOKEN="$APIFOX_ACCESS_TOKEN" \
+node .github/scripts/apifox-import.mjs --spec /tmp/openapi.json
 ```
 
 不要把 Access Token 写入仓库、OpenAPI 文件或 workflow YAML。
@@ -106,4 +106,4 @@ npx --yes apifox-cli@2.2.7 import \
 
 截至 2026 年 7 月，Apifox 免费版为 `¥0`，包含一个在线文档站、托管分享和每 3 小时一次的定时导入；默认可以获得 `xxx.apifox.cn` 地址。Runner 发起的无人值守定时导入从商业专业版起提供；多个文档站和对子站点单独选择发布范围从商业旗舰版起提供。具体能力和活动价格以 [Apifox 价格页](https://apifox.com/pricing/) 为准。
 
-对这个项目，免费版足够：GitHub Actions 会在 contract 合并后立即精确同步 HTTP endpoint，已发布文档站会实时反映 Apifox 项目的主分支内容。免费版 3 小时定时同步可负责孤立 schema、folder 等全项目清理，但要求客户端和项目处于打开状态；只有必须无人值守地执行远端定时拉取和全项目清理时，才需要考虑商业专业版 Runner。
+对这个项目，免费版足够：GitHub Actions 会在 contract 合并后通过开放 API 立即覆盖同步 endpoint 和 schema，并清理不再匹配的资源；已发布文档站会实时反映 Apifox 项目的主分支内容。免费版每 3 小时定时导入可以作为客户端打开时的额外保障；只有必须由 Apifox Runner 独立执行周期拉取时，才需要考虑支持该能力的付费方案。
