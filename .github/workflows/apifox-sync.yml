@@ -118,6 +118,24 @@ jobs:
           else
             echo "Apifox Runner is not configured; immediate CI import remains enabled."
           fi
+      - name: Inspect public environment bindings
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
+        run: |
+          npx --yes apifox-cli@2.2.7 environment list \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" \
+            > "$RUNNER_TEMP/apifox-environments.json"
+          npx --yes apifox-cli@2.2.7 docs-site get "$APIFOX_DOCS_SITE_ID" \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" \
+            > "$RUNNER_TEMP/apifox-docs-site-probe.json"
+          jq '{environments: [.data[] | {id, name, baseUrl, baseUrls, type, visibility}]}' \
+            "$RUNNER_TEMP/apifox-environments.json"
+          jq '{environments: (.data.environments | walk(if type == "object" then with_entries(select(.key | test("token|secret|password|authorization"; "i") | not)) else . end))}' \
+            "$RUNNER_TEMP/apifox-docs-site-probe.json"
       - name: Validate OpenAPI
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
