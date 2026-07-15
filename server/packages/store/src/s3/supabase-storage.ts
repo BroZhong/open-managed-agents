@@ -24,6 +24,10 @@ export interface SupabaseListEntry {
   metadata?: { size?: number; mimetype?: string } | null;
 }
 
+export interface SupabaseObjectInfo {
+  userMetadata: Record<string, unknown> | null;
+}
+
 export const DEFAULT_BUCKET = "workspace";
 const LIST_PAGE_SIZE = 1000;
 
@@ -72,18 +76,37 @@ export class SupabaseStorageClient {
     return { Authorization: `Bearer ${this.serviceKey}` };
   }
 
+  private encodeUrlPath(path: string): string {
+    return path.split("/").map(encodeURIComponent).join("/");
+  }
+
   private objectUrl(key: string): string {
-    return `${this.endpoint}/object/${this.bucket}/${key}`;
+    return (
+      `${this.endpoint}/object/${encodeURIComponent(this.bucket)}/` +
+      this.encodeUrlPath(key)
+    );
   }
 
   /** Upsert an object at an absolute (already-prefixed) key. */
-  async putObject(key: string, body: Uint8Array, contentType?: string): Promise<void> {
+  async putObject(
+    key: string,
+    body: Uint8Array,
+    contentType?: string,
+    userMetadata?: Record<string, unknown>,
+  ): Promise<void> {
     const res = await this.fetchImpl(this.objectUrl(key), {
       method: "POST",
       headers: {
         ...this.authHeaders(),
         "Content-Type": contentType ?? "application/octet-stream",
         "x-upsert": "true",
+        ...(userMetadata
+          ? {
+              "x-metadata": Buffer.from(JSON.stringify(userMetadata), "utf8").toString(
+                "base64",
+              ),
+            }
+          : {}),
       },
       body: body as unknown as BodyInit,
     });
@@ -98,7 +121,7 @@ export class SupabaseStorageClient {
       method: "GET",
       headers: this.authHeaders(),
     });
-    if (res.status === 404 || res.status === 400) return null;
+    if (res.status === 404) return null;
     if (!res.ok) {
       throw new Error(`Supabase getObject failed: ${res.status} ${await safeText(res)}`);
     }
@@ -114,11 +137,41 @@ export class SupabaseStorageClient {
       method: "HEAD",
       headers: this.authHeaders(),
     });
-    if (res.status === 404 || res.status === 400) return false;
+    if (res.status === 404) return false;
     if (!res.ok) {
-      throw new Error(`Supabase objectExists failed: ${res.status} ${await safeText(res)}`);
+      const detail = await safeText(res);
+      throw new Error(`Supabase objectExists failed: ${res.status} ${detail}`);
     }
     return true;
+  }
+
+  /** Fetch the custom metadata needed to disambiguate codec and legacy keys. */
+  async getObjectInfo(
+    key: string,
+    opts: { invalidKeyAsMissing?: boolean } = {},
+  ): Promise<SupabaseObjectInfo | null> {
+    const res = await this.fetchImpl(
+      `${this.endpoint}/object/info/authenticated/${encodeURIComponent(this.bucket)}/` +
+        this.encodeUrlPath(key),
+      {
+        method: "GET",
+        headers: this.authHeaders(),
+      },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const detail = await safeText(res);
+      if (
+        res.status === 400 &&
+        opts.invalidKeyAsMissing &&
+        /"(?:error|code)"\s*:\s*"InvalidKey"/.test(detail)
+      ) {
+        return null;
+      }
+      throw new Error(`Supabase getObjectInfo failed: ${res.status} ${detail}`);
+    }
+    const info = (await res.json()) as { metadata?: Record<string, unknown> | null };
+    return { userMetadata: info.metadata ?? null };
   }
 
   /** Delete an object. Returns true if it existed. */
@@ -127,7 +180,7 @@ export class SupabaseStorageClient {
       method: "DELETE",
       headers: this.authHeaders(),
     });
-    if (res.status === 404 || res.status === 400) return false;
+    if (res.status === 404) return false;
     if (!res.ok) {
       throw new Error(`Supabase deleteObject failed: ${res.status} ${await safeText(res)}`);
     }
@@ -140,11 +193,15 @@ export class SupabaseStorageClient {
    * endpoint; the bucket stays private. Read-only — never signs writes.
    */
   async createSignedUrl(key: string, expiresInSec: number): Promise<string> {
-    const res = await this.fetchImpl(`${this.endpoint}/object/sign/${this.bucket}/${key}`, {
-      method: "POST",
-      headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ expiresIn: expiresInSec }),
-    });
+    const res = await this.fetchImpl(
+      `${this.endpoint}/object/sign/${encodeURIComponent(this.bucket)}/` +
+        this.encodeUrlPath(key),
+      {
+        method: "POST",
+        headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ expiresIn: expiresInSec }),
+      },
+    );
     if (!res.ok) throw new Error(`Supabase sign failed: ${res.status} ${await safeText(res)}`);
     const { signedURL } = (await res.json()) as { signedURL: string };
     return signedURL;
@@ -157,11 +214,14 @@ export class SupabaseStorageClient {
   async listRecursive(listPrefix: string, onFile: (fullKey: string) => void): Promise<void> {
     let offset = 0;
     for (;;) {
-      const res = await this.fetchImpl(`${this.endpoint}/object/list/${this.bucket}`, {
-        method: "POST",
-        headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
-      });
+      const res = await this.fetchImpl(
+        `${this.endpoint}/object/list/${encodeURIComponent(this.bucket)}`,
+        {
+          method: "POST",
+          headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
+        },
+      );
       if (!res.ok) {
         throw new Error(`Supabase list failed: ${res.status} ${await safeText(res)}`);
       }
@@ -182,15 +242,22 @@ export class SupabaseStorageClient {
   /** As {@link listRecursive}, but also surfaces each file's size + mtime. */
   async listRecursiveDetailed(
     listPrefix: string,
-    onFile: (fullKey: string, size: number, updatedAt?: string | null) => void,
+    onFile: (
+      fullKey: string,
+      size: number,
+      updatedAt?: string | null,
+    ) => void | Promise<void>,
   ): Promise<void> {
     let offset = 0;
     for (;;) {
-      const res = await this.fetchImpl(`${this.endpoint}/object/list/${this.bucket}`, {
-        method: "POST",
-        headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
-      });
+      const res = await this.fetchImpl(
+        `${this.endpoint}/object/list/${encodeURIComponent(this.bucket)}`,
+        {
+          method: "POST",
+          headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
+        },
+      );
       if (!res.ok) {
         throw new Error(`Supabase list failed: ${res.status} ${await safeText(res)}`);
       }
@@ -200,7 +267,11 @@ export class SupabaseStorageClient {
         if (isFolder) {
           await this.listRecursiveDetailed(`${listPrefix}${entry.name}/`, onFile);
         } else {
-          onFile(`${listPrefix}${entry.name}`, entry.metadata?.size ?? 0, entry.updated_at);
+          await onFile(
+            `${listPrefix}${entry.name}`,
+            entry.metadata?.size ?? 0,
+            entry.updated_at,
+          );
         }
       }
       if (entries.length < LIST_PAGE_SIZE) break;
