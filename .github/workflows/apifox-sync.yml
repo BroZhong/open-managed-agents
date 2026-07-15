@@ -16,7 +16,7 @@ concurrency:
 jobs:
   sync:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
@@ -118,24 +118,6 @@ jobs:
           else
             echo "Apifox Runner is not configured; immediate CI import remains enabled."
           fi
-      - name: Inspect public environment bindings
-        env:
-          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
-          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
-          APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
-        run: |
-          npx --yes apifox-cli@2.2.7 environment list \
-            --project "$APIFOX_PROJECT_ID" \
-            --access-token "$APIFOX_ACCESS_TOKEN" \
-            > "$RUNNER_TEMP/apifox-environments.json"
-          npx --yes apifox-cli@2.2.7 docs-site get "$APIFOX_DOCS_SITE_ID" \
-            --project "$APIFOX_PROJECT_ID" \
-            --access-token "$APIFOX_ACCESS_TOKEN" \
-            > "$RUNNER_TEMP/apifox-docs-site-probe.json"
-          jq '{environments: [.data[] | {id, name, baseUrl, baseUrls, type, visibility}]}' \
-            "$RUNNER_TEMP/apifox-environments.json"
-          jq '{environments: (.data.environments | walk(if type == "object" then with_entries(select(.key | test("token|secret|password|authorization"; "i") | not)) else . end))}' \
-            "$RUNNER_TEMP/apifox-docs-site-probe.json"
       - name: Validate OpenAPI
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
@@ -195,6 +177,53 @@ jobs:
           node .github/scripts/apifox-reconcile.mjs
           --spec "$RUNNER_TEMP/openapi.json"
           --project "$APIFOX_PROJECT_ID"
+      - name: Bind the public API environment to the documentation site
+        if: ${{ vars.PUBLIC_API_URL != '' }}
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          APIFOX_DOCS_SITE_ID: ${{ vars.APIFOX_DOCS_SITE_ID }}
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+        run: |
+          environments_file="$RUNNER_TEMP/apifox-environments.json"
+          site_before_file="$RUNNER_TEMP/apifox-docs-site-before-environment.json"
+          update_file="$RUNNER_TEMP/apifox-docs-site-environment-update.json"
+          site_after_file="$RUNNER_TEMP/apifox-docs-site-after-environment.json"
+
+          npx --yes apifox-cli@2.2.7 environment list \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" \
+            > "$environments_file"
+          npx --yes apifox-cli@2.2.7 docs-site get "$APIFOX_DOCS_SITE_ID" \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" \
+            > "$site_before_file"
+
+          node .github/scripts/apifox-docs-environment.mjs prepare \
+            --environments-file "$environments_file" \
+            --site-file "$site_before_file" \
+            --public-api-url "$PUBLIC_API_URL" \
+            --project "$APIFOX_PROJECT_ID" \
+            --site "$APIFOX_DOCS_SITE_ID" \
+            --output "$update_file"
+          npx --yes apifox-cli@2.2.7 cli-schema validate docs-site-update \
+            --file "$update_file"
+          npx --yes apifox-cli@2.2.7 docs-site update "$APIFOX_DOCS_SITE_ID" \
+            --project "$APIFOX_PROJECT_ID" \
+            --file "$update_file" \
+            --access-token "$APIFOX_ACCESS_TOKEN" \
+            > "$RUNNER_TEMP/apifox-docs-site-environment-update-result.json"
+
+          npx --yes apifox-cli@2.2.7 docs-site get "$APIFOX_DOCS_SITE_ID" \
+            --project "$APIFOX_PROJECT_ID" \
+            --access-token "$APIFOX_ACCESS_TOKEN" \
+            > "$site_after_file"
+          node .github/scripts/apifox-docs-environment.mjs verify \
+            --environments-file "$environments_file" \
+            --site-file "$site_after_file" \
+            --public-api-url "$PUBLIC_API_URL" \
+            --project "$APIFOX_PROJECT_ID" \
+            --site "$APIFOX_DOCS_SITE_ID"
       - name: Ensure optional Runner synchronization from the remote OpenAPI endpoint
         if: ${{ vars.APIFOX_RUNNER_ID != '' }}
         env:

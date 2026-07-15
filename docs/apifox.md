@@ -12,7 +12,7 @@ API route contract 或模型变更
   -> Apifox 已发布的文档站实时展示项目内容
 ```
 
-GitHub Actions 会先核对项目 ID、项目名称（可选再核对团队 ID），并要求目标项目为空或已包含本服务的两个哨兵接口；通过后才把生成文件推送到 Apifox。工作流使用 Apifox 官方 Open API 的覆盖模式更新所有同 method/path 接口和同名数据模型，并删除 contract 中不再存在的资源。导入前会分别对当前 HTTP endpoint 和 schema 清单执行删除上限检查；导入后还会校验官方返回的 created/updated/failed/ignored 计数，再断言远端 endpoint/schema 集合完全一致。这条即时同步路径不依赖 Runner。两类资源默认各允许删除 10 个，超过时工作流会先失败。若团队另行配置自托管 Runner，工作流还会确保存在一个指向远端 `/openapi.json` 的定时导入设置，作为独立的周期同步保障。
+GitHub Actions 会先核对项目 ID、项目名称（可选再核对团队 ID），并要求目标项目为空或已包含本服务的两个哨兵接口；通过后才把生成文件推送到 Apifox。工作流使用 Apifox 官方 Open API 的覆盖模式更新所有同 method/path 接口和同名数据模型，并删除 contract 中不再存在的资源。导入前会分别对当前 HTTP endpoint 和 schema 清单执行删除上限检查；导入后还会校验官方返回的 created/updated/failed/ignored 计数，再断言远端 endpoint/schema 集合完全一致。配置 `PUBLIC_API_URL` 时，导入还会创建或更新对应的 Apifox 环境；工作流会按规范化后的 `baseUrls.default` 唯一匹配该环境，并把它设为已发布文档站唯一且默认的在线调试环境。这条即时同步路径不依赖 Runner。两类资源默认各允许删除 10 个，超过时工作流会先失败。若团队另行配置自托管 Runner，工作流还会确保存在一个指向远端 `/openapi.json` 的定时导入设置，作为独立的周期同步保障。
 
 ## 本地生成与校验
 
@@ -58,7 +58,7 @@ PUBLIC_API_URL=https://api.example.com
 3. 在项目的“分享文档 -> 发布文档站”中配置可见性并点击“立即发布”。复制公开地址，并通过 `apifox docs-site list --project <PROJECT_ID>` 读取真正的文档站 ID；不要把项目 ID 当作文档站 ID。
 4. 在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中创建 Repository secrets：`APIFOX_ACCESS_TOKEN`、`APIFOX_PROJECT_ID`。
 5. 创建 Repository variables：
-   - `PUBLIC_API_URL`：可选，部署后的公网 HTTPS API origin，例如 `https://api.example.com`；不要带 `/openapi.json`。不填时仍可发布文档，但在线调试不可用；配置 Runner 时必填。
+   - `PUBLIC_API_URL`：可选，部署后的公网 HTTPS API origin，例如 `https://api.example.com`；不要带 `/openapi.json`。配置后，工作流会把 OpenAPI 导入生成的同 URL 环境绑定为文档站的唯一默认在线调试环境；不填时仍可发布文档，但在线调试不可用；配置 Runner 时必填。
    - `APIFOX_EXPECTED_PROJECT_NAME`：必填，专用项目的精确名称；导入前会与项目 ID 一起校验。
    - `APIFOX_EXPECTED_TEAM_ID`：可选，项目所属团队 ID；建议填写以防同名项目误配。
    - `APIFOX_DOCS_SITE_ID`：上一步已发布文档站的 ID。
@@ -84,6 +84,7 @@ Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布
 - 配置了 `PUBLIC_API_URL` 时，使用临时 OpenAPI 文件替换 `servers[0].url`；未配置时保留生成产物并继续发布文档，不会修改仓库中的确定性产物。
 - 官方 Open API 导入显式使用 `OVERWRITE_EXISTING` 覆盖接口和数据模型，并启用 `deleteUnmatchedResources`；工作流要求 created+updated 数分别等于本地 operation/schema 数，且 failed/ignored 均为零，避免“新增成功、旧接口未更新”的假绿。
 - 安全 reconciler 会在导入前限制计划删除的 endpoint 数，在导入后确认没有缺失或重复的 method/path，并验证远端集合与本地完全一致。
+- 配置了 `PUBLIC_API_URL` 时，工作流会在导入后读取环境列表，只接受 `baseUrls.default` 与规范化 URL 完全相等的唯一环境；然后先读取文档站的完整 `environments` 对象，只替换其中的 `environmentIds` 和 `defaultEnvironmentId`，经 Apifox CLI schema 校验后更新，再重新读取并验证精确绑定。零个或多个匹配都会让同步失败，避免把 Try-it 请求发往错误环境。
 - 配置了 Runner 时，`docs/apifox-auto-import.json` 会额外创建远端定时同步；同名配置漂移时会重建。未配置 Runner 时跳过这个周期保障，不影响官方 Open API 的即时精确同步。
 - 最后检查指定文档站已经发布，并从 GitHub Runner 实际访问公开 URL。
 
