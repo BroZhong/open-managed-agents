@@ -68,6 +68,7 @@ export const AgentSandboxConfigSchema = z
     enabled: z.boolean(),
     image: z.string().optional(),
     workspacePersistence: z.enum(["durable", "ephemeral"]).optional(),
+    credentialMode: z.enum(["runtime-vfs"]).optional(),
     env: z.record(z.string(), z.string()).optional(),
   })
   .openapi("AgentSandboxConfig");

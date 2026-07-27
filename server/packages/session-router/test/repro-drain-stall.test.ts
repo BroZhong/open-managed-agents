@@ -5,7 +5,10 @@ import {
   createMemoryStores,
   InMemoryEventLogStore as DurableInMemoryEventLogStore,
 } from "@oma-server/store-memory";
-import { InMemoryTurnStreamStore } from "@oma-server/redis";
+import {
+  InMemoryRuntimeCredentialStore,
+  InMemoryTurnStreamStore,
+} from "@oma-server/redis";
 import type {
   EventLogStore,
   EventLogStoreAppendInput,
@@ -229,8 +232,8 @@ async function enqueueUser(
   store: PendingEventStore,
   sessionId: string,
   text: string,
-): Promise<void> {
-  await store.enqueue(sessionId, {
+): Promise<PendingEvent> {
+  return store.enqueue(sessionId, {
     type: "user.message",
     data: { content: [{ type: "text", text }] },
     sessionThreadId: "sthr_primary",
@@ -538,6 +541,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     const pendingEventStore = new InMemoryPendingEventStore();
     const sessionStore = new InMemorySessionStore();
     const eventStreamHub = new InProcessEventStreamHub();
+    const runtimeCredentialStore = new InMemoryRuntimeCredentialStore();
     let adapterRuns = 0;
     const adapter: Adapter = {
       async *run(): AsyncIterable<SessionEvent> {
@@ -555,6 +559,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       pendingEventStore,
       sessionStore,
       eventStreamHub,
+      runtimeCredentialStore,
       resolveAdapter: () => adapter,
     });
     const session = await sessionStore.create({
@@ -563,7 +568,14 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       agent: testAgent,
       workspaceId: "ws_test",
     });
-    await enqueueUser(pendingEventStore, session.id, "complete before ack");
+    const pending = await enqueueUser(
+      pendingEventStore,
+      session.id,
+      "complete before ack",
+    );
+    await runtimeCredentialStore.put(pending.id, {
+      vfsToken: "recovery-token",
+    });
     pendingEventStore.failNextAck = true;
 
     await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
@@ -572,6 +584,9 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     expect(await pendingEventStore.count(session.id)).toBe(1);
     const beforeRecovery = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(beforeRecovery.some((event) => event.type === "session.turn_completed")).toBe(true);
+    expect(await runtimeCredentialStore.get(pending.id)).toEqual({
+      vfsToken: "recovery-token",
+    });
 
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
@@ -580,6 +595,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     const afterRecovery = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(adapterRuns).toBe(1);
     expect(afterRecovery).toEqual(beforeRecovery);
+    expect(await runtimeCredentialStore.get(pending.id)).toBeNull();
   });
 
   it("abandons a partial durable attempt without mixing output from a rerun", async () => {

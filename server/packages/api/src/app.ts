@@ -2,7 +2,10 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
-import type { TurnStreamStore } from "@oma-server/redis";
+import type {
+  RuntimeCredentialStore,
+  TurnStreamStore,
+} from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "./types.js";
 import { authMiddleware } from "./middleware/auth.js";
@@ -48,6 +51,7 @@ export interface AppDeps {
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
   turnStreamStore?: TurnStreamStore;
+  runtimeCredentialStore?: RuntimeCredentialStore;
   /** Override the SSE keepalive cadence in focused tests. */
   sseHeartbeatIntervalMs?: number;
   sessionRouter?: SessionRouter;
@@ -142,6 +146,7 @@ export function createApp(deps: AppDeps): OpenAPIHono<Env> {
       sessionStore: deps.sessionStore,
       eventStreamHub: deps.eventStreamHub,
       turnStreamStore: deps.turnStreamStore,
+      runtimeCredentialStore: deps.runtimeCredentialStore,
       sseHeartbeatIntervalMs: deps.sseHeartbeatIntervalMs,
       sessionRouter: deps.sessionRouter,
     }));

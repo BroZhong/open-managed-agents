@@ -19,7 +19,10 @@ import { PendingEventClaimLostError } from "@oma-server/store";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
-import type { TurnStreamStore } from "@oma-server/redis";
+import type {
+  RuntimeCredentialStore,
+  TurnStreamStore,
+} from "@oma-server/redis";
 import type {
   EnvSpec,
   SandboxManager,
@@ -38,6 +41,7 @@ import type {
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
 import { isStreamEvent } from "@open-managed-agents/adapter-core";
+import { withVfsCredential } from "./credentialed-tool-executor.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -150,13 +154,16 @@ export interface SessionRouterDeps {
    */
   turnStreamStore?: TurnStreamStore;
   /**
+   * Short-lived, out-of-band credentials keyed by Pending Event id. The router
+   * resolves one credential for one claimed turn and binds it only to direct
+   * vfs-cli processes; it is never merged into EnvSpec or model-visible data.
+   */
+  runtimeCredentialStore?: RuntimeCredentialStore;
+  /**
    * Deployment-wide default sandbox environment variables, merged into every
    * sandboxed Agent's `EnvSpec.env` (the Agent's own `sandbox.env` wins per key).
-   * Used to inject a shared secret a bundled CLI needs — e.g. `VFS_TOKEN` for the
-   * `vfs-cli` baked into the custom sandbox image — without requiring every Agent
-   * to carry the token in its own config. Sourced from server config (a K8s
-   * Secret → env), so the token never lives in code or in the Agent record.
-   * Absent ⇒ only the Agent's own `sandbox.env` is used (prior behavior).
+   * These values are model-readable and must be non-sensitive. Runtime CLI
+   * credentials use `runtimeCredentialStore` instead.
    */
   defaultSandboxEnv?: Record<string, string>;
   /** Stable, process-unique pending owner. Injectable for deterministic tests. */
@@ -208,6 +215,7 @@ export class SessionRouter {
   private readonly skillStore?: SkillStore;
   private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
+  private readonly runtimeCredentialStore?: RuntimeCredentialStore;
   private readonly defaultSandboxEnv?: Record<string, string>;
   private readonly pendingClaimOwnerId: string;
   private readonly pendingClaimLeaseMs: number;
@@ -253,6 +261,7 @@ export class SessionRouter {
     this.skillStore = deps.skillStore;
     this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
+    this.runtimeCredentialStore = deps.runtimeCredentialStore;
     this.defaultSandboxEnv = deps.defaultSandboxEnv;
     this.pendingClaimOwnerId = deps.pendingClaimOwnerId ?? `host_${randomUUID()}`;
     this.pendingClaimLeaseMs = deps.pendingClaimLeaseMs ?? 30_000;
@@ -498,7 +507,6 @@ export class SessionRouter {
   async handleNewEvent(
     sessionId: string,
     agentConfig: Agent,
-    runtimeSandboxEnv?: Record<string, string>,
   ): Promise<void> {
     // Usually the active loop will pick up newly queued input itself. Remember
     // the wake as well, so an arrival after its final empty dequeue cannot be
@@ -522,7 +530,6 @@ export class SessionRouter {
         sessionId,
         agentConfig,
         activeRun.controller.signal,
-        runtimeSandboxEnv,
       );
     } finally {
       if (this.activeSessions.get(sessionId) === activeRun) {
@@ -671,21 +678,23 @@ export class SessionRouter {
    * `SkillArtifactStore.getAll` inside the manager (see `S3ProvisionRef`).
    *
    * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
-   * with the Agent's own `sandbox.env` — the Agent wins per key, so an Agent can
-   * override or extend the shared defaults but the defaults (e.g. `VFS_TOKEN`)
-   * apply automatically when the Agent sets none.
+   * with the Agent's own `sandbox.env` — the Agent wins per key. Agents using
+   * `credentialMode: "runtime-vfs"` are the exception: their long-lived
+   * sandbox spec never receives `VFS_TOKEN`; the router injects the per-event
+   * credential only into a validated `vfs-cli` tool process.
    */
   private specFor(
     session: Session,
     agent: Agent,
     equippedSkills: EquippedSkill[],
-    runtimeSandboxEnv?: Record<string, string>,
   ): EnvSpec {
     const mergedEnv = {
       ...this.defaultSandboxEnv,
       ...agent.sandbox?.env,
-      ...runtimeSandboxEnv,
     };
+    if (agent.sandbox?.credentialMode === "runtime-vfs") {
+      delete mergedEnv.VFS_TOKEN;
+    }
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
@@ -711,13 +720,12 @@ export class SessionRouter {
     session: Session,
     agent: Agent,
     equippedSkills: EquippedSkill[],
-    runtimeSandboxEnv?: Record<string, string>,
   ): SandboxSession | undefined {
     if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
     let sandbox = this.sessions.get(sessionId);
     if (!sandbox) {
       sandbox = this.sandboxManager.open(
-        this.specFor(session, agent, equippedSkills, runtimeSandboxEnv),
+        this.specFor(session, agent, equippedSkills),
       );
       this.sessions.set(sessionId, sandbox);
     }
@@ -970,14 +978,21 @@ export class SessionRouter {
       data: completionEvent.data,
     });
 
-    return this.pendingEventStore.ack(sessionId, pendingEventId, pendingFence);
+    const acknowledged = await this.pendingEventStore.ack(
+      sessionId,
+      pendingEventId,
+      pendingFence,
+    );
+    if (acknowledged) {
+      await this.runtimeCredentialStore?.delete(pendingEventId);
+    }
+    return acknowledged;
   }
 
   private async drainLoop(
     sessionId: string,
     agentConfig: Agent,
     signal: AbortSignal,
-    runtimeSandboxEnv?: Record<string, string>,
   ): Promise<void> {
     let lastOwnedTurnId: string | undefined;
     while (!signal.aborted) {
@@ -991,6 +1006,8 @@ export class SessionRouter {
       this.resetClaimRetry(sessionId);
       const pendingEvent = claim.event;
       const pendingFence = this.fenceFor(claim);
+      const runtimeCredential =
+        await this.runtimeCredentialStore?.get(pendingEvent.id);
 
       // Enqueue and execution race with termination. Re-read only after claim;
       // a missing/terminated Session can never be revived by status_running.
@@ -1049,6 +1066,7 @@ export class SessionRouter {
           pendingFence,
         );
         if (!acknowledged) return;
+        await this.runtimeCredentialStore?.delete(pendingEvent.id);
         continue;
       }
 
@@ -1232,7 +1250,6 @@ export class SessionRouter {
         session,
         currentAgent,
         equippedSkills,
-        runtimeSandboxEnv,
       );
       const projections = this.skillProjections(session, equippedSkills);
 
@@ -1298,7 +1315,9 @@ export class SessionRouter {
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox,
+          sandbox
+            ? withVfsCredential(sandbox, runtimeCredential?.vfsToken)
+            : undefined,
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,

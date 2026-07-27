@@ -9,6 +9,7 @@ export class FakeRedis implements RedisLike {
   private streams = new Map<string, Array<[string, string[]]>>();
   private hashes = new Map<string, Record<string, string>>();
   private lists = new Map<string, string[]>();
+  private strings = new Map<string, { value: string; expiresAt: number }>();
   private seq = 0;
 
   async eval(script: string, numberOfKeys: number, ...keysAndArgs: string[]): Promise<unknown> {
@@ -37,6 +38,7 @@ export class FakeRedis implements RedisLike {
       ...this.streams.keys(),
       ...this.hashes.keys(),
       ...this.lists.keys(),
+      ...this.strings.keys(),
     ]);
     return ["0", [...keys].filter((key) => matcher.test(key)).sort()];
   }
@@ -135,12 +137,33 @@ export class FakeRedis implements RedisLike {
   }
 
   // ─── Keyspace ──────────────────────────────────────────────────────────────
+  async get(key: string): Promise<string | null> {
+    const entry = this.strings.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      this.strings.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+
+  async set(
+    key: string,
+    value: string,
+    _expiryMode: "PX",
+    ttlMs: number,
+  ): Promise<"OK"> {
+    this.strings.set(key, { value, expiresAt: Date.now() + ttlMs });
+    return "OK";
+  }
+
   async del(...keys: string[]): Promise<number> {
     let removed = 0;
     for (const key of keys) {
       if (this.streams.delete(key)) removed++;
       if (this.hashes.delete(key)) removed++;
       if (this.lists.delete(key)) removed++;
+      if (this.strings.delete(key)) removed++;
     }
     return removed;
   }

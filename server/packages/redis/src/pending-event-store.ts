@@ -54,7 +54,7 @@ export class RedisPendingEventStore implements PendingEventStore {
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
-      id: nanoid(),
+      id: event.id ?? nanoid(),
       sessionId,
       type: event.type,
       data: event.data,

@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createApp } from "../src/app.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { InMemoryTurnStreamStore } from "@oma-server/redis";
+import {
+  InMemoryRuntimeCredentialStore,
+  InMemoryTurnStreamStore,
+} from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
@@ -227,7 +230,7 @@ class InMemoryPendingEventStore implements PendingEventIngressStore {
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
+      id: event.id ?? `pending_${this.nextId++}`,
       sessionId,
       type: event.type,
       data: event.data,
@@ -394,15 +397,24 @@ function createTestApp(
     const current = await sessionStore.getById(sessionId);
     return Boolean(current && current.status !== "terminated");
   });
+  const runtimeCredentialStore = new InMemoryRuntimeCredentialStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(apiKeys),
     agentStore,
     sessionStore,
     eventLogStore,
     pendingEventStore,
+    runtimeCredentialStore,
     sessionRouter,
   });
-  return { app, agentStore, sessionStore, eventLogStore, pendingEventStore };
+  return {
+    app,
+    agentStore,
+    sessionStore,
+    eventLogStore,
+    pendingEventStore,
+    runtimeCredentialStore,
+  };
 }
 
 async function createTestSession(
@@ -452,10 +464,16 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(pending!.type).toBe("user.message");
   });
 
-  it("forwards x-vfs-token only as transient sandbox env", async () => {
+  it("stores x-vfs-token out-of-band for the exact pending event", async () => {
     const handleNewEvent = vi.fn(async () => {});
     const sessionRouter = { handleNewEvent } as unknown as SessionRouter;
-    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const {
+      app,
+      agentStore,
+      sessionStore,
+      pendingEventStore,
+      runtimeCredentialStore,
+    } = createTestApp(sessionRouter);
     const { session } = await createTestSession(agentStore, sessionStore);
 
     const res = await app.request(`/v1/sessions/${session.id}/events`, {
@@ -470,10 +488,12 @@ describe("POST /v1/sessions/:id/events", () => {
     });
 
     expect(res.status).toBe(202);
-    expect(handleNewEvent).toHaveBeenCalledWith(session.id, session.agent, {
-      VFS_TOKEN: "user-vfs-token",
+    expect(handleNewEvent).toHaveBeenCalledWith(session.id, session.agent);
+    const pending = await pendingEventStore.peek(session.id);
+    expect(await runtimeCredentialStore.get(pending!.id)).toEqual({
+      vfsToken: "user-vfs-token",
     });
-    expect(JSON.stringify(await pendingEventStore.peek(session.id))).not.toContain(
+    expect(JSON.stringify(pending)).not.toContain(
       "user-vfs-token",
     );
   });

@@ -24,7 +24,7 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
+      id: event.id ?? `pending_${this.nextId++}`,
       sessionId,
       type: event.type,
       data: event.data,

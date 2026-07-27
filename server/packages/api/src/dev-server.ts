@@ -6,9 +6,13 @@ import type { ArtifactStore, SkillArtifactStore } from "@oma-server/store";
 import {
   createRedisClient,
   redisConfigFromEnv,
+  RedisRuntimeCredentialStore,
   RedisTurnStreamStore,
 } from "@oma-server/redis";
-import type { TurnStreamStore } from "@oma-server/redis";
+import type {
+  RuntimeCredentialStore,
+  TurnStreamStore,
+} from "@oma-server/redis";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import {
@@ -305,11 +309,13 @@ async function main() {
   // Redis retains only reconstructable/live turn traffic (deltas + active map).
   const redis = createRedisClient(redisConfigFromEnv());
   let turnStreamStore: TurnStreamStore | undefined;
+  let runtimeCredentialStore: RuntimeCredentialStore | undefined;
   const pendingEventStore = stores.pendingEventStore;
   try {
     await redis.connect();
     turnStreamStore = new RedisTurnStreamStore(redis);
-    console.log("Connected to Redis (delta streams + active-turn map; pending input stays in PostgreSQL)");
+    runtimeCredentialStore = new RedisRuntimeCredentialStore(redis);
+    console.log("Connected to Redis (delta streams + active-turn map + transient credentials; pending input stays in PostgreSQL)");
   } catch (err) {
     console.log(
       `Redis not reachable (${String(err)}) — pending input remains in PostgreSQL, deltas are live-only`,
@@ -398,6 +404,7 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventStreamHub,
     turnStreamStore,
+    runtimeCredentialStore,
     resolveAdapter,
     sandboxManager,
     defaultSandboxEnv:
@@ -445,6 +452,7 @@ async function main() {
     artifactStore,
     eventStreamHub,
     turnStreamStore,
+    runtimeCredentialStore,
     sessionRouter,
   });
 

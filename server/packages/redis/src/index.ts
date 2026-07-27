@@ -17,6 +17,14 @@ export type {
 } from "./turn-stream-store.js";
 
 export { RedisPendingEventStore } from "./pending-event-store.js";
+export {
+  RedisRuntimeCredentialStore,
+  InMemoryRuntimeCredentialStore,
+} from "./runtime-credential-store.js";
+export type {
+  RuntimeCredential,
+  RuntimeCredentialStore,
+} from "./runtime-credential-store.js";
 
 export interface RedisConnectionConfig {
   /** Full connection URL (redis://[:password@]host:port[/db]). Takes precedence. */

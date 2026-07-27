@@ -38,11 +38,15 @@ export interface AgentSandboxConfig {
    */
   workspacePersistence?: "durable" | "ephemeral";
   /**
-   * Environment variables injected into the Agent's sandbox at create time
-   * (e.g. a `VFS_TOKEN` a CLI in the sandbox needs). These are baked into the
-   * sandbox by the ToolExecutor and never enter the model context or event log
-   * — unlike anything passed through a turn's prompt. Per-Agent, so two Agents
-   * on the same template get isolated secrets.
+   * `runtime-vfs` removes VFS_TOKEN from every create-time env source and
+   * requires the per-Pending-Event runtime credential seam.
+   */
+  credentialMode?: "runtime-vfs";
+  /**
+   * Non-sensitive environment variables injected into the Agent's sandbox at
+   * create time. They are readable by sandbox processes and model-invoked shell
+   * commands, so credentials must use a Host-owned runtime credential seam
+   * instead of this field.
    */
   env?: Record<string, string>;
 }

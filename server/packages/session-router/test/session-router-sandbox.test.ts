@@ -3,6 +3,10 @@ import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryAgentStore } from "@oma-server/store-memory";
 import {
+  InMemoryRuntimeCredentialStore,
+  type RuntimeCredentialStore,
+} from "@oma-server/redis";
+import {
   FakeSandboxClient,
   FakeWorkspacePersistence,
   FakeProvisionSource,
@@ -418,6 +422,7 @@ function createDeps(opts: {
   agentStore?: AgentStore;
   withManager?: boolean;
   defaultSandboxEnv?: Record<string, string>;
+  runtimeCredentialStore?: RuntimeCredentialStore;
 }) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
@@ -449,6 +454,7 @@ function createDeps(opts: {
     skillArtifactStore: opts.skillArtifactStore,
     agentStore: opts.agentStore,
     defaultSandboxEnv: opts.defaultSandboxEnv,
+    runtimeCredentialStore: opts.runtimeCredentialStore,
   });
 
   return {
@@ -468,7 +474,7 @@ async function enqueue(
   sessionId: string,
   text: string,
 ) {
-  await pendingEventStore.enqueue(sessionId, {
+  return pendingEventStore.enqueue(sessionId, {
     type: "user.message",
     data: { content: [{ type: "text", text }] },
     sessionThreadId: "sthr_primary",
@@ -582,12 +588,44 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     });
   });
 
-  it("injects transient per-session env without persisting it on the Agent", async () => {
+  it("binds a transient token only to direct vfs-cli exec and reclaims it after ack", async () => {
     const persistence = new FakeWorkspacePersistence();
     persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const runtimeCredentialStore = new InMemoryRuntimeCredentialStore();
+    const seenExecEnv: Array<Record<string, string> | undefined> = [];
+    const recordingSandboxClient = new FakeSandboxClient({
+      execHandler: (_command, _files, opts) => {
+        seenExecEnv.push(opts?.env);
+        return [];
+      },
+    });
+    const adapter: Adapter = {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        for await (const _ of input.toolExecutor!.exec(["/bin/sh", "-c", "env"])) {
+          // consume
+        }
+        for await (
+          const _ of input.toolExecutor!.exec([
+            "/bin/sh",
+            "-c",
+            "vfs-cli doctor --json",
+          ])
+        ) {
+          // consume
+        }
+        yield {
+          id: "evt_credential_probe",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          type: "agent.message",
+          content: [{ type: "text", text: "done" }],
+        };
+      },
+    };
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
-      adapter: toolReadingAdapter("hello.txt"),
+      adapter,
       persistence,
+      sandboxClient: recordingSandboxClient,
+      runtimeCredentialStore,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -595,16 +633,20 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
       agent: sandboxedAgent,
       workspaceId: "ws_1",
     });
-    await enqueue(pendingEventStore, session.id, "read the file");
-
-    await router.handleNewEvent(session.id, sandboxedAgent, {
-      VFS_TOKEN: "per-session-token",
+    const pending = await enqueue(pendingEventStore, session.id, "read the file");
+    await runtimeCredentialStore.put(pending.id, {
+      vfsToken: "per-turn-token",
     });
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
 
     const id = sandboxClient.created[0];
-    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
-      VFS_TOKEN: "per-session-token",
-    });
+    expect(sandboxClient.createOptsOf(id).env).toBeUndefined();
+    expect(seenExecEnv).toEqual([
+      undefined,
+      { VFS_TOKEN: "per-turn-token" },
+    ]);
+    expect(await runtimeCredentialStore.get(pending.id)).toBeNull();
     expect(sandboxedAgent.sandbox?.env).toBeUndefined();
   });
 
@@ -639,6 +681,37 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
       SHARED: "yes", // inherited from the deployment default
       OWN: "1", // the Agent's own extra key
     });
+  });
+
+  it("runtime-vfs mode strips every sandbox-global VFS_TOKEN source", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      persistence,
+      defaultSandboxEnv: { VFS_TOKEN: "shared-token", SHARED: "yes" },
+    });
+    const runtimeCredentialAgent: Agent = {
+      ...sandboxedAgent,
+      sandbox: {
+        enabled: true,
+        image: "kiki-open-managed-agents",
+        credentialMode: "runtime-vfs",
+        env: { VFS_TOKEN: "agent-token", OWN: "1" },
+      },
+    };
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: runtimeCredentialAgent.id,
+      agent: runtimeCredentialAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, runtimeCredentialAgent);
+
+    const env = sandboxClient.createOptsOf(sandboxClient.created[0]).env;
+    expect(env).toEqual({ SHARED: "yes", OWN: "1" });
   });
 
   it("injects defaultSandboxEnv even when the Agent sets no sandbox.env", async () => {

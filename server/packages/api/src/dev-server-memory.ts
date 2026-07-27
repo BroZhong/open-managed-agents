@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
+import { InMemoryRuntimeCredentialStore } from "@oma-server/redis";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
 import type {
@@ -264,6 +265,7 @@ function resolveAdapter(runtime: string): Adapter {
 async function main() {
   const stores = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
+  const runtimeCredentialStore = new InMemoryRuntimeCredentialStore();
 
   // Create a dev seed key so auth can be tested
   await stores.apiKeyStore.create("dev", "dev-console");
@@ -284,6 +286,7 @@ async function main() {
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
+    runtimeCredentialStore,
     resolveAdapter,
     defaultSandboxEnv:
       Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
@@ -328,6 +331,7 @@ async function main() {
     loopStore: stores.loopStore,
     userStore: stores.userStore,
     eventStreamHub,
+    runtimeCredentialStore,
     sessionRouter,
   });
 

@@ -867,7 +867,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
           .optional()
           .openapi({
             description:
-              "Transient VFS access token injected as VFS_TOKEN into this Session's sandbox. It is not persisted in the event log or Agent record.",
+              "Transient VFS access token stored out-of-band for the queued event and exposed only to a direct vfs-cli subprocess. It is not persisted in the event log, Agent, Workspace, or sandbox environment.",
             param: { name: "X-VFS-Token", in: "header" },
           }),
       }),
@@ -882,6 +882,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         "Events accepted",
       ),
       400: errorResponse("Invalid or unsupported event batch"),
+      503: errorResponse("Transient VFS credential store unavailable"),
       404: errorResponse("Session not found"),
       410: errorResponse("Session is terminated"),
     },

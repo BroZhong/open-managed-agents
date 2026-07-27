@@ -78,9 +78,9 @@ _Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
 The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, its **Workspace Persistence Mode**, and any **Read-only Projections**. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
 _Avoid_: config, sandbox config, environment, EnvVars
 
-**Runtime Sandbox Credential**:
-An optional credential supplied with an authenticated user event and injected into that Session's sandbox environment without entering the Agent record, pending event, event log, model context, or Workspace. The current supported credential is the `X-VFS-Token` header, mapped narrowly to `VFS_TOKEN`. It is intentionally transient: a Host crash before sandbox creation loses it, so the client supplies it on every user message.
-_Avoid_: prompt secret, Agent env secret, persisted Session secret
+**Runtime CLI Credential**:
+An optional credential supplied with an authenticated user event and stored out-of-band under that event's generated Pending Event id. The current supported credential is the `X-VFS-Token` header. The Host resolves it after the exact pending claim, exposes it only as `VFS_TOKEN` to one direct `vfs-cli` subprocess, and deletes it after acknowledgement. An Agent with `sandbox.credentialMode: runtime-vfs` also strips `VFS_TOKEN` from legacy deployment/Agent create-time env, preventing fallback to a sandbox-global identity. It never enters the Pending Event, Event Log, Agent, Workspace, sandbox creation environment, or arbitrary shell environment. The client supplies the current token on every user message so token rotation and multi-Host claim handoff remain correct.
+_Avoid_: Runtime Sandbox Credential, prompt secret, Agent env secret, persisted Session secret
 
 **Workspace Persistence Mode**:
 The Agent-scoped choice for the writable `/home/user` area. `durable` (the default) hydrates from and syncs to the **Workspace Store**. `ephemeral` keeps the same live sandbox across Turns but deliberately performs neither operation; it is for Agents whose authoritative working state lives behind an external CLI or API. The mode does not affect **Read-only Projections**, sandbox lifetime, or tool isolation.

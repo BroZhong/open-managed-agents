@@ -10,6 +10,8 @@ export interface PendingEvent {
 }
 
 export interface PendingEventEnqueueInput {
+  /** Optional Host-generated id, used to bind short-lived out-of-band metadata. */
+  id?: string;
   type: string;
   data: unknown;
   sessionThreadId: string;

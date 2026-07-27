@@ -22,7 +22,7 @@ spec:
         - name: oma-acr
       containers:
         - name: sandbox
-          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox:kiki-vfscli-0.5.0
+          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox@sha256:8772373fc805b257ba0f973d525983f3e0fc9ecb32c621b6831127b530c429e9
           resources:
             requests:
               cpu: "1"

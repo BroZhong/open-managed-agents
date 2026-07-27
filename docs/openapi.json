@@ -310,6 +310,12 @@
               "ephemeral"
             ]
           },
+          "credentialMode": {
+            "type": "string",
+            "enum": [
+              "runtime-vfs"
+            ]
+          },
           "env": {
             "type": "object",
             "additionalProperties": {
@@ -4082,10 +4088,10 @@
             "schema": {
               "type": "string",
               "maxLength": 8192,
-              "description": "Transient VFS access token injected as VFS_TOKEN into this Session's sandbox. It is not persisted in the event log or Agent record."
+              "description": "Transient VFS access token stored out-of-band for the queued event and exposed only to a direct vfs-cli subprocess. It is not persisted in the event log, Agent, Workspace, or sandbox environment."
             },
             "required": false,
-            "description": "Transient VFS access token injected as VFS_TOKEN into this Session's sandbox. It is not persisted in the event log or Agent record.",
+            "description": "Transient VFS access token stored out-of-band for the queued event and exposed only to a direct vfs-cli subprocess. It is not persisted in the event log, Agent, Workspace, or sandbox environment.",
             "name": "X-VFS-Token",
             "in": "header"
           }
@@ -4170,6 +4176,16 @@
           },
           "410": {
             "description": "Session is terminated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Transient VFS credential store unavailable",
             "content": {
               "application/json": {
                 "schema": {

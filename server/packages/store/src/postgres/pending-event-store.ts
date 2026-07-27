@@ -47,7 +47,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       `INSERT INTO pending_events (id, session_id, type, data, session_thread_id, api_key_id, arrived_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at`,
-      [nanoid(), sessionId, event.type, JSON.stringify(event.data ?? null), event.sessionThreadId, event.apiKeyId ?? null, new Date()],
+      [event.id ?? nanoid(), sessionId, event.type, JSON.stringify(event.data ?? null), event.sessionThreadId, event.apiKeyId ?? null, new Date()],
     );
     return rowToEvent(rows[0]);
   }
@@ -60,7 +60,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     // failing fast on non-serializable input, this guarantees we never begin a
     // batch whose later item cannot even be encoded.
     const prepared = events.map((event) => ({
-      id: nanoid(),
+      id: event.id ?? nanoid(),
       type: event.type,
       data: JSON.stringify(event.data ?? null),
       sessionThreadId: event.sessionThreadId,

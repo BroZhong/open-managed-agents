@@ -2,7 +2,11 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { EventLogIngressStore, PendingEventIngressStore, SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import { alignedChunkData } from "@oma-server/event-log";
-import type { TurnStreamStore } from "@oma-server/redis";
+import type {
+  RuntimeCredentialStore,
+  TurnStreamStore,
+} from "@oma-server/redis";
+import { randomUUID } from "node:crypto";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { deriveTitleFromEventData } from "../lib/derive-title.js";
@@ -29,6 +33,7 @@ export interface EventRouteDeps {
   sessionStore: SessionStore;
   eventStreamHub?: EventStreamHub;
   sessionRouter?: SessionRouter;
+  runtimeCredentialStore?: RuntimeCredentialStore;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * the SSE reconnect merge is done server-side: completed Events are replayed
@@ -131,16 +136,57 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
 
     let acceptedPending = false;
     if (pendingEvents.length > 0) {
-      const inserted = await deps.pendingEventStore.enqueueBatchIfSessionActive(
-        sessionId,
-        pendingEvents.map(({ type, data }) => ({
-          type,
-          data,
-          sessionThreadId: "sthr_primary",
-          ...(tenant.apiKeyId ? { apiKeyId: tenant.apiKeyId } : {}),
-        })),
-      );
+      if (vfsToken && !deps.runtimeCredentialStore) {
+        return c.json({ error: "Transient VFS credentials are unavailable" }, 503);
+      }
+      const inputs = pendingEvents.map(({ type, data }) => ({
+        id: `pending_${randomUUID()}`,
+        type,
+        data,
+        sessionThreadId: "sthr_primary",
+        ...(tenant.apiKeyId ? { apiKeyId: tenant.apiKeyId } : {}),
+      }));
+      if (vfsToken) {
+        try {
+          await Promise.all(
+            inputs.map(({ id }) =>
+              deps.runtimeCredentialStore!.put(id, { vfsToken }),
+            ),
+          );
+        } catch {
+          await Promise.all(
+            inputs.map(({ id }) =>
+              deps.runtimeCredentialStore!.delete(id).catch(() => undefined),
+            ),
+          );
+          return c.json({ error: "Transient VFS credentials are unavailable" }, 503);
+        }
+      }
+
+      let inserted;
+      try {
+        inserted = await deps.pendingEventStore.enqueueBatchIfSessionActive(
+          sessionId,
+          inputs,
+        );
+      } catch (error) {
+        if (vfsToken) {
+          await Promise.all(
+            inputs.map(({ id }) =>
+              deps.runtimeCredentialStore!.delete(id).catch(() => undefined),
+            ),
+          );
+        }
+        throw error;
+      }
       if (!inserted) {
+        if (vfsToken) {
+          await Promise.all(
+            inputs.map(({ id }) =>
+              deps.runtimeCredentialStore!.delete(id).catch(() => undefined),
+            ),
+          );
+        }
         return c.json({ error: "Session is terminated" }, 410);
       }
       acceptedPending = true;
@@ -186,9 +232,8 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
 
     // Trigger session router if we enqueued pending events
     if (acceptedPending && deps.sessionRouter) {
-      const runtimeSandboxEnv = vfsToken ? { VFS_TOKEN: vfsToken } : undefined;
       void deps.sessionRouter
-        .handleNewEvent(sessionId, session.agent, runtimeSandboxEnv)
+        .handleNewEvent(sessionId, session.agent)
         .catch((error) => {
           // The input is already durable in the Pending Event Store. Keep the
           // request accepted and leave recovery/retry to the router lifecycle.

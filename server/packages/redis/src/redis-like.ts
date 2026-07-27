@@ -37,5 +37,12 @@ export interface RedisLike {
   llen(key: string): Promise<number>;
 
   // ─── Keyspace ──────────────────────────────────────────────────────────────
+  get(key: string): Promise<string | null>;
+  set(
+    key: string,
+    value: string,
+    expiryMode: "PX",
+    ttlMs: number,
+  ): Promise<"OK" | null>;
   del(...keys: string[]): Promise<number>;
 }
