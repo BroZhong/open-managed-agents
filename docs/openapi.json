@@ -4077,6 +4077,17 @@
             "required": true,
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 8192,
+              "description": "Transient VFS access token injected as VFS_TOKEN into this Session's sandbox. It is not persisted in the event log or Agent record."
+            },
+            "required": false,
+            "description": "Transient VFS access token injected as VFS_TOKEN into this Session's sandbox. It is not persisted in the event log or Agent record.",
+            "name": "X-VFS-Token",
+            "in": "header"
           }
         ],
         "requestBody": {

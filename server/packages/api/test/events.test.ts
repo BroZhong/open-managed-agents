@@ -452,6 +452,32 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(pending!.type).toBe("user.message");
   });
 
+  it("forwards x-vfs-token only as transient sandbox env", async () => {
+    const handleNewEvent = vi.fn(async () => {});
+    const sessionRouter = { handleNewEvent } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vfs-token": "user-vfs-token",
+      },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "List assets" } }],
+      }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(handleNewEvent).toHaveBeenCalledWith(session.id, session.agent, {
+      VFS_TOKEN: "user-vfs-token",
+    });
+    expect(JSON.stringify(await pendingEventStore.peek(session.id))).not.toContain(
+      "user-vfs-token",
+    );
+  });
+
   it("attributes queued events to the authenticating API key", async () => {
     const rawKey = "event-attribution-key";
     const hash = createHash("sha256").update(rawKey).digest("hex");

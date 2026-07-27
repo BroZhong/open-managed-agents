@@ -860,6 +860,17 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Sessions/Events"],
     request: {
       params: idParams,
+      headers: z.object({
+        "X-VFS-Token": z
+          .string()
+          .max(8192)
+          .optional()
+          .openapi({
+            description:
+              "Transient VFS access token injected as VFS_TOKEN into this Session's sandbox. It is not persisted in the event log or Agent record.",
+            param: { name: "X-VFS-Token", in: "header" },
+          }),
+      }),
       body: jsonBody(z.object({ events: z.array(UserEventSchema).min(1) })),
     },
     responses: {

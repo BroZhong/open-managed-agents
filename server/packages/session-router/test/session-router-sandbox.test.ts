@@ -582,6 +582,32 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     });
   });
 
+  it("injects transient per-session env without persisting it on the Agent", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      persistence,
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: sandboxedAgent.id,
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, sandboxedAgent, {
+      VFS_TOKEN: "per-session-token",
+    });
+
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
+      VFS_TOKEN: "per-session-token",
+    });
+    expect(sandboxedAgent.sandbox?.env).toBeUndefined();
+  });
+
   it("merges defaultSandboxEnv into the sandbox; the Agent's own env wins per key", async () => {
     const persistence = new FakeWorkspacePersistence();
     persistence.seed("tenant_1", "ws_1", "hello.txt", "world");

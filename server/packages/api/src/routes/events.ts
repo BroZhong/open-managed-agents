@@ -68,6 +68,10 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
   registerContractRoute(router, getOpenApiRoute("appendSessionEvents"), async (c) => {
     const sessionId = c.req.param("id")!;
     const tenant = c.get("tenant");
+    const vfsToken = c.req.header("x-vfs-token")?.trim();
+    if (vfsToken && (vfsToken.length > 8192 || vfsToken.includes("\0"))) {
+      return c.json({ error: "Invalid x-vfs-token header" }, 400);
+    }
 
     // Validate session exists and belongs to tenant
     const session = await deps.sessionStore.getById(sessionId);
@@ -182,11 +186,14 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
 
     // Trigger session router if we enqueued pending events
     if (acceptedPending && deps.sessionRouter) {
-      void deps.sessionRouter.handleNewEvent(sessionId, session.agent).catch((error) => {
-        // The input is already durable in the Pending Event Store. Keep the
-        // request accepted and leave recovery/retry to the router lifecycle.
-        console.error(`SessionRouter failed after accepting input for ${sessionId}:`, error);
-      });
+      const runtimeSandboxEnv = vfsToken ? { VFS_TOKEN: vfsToken } : undefined;
+      void deps.sessionRouter
+        .handleNewEvent(sessionId, session.agent, runtimeSandboxEnv)
+        .catch((error) => {
+          // The input is already durable in the Pending Event Store. Keep the
+          // request accepted and leave recovery/retry to the router lifecycle.
+          console.error(`SessionRouter failed after accepting input for ${sessionId}:`, error);
+        });
     }
 
     return c.json({ accepted: true as const, interrupted: false }, 202);

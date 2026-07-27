@@ -495,7 +495,11 @@ export class SessionRouter {
     return stop;
   }
 
-  async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
+  async handleNewEvent(
+    sessionId: string,
+    agentConfig: Agent,
+    runtimeSandboxEnv?: Record<string, string>,
+  ): Promise<void> {
     // Usually the active loop will pick up newly queued input itself. Remember
     // the wake as well, so an arrival after its final empty dequeue cannot be
     // stranded merely because the per-process active marker is still present.
@@ -514,7 +518,12 @@ export class SessionRouter {
     this.activeSessions.set(sessionId, activeRun);
 
     try {
-      await this.drainLoop(sessionId, agentConfig, activeRun.controller.signal);
+      await this.drainLoop(
+        sessionId,
+        agentConfig,
+        activeRun.controller.signal,
+        runtimeSandboxEnv,
+      );
     } finally {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
@@ -670,8 +679,13 @@ export class SessionRouter {
     session: Session,
     agent: Agent,
     equippedSkills: EquippedSkill[],
+    runtimeSandboxEnv?: Record<string, string>,
   ): EnvSpec {
-    const mergedEnv = { ...this.defaultSandboxEnv, ...agent.sandbox?.env };
+    const mergedEnv = {
+      ...this.defaultSandboxEnv,
+      ...agent.sandbox?.env,
+      ...runtimeSandboxEnv,
+    };
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
@@ -697,11 +711,14 @@ export class SessionRouter {
     session: Session,
     agent: Agent,
     equippedSkills: EquippedSkill[],
+    runtimeSandboxEnv?: Record<string, string>,
   ): SandboxSession | undefined {
     if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
     let sandbox = this.sessions.get(sessionId);
     if (!sandbox) {
-      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills));
+      sandbox = this.sandboxManager.open(
+        this.specFor(session, agent, equippedSkills, runtimeSandboxEnv),
+      );
       this.sessions.set(sessionId, sandbox);
     }
     return sandbox; // lazy: no sandbox actually started yet.
@@ -960,6 +977,7 @@ export class SessionRouter {
     sessionId: string,
     agentConfig: Agent,
     signal: AbortSignal,
+    runtimeSandboxEnv?: Record<string, string>,
   ): Promise<void> {
     let lastOwnedTurnId: string | undefined;
     while (!signal.aborted) {
@@ -1209,7 +1227,13 @@ export class SessionRouter {
       if (!session) {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
-      const sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
+      const sandbox = this.sandboxFor(
+        sessionId,
+        session,
+        currentAgent,
+        equippedSkills,
+        runtimeSandboxEnv,
+      );
       const projections = this.skillProjections(session, equippedSkills);
 
       // The write gate is already running at this point. Before adapter.run,

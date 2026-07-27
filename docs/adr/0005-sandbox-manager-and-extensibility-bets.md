@@ -47,6 +47,8 @@ Sync belongs to a durable Workspace, not to a Session/turn. It is triggered at s
 
 The Environment Spec carries the Agent's persistence mode. `durable` (including an omitted mode) preserves the lifecycle above. `ephemeral` makes hydrate, refresh-from-medium, checkpoint sync, and dispose sync empty operations; sandbox creation, reuse, reclaim handling, tool isolation, and Read-only Projection refresh remain unchanged.
 
+The Environment Spec may also receive a **Runtime Sandbox Credential** from the authenticated event ingress. This is a narrow escape hatch for per-user external API authorization: `X-VFS-Token` maps only to `VFS_TOKEN`, overrides deployment/Agent defaults for the new Session sandbox, and is never copied into the queued event, event log, Agent record, prompt, or Workspace. The browser repeats the header on every user message so another Host can create the sandbox after load balancing. A Host crash between accepting the durable event and creating the sandbox can lose this transient value; recovery then fails closed at the external CLI and the client must retry rather than persisting a reusable user credential.
+
 ## Consequences
 
 - A crash-orphaned sandbox is bounded by the existing ~1h TTL; the Manager interface reserves `list`/`reclaim` for a future active sweep, but no sweep is built now (no evidence of orphan-cost pain yet).
