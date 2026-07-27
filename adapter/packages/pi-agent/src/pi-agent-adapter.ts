@@ -6,6 +6,7 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -207,6 +208,17 @@ export interface PiAgentAdapterOptions {
 interface MaterializedMcpConfig {
   path: string;
   cleanup(): void;
+}
+
+/**
+ * Derive a provider-affinity key that is stable, Pi-safe, and no longer than
+ * OpenAI's 64-character prompt_cache_key limit. OMA's Nano ID alphabet allows
+ * trailing `-` / `_`, which Pi rejects for explicit session ids, so the raw
+ * Host Session id cannot be passed through directly.
+ */
+function derivePiSessionId(omaSessionId: string): string {
+  const digest = createHash("sha256").update(omaSessionId).digest("hex");
+  return `oma-${digest.slice(0, 60)}`;
 }
 
 type PiRunQueueItem =
@@ -494,8 +506,13 @@ export class PiAgentAdapter implements Adapter {
       // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
       // at construction, loading this history into the LLM context before the
       // first `prompt()`. `persist = false`, so nothing is written to disk — the
-      // event log stays the sole authoritative store.
-      const sessionManager = SessionManager.inMemory(cwd);
+      // event log stays the sole authoritative store. Derive a stable id from
+      // the Host Session so provider-level prompt caching keeps routing
+      // affinity across Turns even though each Turn still gets a fresh
+      // in-memory manager.
+      const sessionManager = SessionManager.inMemory(cwd, {
+        id: derivePiSessionId(args.input.sessionId),
+      });
       for (const message of args.historyMessages) {
         sessionManager.appendMessage(message);
       }

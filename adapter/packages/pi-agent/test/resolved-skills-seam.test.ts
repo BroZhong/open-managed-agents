@@ -11,7 +11,11 @@ const sdkSeam = vi.hoisted(() => ({
   resourceLoaderOptions: [] as Array<Record<string, unknown>>,
   sessionOptions: [] as Array<{
     cwd?: string;
-    sessionManager?: { getCwd(): string };
+    sessionManager?: {
+      getCwd(): string;
+      getSessionId(): string;
+      isPersisted(): boolean;
+    };
   }>,
   mcpConfigPath: undefined as string | undefined,
   mcpConfig: undefined as unknown,
@@ -47,7 +51,11 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
     createAgentSession: async (options: {
       cwd?: string;
       resourceLoader?: FakeResourceLoader;
-      sessionManager?: { getCwd(): string };
+      sessionManager?: {
+        getCwd(): string;
+        getSessionId(): string;
+        isPersisted(): boolean;
+      };
     }) => {
       sdkSeam.sessionOptions.push(options);
       const configPath = options.resourceLoader
@@ -186,6 +194,46 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(sdkSeam.sessionOptions[0].cwd).toBe(process.cwd());
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe(process.cwd());
   });
+
+  it("keeps the Pi session id stable across Turns in the same OMA Session", async () => {
+    const firstTurn = input(true);
+    firstTurn.sessionId = "sess_cache-affinity";
+    firstTurn.turnId = "turn-1";
+    const secondTurn = input(true);
+    secondTurn.sessionId = firstTurn.sessionId;
+    secondTurn.turnId = "turn-2";
+
+    await collect(new PiAgentAdapter().run(firstTurn));
+    await collect(new PiAgentAdapter().run(secondTurn));
+
+    const managers = sdkSeam.sessionOptions.map(
+      (options) => options.sessionManager,
+    );
+    const piSessionIds = managers.map((manager) => manager?.getSessionId());
+
+    expect(piSessionIds[0]).toBe(piSessionIds[1]);
+    expect(piSessionIds[0]).toMatch(/^oma-[a-f0-9]{60}$/);
+    expect(managers[0]).not.toBe(managers[1]);
+    expect(managers.map((manager) => manager?.isPersisted())).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it.each(["sess_cache-affinity-", "sess_cache-affinity_"])(
+    "normalizes the valid OMA Session id %s for Pi",
+    async (sessionId) => {
+      const turn = input(true);
+      turn.sessionId = sessionId;
+
+      const events = await collect(new PiAgentAdapter().run(turn));
+
+      expect(events.some((event) => event.type === "session.error")).toBe(false);
+      expect(sdkSeam.sessionOptions[0].sessionManager?.getSessionId()).toMatch(
+        /^oma-[a-f0-9]{60}$/,
+      );
+    },
+  );
 
   it("fails loud instead of asking Host-native tools to open sandbox Skill paths", async () => {
     const events = await collect(new PiAgentAdapter().run(input(false)));
