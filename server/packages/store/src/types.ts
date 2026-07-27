@@ -31,6 +31,13 @@ export interface AgentSandboxConfig {
   enabled: boolean;
   image?: string;
   /**
+   * Whether `/home/user` is hydrated from and synced back to the Workspace
+   * medium. Defaults to `durable`. `ephemeral` keeps one live sandbox across
+   * turns but deliberately skips Workspace persistence; use it for Agents
+   * whose authoritative state lives behind an external CLI/API.
+   */
+  workspacePersistence?: "durable" | "ephemeral";
+  /**
    * Environment variables injected into the Agent's sandbox at create time
    * (e.g. a `VFS_TOKEN` a CLI in the sandbox needs). These are baked into the
    * sandbox by the ToolExecutor and never enter the model context or event log

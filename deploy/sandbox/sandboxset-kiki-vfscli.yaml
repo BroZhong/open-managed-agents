@@ -1,0 +1,33 @@
+# Dedicated warm pool for the new Kiki open-managed-agents integration.
+# The existing code-interpreter and code-interpreter-vfscli pools are unchanged.
+apiVersion: agents.kruise.io/v1alpha1
+kind: SandboxSet
+metadata:
+  name: kiki-open-managed-agents
+  namespace: sandbox-system
+spec:
+  replicas: 1
+  runtimes:
+    - name: csi
+    - name: agent-runtime
+  template:
+    metadata:
+      labels:
+        alibabacloud.com/acs: "true"
+        alibabacloud.com/compute-class: agent-sandbox
+        alibabacloud.com/compute-qos: default
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: oma-acr
+      containers:
+        - name: sandbox
+          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox:kiki-vfscli-0.5.0
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 30Gi
+            limits:
+              cpu: "1"
+              memory: 1Gi

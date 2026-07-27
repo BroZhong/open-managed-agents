@@ -75,8 +75,12 @@ The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, de
 _Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
 
 **Environment Spec**:
-The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and any **Read-only Projections**. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
+The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, its **Workspace Persistence Mode**, and any **Read-only Projections**. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
 _Avoid_: config, sandbox config, environment, EnvVars
+
+**Workspace Persistence Mode**:
+The Agent-scoped choice for the writable `/home/user` area. `durable` (the default) hydrates from and syncs to the **Workspace Store**. `ephemeral` keeps the same live sandbox across Turns but deliberately performs neither operation; it is for Agents whose authoritative working state lives behind an external CLI or API. The mode does not affect **Read-only Projections**, sandbox lifetime, or tool isolation.
+_Avoid_: disable storage, stateless sandbox (an ephemeral Session still retains its live sandbox between Turns)
 
 **Workspace Store**:
 The medium-agnostic home of a **Workspace**'s persistent state, responsible for the two-way hydrate/sync of the sandbox's writable workspace area. Hydrate restores state into a fresh sandbox; sync writes the sandbox's current state back. Today S3 is its only implementation; a persistent volume, an image snapshot, or an in-sandbox sidecar would each be another. The changing storage medium is the one thing sealed behind its interface.

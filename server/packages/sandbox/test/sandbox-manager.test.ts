@@ -259,6 +259,39 @@ describe("SandboxManager / SandboxSession", () => {
     expect(persistence.contentOf(TENANT, WS, "b.txt")).toBe("B");
   });
 
+  it("ephemeral workspace mode skips hydrate and sync while keeping projections and one live sandbox", async () => {
+    const { manager, sandboxClient, persistence, provision } = makeManager({
+      seed: [["durable.txt", "must not hydrate"]],
+    });
+    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
+    provision.seed(coord, { "SKILL.md": "# image-independent projection" });
+    const session = manager.open(
+      specFor({
+        workspacePersistence: "ephemeral",
+        projections: [{ targetPath: "/skills/skl_1", source: coord }],
+      }),
+    );
+
+    await session.writeFile("turn.txt", "kept only in the live sandbox");
+    await expect(session.readFile("durable.txt")).rejects.toThrow();
+    expect(await session.readFile("/skills/skl_1/SKILL.md")).toBe(
+      "# image-independent projection",
+    );
+
+    expect(await session.checkpoint()).toEqual({
+      tenantId: TENANT,
+      workspaceId: WS,
+      changed: [],
+      deleted: [],
+    });
+    expect(persistence.contentOf(TENANT, WS, "turn.txt")).toBeUndefined();
+
+    await session.refresh();
+    expect(await session.readFile("turn.txt")).toBe("kept only in the live sandbox");
+    expect(sandboxClient.created).toHaveLength(1);
+    expect(provision.projected).toHaveLength(2);
+  });
+
   it("checkpoint on a never-created (pure-chat) session → EMPTY, no throw, no create", async () => {
     const { manager, sandboxClient } = makeManager();
     const session = manager.open(specFor());

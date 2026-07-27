@@ -67,6 +67,7 @@ export const AgentSandboxConfigSchema = z
   .object({
     enabled: z.boolean(),
     image: z.string().optional(),
+    workspacePersistence: z.enum(["durable", "ephemeral"]).optional(),
     env: z.record(z.string(), z.string()).optional(),
   })
   .openapi("AgentSandboxConfig");

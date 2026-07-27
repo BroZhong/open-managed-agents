@@ -303,6 +303,13 @@
           "image": {
             "type": "string"
           },
+          "workspacePersistence": {
+            "type": "string",
+            "enum": [
+              "durable",
+              "ephemeral"
+            ]
+          },
           "env": {
             "type": "object",
             "additionalProperties": {

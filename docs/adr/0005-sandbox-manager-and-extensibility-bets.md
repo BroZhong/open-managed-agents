@@ -32,7 +32,7 @@ The Pi tools themselves use Pi's own `create*ToolDefinition(cwd, {operations})` 
 
 ### 3. Two orthogonal kinds of sandbox content
 
-- **Workspace** — two-way. Hydrated into `/home/user`, writable, synced back to the **Workspace Store** (content-hash push + baseline-diff delete). The **Baseline** is per-sandbox-instance and private to the Store.
+- **Workspace** — writable `/home/user` content with an Agent-scoped persistence mode. `durable` is the default: hydrate from and sync back to the **Workspace Store** (content-hash push + baseline-diff delete), with a per-sandbox **Baseline** private to the Store. `ephemeral` deliberately performs neither operation while retaining the same live sandbox between Turns; it is reserved for Agents whose authoritative state is external to OMA.
 - **Read-only Projection** — one-way, downward only, **never synced**. Equipped Skills, a code repo, a dataset. Projected into a path *outside* `/home/user` (e.g. `/skills`, `/repo`) so the sync scan never mistakes it for a user artifact. Its source is a pluggable **Provision Source** (S3 today; git/tarball later). Content flows S3 → sandbox directly, never routed through the Host — the Host supplies only coordinates.
 
 ### 4. Skills must be projected into the sandbox
@@ -43,10 +43,13 @@ Because the Pi adapter runs with `noTools: "builtin"` and custom tools, Pi's pro
 
 ### 5. Sync is a Workspace concern, triggered at a lifecycle checkpoint
 
-Sync belongs to the Workspace, not to a Session/turn. It is triggered at sandbox lifecycle checkpoints (a turn-end checkpoint is retained as a convenient, cheap safe point; the Manager also syncs before dispose/rebuild). Upload to S3 is already incremental (content hash); detection becomes incremental via a size+mtime pre-filter before hashing. The `workspace.file_change` event is an idempotent "refresh now" pulse emitted only to the triggering Session's stream — no cross-instance registry, since S3 is authoritative and the frontend already backstops on turn end.
+Sync belongs to a durable Workspace, not to a Session/turn. It is triggered at sandbox lifecycle checkpoints (a turn-end checkpoint is retained as a convenient, cheap safe point; the Manager also syncs before dispose/rebuild). Upload to S3 is already incremental (content hash); detection becomes incremental via a size+mtime pre-filter before hashing. The `workspace.file_change` event is an idempotent "refresh now" pulse emitted only to the triggering Session's stream — no cross-instance registry, since S3 is authoritative and the frontend already backstops on turn end.
+
+The Environment Spec carries the Agent's persistence mode. `durable` (including an omitted mode) preserves the lifecycle above. `ephemeral` makes hydrate, refresh-from-medium, checkpoint sync, and dispose sync empty operations; sandbox creation, reuse, reclaim handling, tool isolation, and Read-only Projection refresh remain unchanged.
 
 ## Consequences
 
 - A crash-orphaned sandbox is bounded by the existing ~1h TTL; the Manager interface reserves `list`/`reclaim` for a future active sweep, but no sweep is built now (no evidence of orphan-cost pain yet).
 - A sandbox reclaimed by the gateway between hydrate and sync loses that turn's un-synced files — a known eventual-consistency cost of S3-authoritative, disposable sandboxes (consistent with ADR-0002's "1:N collisions are the user's responsibility").
+- An Agent choosing `ephemeral` declares `/home/user` non-authoritative: a reclaim or Host restart loses it by design. External CLI/API state must be the source of truth, and no `workspace.file_change` event is emitted for those local files.
 - Future architecture reviews should **not** re-suggest extracting a neutral/reusable tool package: that seam is intentionally hypothetical (§2). Revisit only when a real second non-Pi consumer exists.

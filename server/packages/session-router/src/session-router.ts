@@ -677,6 +677,7 @@ export class SessionRouter {
       workspaceId: session.workspaceId,
       image: agent.sandbox?.image,
       env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
+      workspacePersistence: agent.sandbox?.workspacePersistence,
       projections: this.skillProjections(session, equippedSkills),
     };
   }

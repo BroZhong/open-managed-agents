@@ -55,6 +55,12 @@ export interface EnvSpec {
   image?: string;
   /** Environment variables baked into the sandbox runtime. */
   env?: Record<string, string>;
+  /**
+   * `durable` hydrates and syncs `/home/user` through the configured medium.
+   * `ephemeral` retains the live sandbox across turns but skips that medium.
+   * Defaults to `durable`.
+   */
+  workspacePersistence?: "durable" | "ephemeral";
 
   /**
    * Read-only projections: one-way downward, **never** synced, mounted *outside*
@@ -252,6 +258,7 @@ class SandboxSessionImpl implements SandboxSession {
   private readonly workspaceDir: string;
   private readonly image?: string;
   private readonly env?: Record<string, string>;
+  private readonly workspacePersistence: "durable" | "ephemeral";
   private projections: readonly ReadonlyProjection[];
   private readonly lifetimeSeconds: number;
 
@@ -294,6 +301,7 @@ class SandboxSessionImpl implements SandboxSession {
     this.workspaceDir = DEFAULT_WORKSPACE_DIR;
     this.image = spec.image;
     this.env = spec.env;
+    this.workspacePersistence = spec.workspacePersistence ?? "durable";
     this.projections = spec.projections ?? [];
     this.lifetimeSeconds =
       deps.defaults?.lifetimeSeconds ?? DEFAULT_SANDBOX_LIFETIME_SECONDS;
@@ -365,22 +373,25 @@ class SandboxSessionImpl implements SandboxSession {
     if (this.ensuring) await this.ensuring;
 
     const id = this.sandboxId;
-    const hydration = this.hydration;
-    if (!id || !hydration) return;
+    if (!id) return;
     // A reclaimed sandbox will rebuild from authoritative state on its next
     // primitive; refreshing it here must not destroy/recreate anything.
     if (!(await this.sandboxClient.isAlive(id))) return;
 
-    const target = this.targetFor(id);
-    if (this.workspaceSyncDirty) {
-      // A previous checkpoint failed, so the sandbox may be ahead of the
-      // authoritative medium. Retry that upward sync before reconciling
-      // downward; if it still fails, syncLive throws and the sandbox is left
-      // untouched for another retry. The recovered delta is intentionally not
-      // returned from refresh(): the UI's idle-event refetch is the backstop.
-      await this.syncLive(hydration, target);
+    if (this.workspacePersistence === "durable") {
+      const hydration = this.hydration;
+      if (!hydration) return;
+      const target = this.targetFor(id);
+      if (this.workspaceSyncDirty) {
+        // A previous checkpoint failed, so the sandbox may be ahead of the
+        // authoritative medium. Retry that upward sync before reconciling
+        // downward; if it still fails, syncLive throws and the sandbox is left
+        // untouched for another retry. The recovered delta is intentionally not
+        // returned from refresh(): the UI's idle-event refetch is the backstop.
+        await this.syncLive(hydration, target);
+      }
+      await this.persistence.refresh(hydration, target);
     }
-    await this.persistence.refresh(hydration, target);
     const targets = new Set([
       ...previousProjections.map((projection) => projection.targetPath),
       ...projections.map((projection) => projection.targetPath),
@@ -455,6 +466,7 @@ class SandboxSessionImpl implements SandboxSession {
       changed: [],
       deleted: [],
     };
+    if (this.workspacePersistence === "ephemeral") return empty;
     if (!this.sandboxId || !this.hydration) return empty;
     const id = this.sandboxId;
     // A reclaimed sandbox holds no state to sync; probing it would throw. Treat
@@ -542,8 +554,12 @@ class SandboxSessionImpl implements SandboxSession {
       },
     });
     this.sandboxId = handle.id;
-    // 1. Hydrate the two-way Workspace area; keep only the opaque session.
-    this.hydration = await this.persistence.hydrate(this.targetFor(handle.id));
+    // 1. Hydrate the two-way Workspace area only for durable Agents; keep the
+    // opaque session for later refresh/sync. Ephemeral Agents intentionally
+    // retain only the live sandbox filesystem.
+    if (this.workspacePersistence === "durable") {
+      this.hydration = await this.persistence.hydrate(this.targetFor(handle.id));
+    }
     // 2. Project every read-only projection (one-way, outside workspaceDir).
     await this.projectAll(handle.id);
     return handle.id;

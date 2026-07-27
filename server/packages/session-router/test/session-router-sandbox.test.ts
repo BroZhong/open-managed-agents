@@ -516,6 +516,43 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     expect(sandboxClient.created).toHaveLength(1);
   });
 
+  it("passes ephemeral workspace mode through and completes consecutive tool turns without persistence", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "durable.txt", "must not hydrate");
+    const { router, sessionStore, pendingEventStore, sandboxClient, eventLogStore } =
+      createDeps({
+        adapter: toolWritingAdapter("turn.txt", "sandbox-only"),
+        persistence,
+      });
+    const ephemeralAgent: Agent = {
+      ...sandboxedAgent,
+      sandbox: {
+        enabled: true,
+        image: "kiki-open-managed-agents",
+        workspacePersistence: "ephemeral",
+      },
+    };
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: ephemeralAgent.id,
+      agent: ephemeralAgent,
+      workspaceId: "ws_1",
+    });
+
+    await enqueue(pendingEventStore, session.id, "first");
+    await router.handleNewEvent(session.id, ephemeralAgent);
+    await enqueue(pendingEventStore, session.id, "second");
+    await router.handleNewEvent(session.id, ephemeralAgent);
+
+    expect(sandboxClient.created).toHaveLength(1);
+    expect(persistence.contentOf("tenant_1", "ws_1", "turn.txt")).toBeUndefined();
+    expect(
+      (await eventLogStore.getEvents(session.id, { limit: 100 })).data.filter(
+        (event) => event.type === "session.error",
+      ),
+    ).toEqual([]);
+  });
+
   it("injects the Agent's sandbox.env into the created sandbox", async () => {
     const persistence = new FakeWorkspacePersistence();
     persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
