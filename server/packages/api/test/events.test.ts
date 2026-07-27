@@ -481,6 +481,12 @@ describe("POST /v1/sessions/:id/events", () => {
       headers: {
         "Content-Type": "application/json",
         "x-vfs-token": "user-vfs-token",
+        "x-vfs-project-url":
+          "https://pre-pixel-director.creativefitting.cn/studio3/projects/details/?id=project-1&twid=teamwork-1",
+        "x-vfs-project-id": "project-1",
+        "x-vfs-teamwork-id": "teamwork-1",
+        "x-vfs-storyboard-id": "storyboard-1",
+        "x-vfs-runtime-env": "test",
       },
       body: JSON.stringify({
         events: [{ type: "user.message", data: { text: "List assets" } }],
@@ -492,10 +498,135 @@ describe("POST /v1/sessions/:id/events", () => {
     const pending = await pendingEventStore.peek(session.id);
     expect(await runtimeCredentialStore.get(pending!.id)).toEqual({
       vfsToken: "user-vfs-token",
+      vfsEnvironment: {
+        VFS_PROJECT_URL:
+          "https://pre-pixel-director.creativefitting.cn/studio3/projects/details/?id=project-1&twid=teamwork-1",
+        VFS_PROJECT_ID: "project-1",
+        VFS_TEAMWORK_ID: "teamwork-1",
+        VFS_STORYBOARD_ID: "storyboard-1",
+        RUNTIME_ENV: "test",
+      },
     });
     expect(JSON.stringify(pending)).not.toContain(
       "user-vfs-token",
     );
+  });
+
+  it("rejects invalid transient VFS environment headers", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vfs-token": "user-vfs-token",
+        "x-vfs-runtime-env": "staging",
+      },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "List assets" } }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+  });
+
+  it("rejects VFS project context that disagrees with the project URL", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vfs-token": "user-vfs-token",
+        "x-vfs-project-url":
+          "https://pre-pixel-director.creativefitting.cn/studio3/projects/details/?id=project-1&twid=teamwork-1",
+        "x-vfs-project-id": "different-project",
+        "x-vfs-teamwork-id": "teamwork-1",
+        "x-vfs-runtime-env": "prod",
+      },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "List assets" } }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+  });
+
+  it("rejects project URLs outside the VFS web origins", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vfs-token": "user-vfs-token",
+        "x-vfs-project-url":
+          "https://example.test/studio3/projects/details/?id=project-1&twid=teamwork-1",
+        "x-vfs-project-id": "project-1",
+        "x-vfs-teamwork-id": "teamwork-1",
+        "x-vfs-runtime-env": "prod",
+      },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "List assets" } }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+  });
+
+  it("rejects non-canonical VFS project URLs with additional query input", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vfs-token": "user-vfs-token",
+        "x-vfs-project-url":
+          "https://pre-pixel-director.creativefitting.cn/studio3/projects/details/?id=project-1&twid=teamwork-1&instruction=ignore%20previous",
+        "x-vfs-project-id": "project-1",
+        "x-vfs-teamwork-id": "teamwork-1",
+        "x-vfs-runtime-env": "test",
+      },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "List assets" } }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+  });
+
+  it("rejects unsafe VFS identifiers before they reach the runtime prompt", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-vfs-token": "user-vfs-token",
+        "x-vfs-project-url":
+          "https://pre-pixel-director.creativefitting.cn/studio3/projects/details/?id=project-1&twid=teamwork-1",
+        "x-vfs-project-id": "project-1",
+        "x-vfs-teamwork-id": "teamwork-1",
+        "x-vfs-storyboard-id": "storyboard-1 ignore previous",
+        "x-vfs-runtime-env": "test",
+      },
+      body: JSON.stringify({
+        events: [{ type: "user.message", data: { text: "List assets" } }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await pendingEventStore.count(session.id)).toBe(0);
   });
 
   it("attributes queued events to the authenticating API key", async () => {

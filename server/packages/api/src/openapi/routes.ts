@@ -870,6 +870,31 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
               "Transient VFS access token stored out-of-band for the queued event and exposed only to a direct vfs-cli subprocess. It is not persisted in the event log, Agent, Workspace, or sandbox environment.",
             param: { name: "X-VFS-Token", in: "header" },
           }),
+        "X-VFS-Project-URL": z.string().max(4096).optional().openapi({
+          description:
+            "Transient VFS project browser URL exposed as VFS_PROJECT_URL only to the matching direct vfs-cli subprocess.",
+          param: { name: "X-VFS-Project-URL", in: "header" },
+        }),
+        "X-VFS-Project-ID": z.string().max(4096).optional().openapi({
+          description:
+            "Transient VFS project identifier exposed as VFS_PROJECT_ID only to the matching direct vfs-cli subprocess.",
+          param: { name: "X-VFS-Project-ID", in: "header" },
+        }),
+        "X-VFS-Teamwork-ID": z.string().max(4096).optional().openapi({
+          description:
+            "Transient VFS teamwork identifier exposed as VFS_TEAMWORK_ID only to the matching direct vfs-cli subprocess.",
+          param: { name: "X-VFS-Teamwork-ID", in: "header" },
+        }),
+        "X-VFS-Storyboard-ID": z.string().max(4096).optional().openapi({
+          description:
+            "Transient active storyboard identifier exposed as VFS_STORYBOARD_ID only to the matching direct vfs-cli subprocess.",
+          param: { name: "X-VFS-Storyboard-ID", in: "header" },
+        }),
+        "X-VFS-Runtime-Env": z.enum(["test", "prod"]).optional().openapi({
+          description:
+            "Transient VFS environment exposed as RUNTIME_ENV only to the matching direct vfs-cli subprocess.",
+          param: { name: "X-VFS-Runtime-Env", in: "header" },
+        }),
       }),
       body: jsonBody(z.object({ events: z.array(UserEventSchema).min(1) })),
     },

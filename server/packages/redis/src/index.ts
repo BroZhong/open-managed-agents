@@ -24,6 +24,7 @@ export {
 export type {
   RuntimeCredential,
   RuntimeCredentialStore,
+  RuntimeVfsEnvironment,
 } from "./runtime-credential-store.js";
 
 export interface RedisConnectionConfig {

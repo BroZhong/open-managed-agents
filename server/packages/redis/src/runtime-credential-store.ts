@@ -5,6 +5,15 @@ const KEY_PREFIX = "runtime-credential:pending:";
 
 export interface RuntimeCredential {
   vfsToken: string;
+  vfsEnvironment?: RuntimeVfsEnvironment;
+}
+
+export interface RuntimeVfsEnvironment {
+  VFS_PROJECT_URL?: string;
+  VFS_PROJECT_ID?: string;
+  VFS_TEAMWORK_ID?: string;
+  VFS_STORYBOARD_ID?: string;
+  RUNTIME_ENV?: "test" | "prod";
 }
 
 /**
@@ -33,7 +42,7 @@ export class RedisRuntimeCredentialStore implements RuntimeCredentialStore {
     assertCredential(pendingEventId, credential, ttlMs);
     await this.redis.set(
       `${KEY_PREFIX}${pendingEventId}`,
-      JSON.stringify(credential),
+      JSON.stringify(copyCredential(credential)),
       "PX",
       ttlMs,
     );
@@ -43,9 +52,15 @@ export class RedisRuntimeCredentialStore implements RuntimeCredentialStore {
     const raw = await this.redis.get(`${KEY_PREFIX}${pendingEventId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RuntimeCredential>;
-    return typeof parsed.vfsToken === "string" && parsed.vfsToken
-      ? { vfsToken: parsed.vfsToken }
-      : null;
+    if (typeof parsed.vfsToken !== "string" || !parsed.vfsToken) return null;
+    const credential = {
+      vfsToken: parsed.vfsToken,
+      ...(parsed.vfsEnvironment
+        ? { vfsEnvironment: copyEnvironment(parsed.vfsEnvironment) }
+        : {}),
+    };
+    assertCredential(pendingEventId, credential, DEFAULT_TTL_MS);
+    return credential;
   }
 
   async delete(pendingEventId: string): Promise<void> {
@@ -66,7 +81,7 @@ export class InMemoryRuntimeCredentialStore implements RuntimeCredentialStore {
   ): Promise<void> {
     assertCredential(pendingEventId, credential, ttlMs);
     this.credentials.set(pendingEventId, {
-      credential: { ...credential },
+      credential: copyCredential(credential),
       expiresAt: Date.now() + ttlMs,
     });
   }
@@ -78,7 +93,7 @@ export class InMemoryRuntimeCredentialStore implements RuntimeCredentialStore {
       this.credentials.delete(pendingEventId);
       return null;
     }
-    return { ...entry.credential };
+    return copyCredential(entry.credential);
   }
 
   async delete(pendingEventId: string): Promise<void> {
@@ -95,7 +110,56 @@ function assertCredential(
   if (!credential.vfsToken || credential.vfsToken.includes("\0")) {
     throw new RangeError("vfsToken must be a non-empty string without NUL");
   }
+  if (credential.vfsEnvironment) {
+    copyEnvironment(credential.vfsEnvironment);
+  }
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
     throw new RangeError("runtime credential ttlMs must be positive");
   }
+}
+
+function copyCredential(credential: RuntimeCredential): RuntimeCredential {
+  return {
+    vfsToken: credential.vfsToken,
+    ...(credential.vfsEnvironment
+      ? { vfsEnvironment: copyEnvironment(credential.vfsEnvironment) }
+      : {}),
+  };
+}
+
+function copyEnvironment(
+  environment: RuntimeVfsEnvironment,
+): RuntimeVfsEnvironment {
+  const copied: RuntimeVfsEnvironment = {};
+  const stringKeys = [
+    "VFS_PROJECT_URL",
+    "VFS_PROJECT_ID",
+    "VFS_TEAMWORK_ID",
+    "VFS_STORYBOARD_ID",
+  ] as const;
+  for (const key of stringKeys) {
+    const value = environment[key];
+    if (value === undefined) continue;
+    if (
+      typeof value !== "string" ||
+      !value ||
+      value.length > 4096 ||
+      value.includes("\0") ||
+      value.includes("\r") ||
+      value.includes("\n")
+    ) {
+      throw new RangeError(`${key} must be a non-empty bounded single-line string`);
+    }
+    copied[key] = value;
+  }
+  if (environment.RUNTIME_ENV !== undefined) {
+    if (
+      environment.RUNTIME_ENV !== "test" &&
+      environment.RUNTIME_ENV !== "prod"
+    ) {
+      throw new RangeError("RUNTIME_ENV must be test or prod");
+    }
+    copied.RUNTIME_ENV = environment.RUNTIME_ENV;
+  }
+  return copied;
 }

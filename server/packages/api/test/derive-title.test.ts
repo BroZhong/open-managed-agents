@@ -32,6 +32,26 @@ describe("deriveTitleFromEventData", () => {
     ).toBe("a b");
   });
 
+  it("uses the visible message after a KIKI_CONTEXT envelope", () => {
+    expect(
+      deriveTitleFromEventData({
+        content: [
+          {
+            type: "text",
+            text: [
+              "[KIKI_CONTEXT]",
+              "project_id: project-1",
+              "teamwork_id: teamwork-1",
+              "[/KIKI_CONTEXT]",
+              "",
+              "拆分第一集并创建分镜",
+            ].join("\n"),
+          },
+        ],
+      }),
+    ).toBe("拆分第一集并创建分镜");
+  });
+
   it("truncates to 60 chars with an ellipsis", () => {
     expect(
       deriveTitleFromEventData({ content: [{ type: "text", text: "x".repeat(100) }] }),

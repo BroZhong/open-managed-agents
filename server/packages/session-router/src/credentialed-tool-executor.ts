@@ -4,6 +4,7 @@ import type {
   FileListEntry,
   ToolExecutor,
 } from "@open-managed-agents/adapter-core";
+import type { RuntimeVfsEnvironment } from "@oma-server/redis";
 
 const VFS_CLI = /^(?:\/usr\/local\/bin\/)?vfs-cli(?:\s|$)/;
 
@@ -16,15 +17,17 @@ const VFS_CLI = /^(?:\/usr\/local\/bin\/)?vfs-cli(?:\s|$)/;
 export function withVfsCredential(
   executor: ToolExecutor,
   vfsToken: string | undefined,
+  vfsEnvironment: RuntimeVfsEnvironment | undefined = undefined,
 ): ToolExecutor {
-  if (!vfsToken) return executor;
-  return new CredentialedToolExecutor(executor, vfsToken);
+  if (!vfsToken && !vfsEnvironment) return executor;
+  return new CredentialedToolExecutor(executor, vfsToken, vfsEnvironment);
 }
 
 class CredentialedToolExecutor implements ToolExecutor {
   constructor(
     private readonly inner: ToolExecutor,
-    private readonly vfsToken: string,
+    private readonly vfsToken: string | undefined,
+    private readonly vfsEnvironment: RuntimeVfsEnvironment | undefined,
   ) {}
 
   async *exec(
@@ -35,7 +38,11 @@ class CredentialedToolExecutor implements ToolExecutor {
     const nextOpts = shouldInject
       ? {
           ...opts,
-          env: { ...opts?.env, VFS_TOKEN: this.vfsToken },
+          env: {
+            ...opts?.env,
+            ...(this.vfsToken ? { VFS_TOKEN: this.vfsToken } : {}),
+            ...this.vfsEnvironment,
+          },
         }
       : opts;
     yield* this.inner.exec(command, nextOpts);

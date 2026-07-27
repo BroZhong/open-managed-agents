@@ -8,16 +8,16 @@ sandbox base:
 
 - `Agent-Skills` commit `d17fb790112cc23809b27e38704dc0198b69c270`
   from branch `codex/decouple-skills-vfs-cli`; only the 12 entries enabled in
-  that commit's `registry.json` are copied to `/opt/agent-skills`.
+that commit's `registry.json` are copied to `/opt/agent-skills`.
 - The official linux/amd64 `vfs-cli v0.2.19` release binary, installed at
   `/usr/local/bin/vfs-cli`.
 
 The inputs are deliberately separate. Skills contain business workflows and
 invoke the CLI; the CLI is not copied into a Skill, and no MCP server or MCP
-credential is installed. `VFS_TOKEN` remains a runtime secret injected by the
-OMA Host and is never baked into the image. It is attached only to a single,
-direct `vfs-cli` subprocess for the pending Turn; it is not a sandbox-global
-environment variable.
+credential is installed. `VFS_TOKEN` and its allowlisted project context remain
+runtime values injected by the OMA Host and are never baked into the image.
+They are attached only to a single, direct `vfs-cli` subprocess for the pending
+Turn; they are not sandbox-global environment variables.
 
 ## Build and push
 
@@ -55,17 +55,29 @@ and complete runtime instructions.
 
 ## Runtime credential boundary
 
-The frontend sends `X-VFS-Token` with each queued user event. The Host stores it
-in a short-lived Redis entry keyed by the generated Pending Event id, so token
-rotation and multi-Host claim handoff resolve the credential for the exact
-Turn. After the pending event is acknowledged, the Host deletes the entry.
+The frontend sends `X-VFS-Token` and the allowlisted
+`X-VFS-Project-Url`, `X-VFS-Project-Id`, `X-VFS-Teamwork-Id`,
+`X-VFS-Storyboard-Id`, and `X-VFS-Runtime-Env` headers with each queued user
+event. The Host validates them and stores them in a short-lived Redis entry
+keyed by the generated Pending Event id, so token/project rotation and
+multi-Host claim handoff resolve the values for the exact Turn. After the
+pending event is acknowledged, the Host deletes the entry.
 
-The token is never stored in the Pending Event, Event Log, Agent, Workspace, or
-sandbox creation environment. The per-Turn executor exposes it only to one
-direct `vfs-cli ...` command and rejects shell control operators. Arbitrary
-`env`, `echo`, pipelines, redirects, and compound shell commands receive no
-token. The Agent's `credentialMode: "runtime-vfs"` also strips the legacy
-deployment-wide `VFS_TOKEN` while leaving old Agents unchanged.
+The token and project context are never stored in the Pending Event, Event Log,
+Agent, Workspace, or sandbox creation environment. The per-Turn executor
+exposes them only to one direct `vfs-cli ...` command and rejects shell control
+operators. Arbitrary `env`, `echo`, pipelines, redirects, and compound shell
+commands receive none of these values. The Agent's
+`credentialMode: "runtime-vfs"` also strips the legacy deployment-wide
+`VFS_TOKEN` while leaving old Agents unchanged.
+
+The VFS token is never model-visible. The same non-secret project context is
+also rendered into one transient Host-supplied system-prompt block for the
+exact Turn. This lets the Agent pass an explicit storyboard argument even
+though vfs-cli v0.2.19 resolves project/teamwork locators, but not storyboard
+ids, from environment. The prompt block is built from the same Pending
+Event-bound value as the process environment and is not appended to the Event
+Log.
 
 `vfs-cli` currently accepts authentication through process environment, so the
 credential necessarily exists in that CLI process for the duration of the

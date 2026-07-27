@@ -44,9 +44,18 @@ export function deriveTitleFromContent(content: ContentBlock[]): string | null {
 
 function normalizeTitle(text: string | undefined): string | null {
   if (typeof text !== "string") return null;
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = stripKikiContext(text).replace(/\s+/g, " ").trim();
   if (normalized === "") return null;
   return normalized.length > MAX_TITLE_LEN
     ? normalized.slice(0, MAX_TITLE_LEN) + "…"
     : normalized;
+}
+
+function stripKikiContext(text: string): string {
+  if (!text.startsWith("[KIKI_CONTEXT]")) return text;
+  const marker = "[/KIKI_CONTEXT]";
+  const markerIndex = text.indexOf(marker);
+  return markerIndex === -1
+    ? text
+    : text.slice(markerIndex + marker.length).trimStart();
 }

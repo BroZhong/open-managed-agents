@@ -55,6 +55,32 @@ describe("withVfsCredential", () => {
     ]);
   });
 
+  it("injects the current turn VFS project environment only into direct vfs-cli", async () => {
+    const inner = new RecordingExecutor();
+    const executor = withVfsCredential(inner, "secret-token", {
+      VFS_PROJECT_URL:
+        "https://pre.example.test/studio3/projects/details/?id=p1&twid=t1",
+      VFS_PROJECT_ID: "p1",
+      VFS_TEAMWORK_ID: "t1",
+      VFS_STORYBOARD_ID: "board-1",
+      RUNTIME_ENV: "test",
+    });
+
+    await drain(executor.exec(["/bin/sh", "-c", "env"]));
+    await drain(executor.exec(["vfs-cli", "doctor", "--format", "json"]));
+
+    expect(inner.calls[0]?.opts?.env).toBeUndefined();
+    expect(inner.calls[1]?.opts?.env).toEqual({
+      VFS_TOKEN: "secret-token",
+      VFS_PROJECT_URL:
+        "https://pre.example.test/studio3/projects/details/?id=p1&twid=t1",
+      VFS_PROJECT_ID: "p1",
+      VFS_TEAMWORK_ID: "t1",
+      VFS_STORYBOARD_ID: "board-1",
+      RUNTIME_ENV: "test",
+    });
+  });
+
   it("allows shell punctuation when it is a literal single-quoted argument", async () => {
     const inner = new RecordingExecutor();
     const executor = withVfsCredential(inner, "secret-token");

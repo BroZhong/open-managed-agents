@@ -21,6 +21,7 @@ import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type {
   RuntimeCredentialStore,
+  RuntimeVfsEnvironment,
   TurnStreamStore,
 } from "@oma-server/redis";
 import type {
@@ -91,6 +92,34 @@ class PendingLeaseLostError extends Error {
   }
 }
 
+function runtimeVfsContextPrompt(
+  environment: RuntimeVfsEnvironment | undefined,
+): string[] {
+  if (!environment) return [];
+  const orderedEntries = [
+    ["VFS_PROJECT_URL", environment.VFS_PROJECT_URL],
+    ["VFS_PROJECT_ID", environment.VFS_PROJECT_ID],
+    ["VFS_TEAMWORK_ID", environment.VFS_TEAMWORK_ID],
+    ["VFS_STORYBOARD_ID", environment.VFS_STORYBOARD_ID],
+    ["RUNTIME_ENV", environment.RUNTIME_ENV],
+  ] as const;
+  const values = orderedEntries.flatMap(([name, value]) =>
+    typeof value === "string" && value.length > 0
+      ? [`${name}: ${value}`]
+      : [],
+  );
+  if (values.length === 0) return [];
+  return [
+    [
+      "Runtime VFS context for this Turn (Host-validated):",
+      ...values,
+      "A direct vfs-cli command receives the same locator values through its process environment.",
+      "Use the exact storyboard id above when a workflow requires an explicit storyboard argument.",
+      "Never ask for, print, or inspect VFS credentials.",
+    ].join("\n"),
+  ];
+}
+
 export interface SessionRouterDeps {
   eventLogStore: EventLogStore;
   pendingEventStore: PendingEventStore;
@@ -156,7 +185,10 @@ export interface SessionRouterDeps {
   /**
    * Short-lived, out-of-band credentials keyed by Pending Event id. The router
    * resolves one credential for one claimed turn and binds it only to direct
-   * vfs-cli processes; it is never merged into EnvSpec or model-visible data.
+   * vfs-cli processes; it is never merged into EnvSpec. The token is never
+   * model-visible. The non-secret project context is also rendered as one
+   * transient system-prompt block so the Agent can supply workflow parameters
+   * that vfs-cli does not currently resolve from environment.
    */
   runtimeCredentialStore?: RuntimeCredentialStore;
   /**
@@ -1302,7 +1334,10 @@ export class SessionRouter {
       // skipped). Skills are no longer materialized to a Host temp dir — they are
       // projected into the sandbox by the SandboxManager (ADR-0005 §4); the
       // adapter is pointed at their in-sandbox `/skills/<id>` roots below.
-      const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
+      const appendSystemPrompt = [
+        ...await this.assembleAgentFiles(currentAgent),
+        ...runtimeVfsContextPrompt(runtimeCredential?.vfsEnvironment),
+      ];
       if (leaseLost) return;
       const skillPaths = equippedSkills.map(({ id }) => `/skills/${id}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
@@ -1316,7 +1351,11 @@ export class SessionRouter {
           currentAgent,
           priorEvents,
           sandbox
-            ? withVfsCredential(sandbox, runtimeCredential?.vfsToken)
+            ? withVfsCredential(
+              sandbox,
+              runtimeCredential?.vfsToken,
+              runtimeCredential?.vfsEnvironment,
+            )
             : undefined,
           appendSystemPrompt,
           skillPaths,

@@ -4,6 +4,7 @@ import type { EventStreamHub } from "@oma-server/event-log";
 import { alignedChunkData } from "@oma-server/event-log";
 import type {
   RuntimeCredentialStore,
+  RuntimeVfsEnvironment,
   TurnStreamStore,
 } from "@oma-server/redis";
 import { randomUUID } from "node:crypto";
@@ -26,6 +27,12 @@ type Env = {
 // produce transport activity without dispatching a browser MessageEvent or
 // changing Last-Event-ID.
 const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 10_000;
+const VFS_PROJECT_ORIGINS = new Set([
+  "https://pixel-director.creativefitting.cn",
+  "https://pre-pixel-director.creativefitting.cn",
+]);
+const VFS_PROJECT_PATH = "/studio3/projects/details/";
+const SAFE_VFS_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/;
 
 export interface EventRouteDeps {
   eventLogStore: EventLogIngressStore;
@@ -76,6 +83,27 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
     const vfsToken = c.req.header("x-vfs-token")?.trim();
     if (vfsToken && (vfsToken.length > 8192 || vfsToken.includes("\0"))) {
       return c.json({ error: "Invalid x-vfs-token header" }, 400);
+    }
+    const vfsEnvironment = {
+      VFS_PROJECT_URL: c.req.header("x-vfs-project-url")?.trim(),
+      VFS_PROJECT_ID: c.req.header("x-vfs-project-id")?.trim(),
+      VFS_TEAMWORK_ID: c.req.header("x-vfs-teamwork-id")?.trim(),
+      VFS_STORYBOARD_ID: c.req.header("x-vfs-storyboard-id")?.trim(),
+      RUNTIME_ENV: c.req.header("x-vfs-runtime-env")?.trim(),
+    };
+    const environmentError = validateVfsEnvironment(vfsEnvironment);
+    if (environmentError) {
+      return c.json({ error: environmentError }, 400);
+    }
+    const compactVfsEnvironment = Object.fromEntries(
+      Object.entries(vfsEnvironment).filter((entry): entry is [string, string] =>
+        Boolean(entry[1]),
+      ),
+    ) as RuntimeVfsEnvironment;
+    if (Object.keys(compactVfsEnvironment).length > 0 && !vfsToken) {
+      return c.json({
+        error: "x-vfs-token is required with transient VFS environment headers",
+      }, 400);
     }
 
     // Validate session exists and belongs to tenant
@@ -150,7 +178,12 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
         try {
           await Promise.all(
             inputs.map(({ id }) =>
-              deps.runtimeCredentialStore!.put(id, { vfsToken }),
+              deps.runtimeCredentialStore!.put(id, {
+                vfsToken,
+                ...(Object.keys(compactVfsEnvironment).length > 0
+                  ? { vfsEnvironment: compactVfsEnvironment }
+                  : {}),
+              }),
             ),
           );
         } catch {
@@ -489,6 +522,88 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
   });
 
   return router;
+}
+
+function validateVfsEnvironment(
+  environment: Record<string, string | undefined>,
+): string | null {
+  for (const [name, value] of Object.entries(environment)) {
+    if (value === undefined) continue;
+    if (
+      !value ||
+      value.length > 4096 ||
+      value.includes("\0") ||
+      value.includes("\r") ||
+      value.includes("\n")
+    ) {
+      return `Invalid ${name} header`;
+    }
+  }
+
+  const runtimeEnv = environment.RUNTIME_ENV;
+  if (runtimeEnv && runtimeEnv !== "test" && runtimeEnv !== "prod") {
+    return "Invalid x-vfs-runtime-env header";
+  }
+
+  for (const name of [
+    "VFS_PROJECT_ID",
+    "VFS_TEAMWORK_ID",
+    "VFS_STORYBOARD_ID",
+  ] as const) {
+    const value = environment[name];
+    if (value !== undefined && !SAFE_VFS_IDENTIFIER.test(value)) {
+      return `Invalid ${name} header`;
+    }
+  }
+
+  const projectUrl = environment.VFS_PROJECT_URL;
+  if (projectUrl) {
+    try {
+      const url = new URL(projectUrl);
+      const queryKeys = [...url.searchParams.keys()];
+      if (
+        !VFS_PROJECT_ORIGINS.has(url.origin) ||
+        url.username ||
+        url.password ||
+        url.pathname !== VFS_PROJECT_PATH ||
+        url.hash ||
+        queryKeys.some((key) => key !== "id" && key !== "twid") ||
+        url.searchParams.getAll("id").length !== 1 ||
+        url.searchParams.getAll("twid").length !== 1
+      ) {
+        return "Invalid x-vfs-project-url header";
+      }
+      const urlProjectId = url.searchParams.get("id");
+      const urlTeamworkId = url.searchParams.get("twid");
+      if (
+        !urlProjectId ||
+        !SAFE_VFS_IDENTIFIER.test(urlProjectId) ||
+        (environment.VFS_PROJECT_ID !== undefined &&
+          environment.VFS_PROJECT_ID !== urlProjectId)
+      ) {
+        return "VFS project id does not match x-vfs-project-url";
+      }
+      if (
+        !urlTeamworkId ||
+        !SAFE_VFS_IDENTIFIER.test(urlTeamworkId) ||
+        (environment.VFS_TEAMWORK_ID !== undefined &&
+          environment.VFS_TEAMWORK_ID !== urlTeamworkId)
+      ) {
+        return "VFS teamwork id does not match x-vfs-project-url";
+      }
+      const urlRuntimeEnv = url.hostname.startsWith("pre-") ? "test" : "prod";
+      if (
+        runtimeEnv !== undefined &&
+        runtimeEnv !== urlRuntimeEnv
+      ) {
+        return "VFS runtime environment does not match x-vfs-project-url";
+      }
+    } catch {
+      return "Invalid x-vfs-project-url header";
+    }
+  }
+
+  return null;
 }
 
 /**

@@ -593,6 +593,7 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
     const runtimeCredentialStore = new InMemoryRuntimeCredentialStore();
     const seenExecEnv: Array<Record<string, string> | undefined> = [];
+    let seenAppendSystemPrompt: string[] | undefined;
     const recordingSandboxClient = new FakeSandboxClient({
       execHandler: (_command, _files, opts) => {
         seenExecEnv.push(opts?.env);
@@ -601,6 +602,7 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     });
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        seenAppendSystemPrompt = input.agent.appendSystemPrompt;
         for await (const _ of input.toolExecutor!.exec(["/bin/sh", "-c", "env"])) {
           // consume
         }
@@ -636,6 +638,13 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     const pending = await enqueue(pendingEventStore, session.id, "read the file");
     await runtimeCredentialStore.put(pending.id, {
       vfsToken: "per-turn-token",
+      vfsEnvironment: {
+        VFS_PROJECT_URL: "https://pre.example.test/?id=p1&twid=t1",
+        VFS_PROJECT_ID: "p1",
+        VFS_TEAMWORK_ID: "t1",
+        VFS_STORYBOARD_ID: "board-1",
+        RUNTIME_ENV: "test",
+      },
     });
 
     await router.handleNewEvent(session.id, sandboxedAgent);
@@ -644,8 +653,22 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     expect(sandboxClient.createOptsOf(id).env).toBeUndefined();
     expect(seenExecEnv).toEqual([
       undefined,
-      { VFS_TOKEN: "per-turn-token" },
+      {
+        VFS_TOKEN: "per-turn-token",
+        VFS_PROJECT_URL: "https://pre.example.test/?id=p1&twid=t1",
+        VFS_PROJECT_ID: "p1",
+        VFS_TEAMWORK_ID: "t1",
+        VFS_STORYBOARD_ID: "board-1",
+        RUNTIME_ENV: "test",
+      },
     ]);
+    expect(seenAppendSystemPrompt?.join("\n")).toContain(
+      "VFS_STORYBOARD_ID: board-1",
+    );
+    expect(seenAppendSystemPrompt?.join("\n")).toContain(
+      "VFS_PROJECT_ID: p1",
+    );
+    expect(seenAppendSystemPrompt?.join("\n")).not.toContain("per-turn-token");
     expect(await runtimeCredentialStore.get(pending.id)).toBeNull();
     expect(sandboxedAgent.sandbox?.env).toBeUndefined();
   });
