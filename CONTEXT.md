@@ -20,6 +20,14 @@ _Avoid_: chat, thread, run
 One user message and the Agent execution that responds to it within a **Session**.
 _Avoid_: request, job, invocation
 
+**Interrupt**:
+A user's demand that the **Session**'s currently running **Turn** stop now. An Interrupt targets that one Turn only: input the user has already queued still runs afterwards, and the Session stays usable. It is a request about the present, not an edit of the past — whatever the Agent had already produced remains part of the Session's history.
+_Avoid_: cancel, stop the session, kill (an Interrupt ends a Turn, not a Session)
+
+**Interrupted Turn**:
+A **Turn** that ended because of an **Interrupt** rather than by the Agent finishing. Its output is kept and shown as it was left — recognizably cut short rather than presented as a finished answer — because a user who stopped an Agent still wants to see how far it got. What the Agent half-produced is history, but it is not treated as work the Agent stands behind: a later Turn continues from the last point the Agent actually completed.
+_Avoid_: failed Turn, cancelled Turn, error (an Interrupt is the user's intent, not a fault)
+
 **Delta**:
 A transient increment of an Agent's output emitted while the current **Turn** is running. Deltas form a live projection of that Turn only: they are never part of a Session's durable history, are replaced by the corresponding complete event as it arrives, and are discarded if the Turn ends without one.
 _Avoid_: event, message, token (a Delta may contain text beyond one token)

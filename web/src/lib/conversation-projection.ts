@@ -23,6 +23,12 @@ export interface DisplayMessage {
   serverName?: string;
   result?: ToolResultData;
   seq?: number;
+  /**
+   * This message was cut short by an Interrupt rather than finished by the Agent
+   * (issue #110). The text is shown as it was left, marked so a user who stopped
+   * the Agent can tell a half-answer from a complete one.
+   */
+  aborted?: boolean;
 }
 
 export function shouldShowTypingIndicator(
@@ -93,6 +99,7 @@ export function processEventsToMessages(
           content: Array<{ type: string; text: string }>;
           turnId?: string;
           blockIndex?: number;
+          stopReason?: string;
         };
         const text = data.content
           .filter((c) => c.type === "text")
@@ -103,6 +110,9 @@ export function processEventsToMessages(
           role: "assistant",
           text,
           seq,
+          // No stopReason means the message finished normally — legacy events
+          // and every runtime that does not report one keep their meaning.
+          ...(data.stopReason === "aborted" ? { aborted: true } : {}),
         });
         break;
       }

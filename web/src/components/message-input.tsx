@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import { ArrowUp, Clock } from "lucide-react";
+import { ArrowUp, Clock, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SessionEvent } from "@/lib/types";
 import type { EquippedSkill } from "@/lib/hooks/use-skills";
@@ -9,6 +9,14 @@ interface MessageInputProps {
   disabled?: boolean;
   pendingMessages?: SessionEvent[];
   skills?: Array<Pick<EquippedSkill, "id" | "name" | "description">>;
+  /**
+   * Stop the Session's running Turn. When given together with `running`, the
+   * button becomes Stop — one control for "the Agent is working" instead of a
+   * Send button the user has to guess is inert (issue #113).
+   */
+  onInterrupt?: () => void;
+  /** Whether a Turn of this Session is running right now. */
+  running?: boolean;
 }
 
 export function MessageInput({
@@ -16,6 +24,8 @@ export function MessageInput({
   disabled = false,
   pendingMessages = [],
   skills = [],
+  onInterrupt,
+  running = false,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
@@ -100,7 +110,12 @@ export function MessageInput({
     }
   }
 
+  // While a Turn runs the button's job is to stop it, not to send: a Stop needs
+  // no typed text to be meaningful. Enter still queues a message, so typing
+  // ahead during a running Turn keeps working.
+  const showStop = running && Boolean(onInterrupt);
   const canSend = text.trim().length > 0 && !disabled;
+  const buttonEnabled = showStop || canSend;
 
   return (
     <div className="bg-[var(--color-bg)] px-6 py-4">
@@ -181,17 +196,22 @@ export function MessageInput({
           />
           <button
             type="button"
-            aria-label="Send message"
-            onClick={handleSubmit}
-            disabled={!canSend}
+            aria-label={showStop ? "Stop generating" : "Send message"}
+            title={showStop ? "Stop the current turn" : undefined}
+            onClick={showStop ? onInterrupt : handleSubmit}
+            disabled={!buttonEnabled}
             className={cn(
               "absolute bottom-2.5 right-3 flex h-7 w-7 items-center justify-center rounded-lg transition-all",
-              canSend
+              buttonEnabled
                 ? "bg-[var(--color-fg)] text-white hover:opacity-80"
                 : "bg-[var(--color-bg-muted)] text-[var(--color-fg-subtle)]"
             )}
           >
-            <ArrowUp className="h-4 w-4" />
+            {showStop ? (
+              <Square className="h-3 w-3 fill-current" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
           </button>
         </div>
       </div>

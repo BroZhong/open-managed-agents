@@ -184,6 +184,16 @@ export interface AgentMessageEvent extends BaseEvent {
   provider?: string;
   api?: string;
   model?: string;
+  /**
+   * Why the runtime stopped producing this message. Optional, like the model
+   * metadata above: absent means the message finished normally, so existing
+   * producers and persisted events keep their meaning. A runtime that knows the
+   * message was cut short records `"aborted"` (a user Interrupt) or `"error"`
+   * here, which is what makes an Interrupted Turn's half-written text a durable
+   * Complete Event that the frontend can mark and a history rebuild can drop
+   * from the model's context.
+   */
+  stopReason?: string;
 }
 
 export interface AgentThinkingEvent extends BaseEvent {

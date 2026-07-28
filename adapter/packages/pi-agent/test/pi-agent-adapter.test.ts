@@ -388,6 +388,148 @@ describe("PiAgentAdapter (SDK)", () => {
     });
   });
 
+  describe("Interrupted Turn (issue #110)", () => {
+    /**
+     * Pi's real interrupt shape: text streams, then the abort settles the run
+     * WITHOUT a `text_end`. Only `message_end` arrives, carrying the partial
+     * content and `stopReason: "aborted"`.
+     */
+    const abortedMidText: AgentSessionEvent[] = [
+      assistantStart,
+      ame({ type: "text_start", contentIndex: 0 }),
+      ame({ type: "text_delta", contentIndex: 0, delta: "Half a th" }),
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Half a th" }],
+          stopReason: "aborted",
+          usage: {
+            input: 10,
+            output: 3,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 13,
+            cost: { total: 0 },
+          },
+        },
+      } as never as AgentSessionEvent,
+    ];
+
+    it("compensates the half-written text as an agent.message tagged aborted", async () => {
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: scriptedFactory(abortedMidText),
+      });
+      const events = await collectEvents(adapter.run(makeInput("write")));
+      const messages = events.filter(
+        (e) => e.type === "agent.message",
+      ) as AgentMessageEvent[];
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toEqual([{ type: "text", text: "Half a th" }]);
+      expect(messages[0].stopReason).toBe("aborted");
+    });
+
+    it("falls back to the streamed deltas when message_end carries no content", async () => {
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_delta", contentIndex: 0, delta: "Only deltas" }),
+        {
+          type: "message_end",
+          message: { role: "assistant", stopReason: "aborted" },
+        } as never as AgentSessionEvent,
+      ];
+      const adapter = new PiAgentAdapter({ _sessionFactory: scriptedFactory(script) });
+      const events = await collectEvents(adapter.run(makeInput("write")));
+      const messages = events.filter(
+        (e) => e.type === "agent.message",
+      ) as AgentMessageEvent[];
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toEqual([{ type: "text", text: "Only deltas" }]);
+      expect(messages[0].stopReason).toBe("aborted");
+    });
+
+    it("only compensates the text block the interrupt cut off, not the finished one", async () => {
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_delta", contentIndex: 0, delta: "First done." }),
+        ame({ type: "text_end", contentIndex: 0, content: "First done." }),
+        ame({ type: "text_start", contentIndex: 1 }),
+        ame({ type: "text_delta", contentIndex: 1, delta: "Second cu" }),
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "First done." },
+              { type: "text", text: "Second cu" },
+            ],
+            stopReason: "aborted",
+          },
+        } as never as AgentSessionEvent,
+      ];
+      const adapter = new PiAgentAdapter({ _sessionFactory: scriptedFactory(script) });
+      const events = await collectEvents(adapter.run(makeInput("write")));
+      const messages = events.filter(
+        (e) => e.type === "agent.message",
+      ) as AgentMessageEvent[];
+      expect(messages.map((m) => m.content)).toEqual([
+        [{ type: "text", text: "First done." }],
+        [{ type: "text", text: "Second cu" }],
+      ]);
+      expect(messages[0].stopReason).toBeUndefined();
+      expect(messages[1].stopReason).toBe("aborted");
+    });
+
+    it("produces no duplicate and no stopReason on a normally completed turn", async () => {
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory([
+          assistantStart,
+          ame({ type: "text_start", contentIndex: 0 }),
+          ame({ type: "text_delta", contentIndex: 0, delta: "Four." }),
+          ame({ type: "text_end", contentIndex: 0, content: "Four." }),
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Four." }],
+              stopReason: "stop",
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { total: 0 },
+              },
+            },
+          } as never as AgentSessionEvent,
+        ]),
+      });
+      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const messages = events.filter(
+        (e) => e.type === "agent.message",
+      ) as AgentMessageEvent[];
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toEqual([{ type: "text", text: "Four." }]);
+      expect(messages[0].stopReason).toBeUndefined();
+    });
+
+    it("does not compensate a turn that produced no text at all", async () => {
+      const script: AgentSessionEvent[] = [
+        assistantStart,
+        {
+          type: "message_end",
+          message: { role: "assistant", content: [], stopReason: "aborted" },
+        } as never as AgentSessionEvent,
+      ];
+      const adapter = new PiAgentAdapter({ _sessionFactory: scriptedFactory(script) });
+      const events = await collectEvents(adapter.run(makeInput("write")));
+      expect(events.filter((e) => e.type === "agent.message")).toHaveLength(0);
+    });
+  });
+
   describe("error handling", () => {
     it("keeps consuming events after an agent_end that Pi marks for retry", async () => {
       const script: AgentSessionEvent[] = [

@@ -104,8 +104,12 @@ export function eventRoutes(deps: EventRouteDeps) {
       if (events.length !== 1) {
         return c.json({ error: "user.interrupt must be the only event in a batch" }, 400);
       }
-      deps.sessionRouter?.interrupt(sessionId);
-      return c.json({ accepted: true, interrupted: true }, 202);
+      // Report what actually happened rather than always claiming success: the
+      // active-Turn controllers are per-process, so an interrupt for a Turn
+      // running on another replica stops nothing (issue #113). The request itself
+      // was still accepted, so the status stays 202.
+      const interrupted = deps.sessionRouter?.interrupt(sessionId) ?? false;
+      return c.json({ accepted: true, interrupted }, 202);
     }
 
     const pendingEvents = events.filter((event) => PENDING_USER_TYPES.has(event.type));

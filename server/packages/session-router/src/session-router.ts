@@ -542,14 +542,26 @@ export class SessionRouter {
     return summary;
   }
 
-  interrupt(sessionId: string): void {
+  /**
+   * Stop this Session's active Turn, if this process is running one.
+   *
+   * Returns whether a Turn was actually aborted, so a caller can be honest about
+   * having stopped nothing. The active-Turn controllers are per-process, so an
+   * interrupt aimed at a Turn running on another replica returns false rather
+   * than silently claiming success (issue #113). Queued input is deliberately
+   * left alone: an Interrupt ends the current Turn only.
+   */
+  interrupt(sessionId: string): boolean {
     const controller = this.activeSessions.get(sessionId);
-    if (controller) {
-      this.clearClaimRetry(sessionId);
-      this.claimHeartbeatStops.get(sessionId)?.();
-      controller.abort(new DOMException("Session interrupted", "AbortError"));
+    if (!controller) {
+      this.notifyIdleIfSettled();
+      return false;
     }
+    this.clearClaimRetry(sessionId);
+    this.claimHeartbeatStops.get(sessionId)?.();
+    controller.abort(new DOMException("Session interrupted", "AbortError"));
     this.notifyIdleIfSettled();
+    return true;
   }
 
   /**
@@ -1245,11 +1257,18 @@ export class SessionRouter {
       let blockIndex = -1;
       let durableEventIndex = 0;
       const pendingStreamBlocks: PendingStreamBlock[] = [];
+      // The Complete Events this attempt persisted, in order. Only the Adapter
+      // knows what it produced, so an Interrupt's cleanup (dangling tool_use
+      // repair) reads this instead of re-querying the log.
+      const attemptStoredEvents: StoredEvent[] = [];
 
       try {
         for await (const event of events) {
-          if (turnController.signal.aborted) break;
-
+          // No abort check here on purpose: the abort signal's job is to end the
+          // *Adapter*, and this loop's job is only to forward what the Adapter
+          // yields. An Adapter that settles its Interrupt by emitting the
+          // half-written output (issue #110) must have that output persisted, and
+          // an Adapter that is truly wedged emits nothing for this loop to see.
           if (isStreamEvent(event)) {
             if (STREAM_START_TYPES.has(event.type)) {
               blockIndex++;
@@ -1325,6 +1344,7 @@ export class SessionRouter {
               ),
               pendingFence,
             });
+            attemptStoredEvents.push(stored);
             this.eventStreamHub.publish(sessionId, {
               type: stored.type,
               seq: stored.seq,
@@ -1360,6 +1380,34 @@ export class SessionRouter {
       }
 
       if (leaseLost) return;
+
+      // Interrupted Turn cleanup (issue #112). A Turn stopped while a tool was
+      // running leaves the *other* shape of Interrupt: the assistant message is
+      // a normal one, and the only trace is a tool_use with no result. Close
+      // those orphans with the same repair the restart path uses, and record the
+      // Turn-level fact that this Turn was interrupted — a message-level
+      // `stopReason` has nowhere to carry it.
+      if (turnController.signal.aborted) {
+        await this.repairDanglingToolUses(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          attemptStoredEvents,
+          pendingFence,
+        );
+        const abortedEvent = await this.eventLogStore.append(sessionId, {
+          type: "session.turn_aborted",
+          data: { turnId },
+          sessionThreadId: "sthr_primary",
+          idempotencyKey: this.turnKey(pendingEvent.id, "turn_aborted"),
+          pendingFence,
+        });
+        this.eventStreamHub.publish(sessionId, {
+          type: abortedEvent.type,
+          seq: abortedEvent.seq,
+          data: abortedEvent.data,
+        });
+      }
 
       // Checkpoint can mutate S3. Extend and validate the exact generation
       // immediately before crossing that external side-effect boundary.

@@ -32,7 +32,10 @@ import type { ContentBlock, SessionEvent } from "@open-managed-agents/adapter-co
  * `toolCall.id` ↔ `toolResult.toolCallId` pairing key. Each assistant message
  * carries the origin `provider`/`api`/`model`, so the provider layer's
  * `isSameModel` check keeps tool ids byte-stable for same-model turns and
- * normalizes only across a model switch.
+ * normalizes only across a model switch. It also carries the recorded
+ * `stopReason`, which is how an Interrupted Turn's half-written output stays in
+ * the event log and the frontend yet is dropped from the model's context — Pi's
+ * own conversion layer skips assistant messages marked `aborted`/`error`.
  *
  * History events reach the adapter shaped as `{ type, ...data }` (the Host
  * spreads the stored event body onto the type). This translator reads defensively
@@ -50,13 +53,26 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
         provider?: string;
         api?: string;
         model?: string;
+        stopReason?: string;
       }
     | undefined;
+
+  // Tool calls belonging to an assistant message Pi will discard. Pi drops such
+  // an assistant whole — its `toolCall` blocks with it — so a `toolResult` for
+  // one of them would reach the provider with no request in front of it, which
+  // the provider APIs reject. Their results are therefore dropped too, which is
+  // also the honest reading: a result nobody asked for is not history.
+  const discardedToolCallIds = new Set<string>();
 
   const flushAssistant = (): void => {
     if (!pendingAssistant || pendingAssistant.content.length === 0) {
       pendingAssistant = undefined;
       return;
+    }
+    if (isDiscardedByPi(pendingAssistant.stopReason)) {
+      for (const block of pendingAssistant.content) {
+        if (block.type === "toolCall") discardedToolCallIds.add(block.id);
+      }
     }
     messages.push(makeAssistant(pendingAssistant));
     pendingAssistant = undefined;
@@ -81,6 +97,7 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
             provider: record.provider,
             api: record.api,
             model: record.model,
+            stopReason: record.stopReason,
           };
         } else {
           // Model metadata may only be present on the message event; keep the
@@ -88,6 +105,7 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
           pendingAssistant.provider ??= record.provider;
           pendingAssistant.api ??= record.api;
           pendingAssistant.model ??= record.model;
+          pendingAssistant.stopReason ??= record.stopReason;
         }
         if (text) {
           pendingAssistant.content.push({ type: "text", text });
@@ -114,6 +132,7 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
       case "agent.mcp_tool_result": {
         // A tool result closes the assistant turn that requested it.
         flushAssistant();
+        if (record.toolUseId && discardedToolCallIds.has(record.toolUseId)) break;
         const result: ToolResultMessage = {
           role: "toolResult",
           toolCallId: record.toolUseId ?? "",
@@ -148,6 +167,7 @@ interface EventRecord {
   provider?: string;
   api?: string;
   model?: string;
+  stopReason?: string;
 }
 
 /** Pull the content blocks from either the flat or the `{ data }` shape. */
@@ -195,6 +215,7 @@ function makeAssistant(pending: {
   provider?: string;
   api?: string;
   model?: string;
+  stopReason?: string;
 }): AssistantMessage {
   return {
     role: "assistant",
@@ -210,7 +231,36 @@ function makeAssistant(pending: {
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
-    stopReason: "stop",
+    // Carry the recorded reason through instead of asserting "stop" (issue
+    // #111). Pi's own message-conversion layer drops assistant messages whose
+    // stopReason is "aborted"/"error" so the model retries from the last valid
+    // state; hardcoding "stop" here made that branch unreachable and replayed
+    // Interrupted output as if it had finished. Events without the field are
+    // legacy or normally-completed, so they still default to "stop".
+    stopReason: isStopReason(pending.stopReason) ? pending.stopReason : "stop",
     timestamp: 0,
   };
+}
+
+const STOP_REASONS: ReadonlySet<string> = new Set([
+  "stop",
+  "length",
+  "toolUse",
+  "error",
+  "aborted",
+]);
+
+/** Guard the free-text event field down to Pi's `StopReason` union. */
+function isStopReason(value: unknown): value is AssistantMessage["stopReason"] {
+  return typeof value === "string" && STOP_REASONS.has(value);
+}
+
+/**
+ * Whether Pi's message-conversion layer will drop an assistant with this stop
+ * reason ("The model should retry from the last valid state"). Mirrors the check
+ * in `pi-ai`'s `transformMessages`; we only need to know which tool calls go
+ * down with it.
+ */
+function isDiscardedByPi(stopReason: string | undefined): boolean {
+  return stopReason === "aborted" || stopReason === "error";
 }

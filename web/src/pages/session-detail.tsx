@@ -11,6 +11,7 @@ import { MessageInput } from "@/components/message-input";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
+import { useInterrupt } from "@/lib/hooks/use-interrupt";
 import { useAgentSkills } from "@/lib/hooks/use-skills";
 import { cn } from "@/lib/utils";
 import type { SessionEvent } from "@/lib/types";
@@ -24,6 +25,7 @@ export default function SessionDetailPage() {
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, isConnected, fileChange } = useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
+  const { interrupt, isPending: isInterrupting } = useInterrupt(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
@@ -78,6 +80,13 @@ export default function SessionDetailPage() {
     },
     [send],
   );
+
+  const handleInterrupt = useCallback(async () => {
+    if (isInterrupting) return;
+    // Nothing to undo if the Host reports it stopped nothing: the Turn had
+    // already finished, and the status the SSE stream reports will say so.
+    await interrupt().catch(() => false);
+  }, [interrupt, isInterrupting]);
 
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
   const effectiveStatus = status === "running" ? "running" : (session?.status ?? "idle");
@@ -187,6 +196,8 @@ export default function SessionDetailPage() {
               disabled={inputDisabled}
               pendingMessages={status === "running" ? unconfirmedEvents : []}
               skills={equippedSkills}
+              running={status === "running"}
+              onInterrupt={handleInterrupt}
             />
           </div>
           {/* Slide-out Workspace panel */}

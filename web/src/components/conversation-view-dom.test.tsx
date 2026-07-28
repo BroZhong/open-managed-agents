@@ -70,3 +70,49 @@ it("preserves the assistant bubble DOM node across Delta to Complete replacement
 
   expect(screen.getByText("Stable bubble")).toBe(streamingTextNode);
 });
+
+it("shows an interrupted message's text with a stopped marker (issue #110)", () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const aborted: SessionEvent = {
+    seq: 11,
+    type: "agent.message",
+    data: {
+      content: [{ type: "text", text: "Half a th" }],
+      turnId: "turn_10",
+      blockIndex: 0,
+      stopReason: "aborted",
+    },
+    ts: "2026-07-11T00:00:02.000Z",
+  };
+  render(
+    <ConversationView
+      events={[userMessage, aborted]}
+      activeDeltas={[]}
+      sessionStatus="idle"
+    />,
+  );
+
+  expect(screen.getByText("Half a th")).toBeTruthy();
+  expect(screen.getByText("Stopped by you")).toBeTruthy();
+});
+
+it("renders a completed message without the stopped marker", () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const done: SessionEvent = {
+    seq: 11,
+    type: "agent.message",
+    data: { content: [{ type: "text", text: "All done" }] },
+    ts: "2026-07-11T00:00:02.000Z",
+  };
+  render(
+    <ConversationView events={[userMessage, done]} activeDeltas={[]} sessionStatus="idle" />,
+  );
+
+  expect(screen.queryByText("Stopped by you")).toBeNull();
+});

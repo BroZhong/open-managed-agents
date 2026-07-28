@@ -23,7 +23,12 @@ function userMessage(text: string): SessionEvent {
 
 function agentMessage(
   text: string,
-  origin?: { provider?: string; api?: string; model?: string },
+  origin?: {
+    provider?: string;
+    api?: string;
+    model?: string;
+    stopReason?: string;
+  },
 ): SessionEvent {
   return {
     id: "sevt_a",
@@ -194,5 +199,87 @@ describe("eventLogToAgentMessages", () => {
 
   it("returns an empty array for empty history (first turn)", () => {
     expect(eventLogToAgentMessages([])).toEqual([]);
+  });
+
+  describe("stopReason (issue #111)", () => {
+    it("carries a recorded aborted stopReason onto the rebuilt assistant message", () => {
+      const messages = eventLogToAgentMessages([
+        userMessage("write a poem"),
+        agentMessage("Half a th", { stopReason: "aborted" }),
+      ]);
+      expect((messages[1] as AssistantMessage).stopReason).toBe("aborted");
+    });
+
+    it("treats an event with no stopReason as completed (backward compatible)", () => {
+      const messages = eventLogToAgentMessages([
+        userMessage("hi"),
+        agentMessage("Hello!"),
+      ]);
+      expect((messages[1] as AssistantMessage).stopReason).toBe("stop");
+    });
+
+    it("falls back to stop for a value outside Pi's StopReason union", () => {
+      const messages = eventLogToAgentMessages([
+        userMessage("hi"),
+        agentMessage("Hello!", { stopReason: "something-else" }),
+      ]);
+      expect((messages[1] as AssistantMessage).stopReason).toBe("stop");
+    });
+
+    it("keeps the aborted reason when the interrupted message also requested a tool", () => {
+      const messages = eventLogToAgentMessages([
+        userMessage("run it"),
+        agentMessage("Let me check.", { stopReason: "aborted" }),
+        toolUse("tc_1", "exec", { command: "ls" }),
+      ]);
+      const assistant = messages[1] as AssistantMessage;
+      expect(assistant.stopReason).toBe("aborted");
+      expect(assistant.content).toHaveLength(2);
+    });
+
+    it("drops the tool results belonging to a discarded assistant, leaving no orphan", () => {
+      // Pi discards an aborted assistant whole — including its toolCalls. A
+      // toolResult for one of those calls would then reach the provider with no
+      // request in front of it, which the provider APIs reject. Since the
+      // assistant is going, its results must go with it (issue #112).
+      const messages = eventLogToAgentMessages([
+        userMessage("run it"),
+        agentMessage("Let me check.", { stopReason: "aborted" }),
+        toolUse("tc_1", "exec", { command: "ls" }),
+        toolResult("tc_1", "The previous tool execution was interrupted", true),
+        userMessage("try again"),
+      ]);
+
+      expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+      expect((messages[1] as AssistantMessage).stopReason).toBe("aborted");
+    });
+
+    it("keeps tool results whose assistant survives", () => {
+      const messages = eventLogToAgentMessages([
+        userMessage("run it"),
+        agentMessage("Let me check."),
+        toolUse("tc_1", "exec", { command: "ls" }),
+        toolResult("tc_1", "a.ts"),
+      ]);
+
+      expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult"]);
+    });
+
+    it("drops only the discarded assistant's results, not a later turn's", () => {
+      const messages = eventLogToAgentMessages([
+        agentMessage("Interrupted here.", { stopReason: "aborted" }),
+        toolUse("tc_dropped", "exec", { command: "sleep 999" }),
+        toolResult("tc_dropped", "interrupted", true),
+        userMessage("again"),
+        agentMessage("Working."),
+        toolUse("tc_kept", "exec", { command: "ls" }),
+        toolResult("tc_kept", "a.ts"),
+      ]);
+
+      const results = messages.filter(
+        (m): m is ToolResultMessage => m.role === "toolResult",
+      );
+      expect(results.map((r) => r.toolCallId)).toEqual(["tc_kept"]);
+    });
   });
 });

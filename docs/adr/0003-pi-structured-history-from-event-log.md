@@ -98,6 +98,16 @@ summary back as an event) is a later optimization, out of scope here.
 - The event log must carry (or let us derive) the origin model of each historical
   assistant turn, so `isSameModel` is accurate. If unknown for legacy events, the
   worst case is a cross-model normalization pass, which is safe.
+- The rebuilt assistant message must carry the recorded `stopReason` rather than
+  asserting completion, for the same reason as the model metadata: it is a fact
+  about the historical message that only the log knows. It is what lets Pi's own
+  conversion layer discard an **Interrupted Turn**'s half-written output ("the
+  model should retry from the last valid state") while the event log and the
+  frontend keep it — a deliberate two-layer divergence. Because Pi drops such an
+  assistant whole, the tool results belonging to its discarded tool calls are
+  dropped with it; otherwise a result would reach the provider with no request in
+  front of it. A missing `stopReason` means completed, so legacy events and
+  runtimes that report none are unaffected.
 - KV cache is prefix-stable within a single model across turns (tool ids
   round-trip unchanged); it necessarily misses when the provider changes or when
   compaction rewrites the prefix — both unavoidable and unrelated to id handling.

@@ -221,7 +221,7 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
     case "user":
       return <UserBubble text={message.text} />;
     case "assistant":
-      return <AssistantBubble text={message.text} />;
+      return <AssistantBubble text={message.text} aborted={message.aborted} />;
     case "assistant_streaming":
       return <AssistantBubble text={message.text} isStreaming />;
     case "thinking":
@@ -262,9 +262,11 @@ function UserBubble({ text }: { text: string }) {
 function AssistantBubble({
   text,
   isStreaming = false,
+  aborted = false,
 }: {
   text: string;
   isStreaming?: boolean;
+  aborted?: boolean;
 }) {
   return (
     <div className="flex justify-start">
@@ -274,6 +276,13 @@ function AssistantBubble({
         </div>
         {isStreaming && (
           <span className="inline-block h-4 w-0.5 animate-pulse bg-[var(--color-fg-subtle)]" />
+        )}
+        {/* An Interrupt is the user's intent, not a fault, so this reads as a
+            note rather than borrowing the error bubble's red. */}
+        {aborted && (
+          <p className="mt-1.5 text-xs text-[var(--color-fg-subtle)]">
+            Stopped by you
+          </p>
         )}
       </div>
     </div>

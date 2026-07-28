@@ -129,6 +129,58 @@ describe("Conversation Delta projection", () => {
     expect(durable.messages.at(-1)?.id).toBe(streaming.messages.at(-1)?.id);
   });
 
+  it("marks a message the Agent was interrupted mid-way through as aborted", () => {
+    const { messages } = processEventsToMessages([
+      userMessage,
+      {
+        seq: 11,
+        type: "agent.message",
+        data: {
+          content: [{ type: "text", text: "Half a th" }],
+          turnId: "turn_10",
+          blockIndex: 0,
+          stopReason: "aborted",
+        },
+        ts: "2026-07-11T00:00:02.000Z",
+      },
+    ]);
+
+    expect(messages.at(-1)).toMatchObject({
+      role: "assistant",
+      text: "Half a th",
+      aborted: true,
+    });
+  });
+
+  it("treats a message with no stopReason as complete (older events included)", () => {
+    const { messages } = processEventsToMessages([
+      userMessage,
+      {
+        seq: 11,
+        type: "agent.message",
+        data: { content: [{ type: "text", text: "All done" }] },
+        ts: "2026-07-11T00:00:02.000Z",
+      },
+    ]);
+
+    expect(messages.at(-1)?.aborted).toBeUndefined();
+  });
+
+  it("ignores session.turn_aborted rather than failing on an unknown type", () => {
+    const { messages } = processEventsToMessages([
+      userMessage,
+      {
+        seq: 11,
+        type: "session.turn_aborted",
+        data: { turnId: "turn_10" },
+        ts: "2026-07-11T00:00:02.000Z",
+      },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+  });
+
   it("shows the typing indicator only before the current Turn has any response", () => {
     expect(
       shouldShowTypingIndicator(

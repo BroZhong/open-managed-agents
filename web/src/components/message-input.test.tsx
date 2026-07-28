@@ -83,6 +83,56 @@ it("supports keyboard navigation, Tab selection, and Escape dismissal", () => {
   expect(screen.queryByRole("listbox", { name: "Equipped Skills" })).toBeNull();
 });
 
+it("shows Stop while a Turn is running and stops it on click (issue #113)", () => {
+  const onSend = vi.fn();
+  const onInterrupt = vi.fn();
+  render(<MessageInput onSend={onSend} onInterrupt={onInterrupt} running />);
+
+  // Stop needs no typed text to be meaningful, so the button is live right away.
+  const stop = screen.getByRole("button", { name: "Stop generating" });
+  expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+  expect(stop).toHaveProperty("disabled", false);
+
+  fireEvent.click(stop);
+  expect(onInterrupt).toHaveBeenCalledTimes(1);
+  expect(onSend).not.toHaveBeenCalled();
+});
+
+it("shows Send when the Session is idle, unchanged", () => {
+  const onSend = vi.fn();
+  const onInterrupt = vi.fn();
+  render(<MessageInput onSend={onSend} onInterrupt={onInterrupt} running={false} />);
+
+  expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toHaveProperty("disabled", true);
+
+  fireEvent.change(screen.getByPlaceholderText("Send a message..."), {
+    target: { value: "hello" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(onSend).toHaveBeenCalledWith("hello");
+  expect(onInterrupt).not.toHaveBeenCalled();
+});
+
+it("still queues typed messages while a Turn is running", () => {
+  // An Interrupt ends the current Turn only; the queue keeps running, so typing
+  // ahead must stay possible even though the button says Stop.
+  const onSend = vi.fn();
+  render(<MessageInput onSend={onSend} onInterrupt={vi.fn()} running />);
+
+  const input = screen.getByPlaceholderText("Send a message...");
+  fireEvent.change(input, { target: { value: "next up" } });
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+  expect(onSend).toHaveBeenCalledWith("next up");
+});
+
+it("keeps the Send button when running without an interrupt handler", () => {
+  render(<MessageInput onSend={vi.fn()} running />);
+  expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
+});
+
 it("preserves Shift+Enter and IME composition behavior", () => {
   const onSend = vi.fn();
   render(<MessageInput onSend={onSend} skills={skills} />);

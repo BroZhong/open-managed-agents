@@ -23,6 +23,14 @@ export class PiEventTranslator {
   private textAccumulator = "";
   private thinkingAccumulator = "";
   private pendingProviderError: string | undefined;
+  /**
+   * How many of the current assistant message's text blocks already became an
+   * `agent.message`. Pi emits `text_end` per finished text block, but an
+   * Interrupt cuts the stream off before it — only `message_end` arrives. The
+   * count tells `message_end` which text blocks are still unaccounted for so it
+   * can compensate with exactly one message and never duplicate a finished one.
+   */
+  private emittedTextBlocks = 0;
 
   processEvent(event: AgentSessionEvent): SessionEvent[] {
     const events: SessionEvent[] = [];
@@ -52,6 +60,7 @@ export class PiEventTranslator {
           }
           this.textAccumulator = "";
           this.thinkingAccumulator = "";
+          this.emittedTextBlocks = 0;
         }
         break;
       }
@@ -60,6 +69,10 @@ export class PiEventTranslator {
         const ame = event.assistantMessageEvent;
         switch (ame.type) {
           case "text_start":
+            // A new text block starts empty; the accumulator must not carry the
+            // previous block's text into it (matters when an Interrupt lands on
+            // the second block and `message_end` has to compensate).
+            this.textAccumulator = "";
             events.push({
               id: generateEventId(),
               timestamp: generateTimestamp(),
@@ -86,19 +99,11 @@ export class PiEventTranslator {
               timestamp: generateTimestamp(),
               type: "agent.message_stream_end",
             } as SessionEvent);
-            events.push({
-              id: generateEventId(),
-              timestamp: generateTimestamp(),
-              type: "agent.message",
-              content: [{ type: "text", text: this.textAccumulator }],
-              ...(this.currentProvider ? { provider: this.currentProvider } : {}),
-              ...(this.currentApi ? { api: this.currentApi } : {}),
-              // The raw origin model id (not the `model || provider` fallback
-              // used for the span event) so it round-trips into history.
-              ...(this.currentModel && this.currentModel !== "unknown"
-                ? { model: this.currentModel }
-                : {}),
-            } as SessionEvent);
+            events.push(this.makeMessageEvent(this.textAccumulator));
+            this.emittedTextBlocks++;
+            // The block is now durable; anything left in the accumulator would
+            // be mistaken for unfinished text by a later `message_end`.
+            this.textAccumulator = "";
             break;
 
           case "thinking_start":
@@ -223,6 +228,7 @@ export class PiEventTranslator {
             usage?: { input: number; output: number };
             stopReason?: string;
             errorMessage?: string;
+            content?: unknown;
           };
           const usage = message.usage;
           if (this.spanStarted && usage) {
@@ -236,6 +242,22 @@ export class PiEventTranslator {
                 outputTokens: usage.output,
               },
             } as SessionEvent);
+          }
+          // An Interrupt cuts the stream off before `text_end`, so the text Pi
+          // already produced would vanish: the deltas are transient and no
+          // Complete Event was ever emitted. `message_end` still carries the
+          // message, so compensate here with the text no `text_end` claimed and
+          // tag it with the stop reason — that is what makes an Interrupted
+          // Turn's half-written output durable history (issue #110).
+          const unemitted = this.unemittedText(message.content);
+          if (unemitted) {
+            events.push(
+              this.makeMessageEvent(
+                unemitted,
+                message.stopReason === "stop" ? undefined : message.stopReason,
+              ),
+            );
+            this.emittedTextBlocks++;
           }
           this.pendingProviderError =
             message.stopReason === "error"
@@ -252,6 +274,54 @@ export class PiEventTranslator {
     }
 
     return events;
+  }
+
+  /**
+   * Build one `agent.message` Complete Event carrying the current assistant
+   * message's origin metadata. `stopReason` is set only when the message did not
+   * finish normally, keeping the field absent on the overwhelmingly common path.
+   */
+  private makeMessageEvent(text: string, stopReason?: string): SessionEvent {
+    return {
+      id: generateEventId(),
+      timestamp: generateTimestamp(),
+      type: "agent.message",
+      content: [{ type: "text", text }],
+      ...(this.currentProvider ? { provider: this.currentProvider } : {}),
+      ...(this.currentApi ? { api: this.currentApi } : {}),
+      // The raw origin model id (not the `model || provider` fallback used for
+      // the span event) so it round-trips into history.
+      ...(this.currentModel && this.currentModel !== "unknown"
+        ? { model: this.currentModel }
+        : {}),
+      ...(stopReason ? { stopReason } : {}),
+    } as SessionEvent;
+  }
+
+  /**
+   * The text of this assistant message that no `agent.message` covers yet.
+   *
+   * Prefer `message_end`'s own content blocks (authoritative, and present even
+   * when the stream never reached `text_end`), skipping the blocks already
+   * emitted; fall back to the delta accumulator when the message carries no
+   * usable content array.
+   */
+  private unemittedText(content: unknown): string {
+    if (Array.isArray(content)) {
+      const texts = content
+        .filter(
+          (block): block is { type: "text"; text: string } =>
+            !!block &&
+            typeof block === "object" &&
+            (block as { type?: unknown }).type === "text" &&
+            typeof (block as { text?: unknown }).text === "string",
+        )
+        .map((block) => block.text);
+      if (texts.length > 0) {
+        return texts.slice(this.emittedTextBlocks).join("");
+      }
+    }
+    return this.textAccumulator;
   }
 
   /**

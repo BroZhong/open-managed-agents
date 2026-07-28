@@ -45,7 +45,14 @@ export interface UserMessageEvent extends SessionEvent {
 
 export interface AgentMessageEvent extends SessionEvent {
   type: "agent.message";
-  data: { content: Array<{ type: "text"; text: string }> };
+  data: {
+    content: Array<{ type: "text"; text: string }>;
+    /**
+     * Why the runtime stopped producing this message. Absent means it finished
+     * normally; `"aborted"` marks the half-written output of an Interrupted Turn.
+     */
+    stopReason?: string;
+  };
 }
 
 export interface AgentMessageStreamStartEvent extends SessionEvent {
@@ -93,6 +100,12 @@ export interface SessionStatusIdleEvent extends SessionEvent {
   data: Record<string, never>;
 }
 
+/** A Turn that ended because of an Interrupt rather than by the Agent finishing. */
+export interface SessionTurnAbortedEvent extends SessionEvent {
+  type: "session.turn_aborted";
+  data: { turnId: string };
+}
+
 export interface SessionErrorEvent extends SessionEvent {
   type: "session.error";
   data: { error: { message: string; code?: string } };
@@ -133,5 +146,6 @@ export type TypedSessionEvent =
   | AgentMcpToolUseEvent
   | SessionStatusRunningEvent
   | SessionStatusIdleEvent
+  | SessionTurnAbortedEvent
   | SessionErrorEvent
   | SpanModelRequestEndEvent;

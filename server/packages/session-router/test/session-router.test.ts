@@ -543,28 +543,36 @@ describe("SessionRouter", () => {
   });
 
   describe("interrupt", () => {
-    it("aborts the adapter run", async () => {
-      const events: SessionEvent[] = [
-        {
-          id: "evt_1",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message_stream_start",
+    it("persists the half-written output the aborted adapter still emits", async () => {
+      // A real Adapter settles its interrupt by emitting what it had produced
+      // so far, tagged `aborted` (issue #110). The router must forward that —
+      // dropping it is what used to make interrupted output vanish silently.
+      const adapter: Adapter = {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          yield {
+            id: "evt_1",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.message_stream_start",
+          };
+          yield {
+            id: "evt_2",
+            timestamp: "2024-01-01T00:00:01.000Z",
+            type: "agent.message_chunk",
+            text: "Half a th",
+          };
+          await new Promise<void>((resolve) => {
+            if (input.signal?.aborted) return resolve();
+            input.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield {
+            id: "evt_3",
+            timestamp: "2024-01-01T00:00:03.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "Half a th" }],
+            stopReason: "aborted",
+          } as SessionEvent;
         },
-        {
-          id: "evt_2",
-          timestamp: "2024-01-01T00:00:01.000Z",
-          type: "agent.message_chunk",
-          text: "This should not complete",
-        },
-        {
-          id: "evt_3",
-          timestamp: "2024-01-01T00:00:03.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "This should not complete" }],
-        },
-      ];
-
-      const adapter = createDelayedMockAdapter(events, 50);
+      };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
 
       const session = await sessionStore.create({
@@ -583,14 +591,187 @@ describe("SessionRouter", () => {
       const processPromise = router.handleNewEvent(session.id, testAgent);
 
       await new Promise((resolve) => setTimeout(resolve, 30));
-      router.interrupt(session.id);
+      expect(router.interrupt(session.id)).toBe(true);
 
       await processPromise;
 
-      // Verify the canonical message was NOT persisted (interrupted before it)
       const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const message = allEvents.data.find((e) => e.type === "agent.message");
+      expect(message).toBeDefined();
+      expect(message!.data).toMatchObject({
+        content: [{ type: "text", text: "Half a th" }],
+        stopReason: "aborted",
+      });
+      // Deltas stay transient; only the Complete Event is durable.
       const storedTypes = allEvents.data.map((e) => e.type);
-      expect(storedTypes).not.toContain("agent.message");
+      expect(storedTypes).not.toContain("agent.message_chunk");
+      // The Turn still lands idle and its input is acknowledged.
+      expect((await sessionStore.getById(session.id))!.status).toBe("idle");
+      expect(await pendingEventStore.count(session.id)).toBe(0);
+    });
+
+    it("reports false when no Turn of this Session is running in this process", async () => {
+      const adapter = createDelayedMockAdapter([], 0);
+      const { sessionStore, router } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+
+      expect(router.interrupt(session.id)).toBe(false);
+    });
+
+    it("records session.turn_aborted and closes tool_uses left without a result", async () => {
+      // The other shape of Interrupt (issue #112): the assistant message is a
+      // normal one and the only trace is a tool_use whose result never came.
+      const adapter: Adapter = {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          yield {
+            id: "evt_1",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.tool_use",
+            toolUseId: "tc_1",
+            name: "exec",
+            input: { command: "sleep 999" },
+          };
+          await new Promise<void>((resolve) => {
+            if (input.signal?.aborted) return resolve();
+            input.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      };
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
+
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "run it" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      const processPromise = router.handleNewEvent(session.id, testAgent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(router.interrupt(session.id)).toBe(true);
+      await processPromise;
+
+      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const result = allEvents.data.find((e) => e.type === "agent.tool_result");
+      expect(result).toBeDefined();
+      expect(result!.data).toMatchObject({ toolUseId: "tc_1", isError: true });
+      const aborted = allEvents.data.find((e) => e.type === "session.turn_aborted");
+      expect(aborted).toBeDefined();
+      expect(aborted!.data).toMatchObject({ turnId: expect.any(String) });
+      // The Turn still completes its boundary, so the next Turn can start.
+      expect(allEvents.data.map((e) => e.type)).toContain("session.turn_completed");
+    });
+
+    it("leaves a completed Turn untouched — no turn_aborted, no synthetic result", async () => {
+      const adapter = createDelayedMockAdapter(
+        [
+          {
+            id: "evt_1",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.tool_use",
+            toolUseId: "tc_1",
+            name: "exec",
+            input: { command: "ls" },
+          },
+          {
+            id: "evt_2",
+            timestamp: "2024-01-01T00:00:01.000Z",
+            type: "agent.tool_result",
+            toolUseId: "tc_1",
+            content: [{ type: "text", text: "a.ts" }],
+            isError: false,
+          },
+          {
+            id: "evt_3",
+            timestamp: "2024-01-01T00:00:02.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "One file." }],
+          },
+        ],
+        1,
+      );
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "ls" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await router.handleNewEvent(session.id, testAgent);
+
+      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
+      expect(allEvents.data.map((e) => e.type)).not.toContain("session.turn_aborted");
+      expect(allEvents.data.filter((e) => e.type === "agent.tool_result")).toHaveLength(1);
+      const message = allEvents.data.find((e) => e.type === "agent.message");
+      expect(message!.data).not.toHaveProperty("stopReason");
+    });
+
+    it("runs the next queued Turn after an Interrupt — the queue is not cleared", async () => {
+      let run = 0;
+      const adapter: Adapter = {
+        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+          run++;
+          if (run === 1) {
+            await new Promise<void>((resolve) => {
+              if (input.signal?.aborted) return resolve();
+              input.signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            return;
+          }
+          yield {
+            id: `evt_${run}`,
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "Second turn reply" }],
+          };
+        },
+      };
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      for (const text of ["first", "second"]) {
+        await pendingEventStore.enqueue(session.id, {
+          type: "user.message",
+          data: { content: [{ type: "text", text }] },
+          sessionThreadId: "sthr_primary",
+        });
+      }
+
+      const processPromise = router.handleNewEvent(session.id, testAgent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      router.interrupt(session.id);
+      await processPromise;
+      // The outer signal stays aborted for this drainer, so the queued tail is
+      // handed off to a fresh drain (the router's normal handoff path).
+      await router.handleNewEvent(session.id, testAgent);
+
+      expect(await pendingEventStore.count(session.id)).toBe(0);
+      const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
+      const replies = allEvents.data.filter((e) => e.type === "agent.message");
+      expect(replies).toHaveLength(1);
+      expect(replies[0].data).toMatchObject({
+        content: [{ type: "text", text: "Second turn reply" }],
+      });
     });
   });
 

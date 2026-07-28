@@ -587,8 +587,10 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(handleNewEvent).not.toHaveBeenCalled();
   });
 
-  it("user.interrupt is not persisted and returns accepted/interrupted", async () => {
-    const { app, agentStore, sessionStore, eventLogStore } = createTestApp();
+  it("user.interrupt is not persisted and reports that a Turn was stopped", async () => {
+    const interrupt = vi.fn(() => true);
+    const sessionRouter = { interrupt, handleNewEvent: vi.fn(async () => {}) } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, eventLogStore } = createTestApp(sessionRouter);
     const { session } = await createTestSession(agentStore, sessionStore);
 
     const res = await app.request(`/v1/sessions/${session.id}/events`, {
@@ -603,10 +605,46 @@ describe("POST /v1/sessions/:id/events", () => {
     const body = await res.json();
     expect(body.accepted).toBe(true);
     expect(body.interrupted).toBe(true);
+    expect(interrupt).toHaveBeenCalledWith(session.id);
 
     // Verify nothing was persisted
     const events = await eventLogStore.getEvents(session.id);
     expect(events.data).toHaveLength(0);
+  });
+
+  it("reports interrupted:false when no Turn was actually stopped", async () => {
+    // The router's active-Turn map is per-process, so an interrupt aimed at a
+    // Turn on another replica (or at an idle Session) stops nothing. The request
+    // is still accepted, so this is a 202 with an honest body (issue #113).
+    const sessionRouter = {
+      interrupt: vi.fn(() => false),
+      handleNewEvent: vi.fn(async () => {}),
+    } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore } = createTestApp(sessionRouter);
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: [{ type: "user.interrupt", data: {} }] }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ accepted: true, interrupted: false });
+  });
+
+  it("reports interrupted:false when no router is wired at all", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const res = await app.request(`/v1/sessions/${session.id}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: [{ type: "user.interrupt", data: {} }] }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ accepted: true, interrupted: false });
   });
 
   it("user.message goes to pending store, not canonical log", async () => {
