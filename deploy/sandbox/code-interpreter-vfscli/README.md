@@ -32,6 +32,14 @@ image, the ConfigMap, a Skill, or an Agent record. The Host injects the WW pair
 only for Agent ids in `DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS`; it is not a
 deployment-wide credential available to other tenants.
 
+That contract is unchanged, but the WW integration is **off by default** since
+issue #116: `deploy/k8s.yaml` ships none of the three
+`DEFAULT_SANDBOX_OPENGROVE_WW_*` variables, because shipping only some of them
+made `oma-server` fail loud at startup. Until an operator runs the
+all-or-nothing enablement procedure documented in that manifest, no sandbox
+receives `OPENGROVE_WW_BASE_URL` / `OPENGROVE_WW_ACCESS_TOKEN` and the
+`test -n "$OPENGROVE_WW_*"` checks in the E2E section below will not pass.
+
 This is still a general Bash sandbox. Code running inside an allowed Agent's
 sandbox can read its environment and can override variables for a child
 process. This integration keeps the bearer out of persisted Agent
@@ -129,6 +137,9 @@ test -n "$OPENGROVE_WW_BASE_URL"         # verifies presence without disclosure
 test -n "$OPENGROVE_WW_ACCESS_TOKEN"     # verifies presence without disclosure
 ```
 
-All checks must succeed. Do not print either WW variable during verification.
+All checks must succeed — except the two WW checks, which only apply once the
+WW integration has been explicitly enabled (see the note above and
+`deploy/k8s.yaml`). With WW off by default they are expected to fail, and that
+is not an image regression. Do not print either WW variable during verification.
 The write failures were the #85 symptom; `story-seed: not found` is the
 story-seed image regression to watch.

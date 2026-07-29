@@ -191,4 +191,17 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     const queue = this.queues.get(sessionId) ?? [];
     return queue.length;
   }
+
+  async listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]> {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new RangeError("pending event listUnclaimed limit must be a positive integer");
+    }
+    const now = Date.now();
+    return (this.queues.get(sessionId) ?? [])
+      .filter((event) => {
+        const claim = this.claims.get(event.id);
+        return !claim?.ownerId || claim.expiresAtMs <= now;
+      })
+      .slice(0, limit);
+  }
 }

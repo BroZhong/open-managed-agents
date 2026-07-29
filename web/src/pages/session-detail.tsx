@@ -13,8 +13,19 @@ import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
 import { useInterrupt } from "@/lib/hooks/use-interrupt";
 import { useAgentSkills } from "@/lib/hooks/use-skills";
+import { useQueuedInput } from "@/lib/hooks/use-queued-input";
 import { cn } from "@/lib/utils";
+import type { QueuedInput } from "@/components/message-input";
 import type { SessionEvent } from "@/lib/types";
+
+/** Read the display text out of a `user.message` event payload. */
+function messageText(data: unknown): string {
+  if (!data || typeof data !== "object") return "";
+  const content = (data as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  const first = content[0] as { text?: unknown } | undefined;
+  return typeof first?.text === "string" ? first.text : "";
+}
 
 type Tab = "conversation" | "timeline" | "workspace";
 
@@ -23,7 +34,8 @@ export default function SessionDetailPage() {
   const navigate = useNavigate();
   const { data: session, isLoading: sessionLoading } = useSession(id);
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
-  const { events, activeDeltas, status, isConnected, fileChange } = useSessionEvents(id);
+  const { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce } =
+    useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const { interrupt, isPending: isInterrupting } = useInterrupt(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
@@ -65,6 +77,32 @@ export default function SessionDetailPage() {
     if (status === "running") return events;
     return [...events, ...unconfirmedEvents];
   }, [events, unconfirmedEvents, status]);
+
+  // Whether input is waiting to run is the Host's fact, re-read whenever a Turn
+  // starts or ends. This is what keeps the `queued` strip visible through the gap
+  // an Interrupt opens and restores it after a reload (issue #114).
+  const { entries: serverQueued, hasMore: hasMoreQueuedInput } = useQueuedInput(
+    id,
+    turnLifecycleNonce,
+  );
+
+  // The Host round-trip is not instant, so a just-sent message would flicker out
+  // of the strip without a local bridge. Bridge on count, not on text: two
+  // identical messages are two distinct Queued Inputs, and matching by text
+  // would collapse them into one row. Once the server reports at least as many
+  // entries as we sent optimistically, its list is authoritative and the local
+  // ones are dropped — including the case where an entry has since been claimed
+  // and is therefore executing rather than queued.
+  const queuedInput = useMemo<QueuedInput[]>(() => {
+    const fromServer = serverQueued.map((entry) => ({
+      id: entry.id,
+      text: messageText(entry.data),
+    }));
+    const unaccounted = unconfirmedEvents
+      .slice(fromServer.length)
+      .map((event) => ({ id: `optimistic:${event.seq}`, text: messageText(event.data) }));
+    return [...fromServer, ...unaccounted];
+  }, [serverQueued, unconfirmedEvents]);
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -194,7 +232,10 @@ export default function SessionDetailPage() {
             <MessageInput
               onSend={handleSend}
               disabled={inputDisabled}
-              pendingMessages={status === "running" ? unconfirmedEvents : []}
+              // Not gated on `status === "running"`: the queue outlives the Turn
+              // that was running when it was filled (issue #114).
+              queuedInput={queuedInput}
+              hasMoreQueuedInput={hasMoreQueuedInput}
               skills={equippedSkills}
               running={status === "running"}
               onInterrupt={handleInterrupt}

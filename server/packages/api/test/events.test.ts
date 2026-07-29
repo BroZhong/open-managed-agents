@@ -281,6 +281,22 @@ class InMemoryPendingEventStore implements PendingEventIngressStore {
     const queue = this.queues.get(sessionId) ?? [];
     return queue.length;
   }
+
+  /**
+   * This double has no claim bookkeeping, so every queued entry counts as
+   * waiting. `claimed` lets a test mark the head as executing, standing in for
+   * the live lease a real drainer holds.
+   */
+  claimed = new Set<string>();
+
+  async listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]> {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new RangeError("pending event listUnclaimed limit must be a positive integer");
+    }
+    return (this.queues.get(sessionId) ?? [])
+      .filter((event) => !this.claimed.has(event.id))
+      .slice(0, limit);
+  }
 }
 
 interface SSEFrame {
@@ -922,6 +938,120 @@ describe("POST /v1/sessions/:id/events — title snapshot (#70)", () => {
     expect(res.status).toBe(202);
     // The message was still enqueued despite the title failure.
     expect(await pendingEventStore.count(session.id)).toBe(1);
+  });
+});
+
+describe("GET /v1/sessions/:id/pending", () => {
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  it("reports the Session's queued input as a server fact (issue #114)", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const empty = await app.request(`/v1/sessions/${session.id}/pending`);
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ count: 0, has_more: false, data: [] });
+
+    for (const text of ["first", "second"]) {
+      await app.request(`/v1/sessions/${session.id}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          events: [{ type: "user.message", data: { content: [{ type: "text", text }] } }],
+        }),
+      });
+    }
+
+    const res = await app.request(`/v1/sessions/${session.id}/pending`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBe(2);
+    expect(body.has_more).toBe(false);
+    expect(body.data.map((e: { type: string }) => e.type)).toEqual([
+      "user.message",
+      "user.message",
+    ]);
+    // The queued text must be readable, so the console can show *what* is
+    // waiting rather than only how many.
+    expect(body.data.map((e: { data: { content: Array<{ text: string }> } }) =>
+      e.data.content[0].text,
+    )).toEqual(["first", "second"]);
+    expect(typeof body.data[0].arrived_at).toBe("string");
+    expect(typeof body.data[0].id).toBe("string");
+  });
+
+  it("excludes the entry a Turn is currently executing", async () => {
+    // The claimed head is already promoted into the event log, so counting it as
+    // queued would show a message as both running and waiting.
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    const running = await pendingEventStore.enqueue(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "running now" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    await pendingEventStore.enqueue(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "still waiting" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    pendingEventStore.claimed.add(running.id);
+
+    const body = await (await app.request(`/v1/sessions/${session.id}/pending`)).json();
+    expect(body.count).toBe(1);
+    expect(body.data[0].data.content[0].text).toBe("still waiting");
+  });
+
+  it("bounds the preview and flags that more input is queued", async () => {
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    for (let i = 0; i < 25; i++) {
+      await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: `queued ${i}` }] },
+        sessionThreadId: "sthr_primary",
+      });
+    }
+
+    const body = await (await app.request(`/v1/sessions/${session.id}/pending`)).json();
+    expect(body.data).toHaveLength(20);
+    expect(body.has_more).toBe(true);
+  });
+
+  it("returns 404 for a missing Session or one owned by another tenant", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const missing = await app.request("/v1/sessions/sess_nonexistent/pending");
+    expect(missing.status).toBe(404);
+
+    const { session } = await createTestSession(agentStore, sessionStore, "other-tenant");
+    const foreign = await app.request(`/v1/sessions/${session.id}/pending`);
+    expect(foreign.status).toBe(404);
+    expect((await foreign.json()).error).toBe("Session not found");
+  });
+
+  it("reports an unlistable queue in the same shape, without failing", async () => {
+    // A narrow store double predates listUnclaimed. Saying "there is input, none
+    // previewable" keeps the indicator honest and spares clients a second shape.
+    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+    (pendingEventStore as { listUnclaimed?: unknown }).listUnclaimed = undefined;
+
+    const empty = await app.request(`/v1/sessions/${session.id}/pending`);
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ count: 0, has_more: false, data: [] });
+
+    await pendingEventStore.enqueue(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "queued" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    const res = await app.request(`/v1/sessions/${session.id}/pending`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 0, has_more: true, data: [] });
   });
 });
 

@@ -106,6 +106,14 @@ export class FakeRedis implements RedisLike {
     return list[i] ?? null;
   }
 
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    const list = this.lists.get(key) ?? [];
+    const from = start < 0 ? Math.max(list.length + start, 0) : start;
+    // Redis LRANGE stop is inclusive and clamps rather than erroring.
+    const to = stop < 0 ? list.length + stop : stop;
+    return list.slice(from, to + 1);
+  }
+
   async lrem(key: string, count: number, value: string): Promise<number> {
     const list = this.lists.get(key) ?? [];
     const max = count === 0 ? Number.POSITIVE_INFINITY : Math.abs(count);

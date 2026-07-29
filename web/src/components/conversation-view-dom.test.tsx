@@ -116,3 +116,98 @@ it("renders a completed message without the stopped marker", () => {
 
   expect(screen.queryByText("Stopped by you")).toBeNull();
 });
+
+// Verbatim from issue #117 (production oma.events sess_YpxzAYyUZ_HaaavMOvVjc
+// seq 45), so the fixture is the exact shape that rendered unstyled.
+const gfmTable = [
+  "| 编号 | 分镜组 | 景别/机位 | 内容简述 |",
+  "|---|---|---|---|",
+  "| EP01-001 | 分镜组1 | 大特写 / 微俯 / 轻推 | ... |",
+].join("\n");
+
+function renderTableMessage() {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const tableMessage: SessionEvent = {
+    seq: 45,
+    type: "agent.message",
+    data: { content: [{ type: "text", text: gfmTable }] },
+    ts: "2026-07-11T00:00:02.000Z",
+  };
+  return render(
+    <ConversationView
+      events={[userMessage, tableMessage]}
+      activeDeltas={[]}
+      sessionStatus="idle"
+    />,
+  );
+}
+
+it("renders a GFM table in an agent.message as real table elements (issue #117)", () => {
+  const { container } = renderTableMessage();
+
+  const table = container.querySelector("table");
+  expect(table).not.toBeNull();
+  // remarkGfm must produce a real header row, not a plain paragraph of pipes.
+  expect(table!.querySelector("thead")).not.toBeNull();
+  expect([...table!.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual([
+    "编号",
+    "分镜组",
+    "景别/机位",
+    "内容简述",
+  ]);
+  expect([...table!.querySelectorAll("tbody td")].map((td) => td.textContent)).toEqual([
+    "EP01-001",
+    "分镜组1",
+    "大特写 / 微俯 / 轻推",
+    "...",
+  ]);
+  // The raw markdown must not survive as literal text anywhere in the bubble.
+  expect(container.textContent).not.toContain("|---|");
+});
+
+it("puts the markdown table inside the scrollable prose container (issue #117)", () => {
+  const { container } = renderTableMessage();
+
+  const table = container.querySelector("table")!;
+  const prose = table.closest(".prose");
+  expect(prose).not.toBeNull();
+
+  // These are what actually make a wide table scroll itself instead of
+  // bursting the max-w-[85%] bubble. Asserting the class names is the only
+  // jsdom-visible proxy for the visual fix, but it does catch the whole
+  // regression class: dropping any of them silently restores the overflow.
+  const classes = prose!.className.split(/\s+/);
+  for (const required of [
+    "prose",
+    "prose-sm",
+    "[&_table]:block",
+    "[&_table]:overflow-x-auto",
+    "[&_table]:w-max",
+    "[&_table]:max-w-full",
+  ]) {
+    expect(classes).toContain(required);
+  }
+
+  // The bubble itself must stay width-capped; an uncapped bubble would let a
+  // wide table overlap neighbouring messages even with the scroll box.
+  expect(prose!.parentElement!.className).toContain("max-w-[85%]");
+});
+
+it("keeps the bubble's own prose overrides that the typography plugin would otherwise win (issue #117)", () => {
+  const { container } = renderTableMessage();
+
+  const classes = container.querySelector(".prose")!.className.split(/\s+/);
+  // The plugin ships its own p margins, pre background and code sizing. These
+  // three were the pre-existing design and must survive installing it.
+  expect(classes).toContain("[&_p]:my-1.5");
+  expect(classes).toContain("[&_pre]:bg-[var(--color-bg-muted)]");
+  expect(classes).toContain("[&_code]:text-[13px]");
+  // The plugin also adds backtick pseudo-quotes and font-weight:600 to inline
+  // code, neither of which was part of the design.
+  expect(classes).toContain("[&_code]:before:content-none");
+  expect(classes).toContain("[&_code]:after:content-none");
+  expect(classes).toContain("[&_code]:font-normal");
+});

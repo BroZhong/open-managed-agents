@@ -25,6 +25,12 @@ export function useSessionEvents(sessionId: string) {
   );
   const [status, setStatus] = useState<"idle" | "running">("idle");
   const [isConnected, setIsConnected] = useState(false);
+  // Bumped on every Turn lifecycle transition. The Session's queued input can
+  // only change when a Turn starts (an entry was consumed) or ends (the next one
+  // may start), so this is the exact revalidation signal the pending-input read
+  // needs — and it is what keeps the `queued` strip correct across the gap an
+  // Interrupt opens (issue #114).
+  const [turnLifecycleNonce, setTurnLifecycleNonce] = useState(0);
   // Signals the Workspace panel to refresh its tree. Driven by the Host's
   // `workspace.file_change` SSE event (incremental) and by turn end
   // (session.status_idle) as a backstop. Consumed defensively — works even if
@@ -69,9 +75,13 @@ export function useSessionEvents(sessionId: string) {
       return;
     }
 
-    if (event.type === "session.status_running") setStatus("running");
+    if (event.type === "session.status_running") {
+      setStatus("running");
+      setTurnLifecycleNonce((n) => n + 1);
+    }
     if (event.type === "session.status_idle") {
       setStatus("idle");
+      setTurnLifecycleNonce((n) => n + 1);
       // Backstop: refetch the tree once on turn end (no incremental hint).
       setFileChange((prev) => ({ nonce: prev.nonce + 1, changed: [], deleted: [] }));
     }
@@ -241,5 +251,5 @@ export function useSessionEvents(sessionId: string) {
     };
   }, [sessionId, addEvent]);
 
-  return { events, activeDeltas, status, isConnected, fileChange };
+  return { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce };
 }

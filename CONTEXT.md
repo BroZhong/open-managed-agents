@@ -24,6 +24,10 @@ _Avoid_: request, job, invocation
 A user's demand that the **Session**'s currently running **Turn** stop now. An Interrupt targets that one Turn only: input the user has already queued still runs afterwards, and the Session stays usable. It is a request about the present, not an edit of the past — whatever the Agent had already produced remains part of the Session's history.
 _Avoid_: cancel, stop the session, kill (an Interrupt ends a Turn, not a Session)
 
+**Queued Input**:
+Input a user has sent that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history as a user message; so a given input is either queued or executing, never both.
+_Avoid_: pending message, optimistic message, draft, backlog
+
 **Interrupted Turn**:
 A **Turn** that ended because of an **Interrupt** rather than by the Agent finishing. Its output is kept and shown as it was left — recognizably cut short rather than presented as a finished answer — because a user who stopped an Agent still wants to see how far it got. What the Agent half-produced is history, but it is not treated as work the Agent stands behind: a later Turn continues from the last point the Agent actually completed.
 _Avoid_: failed Turn, cancelled Turn, error (an Interrupt is the user's intent, not a fault)

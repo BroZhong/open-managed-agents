@@ -1,13 +1,26 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from "react";
 import { ArrowUp, Clock, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { SessionEvent } from "@/lib/types";
 import type { EquippedSkill } from "@/lib/hooks/use-skills";
+
+/** One Queued Input to show above the composer, in the order it will run. */
+export interface QueuedInput {
+  /** Stable identity — the Host's pending-event id, or a local optimistic key. */
+  id: string;
+  text: string;
+}
 
 interface MessageInputProps {
   onSend: (text: string) => void;
   disabled?: boolean;
-  pendingMessages?: SessionEvent[];
+  /**
+   * Input accepted by the Host but not yet executing, oldest first. Reflects the
+   * server's queue rather than this component's own sends, so it stays correct
+   * between Turns and across a reload (issue #114).
+   */
+  queuedInput?: QueuedInput[];
+  /** Whether more Queued Input exists beyond the listed entries. */
+  hasMoreQueuedInput?: boolean;
   skills?: Array<Pick<EquippedSkill, "id" | "name" | "description">>;
   /**
    * Stop the Session's running Turn. When given together with `running`, the
@@ -22,7 +35,8 @@ interface MessageInputProps {
 export function MessageInput({
   onSend,
   disabled = false,
-  pendingMessages = [],
+  queuedInput = [],
+  hasMoreQueuedInput = false,
   skills = [],
   onInterrupt,
   running = false,
@@ -119,19 +133,23 @@ export function MessageInput({
 
   return (
     <div className="bg-[var(--color-bg)] px-6 py-4">
-      {pendingMessages.length > 0 && (
-        <div className="mx-auto mb-2 max-w-3xl space-y-1.5">
-          {pendingMessages.map((msg, i) => {
-            const data = msg.data as { content: Array<{ type: string; text: string }> };
-            const msgText = data.content?.[0]?.text || "";
-            return (
-              <div key={i} className="flex items-center gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
-                <Clock className="h-3.5 w-3.5 flex-shrink-0 animate-pulse" />
-                <span className="truncate">{msgText}</span>
-                <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
-              </div>
-            );
-          })}
+      {queuedInput.length > 0 && (
+        <div
+          className="mx-auto mb-2 max-w-3xl space-y-1.5"
+          aria-label="Queued input"
+        >
+          {queuedInput.map((entry) => (
+            <div key={entry.id} className="flex items-center gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
+              <Clock className="h-3.5 w-3.5 flex-shrink-0 animate-pulse" />
+              <span className="truncate">{entry.text}</span>
+              <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
+            </div>
+          ))}
+          {hasMoreQueuedInput && (
+            <p className="px-3 text-xs text-[var(--color-fg-subtle)]">
+              More input is queued
+            </p>
+          )}
         </div>
       )}
       <div className="mx-auto max-w-3xl">

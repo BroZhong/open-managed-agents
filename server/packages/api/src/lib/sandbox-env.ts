@@ -57,6 +57,16 @@ export function sandboxEnvPolicyFromHost(env: HostEnv): SandboxEnvPolicy {
   const hasCompleteWwConfig = Boolean(
     wwBaseUrl && wwAccessToken && wwAgentIds.length,
   );
+  // This fail-loud targets "configured wrong", NOT "not configured".
+  // Setting none of the three variables is a supported state: the managed WW
+  // integration is simply off and this function returns without the
+  // managedSandboxEnvByAgentId section. Only a PARTIAL configuration throws,
+  // because it means an operator intended to enable WW and left a hole — e.g.
+  // the endpoint and the allowlist are in the ConfigMap but the bearer's
+  // Secret key was never created (issue #116). Silently degrading that to
+  // "feature off" would ship a deployment that looks configured but injects no
+  // credential. Deployment manifests must therefore keep WW all-or-nothing;
+  // see the OpenGrove WW block in deploy/k8s.yaml.
   if (hasAnyWwConfig && !hasCompleteWwConfig) {
     throw new Error(
       "Managed OpenGrove WW sandbox configuration requires " +

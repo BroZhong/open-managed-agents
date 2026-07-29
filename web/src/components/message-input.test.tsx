@@ -133,6 +133,53 @@ it("keeps the Send button when running without an interrupt handler", () => {
   expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
 });
 
+it("lists Queued Input regardless of whether a Turn is running (issue #114)", () => {
+  // The strip describes the Host's queue, so an idle Session with input waiting
+  // — the gap an Interrupt opens — must still show it.
+  const queuedInput = [
+    { id: "pending_1", text: "first in line" },
+    { id: "pending_2", text: "second in line" },
+  ];
+  const { rerender } = render(
+    <MessageInput onSend={vi.fn()} queuedInput={queuedInput} running={false} />,
+  );
+
+  expect(screen.getByLabelText("Queued input")).toBeTruthy();
+  expect(screen.getByText("first in line")).toBeTruthy();
+  expect(screen.getByText("second in line")).toBeTruthy();
+  expect(screen.getAllByText("queued")).toHaveLength(2);
+
+  rerender(
+    <MessageInput
+      onSend={vi.fn()}
+      queuedInput={queuedInput}
+      running
+      onInterrupt={vi.fn()}
+    />,
+  );
+  expect(screen.getAllByText("queued")).toHaveLength(2);
+});
+
+it("notes that more Queued Input exists than it lists", () => {
+  render(
+    <MessageInput
+      onSend={vi.fn()}
+      queuedInput={[{ id: "pending_1", text: "shown" }]}
+      hasMoreQueuedInput
+    />,
+  );
+
+  expect(screen.getByText("More input is queued")).toBeTruthy();
+});
+
+it("renders no queued strip when nothing is waiting", () => {
+  render(<MessageInput onSend={vi.fn()} queuedInput={[]} running />);
+
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+  expect(screen.queryByText("queued")).toBeNull();
+  expect(screen.queryByText("More input is queued")).toBeNull();
+});
+
 it("preserves Shift+Enter and IME composition behavior", () => {
   const onSend = vi.fn();
   render(<MessageInput onSend={onSend} skills={skills} />);

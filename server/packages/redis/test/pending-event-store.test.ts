@@ -99,6 +99,40 @@ describe("RedisPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(1);
   });
 
+  it("lists only the input no live attempt is executing (issue #114)", async () => {
+    const first = await store.enqueue("sess_1", { type: "user.message", data: { n: 1 }, sessionThreadId: "t" });
+    const second = await store.enqueue("sess_1", { type: "user.message", data: { n: 2 }, sessionThreadId: "t" });
+
+    expect((await store.listUnclaimed("sess_1", 10)).map((e) => e.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+
+    // A live claim on the head means it is already promoted into the log.
+    const claim = await store.claim("sess_1", "host_a", 60_000);
+    expect(claim?.event.id).toBe(first.id);
+    expect((await store.listUnclaimed("sess_1", 10)).map((e) => e.id)).toEqual([second.id]);
+
+    // Released: no attempt owns it, so it is waiting input again.
+    await store.releaseClaim("sess_1", first.id, claim!);
+    expect((await store.listUnclaimed("sess_1", 10)).map((e) => e.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+  });
+
+  it("fills a full page of unclaimed input even when the head is claimed", async () => {
+    const first = await store.enqueue("sess_1", { type: "m", data: { n: 1 }, sessionThreadId: "t" });
+    const second = await store.enqueue("sess_1", { type: "m", data: { n: 2 }, sessionThreadId: "t" });
+    await store.claim("sess_1", "host_a", 60_000);
+
+    // limit 1 with a claimed head must still surface the entry behind it, not
+    // return empty because the only page it read was the claimed one.
+    expect((await store.listUnclaimed("sess_1", 1)).map((e) => e.id)).toEqual([second.id]);
+    expect(first.id).not.toBe(second.id);
+    await expect(store.listUnclaimed("sess_1", 0)).rejects.toThrow(RangeError);
+  });
+
   it("keeps queues independent per session", async () => {
     await store.enqueue("sess_1", { type: "m", data: { msg: "a" }, sessionThreadId: "t" });
     await store.enqueue("sess_2", { type: "m", data: { msg: "b" }, sessionThreadId: "t" });

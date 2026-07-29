@@ -10,8 +10,11 @@
 #     --from-literal=SUPABASE_SERVICE_KEY=... \
 #     --from-literal=E2B_DOMAIN=... \
 #     --from-literal=E2B_API_KEY=... \
-#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=... \
-#     --from-literal=OPENGROVE_WW_ACCESS_TOKEN=...
+#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=...
+#
+# The OpenGrove WW integration is OFF in this manifest by default; enabling it
+# is a separate all-or-nothing step (see "OpenGrove WW" below). Do not add
+# OPENGROVE_WW_ACCESS_TOKEN to the command above in isolation.
 #
 # The sandbox is mandatory (issue #54): SANDBOX_ENABLED=true below + the E2B_*
 # secrets are what make Agent runs execute inside a sandbox. A sandboxed Agent
@@ -53,11 +56,48 @@ data:
   # E2B templateID = the SandboxSet name in the sandbox-system namespace
   # (see deploy/sandbox/README.md). The code-interpreter warm pool.
   SANDBOX_TEMPLATE: "code-interpreter-vfscli"
-  # Non-secret endpoint paired with the Host-managed WW bearer token below.
-  DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://opengrove.creativefitting.cn"
-  # Comma-separated allowlist. The WW credential is injected only into these
-  # Agents' sandboxes, never deployment-wide across tenants.
-  DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_DAHfGLi_tD9TctXw9cEqo"
+  # ==========================================================================
+  # OpenGrove WW — DISABLED BY DEFAULT (issue #116). ALL-OR-NOTHING.
+  # --------------------------------------------------------------------------
+  # sandboxEnvPolicyFromHost (server/packages/api/src/lib/sandbox-env.ts) fails
+  # loud at startup when only SOME of the three WW variables are set, because a
+  # half-configured managed credential is a misconfiguration, not a feature
+  # toggle. This manifest previously shipped two of the three (BASE_URL +
+  # AGENT_IDS) while the third came from an oma-secrets key that a manual,
+  # never-executed `kubectl create secret` line was supposed to create — so a
+  # full `kubectl apply` put oma-server into CrashLoopBackOff. The default path
+  # must therefore contain ZERO of the three, matching the live cluster
+  # ConfigMap (the two keys were removed there on 2026-07-29).
+  #
+  # Cost of leaving it off: agent `agent_DAHfGLi_tD9TctXw9cEqo`'s sandbox gets
+  # no WW credentials, so `story-seed` has no OPENGROVE_WW_BASE_URL /
+  # OPENGROVE_WW_ACCESS_TOKEN and its WW-backed steps fail. Everything else,
+  # including every other Agent, is unaffected.
+  #
+  # TO TURN WW ON — do all three steps together, in this order, or none:
+  #
+  #   1. Create the secret key FIRST (it must exist before the Deployment
+  #      references it, otherwise the pod stays in CreateContainerConfigError):
+  #        kubectl -n oma-infra patch secret oma-secrets --type=merge \
+  #          -p "{\"stringData\":{\"OPENGROVE_WW_ACCESS_TOKEN\":\"<bearer>\"}}"
+  #        kubectl -n oma-infra get secret oma-secrets \
+  #          -o jsonpath='{.data.OPENGROVE_WW_ACCESS_TOKEN}' | head -c 1   # non-empty
+  #
+  #   2. Uncomment BOTH ConfigMap keys here:
+  #        DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://opengrove.creativefitting.cn"
+  #        DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_DAHfGLi_tD9TctXw9cEqo"
+  #      (BASE_URL is the non-secret endpoint paired with the Host-managed
+  #      bearer; AGENT_IDS is a comma-separated allowlist — the credential is
+  #      injected only into those Agents' sandboxes, never deployment-wide.)
+  #
+  #   3. Uncomment the matching DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN env
+  #      entry in the oma-server container below, then apply + roll:
+  #        kubectl apply -f deploy/k8s.yaml
+  #        kubectl -n oma-infra rollout status deploy/oma-server
+  #
+  # Reverting is the same three edits in reverse; leaving any single one behind
+  # reproduces the startup crash. Keep repo and cluster in sync either way.
+  # ==========================================================================
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -116,12 +156,15 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
             - name: RDS_MCP_APIKEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
+            # OpenGrove WW — DISABLED BY DEFAULT (issue #116). Uncomment only as
+            # step 3 of the all-or-nothing procedure in the ConfigMap comment
+            # above, and only after the oma-secrets key actually exists.
             # story-seed receives the WW credential only when a sandbox is
             # created. The value stays out of the image, ConfigMap, Agent row,
             # and repository; SessionRouter treats it as Host-managed so an
             # Agent cannot pair it with a different endpoint.
-            - name: DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN
-              valueFrom: { secretKeyRef: { name: oma-secrets, key: OPENGROVE_WW_ACCESS_TOKEN } }
+            # - name: DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN
+            #   valueFrom: { secretKeyRef: { name: oma-secrets, key: OPENGROVE_WW_ACCESS_TOKEN } }
           volumeMounts:
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:

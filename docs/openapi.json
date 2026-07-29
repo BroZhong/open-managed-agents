@@ -561,6 +561,61 @@
         }
       }
     },
+    "/v1/sessions/{id}/pending": {
+      "get": {
+        "operationId": "getPendingInput",
+        "summary": "Get the Session's queued input",
+        "description": "Input the Host has accepted but is not yet executing, oldest first. Whether anything is queued is server state: a client must not infer it from its own optimistic sends, which are lost on reload and go blank in the gap between Turns. The entry a Turn is currently executing is excluded — it has already been promoted into the event log and appears as history. The preview is bounded at 20 entries: count describes the returned page rather than the whole queue, and has_more says more input is queued beyond those listed.",
+        "tags": ["Events"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Session's queued input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of queued entries returned in data."
+                    },
+                    "has_more": {
+                      "type": "boolean",
+                      "description": "True when more input is queued than this page lists."
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string", "description": "The Host's pending-event id." },
+                          "type": { "type": "string", "description": "Queued user event type, e.g. user.message." },
+                          "data": { "description": "The queued event payload, verbatim." },
+                          "arrived_at": { "type": "string", "format": "date-time" }
+                        },
+                        "required": ["id", "type", "arrived_at"]
+                      }
+                    }
+                  },
+                  "required": ["count", "data"]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/api-keys": {
       "get": {
         "operationId": "listApiKeys",

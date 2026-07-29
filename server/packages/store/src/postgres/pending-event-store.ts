@@ -364,4 +364,23 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     );
     return Number(rows[0].count);
   }
+
+  async listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]> {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new RangeError("pending event listUnclaimed limit must be a positive integer");
+    }
+    // The claim predicate mirrors `claim`: an unowned row, or one whose lease has
+    // lapsed, is input still waiting to run. A live claim is excluded because the
+    // drainer already promoted it into the event log.
+    const { rows } = await this.pool.query<PendingRow>(
+      `SELECT id, session_id, type, data, session_thread_id, arrived_at
+       FROM pending_events
+       WHERE session_id = $1
+         AND (claim_owner IS NULL OR claim_expires_at <= clock_timestamp())
+       ORDER BY seq ASC
+       LIMIT $2`,
+      [sessionId, limit],
+    );
+    return rows.map(rowToEvent);
+  }
 }

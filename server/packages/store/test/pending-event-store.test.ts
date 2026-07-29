@@ -221,6 +221,34 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(2);
   });
 
+  it("lists only the input no live attempt is executing (issue #114)", async () => {
+    await seedSession("sess_1");
+    const first = await store.enqueue("sess_1", { type: "user.message", data: { n: 1 }, sessionThreadId: "t" });
+    const second = await store.enqueue("sess_1", { type: "user.message", data: { n: 2 }, sessionThreadId: "t" });
+
+    // Nothing claimed: every entry is still input the user is waiting on.
+    expect((await store.listUnclaimed("sess_1", 10)).map((e) => e.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+
+    // The claimed head is promoted into the event log, so it is history now and
+    // must not also be reported as queued — only the tail is still waiting.
+    const claim = await store.claim("sess_1", "host_a", 60_000);
+    expect(claim?.event.id).toBe(first.id);
+    expect((await store.listUnclaimed("sess_1", 10)).map((e) => e.id)).toEqual([second.id]);
+
+    // An expired lease means no attempt owns it: it is waiting input again.
+    await store.releaseClaim("sess_1", first.id, claim!);
+    expect((await store.listUnclaimed("sess_1", 10)).map((e) => e.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+
+    expect((await store.listUnclaimed("sess_1", 1)).map((e) => e.id)).toEqual([first.id]);
+    await expect(store.listUnclaimed("sess_1", 0)).rejects.toThrow(RangeError);
+  });
+
   it("multiple sessions have independent pending queues", async () => {
     await store.enqueue("sess_1", { type: "user.message", data: { msg: "a" }, sessionThreadId: "sthr_primary" });
     await store.enqueue("sess_2", { type: "user.message", data: { msg: "b" }, sessionThreadId: "sthr_primary" });

@@ -227,4 +227,21 @@ export class RedisPendingEventStore implements PendingEventStore {
   async count(sessionId: string): Promise<number> {
     return this.redis.llen(queueKey(sessionId));
   }
+
+  async listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]> {
+    if (!Number.isInteger(limit) || limit <= 0) {
+      throw new RangeError("pending event listUnclaimed limit must be a positive integer");
+    }
+    // This store keeps a single claim record per Session, always describing the
+    // FIFO head. Read one extra entry so dropping a live-claimed head still
+    // returns a full page of the input behind it.
+    const raw = await this.redis.lrange(queueKey(sessionId), 0, limit);
+    const events = raw.map(deserialize);
+    const claim = await this.redis.hgetall(claimKey(sessionId));
+    const claimed =
+      Boolean(claim.ownerId) && Number(claim.expiresAtMs) > Date.now()
+        ? claim.eventId
+        : undefined;
+    return events.filter((event) => event.id !== claimed).slice(0, limit);
+  }
 }

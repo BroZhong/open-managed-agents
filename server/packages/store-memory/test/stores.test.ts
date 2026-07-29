@@ -200,6 +200,26 @@ describe("createMemoryStores", () => {
       expect(await stores.pendingEventStore.count("s1")).toBe(2);
     });
 
+    it("lists only the input no live attempt is executing (issue #114)", async () => {
+      const first = await stores.pendingEventStore.enqueue("s1", { type: "a", data: {}, sessionThreadId: "th1" });
+      const second = await stores.pendingEventStore.enqueue("s1", { type: "b", data: {}, sessionThreadId: "th1" });
+
+      const ids = async (limit = 10) =>
+        (await stores.pendingEventStore.listUnclaimed("s1", limit)).map((e) => e.id);
+
+      expect(await ids()).toEqual([first.id, second.id]);
+
+      // A claimed head has been promoted into the event log; it is history, not
+      // input still waiting to run.
+      const claim = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(await ids()).toEqual([second.id]);
+
+      await stores.pendingEventStore.releaseClaim("s1", first.id, claim!);
+      expect(await ids()).toEqual([first.id, second.id]);
+      expect(await ids(1)).toEqual([first.id]);
+      await expect(stores.pendingEventStore.listUnclaimed("s1", 0)).rejects.toThrow(RangeError);
+    });
+
     it("peeks without removing", async () => {
       await stores.pendingEventStore.enqueue("s1", { type: "a", data: { x: 1 }, sessionThreadId: "th1" });
 
