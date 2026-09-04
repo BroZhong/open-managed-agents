@@ -21,13 +21,15 @@ usage() {
 Usage: deploy/scripts/deploy-app.sh [options]
 
 Render deploy/k8s.yaml with immutable images and validate it against
-agent-platform. The default is a server-side dry-run.
+agent-platform. The default is a server-side dry-run. A production release
+patches only the two Deployment images; it does not rewrite shared config,
+Services, or Ingress resources.
 
 Options:
   --tag TAG                 Use REGISTRY/oma-{server,web}:TAG.
   --server-image IMAGE      Override the complete Server image reference.
   --web-image IMAGE         Override the complete Web image reference.
-  --apply                   Apply and wait for both production rollouts.
+  --apply                   Patch images and wait for both production rollouts.
   --confirm-production      Required together with --apply.
   -h, --help                Show this help.
 EOF
@@ -104,14 +106,22 @@ echo "Target:  ${KUBE_CONTEXT}/${NAMESPACE} (production)"
 echo "Server:  ${server_image}"
 echo "Web:     ${web_image}"
 
+echo "Check:   server-side dry-run"
+kubectl_agent_platform apply --dry-run=server -f "${rendered_manifest}" -o name
+
 if [[ "${apply}" == false ]]; then
-  echo "Mode:    server-side dry-run"
-  kubectl_agent_platform apply --dry-run=server -f "${rendered_manifest}" -o name
+  echo "Mode:    validation only"
   exit 0
 fi
 
-echo "Mode:    apply"
-kubectl_agent_platform apply -f "${rendered_manifest}"
+echo "Mode:    image-only rollout"
+# Fast releases should not make unrelated production configuration converge as
+# a side effect. The full manifest was already validated above; mutate only the
+# container image fields that identify this release.
+kubectl_agent_platform -n "${NAMESPACE}" set image \
+  deployment/oma-server "server=${server_image}"
+kubectl_agent_platform -n "${NAMESPACE}" set image \
+  deployment/oma-web "web=${web_image}"
 kubectl_agent_platform -n "${NAMESPACE}" rollout status deploy/oma-server --timeout="${ROLLOUT_TIMEOUT}"
 kubectl_agent_platform -n "${NAMESPACE}" rollout status deploy/oma-web --timeout="${ROLLOUT_TIMEOUT}"
 kubectl_agent_platform -n "${NAMESPACE}" get deploy oma-server oma-web \

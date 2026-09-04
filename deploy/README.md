@@ -83,9 +83,12 @@ both flags deliberately:
 deploy/scripts/deploy-app.sh --tag <tag> --apply --confirm-production
 ```
 
-The apply path renders the image placeholders into a temporary manifest,
-applies it, waits for both rollouts, prints the running images, and checks
-`/api/health`. The rendered manifest is deleted on exit and is never committed.
+The script always renders the image placeholders into a temporary manifest and
+validates the complete resource set. Its apply path then patches only the two
+Deployment image fields, waits for both rollouts, prints the running images,
+and checks `/api/health`. Routine releases therefore cannot accidentally
+rewrite the ConfigMap, Services, or Ingress. The rendered manifest is deleted
+on exit and is never committed.
 
 SandboxSet validation and deployment use the same safety gate:
 
