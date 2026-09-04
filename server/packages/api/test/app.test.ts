@@ -85,3 +85,62 @@ describe("/v1/* auth", () => {
     expect(await res.json()).toEqual({ tenantId: "dev" });
   });
 });
+
+describe("API_BASE_PATH mount prefix", () => {
+  const originalBasePath = process.env.API_BASE_PATH;
+  const originalAuthDisabled = process.env.AUTH_DISABLED;
+
+  beforeEach(() => {
+    process.env.AUTH_DISABLED = "true";
+  });
+
+  afterEach(() => {
+    if (originalBasePath === undefined) {
+      delete process.env.API_BASE_PATH;
+    } else {
+      process.env.API_BASE_PATH = originalBasePath;
+    }
+    if (originalAuthDisabled === undefined) {
+      delete process.env.AUTH_DISABLED;
+    } else {
+      process.env.AUTH_DISABLED = originalAuthDisabled;
+    }
+  });
+
+  it("serves at the bare paths when unset", async () => {
+    delete process.env.API_BASE_PATH;
+    const app = createApp({ apiKeyStore: makeStore(new Map()) });
+    expect((await app.request("/health")).status).toBe(200);
+    expect((await app.request("/api/health")).status).toBe(404);
+  });
+
+  it("serves every route under the prefix when set", async () => {
+    process.env.API_BASE_PATH = "/api";
+    const app = createApp({ apiKeyStore: makeStore(new Map()) });
+    app.get("/v1/test", (c) => c.json({ tenantId: c.get("tenant").tenantId }));
+
+    // Prefixed paths resolve, including the /v1/* auth middleware.
+    expect((await app.request("/api/health")).status).toBe(200);
+    const res = await app.request("/api/v1/test");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ tenantId: "dev" });
+
+    // The unprefixed paths are no longer served.
+    expect((await app.request("/health")).status).toBe(404);
+    expect((await app.request("/v1/test")).status).toBe(404);
+  });
+
+  it("tolerates a missing leading slash and a trailing slash", async () => {
+    for (const raw of ["api", "/api/", "api/"]) {
+      process.env.API_BASE_PATH = raw;
+      const app = createApp({ apiKeyStore: makeStore(new Map()) });
+      expect((await app.request("/api/health")).status).toBe(200);
+    }
+  });
+
+  it("treats a lone slash as no prefix", async () => {
+    process.env.API_BASE_PATH = "/";
+    const app = createApp({ apiKeyStore: makeStore(new Map()) });
+    expect((await app.request("/health")).status).toBe(200);
+  });
+});

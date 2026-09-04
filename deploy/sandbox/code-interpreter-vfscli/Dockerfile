@@ -1,4 +1,4 @@
-# Custom code-interpreter sandbox for Nautilus (brozhong HK).
+# Optional custom code-interpreter sandbox for agent-platform / cn-shanghai.
 #
 # FROM the ACS-provided code-interpreter base (Debian 12; already ships
 # python3/pip/curl/node + the jupyter start-up script the e2b `agent-runtime`
@@ -30,9 +30,9 @@
 # between builds) is COPYd last, so bumping vfs-cli re-runs only the final two
 # layers, not the whole image.
 #
-# The base image is pulled from a region-local ACR mirror. Override BASE_IMAGE
-# to build from the Shanghai VPC mirror on vfs-dev, or the public tag locally.
-ARG BASE_IMAGE=registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
+# Mirrored by deploy/scripts/build-base-images.sh so application builds depend
+# only on the welltop Shanghai ACR rather than the platform-owned ACS registry.
+ARG BASE_IMAGE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/sandbox-base:code-interpreter-v1.6
 FROM ${BASE_IMAGE}
 
 # The non-privileged account e2b `exec` runs commands as. A build ARG (not

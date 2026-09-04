@@ -1,5 +1,6 @@
-# Warm pool for the `code-interpreter` E2B template on the brozhong ACS HK
-# cluster (Alibaba ACK 托管 Agent Sandbox / OpenKruise `agents.kruise.io`).
+# Production warm pool for the `code-interpreter` E2B template on the
+# `agent-platform` ACS cluster in cn-shanghai (Alibaba ACK managed Agent Sandbox
+# / OpenKruise `agents.kruise.io`).
 #
 # The SandboxSet name IS the E2B templateID: clients that call
 # `Sandbox.create("code-interpreter")` get a pre-warmed pod from this pool.
@@ -37,7 +38,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: sandbox
-          image: registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
+          image: registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
           resources:
             requests:
               cpu: "1"

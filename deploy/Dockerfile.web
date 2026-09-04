@@ -1,10 +1,15 @@
-# Nautilus Web Console — static build served by nginx.
+# Open Managed Agents Web Console — static build served by nginx.
 # Build context is the repo root. VITE_API_URL is baked at build time.
 # The Vite output is architecture-neutral. Build it on the builder's native
 # platform (avoids flaky Node/QEMU segfaults on Apple Silicon) and keep only the
 # final nginx image on the requested deployment platform.
-FROM --platform=$BUILDPLATFORM node:22-slim AS build
-RUN corepack enable && corepack prepare pnpm@10.12.4 --activate
+#
+# Built and published by deploy/scripts/build-base-images.sh. Normal builds use
+# only the Shanghai ACR and do not depend on Docker Hub or a Corepack download.
+ARG NODE_BASE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/node-base:22-slim-pnpm-10.12.4
+ARG NGINX_BASE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/nginx-base:1.27-alpine
+
+FROM --platform=$BUILDPLATFORM ${NODE_BASE} AS build
 WORKDIR /app/web
 COPY web/ ./
 ENV CI=true
@@ -13,7 +18,7 @@ ARG VITE_API_URL
 ENV VITE_API_URL=${VITE_API_URL}
 RUN pnpm build
 
-FROM --platform=$TARGETPLATFORM nginx:1.27-alpine
+FROM --platform=$TARGETPLATFORM ${NGINX_BASE}
 COPY --from=build /app/web/dist /usr/share/nginx/html
 # SPA fallback: route all paths to index.html
 RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  location / {\n    try_files $uri $uri/ /index.html;\n  }\n}\n' > /etc/nginx/conf.d/default.conf

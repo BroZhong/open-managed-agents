@@ -1,9 +1,13 @@
 # Sandbox warm pool
 
-The brozhong ACS HK cluster runs Alibaba ACK 托管 Agent Sandbox (OpenKruise
-Agents, `agents.kruise.io`), which is E2B-protocol compatible. Sandboxes are
-served from **warm pools** declared as `SandboxSet` resources in the
-`sandbox-system` namespace.
+The `agent-platform` ACS cluster in cn-shanghai runs Alibaba ACK managed Agent
+Sandbox (OpenKruise Agents, `agents.kruise.io`), which is E2B-protocol
+compatible. Sandboxes are served from warm pools declared as `SandboxSet`
+resources in the `sandbox-system` namespace.
+
+Production currently has one active pool: `code-interpreter`. The older
+`code-interpreter-vfscli` assets are an optional prototype and are not deployed
+or selected by the production Server.
 
 ## The name is the templateID
 
@@ -23,7 +27,7 @@ template. This manifest is what makes the `code-interpreter` template exist.
 [`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) defines
 the `code-interpreter` pool:
 
-- **image** — `registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6`
+- **image** — `registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6`
   (the ACS-provided code-interpreter image; VPC ACR mirror).
 - **runtimes** — `csi` (NAS/OSS mounts) + `agent-runtime` (injects the e2b
   `envd` daemon that the E2B protocol talks to).
@@ -45,8 +49,8 @@ No other resource needs editing to resize the pool.
 ## Apply / verify
 
 ```bash
-kubectl apply -f deploy/sandbox/sandboxset-code-interpreter.yaml
-kubectl get sbs -n sandbox-system code-interpreter
+KUBECONFIG=~/.kube/agent-platform-config kubectl apply -f deploy/sandbox/sandboxset-code-interpreter.yaml
+KUBECONFIG=~/.kube/agent-platform-config kubectl get sbs -n sandbox-system code-interpreter
 ```
 
 `apply` is idempotent. The SandboxSet is ready once `AVAILABLE >= 1`.
@@ -67,7 +71,7 @@ Server wiring (see `deploy/k8s.yaml`):
   secrets:
 
   ```bash
-  kubectl -n oma-infra create secret generic oma-secrets \
+  KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra create secret generic oma-secrets \
     --from-literal=E2B_DOMAIN=... \
     --from-literal=E2B_API_KEY=... \
     ...   # plus PG_PASSWORD / REDIS_PASSWORD / SUPABASE_SERVICE_KEY

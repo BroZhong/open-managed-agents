@@ -1,8 +1,10 @@
 # `code-interpreter-vfscli` sandbox image
 
-The custom sandbox image the brozhong HK cluster serves for Agents that opt in
-with `sandbox.image: "code-interpreter-vfscli"`. It exists to fix three gaps in
-the stock ACS `code-interpreter` base while keeping the E2B protocol intact.
+This is an optional custom-image prototype. It is **not deployed on the current
+agent-platform production cluster**; production uses the stock
+`code-interpreter` SandboxSet. Keep this image only for experiments that need
+the extra tools below, and do not treat these instructions as the production
+runbook.
 
 ## What it adds over the ACS base
 
@@ -70,25 +72,23 @@ The vfs-cli binary is a versioned build artifact, not source — it lives under
 # Local build (amd64 via emulation on a Mac is fine — the image is small):
 VFS_CLI_SRC=/path/to/linux-amd64/vfs-cli ./build.sh
 
-# Build + push to the HK personal ACR:
+# Build + push to the configured Shanghai ACR:
 VFS_CLI_SRC=/path/to/linux-amd64/vfs-cli PUSH=1 ./build.sh
 ```
 
 ### On the Shanghai build host (vfs-dev)
 
-The ACS base only pulls from a **region-local VPC** mirror. On vfs-dev
-(Shanghai) that is `registry-cn-shanghai-vpc...`; the HK VPC / public variants
-are unreachable from there (content is identical across regions). scp the
-vfs-cli binary over (its release CDN is slow/flaky from CN hosts), then:
+The ACS base is mirrored into the `welltop` Shanghai ACR by
+`deploy/scripts/build-base-images.sh`. Copy the vfs-cli binary to the build host
+first because its release CDN can be slow or unreliable from mainland China,
+then run from the repository root:
 
 ```bash
-BASE_IMAGE=registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6 \
-VFS_CLI_SRC=~/vfs-cli PUSH=1 ./build.sh
+VFS_CLI_SRC=~/vfs-cli \
+  deploy/scripts/build-images.sh --push --tag <tag> sandbox
 ```
 
-Shanghai → HK personal ACR pushes over the public endpoint (needs a separate
-`docker login` to the HK ACR; it coexists with the Shanghai login — `auths` are
-keyed per registry).
+Authenticate Docker to the target Shanghai ACR before using `PUSH=1`.
 
 ### Cache
 
@@ -101,24 +101,25 @@ Before Docker starts, the build runs `test-story-seed-launcher.sh` against the
 three repository Skills. This verifies that their scripts are identical and
 that the launcher can run `doctor` without writing into a Skill projection.
 
-## Deploy
+## Optional deployment
 
-1. Bump the image tag in `../sandboxset-code-interpreter-vfscli.yaml` to match
-   `VERSION` you built, then apply:
+Do not perform these steps as part of a normal production release. Production
+must continue to use `SANDBOX_TEMPLATE=code-interpreter` unless the custom pool
+has been deliberately reviewed and enabled.
+
+1. Validate the custom pool against `agent-platform`, then explicitly apply it:
 
    ```bash
-   kubectl apply -f ../sandboxset-code-interpreter-vfscli.yaml
-   kubectl get sbs -n sandbox-system code-interpreter-vfscli   # AVAILABLE >= 1
+   ../../scripts/deploy-sandbox.sh --pool custom --image <immutable-image>
+   ../../scripts/deploy-sandbox.sh --pool custom --image <immutable-image> \
+     --apply --confirm-production
    ```
 
-   The `oma-acr` pull secret must exist in `sandbox-system` (copy from
-   `oma-infra` if absent — that ns has no pull secret by default).
+   The `ali-shanghai` pull Secret must also exist in `sandbox-system`.
 
-2. Point production at it. `SANDBOX_TEMPLATE` in the `oma-server-config`
-   ConfigMap (`deploy/k8s.yaml`) is the *default* template; Agents can also opt
-   in per-Agent with `sandbox.image: "code-interpreter-vfscli"` without changing
-   the default. To make it the default, set
-   `SANDBOX_TEMPLATE=code-interpreter-vfscli` and roll the server.
+2. Opt in only the intended Agent with
+   `sandbox.image: "code-interpreter-vfscli"`. Changing the production-wide
+   `SANDBOX_TEMPLATE` is outside this prototype procedure.
 
 ## E2E verification (#85 acceptance)
 

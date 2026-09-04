@@ -6,12 +6,9 @@
 # plain PATH. See ./Dockerfile for the layer-by-layer rationale.
 #
 # Field-tested constraints this script encodes (see .scratch/deploy notes):
-#   - Sandboxes run linux/amd64 on the brozhong HK cluster → always build amd64,
+#   - Sandboxes run linux/amd64 on agent-platform → always build amd64,
 #     even from an arm64 Mac (emulation is fine; the image is small).
-#   - The ACS base only pulls from a *region-local VPC* ACR mirror. On the
-#     Shanghai build host (vfs-dev) that is the cn-shanghai-vpc mirror; the HK
-#     VPC / public variants are unreachable from there. BASE_IMAGE is overridable
-#     for exactly this reason.
+#   - The ACS base is pulled from the cn-shanghai VPC ACR mirror.
 #   - vfs-cli's release CDN is slow/flaky from CN hosts, so the binary is COPYd
 #     from bin/ rather than curl'd at build time. Populate bin/vfs-cli first.
 #   - buildx + a persistent cache dir turns a warm rebuild (vfs-cli bump only)
@@ -22,22 +19,29 @@
 #   PUSH=1 ./build.sh          # build + push to $REGISTRY
 #
 # Env knobs (all have sensible defaults):
-#   REGISTRY     target repo (default: brozhong HK personal ACR)
+#   REGISTRY     target repo (default: welltop Shanghai VPC ACR)
 #   TAG          image tag   (default: code-interpreter-vfscli-<VERSION>)
 #   VERSION      semantic bump used in the default tag (default: 0.4.1)
-#   BASE_IMAGE   ACS base    (default: HK VPC mirror; set cn-shanghai-vpc on vfs-dev)
+#   BASE_IMAGE   mirrored ACS base in the welltop Shanghai ACR
 #   VFS_CLI_SRC  path to the linux/amd64 vfs-cli binary to stage into bin/
 set -euo pipefail
 
 cd "$(dirname "$0")"
+REPO_ROOT="$(cd ../../.. && pwd)"
 
-REGISTRY="${REGISTRY:-crpi-egv1p3qc9sh5spft.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox}"
+REGISTRY="${REGISTRY:-registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox}"
 VERSION="${VERSION:-0.4.1}"
 TAG="${TAG:-code-interpreter-vfscli-${VERSION}}"
-BASE_IMAGE="${BASE_IMAGE:-registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
+BASE_IMAGE="${BASE_IMAGE:-registry-vpc.cn-shanghai.aliyuncs.com/welltop/sandbox-base:code-interpreter-v1.6}"
 PLATFORM="linux/amd64"
 IMAGE="${REGISTRY}:${TAG}"
-CACHE_DIR="${CACHE_DIR:-.buildx-cache}"
+CACHE_DIR="${REPO_ROOT}/.buildx-cache/sandbox"
+CACHE_NEXT="${CACHE_DIR}.next"
+
+if [[ -L "${REPO_ROOT}/.buildx-cache" ]]; then
+  echo "Refusing to use a symlink as the managed build cache: ${REPO_ROOT}/.buildx-cache" >&2
+  exit 1
+fi
 
 # ── Stage the vfs-cli binary into the build context ──────────────────────────
 # The Dockerfile COPYs bin/vfs-cli. If VFS_CLI_SRC is given, stage it; otherwise
@@ -69,14 +73,18 @@ if [[ "${PUSH:-0}" == "1" ]]; then
 fi
 
 echo "==> building ${IMAGE} (${PLATFORM}) from ${BASE_IMAGE}"
+mkdir -p "${CACHE_DIR}"
+rm -rf "${CACHE_NEXT}"
 docker buildx build \
   --platform "${PLATFORM}" \
   --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
   --cache-from "type=local,src=${CACHE_DIR}" \
-  --cache-to "type=local,dest=${CACHE_DIR},mode=max" \
+  --cache-to "type=local,dest=${CACHE_NEXT},mode=max" \
   -t "${IMAGE}" \
   "${BUILD_OUTPUT[@]}" \
   .
+rm -rf "${CACHE_DIR}"
+mv "${CACHE_NEXT}" "${CACHE_DIR}"
 
 echo "==> done: ${IMAGE}"
 if [[ "${PUSH:-0}" != "1" ]]; then
