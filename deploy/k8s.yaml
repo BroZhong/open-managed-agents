@@ -1,7 +1,15 @@
-# Nautilus Server + Web on the brozhong ACS HK cluster.
-# Deployed into ns oma-infra (same ns as Redis → avoids the cross-ns Service DNS
-# NXDOMAIN trap on this ECI/virtual-kubelet cluster). Secrets injected via
-# the oma-secrets Secret, never baked into the image.
+# Open Managed Agents Server + Web on the `agent-platform` ACS cluster in
+# cn-shanghai. Application resources live in `oma-infra`; the ACK-managed
+# sandbox control plane and warm pools live in `sandbox-system`.
+#
+# This file owns the OMA ConfigMap, Deployments, Services, and public Ingress.
+# Redis, sing-box, the ALB controller, and the ACK sandbox-manager installation
+# already exist in the cluster and are not created here. Secrets are injected
+# at runtime and are never baked into an image.
+#
+# OMA_SERVER_IMAGE and OMA_WEB_IMAGE are release-time placeholders. Replace
+# both with immutable images from
+# registry-vpc.cn-shanghai.aliyuncs.com/welltop before applying this manifest.
 #
 # Create the secret first (values NOT committed):
 # Omit ALIYUN_SUPABASE_INSTANCE when instance discovery is unambiguous.
@@ -14,7 +22,14 @@
 #     --from-literal=ALIYUN_SUPABASE_INSTANCE=... \
 #     --from-literal=E2B_DOMAIN=... \
 #     --from-literal=E2B_API_KEY=... \
-#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=...
+#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=... \
+#     --from-literal=AUTH_JWT_SECRET=... \
+#     --from-literal=INVITE_CODE=...
+#
+# The following objects must also exist before rollout:
+#   - oma-infra/oma-pi-auth   (Pi auth.json)
+#   - oma-infra/ali-shanghai (ACR image-pull credentials)
+#   - oma-infra/agentry-tls  (TLS certificate for agentry.welltop.tech)
 #
 # The sandbox is mandatory (issue #54): SANDBOX_ENABLED=true below + the E2B_*
 # secrets are what make Agent runs execute inside a sandbox. A sandboxed Agent
@@ -28,12 +43,16 @@ metadata:
   namespace: oma-infra
 data:
   PORT: "3000"
+  API_BASE_PATH: "/api"
+  # OpenAPI paths are relative to this externally reachable API base.
+  PUBLIC_API_URL: "https://agentry.welltop.tech/api"
   AUTH_DISABLED: "false"
-  # Public HTTPS origin advertised by GET /openapi.json and used by API docs.
-  # This is an origin only: do not append /openapi.json or another path.
-  PUBLIC_API_URL: "https://console.sandbox.brozhong.com"
-  # PostgreSQL (internal RDS; oma schema; sslmode=disable)
-  PG_HOST: "pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com"
+  ALIYUN_REGION: "cn-shanghai"
+  # Managed Supabase MCP remains fail-closed until production tenants are
+  # explicitly reviewed for this cluster.
+  OMA_SUPABASE_ALLOWED_TENANTS: ""
+  # PostgreSQL (cn-shanghai internal RDS; oma schema; sslmode=disable)
+  PG_HOST: "pgm-uf6fh394661t62gb.pg.rds.aliyuncs.com"
   PG_PORT: "5432"
   PG_DATABASE: "supabase_db"
   PG_USER: "oma_app"
@@ -42,28 +61,21 @@ data:
   # The oma schema is pre-provisioned by migration and oma_app lacks CREATE on
   # the database, so skip the app's startup DDL.
   PG_ENSURE_SCHEMA: "false"
-  # Redis — use ClusterIP, NOT the Service name: even same-ns Service DNS is
-  # unreliable on this ECI/virtual-kubelet cluster (name "redis" → NXDOMAIN).
-  # Re-check with `kubectl -n oma-infra get svc redis` if it drifts.
-  REDIS_HOST: "10.0.56.147"
+  # These ClusterIPs mirror the current agent-platform deployment. Re-check the
+  # corresponding Services before applying if cluster infrastructure changes.
+  REDIS_HOST: "10.0.64.18"
   REDIS_PORT: "6379"
-  # Supabase Storage (S3 artifacts) — VPC endpoint, bucket workspace
-  S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"
+  # Supabase Storage (S3 artifacts) — cn-shanghai VPC endpoint.
+  S3_ENDPOINT: "http://172.17.255.52:80/storage/v1"
   S3_BUCKET: "workspace"
-  # Host-managed, tenant-scoped Supabase Sessions MCP. Credentials remain in
-  # oma-secrets; its single tool executes a fixed bounded SELECT. This exact,
-  # comma-separated tenant allowlist is mandatory and fails closed when empty.
-  OMA_SUPABASE_ALLOWED_TENANTS: "c912f882-3c5c-4355-8b7e-ca6aaccf58bc,05185627-3eb6-4958-ba6f-4dd86b975485"
-  ALIYUN_REGION: "cn-hongkong"
-  # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
-  # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
-  OMA_PROXY_URL: "http://10.0.200.134:7890"
+  STORAGE_PUBLIC_BASE: "http://172.17.255.52:80/storage/v1"
+  # In-cluster sing-box mixed inbound used for external LLM calls.
+  OMA_PROXY_URL: "http://10.0.165.246:7890"
   # Sandbox is mandatory (issue #54). This turns on the sandbox-backed
   # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
   SANDBOX_ENABLED: "true"
-  # E2B templateID = the SandboxSet name in the sandbox-system namespace
-  # (see deploy/sandbox/README.md). The code-interpreter warm pool.
-  SANDBOX_TEMPLATE: "code-interpreter-vfscli"
+  # E2B templateID = SandboxSet metadata.name in sandbox-system.
+  SANDBOX_TEMPLATE: "code-interpreter"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -77,10 +89,12 @@ spec:
     matchLabels: { app: oma-server }
   template:
     metadata:
-      labels: { app: oma-server }
+      labels:
+        app: oma-server
+        alibabacloud.com/acs: "true"
     spec:
       imagePullSecrets:
-        - name: oma-acr
+        - name: ali-shanghai
       volumes:
         # Pi provider credentials (openai-codex OAuth). Copied to a writable
         # emptyDir by initContainer so Pi's AuthStorage can refresh the token.
@@ -127,6 +141,10 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
             - name: E2B_API_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_API_KEY } }
+            - name: AUTH_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: AUTH_JWT_SECRET } }
+            - name: INVITE_CODE
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: INVITE_CODE } }
             # The same VFS access token is exposed under two purpose-specific
             # names: vfs-cli receives VFS_TOKEN inside each sandbox through the
             # Host's DEFAULT_SANDBOX_VFS_TOKEN mapping; pi-mcp-adapter resolves
@@ -138,9 +156,10 @@ spec:
           volumeMounts:
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:
-            httpGet: { path: /health, port: 3000 }
-            initialDelaySeconds: 10
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 15
             periodSeconds: 10
+            failureThreshold: 6
           resources:
             requests: { cpu: "250m", memory: "512Mi" }
             limits: { cpu: "1", memory: "1Gi" }
@@ -168,18 +187,24 @@ spec:
     matchLabels: { app: oma-web }
   template:
     metadata:
-      labels: { app: oma-web }
+      labels:
+        app: oma-web
+        alibabacloud.com/acs: "true"
     spec:
       imagePullSecrets:
-        - name: oma-acr
+        - name: ali-shanghai
       containers:
         - name: web
           image: OMA_WEB_IMAGE  # replaced at deploy time
           ports:
             - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
-            limits: { cpu: "500m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
 ---
 apiVersion: v1
 kind: Service
@@ -199,40 +224,28 @@ metadata:
   namespace: oma-infra
   annotations:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80},{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: alb
+  tls:
+    - hosts:
+        - agentry.welltop.tech
+      secretName: agentry-tls
   rules:
-    - host: console.sandbox.brozhong.com
+    - host: agentry.welltop.tech
       http:
         paths:
-          # Machine-readable API contracts must bypass the Web SPA fallback.
-          - path: /openapi.json
-            pathType: Exact
-            backend:
-              service:
-                name: oma-server
-                port: { number: 3000 }
-          - path: /v1
+          - path: /api
             pathType: Prefix
             backend:
               service:
                 name: oma-server
-                port: { number: 3000 }
-          - path: /health
-            pathType: Prefix
-            backend:
-              service:
-                name: oma-server
-                port: { number: 3000 }
-          - path: /auth
-            pathType: Prefix
-            backend:
-              service:
-                name: oma-server
-                port: { number: 3000 }
+                port:
+                  number: 3000
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: oma-web
-                port: { number: 80 }
+                port:
+                  number: 80

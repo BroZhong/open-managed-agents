@@ -1,7 +1,6 @@
-# Warm pool for the `code-interpreter-vfscli` E2B template on the brozhong ACS
-# HK cluster. This is the custom image (see code-interpreter-vfscli/Dockerfile):
-# the stock ACS code-interpreter base + vfs-cli + a user-writable /home/user
-# (#85) + python on a plain PATH.
+# OPTIONAL, NOT CURRENTLY DEPLOYED. Prototype warm pool for a custom
+# `code-interpreter-vfscli` template on agent-platform. Production uses the
+# stock `code-interpreter` pool from sandboxset-code-interpreter.yaml.
 #
 # The SandboxSet name IS the E2B templateID. Agents opt in with
 # `sandbox.image: "code-interpreter-vfscli"`; the default `code-interpreter`
@@ -13,13 +12,13 @@
 #
 # ⚠️ Private ACR pull: the CRD has no dedicated imagePullSecrets field, but the
 # pod template passes it through — hence template.spec.imagePullSecrets below.
-# The `oma-acr` secret must exist in the sandbox-system namespace (copy it from
-# oma-infra if absent). The image is pulled via the VPC (password-less) ACR
-# address to avoid egress + auth over the public endpoint.
+# The `ali-shanghai` Secret must exist in sandbox-system before this optional
+# pool is enabled. CUSTOM_SANDBOX_IMAGE is a release-time placeholder; replace
+# it with an immutable image from the Shanghai ACR before applying.
 #
 # Apply (idempotent):
-#   kubectl apply -f deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml
-#   kubectl get sbs -n sandbox-system code-interpreter-vfscli
+#   KUBECONFIG=~/.kube/agent-platform-config kubectl apply -f deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml
+#   KUBECONFIG=~/.kube/agent-platform-config kubectl get sbs -n sandbox-system code-interpreter-vfscli
 apiVersion: agents.kruise.io/v1alpha1
 kind: SandboxSet
 metadata:
@@ -41,13 +40,12 @@ spec:
         alibabacloud.com/compute-qos: default
     spec:
       automountServiceAccountToken: false
-      # Pull the private custom image from the HK personal ACR. Use the VPC
-      # (password-less) mirror address in-cluster; the secret is the fallback.
+      # Pull the optional custom image from the Shanghai ACR.
       imagePullSecrets:
-        - name: oma-acr
+        - name: ali-shanghai
       containers:
         - name: sandbox
-          image: crpi-egv1p3qc9sh5spft-vpc.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox:code-interpreter-vfscli-0.3.0
+          image: CUSTOM_SANDBOX_IMAGE
           resources:
             requests:
               cpu: "1"

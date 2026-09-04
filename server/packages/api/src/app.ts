@@ -1,4 +1,3 @@
-import type { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -55,8 +54,24 @@ export interface AppDeps {
   now?: () => Date;
 }
 
-export function createApp(deps: AppDeps): OpenAPIHono<Env> {
-  const app = createContractRouter<Env>();
+/**
+ * Optional prefix that every route is served under, e.g. `/api`, so the console
+ * can be reached at `/api/v1/*` instead of `/v1/*`. Read from `API_BASE_PATH`.
+ *
+ * Empty (the default) preserves the original `/v1/*` and `/health` layout, so
+ * existing deployments and the whole test suite are unaffected. Set it only
+ * where the ingress in front of the server expects a prefix.
+ */
+function normalizeBasePath(raw: string | undefined): string {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "" || trimmed === "/") return "";
+  const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withLeading.replace(/\/+$/, "");
+}
+
+export function createApp(deps: AppDeps) {
+  const basePath = normalizeBasePath(process.env.API_BASE_PATH);
+  const app = createContractRouter<Env>().basePath(basePath);
 
   // CORS middleware — allow all origins in dev
   app.use("*", cors());
