@@ -17,14 +17,15 @@ test("database migrations have unique ordered prefixes", () => {
   assert.equal(new Set(prefixes).size, prefixes.length, `duplicate migration prefix: ${names.join(", ")}`);
 });
 
-test("the public OpenAPI endpoint bypasses the Web SPA fallback", () => {
+test("the public API prefix bypasses the Web SPA fallback", () => {
   const dockerfile = readFileSync(new URL("deploy/Dockerfile.web", root), "utf8");
   const manifest = readFileSync(new URL("deploy/k8s.yaml", root), "utf8");
 
   assert.doesNotMatch(dockerfile, /proxy_pass/);
   assert.match(
     manifest,
-    /path: \/openapi\.json\s+pathType: Exact\s+backend:\s+service:\s+name: oma-server\s+port: \{ number: 3000 \}/,
+    /path: \/api\s+pathType: Prefix\s+backend:\s+service:\s+name: oma-server\s+port:\s+number: 3000/,
   );
-  assert.match(manifest, /PUBLIC_API_URL: "https:\/\/console\.sandbox\.brozhong\.com"/);
+  assert.match(manifest, /PUBLIC_API_URL: "https:\/\/agentry\.welltop\.tech\/api"/);
+  assert.match(manifest, /API_BASE_PATH: "\/api"/);
 });

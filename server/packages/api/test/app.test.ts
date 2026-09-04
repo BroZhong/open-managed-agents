@@ -121,6 +121,7 @@ describe("API_BASE_PATH mount prefix", () => {
 
     // Prefixed paths resolve, including the /v1/* auth middleware.
     expect((await app.request("/api/health")).status).toBe(200);
+    expect((await app.request("/api/openapi.json")).status).toBe(200);
     const res = await app.request("/api/v1/test");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ tenantId: "dev" });

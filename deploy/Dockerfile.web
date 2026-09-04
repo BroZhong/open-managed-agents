@@ -20,8 +20,8 @@ RUN pnpm build
 
 FROM --platform=$TARGETPLATFORM ${NGINX_BASE}
 COPY --from=build /app/web/dist /usr/share/nginx/html
-# The public Ingress routes /openapi.json directly to oma-server. Keeping the
-# Web image free of an in-cluster upstream also avoids startup failures on the
-# ECI cluster, where Service-name DNS can briefly return NXDOMAIN.
+# The public Ingress routes the complete /api prefix directly to oma-server.
+# Keeping the Web image free of an in-cluster upstream also avoids startup
+# failures on ACS, where Service-name DNS can briefly return NXDOMAIN.
 RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  location / {\n    try_files $uri $uri/ /index.html;\n  }\n}\n' > /etc/nginx/conf.d/default.conf
 EXPOSE 80
