@@ -1,5 +1,6 @@
 import type {
   ExtensionFactory,
+  ModelRuntime,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
@@ -72,6 +73,7 @@ function parseManagedSubagentUsage(raw: unknown): ManagedSubagentUsage | undefin
  */
 export function createManagedSubagentToolsExtension(
   tools: ToolDefinition[],
+  modelRuntime: ModelRuntime,
 ): ExtensionFactory {
   assertCompleteToolSet(tools);
 
@@ -89,7 +91,7 @@ export function createManagedSubagentToolsExtension(
       }
       pi.events.emit(
         `${MANAGED_SUBAGENT_TOOLS_REQUEST}:reply:${requestId}`,
-        { tools },
+        { tools, modelRuntime },
       );
     });
     pi.on("session_shutdown", () => {

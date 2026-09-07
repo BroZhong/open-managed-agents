@@ -986,6 +986,10 @@ describe("PiAgentAdapter (SDK)", () => {
       // the session's native abort(), which settles prompt() → closes the queue →
       // the for-await ends → run() completes. Without the fix run() would hang.
       let abortCalled = false;
+      let markPromptStarted!: () => void;
+      const promptStarted = new Promise<void>((resolve) => {
+        markPromptStarted = resolve;
+      });
       const adapter = new PiAgentAdapter({
         _sessionFactory: async (): Promise<PiSessionLike> => {
           let settlePrompt: (() => void) | undefined;
@@ -1001,6 +1005,7 @@ describe("PiAgentAdapter (SDK)", () => {
             prompt() {
               return new Promise<void>((resolve) => {
                 settlePrompt = resolve;
+                markPromptStarted();
               });
             },
             abort() {
@@ -1029,7 +1034,7 @@ describe("PiAgentAdapter (SDK)", () => {
       })();
 
       // Let the turn wedge, then interrupt.
-      await new Promise((r) => setTimeout(r, 10));
+      await promptStarted;
       controller.abort();
 
       await runPromise; // must resolve — proves the hang was broken.

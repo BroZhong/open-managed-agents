@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!requirements.txt
+!smoke.py
+!bin/
+!bin/vfs-cli
+!bin/mediakit-cli

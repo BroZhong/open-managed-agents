@@ -87,6 +87,7 @@ RUN node /tmp/patch-tintinweb-pi-subagents.mjs \
 # replaces child built-ins with the parent's same Sandbox-backed tools.
 COPY deploy/pi-subagents-settings.json /opt/pi-agent-seed/subagents.json
 COPY deploy/pi-subagents-storyboard-stage.md /opt/pi-agent-seed/agents/storyboard-stage.md
+COPY deploy/pi-models.json /opt/pi-agent-seed/models.json
 RUN chmod 0644 /opt/pi-agent-seed/subagents.json \
       /opt/pi-agent-seed/agents/storyboard-stage.md
 

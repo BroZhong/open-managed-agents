@@ -1,0 +1,2 @@
+# Official Gemini SDK with Files + Interactions API support.
+google-genai==2.22.0

@@ -19,6 +19,7 @@ import {
 } from "@oma-server/sandbox";
 import type { SandboxManager } from "@oma-server/sandbox";
 import { createApp } from "./app.js";
+import { adapterProcessEnvFromHost, sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import type {
   Adapter,
   AdapterInput,
@@ -87,7 +88,7 @@ class DevClaudeCodeAdapter implements Adapter {
 
     const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnvFromHost(process.env),
     });
     // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
     // unhandled 'error' event can never crash the Host process.
@@ -184,7 +185,7 @@ class DevCodexAdapter implements Adapter {
 
     const child = spawn("codex", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnvFromHost(process.env),
     });
     // Catch immediate spawn failures (e.g. ENOENT) synchronously so an
     // unhandled 'error' event can never crash the Host process.
@@ -382,15 +383,8 @@ async function main() {
     );
   }
 
-  // Deployment-wide default sandbox env, sourced from server config (a K8s
-  // Secret → env), so a shared CLI secret is auto-injected into every sandboxed
-  // Agent without living in code or the Agent record. Today the only key is
-  // VFS_TOKEN (for the vfs-cli baked into the custom sandbox image); the Agent's
-  // own sandbox.env still wins per key.
-  const defaultSandboxEnv: Record<string, string> = {};
-  if (process.env.DEFAULT_SANDBOX_VFS_TOKEN) {
-    defaultSandboxEnv.VFS_TOKEN = process.env.DEFAULT_SANDBOX_VFS_TOKEN;
-  }
+  // Host-owned values are scoped to allowed Agents and stay out of Agent records.
+  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
@@ -400,8 +394,7 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     sandboxManager,
-    defaultSandboxEnv:
-      Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
+    ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,

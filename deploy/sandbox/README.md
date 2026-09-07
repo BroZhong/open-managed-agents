@@ -24,6 +24,13 @@ template. This manifest is what makes the `code-interpreter` template exist.
 
 ## Manifest
 
+[`sandboxset-auto-story.yaml`](./sandboxset-auto-story.yaml) defines the
+independent `auto-story` media template for `agentry.welltop.tech` (Shanghai).
+It supplies VFS CLI, MediaKit, FFmpeg and Gemini's Python SDK, accepts per-Agent
+environment variables, and loads equipped Skills through the existing Host
+projection mechanism. Build and verification instructions are in
+[`auto-story/README.md`](./auto-story/README.md).
+
 [`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) defines
 the `code-interpreter` pool:
 

@@ -11,4 +11,4 @@ export {
   createManagedSkillCommandExtension,
   expandManagedSkillCommand,
 } from "./skill-command-bridge.js";
-export { resolveModel, DEFAULT_MODEL } from "./model-resolver.js";
+export { resolveModel, highestThinkingLevel, DEFAULT_MODEL } from "./model-resolver.js";

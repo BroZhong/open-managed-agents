@@ -16,8 +16,8 @@
     "e2e": "tsx e2e/run-sdk.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.3",
-    "@earendil-works/pi-coding-agent": "0.80.3",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@open-managed-agents/adapter-core": "file:../core",
     "typebox": "1.1.38"
   },

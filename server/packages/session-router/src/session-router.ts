@@ -159,6 +159,10 @@ export interface SessionRouterDeps {
    * Absent ⇒ only the Agent's own `sandbox.env` is used (prior behavior).
    */
   defaultSandboxEnv?: Record<string, string>;
+  /** Deployment-managed sandbox variables, explicitly scoped per Agent id. */
+  managedSandboxEnvByAgentId?: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
   /** Stable, process-unique pending owner. Injectable for deterministic tests. */
   pendingClaimOwnerId?: string;
   /** Pending lease duration; renewed while an Adapter/tool turn is running. */
@@ -209,6 +213,9 @@ export class SessionRouter {
   private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
   private readonly defaultSandboxEnv?: Record<string, string>;
+  private readonly managedSandboxEnvByAgentId?: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
   private readonly pendingClaimOwnerId: string;
   private readonly pendingClaimLeaseMs: number;
   private readonly pendingClaimRenewIntervalMs: number;
@@ -254,6 +261,7 @@ export class SessionRouter {
     this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
     this.defaultSandboxEnv = deps.defaultSandboxEnv;
+    this.managedSandboxEnvByAgentId = deps.managedSandboxEnvByAgentId;
     this.pendingClaimOwnerId = deps.pendingClaimOwnerId ?? `host_${randomUUID()}`;
     this.pendingClaimLeaseMs = deps.pendingClaimLeaseMs ?? 30_000;
     this.pendingClaimRenewIntervalMs = deps.pendingClaimRenewIntervalMs ?? 10_000;
@@ -662,16 +670,20 @@ export class SessionRouter {
    * `SkillArtifactStore.getAll` inside the manager (see `S3ProvisionRef`).
    *
    * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
-   * with the Agent's own `sandbox.env` — the Agent wins per key, so an Agent can
-   * override or extend the shared defaults but the defaults (e.g. `VFS_TOKEN`)
-   * apply automatically when the Agent sets none.
+   * with the Agent's own `sandbox.env`, then any Host-managed values explicitly
+   * scoped to this Agent id. Agents may override ordinary defaults (e.g.
+   * `VFS_TOKEN`); managed values never cross an Agent boundary.
    */
   private specFor(
     session: Session,
     agent: Agent,
     equippedSkills: EquippedSkill[],
   ): EnvSpec {
-    const mergedEnv = { ...this.defaultSandboxEnv, ...agent.sandbox?.env };
+    const mergedEnv = {
+      ...this.defaultSandboxEnv,
+      ...agent.sandbox?.env,
+      ...this.managedSandboxEnvByAgentId?.[agent.id],
+    };
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,

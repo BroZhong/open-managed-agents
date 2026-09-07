@@ -1,0 +1,15 @@
+# Binary-safe Pi tool reads on the already verified agentry runtime.
+# Supply the currently deployed digest; preserve dependencies and routing.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY adapter/packages/pi-agent/src/custom-tools.ts /app/adapter/packages/pi-agent/src/custom-tools.ts
+COPY adapter/packages/pi-agent/src/translator.ts /app/adapter/packages/pi-agent/src/translator.ts
+# pnpm file: dependencies are snapshots. Refresh the actual API import target,
+# too, without reinstalling or changing any pinned dependency.
+RUN cd /app/server/packages/api && node --input-type=module -e '\
+  import { copyFileSync } from "node:fs"; \
+  import { dirname, join } from "node:path"; \
+  import { fileURLToPath } from "node:url"; \
+  const target = dirname(fileURLToPath(import.meta.resolve("@open-managed-agents/adapter-pi-agent"))); \
+  for (const file of ["custom-tools.ts", "translator.ts"]) \
+    copyFileSync(join("/app/adapter/packages/pi-agent/src", file), join(target, file));'

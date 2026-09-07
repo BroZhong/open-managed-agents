@@ -9,6 +9,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
+import { adapterProcessEnvFromHost, sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import type {
   Adapter,
   AdapterInput,
@@ -63,7 +64,7 @@ class DevClaudeCodeAdapter implements Adapter {
 
     const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnvFromHost(process.env),
     });
     child.stdin.end();
 
@@ -195,7 +196,7 @@ class DevCodexAdapter implements Adapter {
 
     const child = spawn("codex", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env: adapterProcessEnvFromHost(process.env),
     });
     child.stdin.end();
 
@@ -271,13 +272,8 @@ async function main() {
   // In-memory dev mode has no S3 Workspace to hydrate from, so the
   // sandbox-backed ToolExecutor is intentionally not wired here. Use the full
   // dev server (S3 + SANDBOX_ENABLED=true) to exercise the kruise sandbox.
-  // Deployment-wide default sandbox env (parity with dev-server.ts): a shared
-  // CLI secret (today only VFS_TOKEN) auto-injected into every sandboxed Agent,
-  // sourced from env so it never lives in code or the Agent record.
-  const defaultSandboxEnv: Record<string, string> = {};
-  if (process.env.DEFAULT_SANDBOX_VFS_TOKEN) {
-    defaultSandboxEnv.VFS_TOKEN = process.env.DEFAULT_SANDBOX_VFS_TOKEN;
-  }
+  // Host-owned values are scoped to allowed Agents and stay out of Agent records.
+  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,
@@ -285,8 +281,7 @@ async function main() {
     sessionStore: stores.sessionStore,
     eventStreamHub,
     resolveAdapter,
-    defaultSandboxEnv:
-      Object.keys(defaultSandboxEnv).length > 0 ? defaultSandboxEnv : undefined,
+    ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,
