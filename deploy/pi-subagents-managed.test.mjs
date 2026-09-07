@@ -25,6 +25,7 @@ test("the tintinweb extension exposes only the managed Sandbox-backed Agent type
   assert.match(agent, /^run_in_background: false$/m);
   assert.match(agent, /^prompt_mode: append$/m);
   assert.match(agent, /^max_turns: 30$/m);
+  assert.doesNotMatch(agent, /^(?:model|thinking):/m);
   assert.match(agent, /Treat `\/home\/user` as the only Workspace root/);
   assert.match(agent, /Equipped Skills are\s+projected under `\/skills\/`/);
   assert.doesNotMatch(agent, /Treat `\/workspace` as the only Workspace root/);
@@ -49,6 +50,7 @@ test("the pinned package patch injects only the parent session's custom tools", 
   const source = `
 import type { ExtensionContext, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking;
   const builtinToolNameSet = new Set(toolNames);
   const allowedTools = [...toolNames, ...extensionToolNames].filter((t) => {
     if (EXCLUDED_TOOL_NAMES.includes(t)) return false;
@@ -58,6 +60,7 @@ const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
   });
   const sessionOpts: Parameters<typeof createAgentSession>[0] = {
     cwd: effectiveCwd,
+    modelRegistry: ctx.modelRegistry,
     model,
     tools: allowedTools,
     resourceLoader: loader,
@@ -71,4 +74,7 @@ const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
   assert.match(patched, /BUILTIN_TOOL_NAMES\.filter/);
   assert.match(patched, /customTools: managedCustomTools/);
   assert.match(patched, /noTools: "builtin"/);
+  assert.match(patched, /modelRuntime,/);
+  assert.doesNotMatch(patched, /modelRegistry: ctx.modelRegistry/);
+  assert.match(patched, /getSupportedThinkingLevels\(model\)\.at\(-1\)/);
 });

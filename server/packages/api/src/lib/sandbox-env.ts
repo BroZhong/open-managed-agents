@@ -29,7 +29,9 @@ export function adapterProcessEnvFromHost(
   env: HostEnv,
 ): Record<string, string | undefined> {
   return Object.fromEntries(
-    Object.entries(env).filter(([name]) => !name.startsWith("DEFAULT_SANDBOX_")),
+    Object.entries(env).filter(([name]) =>
+      !name.startsWith("DEFAULT_SANDBOX_") && !name.startsWith("AUTO_STORY_"),
+    ),
   );
 }
 
@@ -89,6 +91,43 @@ export function sandboxEnvPolicyFromHost(env: HostEnv): SandboxEnvPolicy {
         },
       ]),
     );
+  }
+
+  // Per-Agent runtime secrets for the auto-story preset. The Host owns both
+  // the allowlist and values; neither is taken from an Agent-authored template.
+  const storyAgentIds = commaSeparated(env, "AUTO_STORY_AGENT_IDS");
+  const storyEnvJson = nonBlank(env, "AUTO_STORY_SANDBOX_ENV_JSON");
+  if (storyAgentIds.length > 0 || storyEnvJson) {
+    if (!storyAgentIds.length || !storyEnvJson) {
+      throw new Error("auto-story requires AUTO_STORY_AGENT_IDS and AUTO_STORY_SANDBOX_ENV_JSON");
+    }
+    let storyEnv: unknown;
+    try {
+      storyEnv = JSON.parse(storyEnvJson);
+    } catch {
+      // Do not include JSON.parse's message: it can contain secret values.
+      throw new Error("AUTO_STORY_SANDBOX_ENV_JSON must be an environment object");
+    }
+    if (!storyEnv || typeof storyEnv !== "object" || Array.isArray(storyEnv) ||
+        Object.entries(storyEnv).some(([name, value]) =>
+          !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ||
+          typeof value !== "string" || value.includes("\0"))) {
+      throw new Error("AUTO_STORY_SANDBOX_ENV_JSON must contain valid environment names and string values");
+    }
+    managedSandboxEnvByAgentId ??= {};
+    managedSandboxEnvByAgentId = { ...managedSandboxEnvByAgentId };
+    for (const agentId of storyAgentIds) {
+      managedSandboxEnvByAgentId = {
+        ...managedSandboxEnvByAgentId,
+        [agentId]: {
+          ...(storyEnv as Record<string, string>),
+          // Preserve the separately managed WW endpoint/credential pairing.
+          ...managedSandboxEnvByAgentId[agentId],
+          MEDIAKIT_SURFACE: "skill",
+          MEDIAKIT_RUNTIME: "pi-agent",
+        },
+      };
+    }
   }
 
   return {

@@ -12,6 +12,8 @@ const sdkSeam = vi.hoisted(() => ({
   sessionOptions: [] as Array<{
     cwd?: string;
     sessionManager?: { getCwd(): string };
+    thinkingLevel?: string;
+    modelRuntime?: { getModel(provider: string, id: string): unknown };
   }>,
   mcpConfigPath: undefined as string | undefined,
   mcpConfig: undefined as unknown,
@@ -165,6 +167,9 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(options.cwd).toBe("/home/user");
     expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user");
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user");
+    expect(sdkSeam.sessionOptions[0].thinkingLevel).toBe("high");
+    expect(sdkSeam.sessionOptions[0].modelRuntime?.getModel("anthropic", "claude-sonnet-4-5"))
+      .toMatchObject({ id: "claude-sonnet-4-5", provider: "anthropic" });
   });
 
   it("preserves native skillPaths when no ToolExecutor is injected", async () => {

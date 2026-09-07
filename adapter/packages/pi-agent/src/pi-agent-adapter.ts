@@ -4,6 +4,7 @@ import {
   DefaultResourceLoader,
   formatSkillsForPrompt,
   getAgentDir,
+  ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -20,7 +21,7 @@ import type {
   SessionEvent,
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
   generateTimestamp,
@@ -28,7 +29,7 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
-import { resolveModel } from "./model-resolver.js";
+import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
 import { createManagedSubagentToolsExtension } from "./subagent-tool-bridge.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
@@ -93,6 +94,10 @@ export interface SessionFactoryArgs {
   historyMessages: Message[];
   /** Resolved from `input.agent.model`; opaque Pi Model. */
   model: unknown;
+  /** The selected model's highest supported Pi thinking level. */
+  thinkingLevel: ModelThinkingLevel;
+  /** One per Turn; shared by model selection and execution, including auth. */
+  modelRuntime: ModelRuntime;
   /** True when a per-run() ToolExecutor was injected. */
   hasToolExecutor: boolean;
   /**
@@ -229,7 +234,12 @@ export class PiAgentAdapter implements Adapter {
       // than being flattened into the prompt string. Empty on the first turn.
       const historyMessages = eventLogToAgentMessages(input.history);
 
-      const model = resolveModel(this.model ?? input.agent.model);
+      // Resolve custom models and auth through the same Pi runtime used by
+      // this Turn. Catalog refresh belongs to deployment; avoid network
+      // discovery on every managed Turn.
+      const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+      const model = resolveModel(this.model ?? input.agent.model, modelRuntime);
+      const thinkingLevel = highestThinkingLevel(model);
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
 
@@ -238,6 +248,8 @@ export class PiAgentAdapter implements Adapter {
         prompt,
         historyMessages,
         model,
+        thinkingLevel,
+        modelRuntime,
         hasToolExecutor,
         resourceLoaderOptions,
       });
@@ -392,7 +404,7 @@ export class PiAgentAdapter implements Adapter {
         ...(customTools
           ? {
               extensionFactories: [
-                createManagedSubagentToolsExtension(customTools),
+                createManagedSubagentToolsExtension(customTools, args.modelRuntime),
                 createManagedSkillCommandExtension(skillDescriptors),
               ],
             }
@@ -430,6 +442,8 @@ export class PiAgentAdapter implements Adapter {
       const { session } = await createAgentSession({
         cwd,
         model: args.model as never,
+        thinkingLevel: args.thinkingLevel,
+        modelRuntime: args.modelRuntime,
         sessionManager,
         resourceLoader,
         ...(customTools

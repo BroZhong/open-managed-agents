@@ -32,7 +32,7 @@ export function patchAgentRunnerSource(input) {
   source = replaceExactlyOnce(
     source,
     'import type { ExtensionContext, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";',
-    'import type { ExtensionContext, LoadExtensionsResult, ToolDefinition } from "@earendil-works/pi-coding-agent";',
+    'import type { ExtensionContext, LoadExtensionsResult, ModelRuntime, ToolDefinition } from "@earendil-works/pi-coding-agent";\nimport { getSupportedThinkingLevels } from "@earendil-works/pi-ai";',
     "ToolDefinition import",
   );
   source = replaceExactlyOnce(
@@ -43,11 +43,16 @@ export function patchAgentRunnerSource(input) {
 const MANAGED_SUBAGENT_TOOLS_REQUEST = "oma:sandbox-tools:v1:get";
 let managedToolRequestSequence = 0;
 
-async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinition[]> {
+interface ManagedParentResources {
+  tools: ToolDefinition[];
+  modelRuntime: ModelRuntime;
+}
+
+async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ManagedParentResources> {
   const requestId = \`\${process.pid}-\${++managedToolRequestSequence}\`;
   const replyChannel = \`\${MANAGED_SUBAGENT_TOOLS_REQUEST}:reply:\${requestId}\`;
 
-  return new Promise<ToolDefinition[]>((resolve, reject) => {
+  return new Promise<ManagedParentResources>((resolve, reject) => {
     let unsubscribe = () => {};
     const timeout = setTimeout(() => {
       unsubscribe();
@@ -67,7 +72,12 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
         reject(new Error("Managed Sandbox tool bridge returned no tools"));
         return;
       }
-      resolve(tools as ToolDefinition[]);
+      const modelRuntime = (raw as { modelRuntime?: ModelRuntime }).modelRuntime;
+      if (!modelRuntime || typeof modelRuntime.getModel !== "function") {
+        reject(new Error("Managed parent model runtime is unavailable"));
+        return;
+      }
+      resolve({ tools: tools as ToolDefinition[], modelRuntime });
     });
 
     pi.events.emit(MANAGED_SUBAGENT_TOOLS_REQUEST, { requestId });
@@ -79,7 +89,7 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
     source,
     `  const builtinToolNameSet = new Set(toolNames);
   const allowedTools = [...toolNames, ...extensionToolNames].filter((t) => {`,
-    `  const managedCustomTools = await lookupManagedCustomTools(options.pi);
+    `  const { tools: managedCustomTools, modelRuntime } = await lookupManagedCustomTools(options.pi);
   const managedToolNameSet = new Set(managedCustomTools.map((tool) => tool.name));
   const missingManagedToolNames = BUILTIN_TOOL_NAMES.filter(
     (name) => !managedToolNameSet.has(name),
@@ -92,6 +102,18 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
   const builtinToolNameSet = new Set(toolNames);
   const allowedTools = [...toolNames, ...extensionToolNames].filter((t) => {`,
     "managed tool allowlist",
+  );
+  source = replaceExactlyOnce(
+    source,
+    "    modelRegistry: ctx.modelRegistry,",
+    "    modelRuntime,",
+    "Pi 0.80.10 child model runtime",
+  );
+  source = replaceExactlyOnce(
+    source,
+    "  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking;",
+    "  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking ?? (model ? getSupportedThinkingLevels(model).at(-1) : undefined);",
+    "highest supported child thinking default",
   );
   source = replaceExactlyOnce(
     source,

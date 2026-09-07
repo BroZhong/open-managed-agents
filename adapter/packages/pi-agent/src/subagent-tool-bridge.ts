@@ -1,5 +1,6 @@
 import type {
   ExtensionFactory,
+  ModelRuntime,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
@@ -35,6 +36,7 @@ function assertCompleteToolSet(tools: ToolDefinition[]): void {
  */
 export function createManagedSubagentToolsExtension(
   tools: ToolDefinition[],
+  modelRuntime: ModelRuntime,
 ): ExtensionFactory {
   assertCompleteToolSet(tools);
 
@@ -52,7 +54,7 @@ export function createManagedSubagentToolsExtension(
       }
       pi.events.emit(
         `${MANAGED_SUBAGENT_TOOLS_REQUEST}:reply:${requestId}`,
-        { tools },
+        { tools, modelRuntime },
       );
     });
 
