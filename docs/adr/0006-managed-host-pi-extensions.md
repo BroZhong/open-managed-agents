@@ -84,7 +84,7 @@ The initial controls are:
   any resolved value.
 - The subagent extension's three default Agent types are disabled and scheduling
   is off. The deployment publishes one `storyboard-stage` type whose
-  authoritative frontmatter pins the model, requests all seven tools, and forces
+  authoritative frontmatter inherits the parent's selected model, requests all seven tools, and forces
   `extensions: false`, `skills: false`, foreground mode, and `isolated: true`.
   The managed overlay refuses to create the child if any corresponding custom
   implementation is absent, so an incomplete bridge cannot fall back to a Host
@@ -106,13 +106,18 @@ watchers, and extension state from surviving a Turn.
 
 `@tintinweb/pi-subagents@0.13.0` has no public `customTools` provider for child
 sessions. Each Adapter Turn therefore creates a fresh Pi `EventBus`. An inline
-extension factory publishes that Turn's tool-definition array over a private
+extension factory publishes that Turn's tool-definition array and Pi
+`ModelRuntime` over a private
 request/reply channel on the bus. The named extension already carries the
 parent's `ExtensionAPI` into its child runner; a source overlay requests the
 definitions there and passes them to the child `createAgentSession({
-customTools, noTools: "builtin" })` call.
+customTools, modelRuntime, noTools: "builtin" })` call. Pi SDK 0.80.10 replaced
+the child SDK's `modelRegistry` option with `modelRuntime`; sharing the parent's
+runtime preserves its exact model definitions and authentication. Child thinking
+defaults to the selected model's highest supported level unless explicitly
+overridden for the delegated task.
 
-Tool definitions pass by reference inside one process. No capability is stored
+Tool definitions and the model runtime pass by reference inside one process. No capability is stored
 in global state or serialized into prompts, files, arguments, or environment.
 Concurrent parents own different buses and cannot request one another's tools.
 The response handler is removed on `session_shutdown`; a missing response or

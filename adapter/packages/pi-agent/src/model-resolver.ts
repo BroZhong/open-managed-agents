@@ -1,94 +1,73 @@
-import { getModel } from "@earendil-works/pi-ai/compat";
-import type { Model } from "@earendil-works/pi-ai/compat";
+import { getModel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai/compat";
 
-/**
- * Resolve an `AdapterInput.agent.model` string into a Pi `Model` via the
- * pi-ai builtin catalog.
- *
- * The mapping is intentionally small and best-effort:
- *  - "anthropic/<id>" or "openai/<id>" (explicit "provider/id") are honored.
- *  - "claude-*" / "anthropic*" map to the anthropic provider.
- *  - "gpt-*" / "o1*" / "o3*" / "openai*" map to the openai provider.
- *  - "gemini-*" / "google*" map to the google provider.
- *  - "default" / "" / unknown fall back to {@link DEFAULT_MODEL}.
- *
- * API keys are NOT resolved here — they come from the environment / Pi
- * AuthStorage (~/.pi/agent/auth.json) at request time, exactly as the CLI did.
- *
- * `getModel` is a static catalog lookup; if the id is unknown for the resolved
- * provider it returns undefined and we fall back to the default so a bad model
- * string never crashes the run (it surfaces later as an auth/model error via
- * the session error path if the default is also unusable).
- */
-
-/** Default model when the agent does not specify a usable one. */
-export const DEFAULT_MODEL: { provider: string; id: string } = {
-  provider: "anthropic",
-  id: "claude-sonnet-4-5",
+/** Matches the local Pi default; deployment provides its catalog in models.json. */
+export const DEFAULT_MODEL = {
+  provider: "openai-codex",
+  id: "gpt-5.6-sol",
 };
 
-interface ProviderAndId {
-  provider: string;
-  id: string;
+export interface ModelCatalog {
+  getModel(provider: string, id: string): Model<Api> | undefined;
 }
 
-function classify(raw: string): ProviderAndId | undefined {
-  const model = raw.trim();
-  if (!model || model === "default") return undefined;
+const builtinCatalog: ModelCatalog = {
+  getModel: (provider, id) => getModel(provider as never, id as never),
+};
 
-  // Explicit "provider/id" form wins.
+function classify(raw: string): { provider: string; id: string } {
+  const model = raw.trim();
+  if (!model || model === "default") return DEFAULT_MODEL;
+
+  // Explicit provider/id preserves custom providers from Pi's models.json.
   const slash = model.indexOf("/");
   if (slash > 0) {
     return { provider: model.slice(0, slash), id: model.slice(slash + 1) };
   }
 
   const lower = model.toLowerCase();
+  if (lower === "k3") return { provider: "kimi-coding-plan", id: "k3" };
+  if (lower === "gpt-6-astra" || lower === "gpt-5.6-sol") {
+    return { provider: "openai-codex", id: lower };
+  }
   if (lower.startsWith("claude") || lower.startsWith("anthropic")) {
     return { provider: "anthropic", id: model };
   }
-  // Codex (ChatGPT/Codex OAuth) is its own Pi provider `openai-codex` with
-  // model ids like `gpt-5.4`, `gpt-5.3-codex-spark`. Match it BEFORE the generic
-  // openai branch: bare "codex"/"openai-codex", or any "*codex*" model id.
-  if (
-    lower === "codex" ||
-    lower.startsWith("openai-codex") ||
-    lower.includes("codex")
-  ) {
-    // Default codex model when only "codex" is given.
-    const id = lower === "codex" || lower === "openai-codex" ? "gpt-5.4" : model;
-    return { provider: "openai-codex", id };
+  if (lower === "codex" || lower.startsWith("openai-codex") || lower.includes("codex")) {
+    return {
+      provider: "openai-codex",
+      id: lower === "codex" || lower === "openai-codex" ? DEFAULT_MODEL.id : model,
+    };
   }
-  if (
-    lower.startsWith("gpt") ||
-    lower.startsWith("o1") ||
-    lower.startsWith("o3") ||
-    lower.startsWith("o4") ||
-    lower.startsWith("openai")
-  ) {
+  if (/^(gpt|o1|o3|o4|openai)/.test(lower)) {
     return { provider: "openai", id: model };
   }
   if (lower.startsWith("gemini") || lower.startsWith("google")) {
     return { provider: "google", id: model };
   }
-  // Unknown shape: try anthropic (the default provider) with the raw id.
   return { provider: "anthropic", id: model };
 }
 
 /**
- * Resolve a model string to a Pi `Model`, falling back to the default when the
- * requested model cannot be found in the builtin catalog.
+ * Managed Turns supply the same ModelRuntime that executes the request, so
+ * custom model definitions, endpoint overrides, and auth stay consistent.
+ * Unknown selections fail explicitly instead of executing a different model.
  */
-export function resolveModel(raw: string | undefined): Model<never> {
+export function resolveModel(
+  raw: string | undefined,
+  catalog: ModelCatalog = builtinCatalog,
+): Model<Api> {
   const wanted = classify(raw ?? "");
-  if (wanted) {
-    const found = getModel(
-      wanted.provider as never,
-      wanted.id as never,
-    ) as Model<never> | undefined;
-    if (found) return found;
+  const model = catalog.getModel(wanted.provider, wanted.id);
+  if (!model) {
+    throw new Error(
+      `Pi model ${wanted.provider}/${wanted.id} is not configured; add it to the Host Pi models.json`,
+    );
   }
-  return getModel(
-    DEFAULT_MODEL.provider as never,
-    DEFAULT_MODEL.id as never,
-  ) as Model<never>;
+  return model;
+}
+
+/** Pi maps this level to the provider's effort (K3 xhigh maps to max). */
+export function highestThinkingLevel(model: Model<Api>): ModelThinkingLevel {
+  return getSupportedThinkingLevels(model).at(-1) ?? "off";
 }

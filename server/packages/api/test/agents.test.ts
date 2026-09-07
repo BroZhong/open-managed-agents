@@ -111,6 +111,29 @@ describe("POST /v1/agents", () => {
     process.env.AUTH_DISABLED = "true";
   });
 
+  it("preserves auto-story sandbox environment and rejects invalid values on create and update", async () => {
+    const { app } = createTestApp();
+    const definition = {
+      name: "auto-story", runtime: "pi-agent", model: "openai-codex/gpt-5.6-sol", system: "Use equipped skills",
+      sandbox: { enabled: true, image: "auto-story", env: { CUSTOM: "a=b\nsecond line", MEDIAKIT_RUNTIME: "pi-agent" } },
+    };
+    const request = (path: string, body: unknown) => app.request(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const created = await request("/v1/agents", definition);
+    expect(created.status).toBe(201);
+    const agent = await created.json();
+    expect(agent.sandbox).toEqual(definition.sandbox);
+    for (const sandbox of [null, [], { env: [] }, { env: { KEY: 42 } }, { env: { "BAD-NAME": "private-sentinel" } }]) {
+      const response = await request("/v1/agents", { ...definition, sandbox });
+      expect(response.status).toBe(400);
+      expect(await response.text()).not.toContain("private-sentinel");
+      expect((await request(`/v1/agents/${agent.id}`, { sandbox })).status).toBe(400);
+    }
+    const unchanged = await (await app.request(`/v1/agents/${agent.id}`)).json();
+    expect(unchanged.sandbox).toEqual(definition.sandbox);
+  });
+
   it("creates an agent with valid input", async () => {
     const { app } = createTestApp();
     const res = await app.request("/v1/agents", {

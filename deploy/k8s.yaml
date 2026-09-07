@@ -116,6 +116,9 @@ spec:
             - containerPort: 3000
           envFrom:
             - configMapRef: { name: oma-server-config }
+            # Optional, all-or-nothing Host-owned auto-story environment.
+            # Contains AUTO_STORY_AGENT_IDS + AUTO_STORY_SANDBOX_ENV_JSON.
+            - secretRef: { name: oma-auto-story-env, optional: true }
           env:
             - name: PG_PASSWORD
               valueFrom: { secretKeyRef: { name: oma-secrets, key: PG_PASSWORD } }

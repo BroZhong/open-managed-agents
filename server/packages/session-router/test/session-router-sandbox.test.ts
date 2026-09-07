@@ -418,6 +418,9 @@ function createDeps(opts: {
   agentStore?: AgentStore;
   withManager?: boolean;
   defaultSandboxEnv?: Record<string, string>;
+  managedSandboxEnvByAgentId?: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
 }) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
@@ -449,6 +452,7 @@ function createDeps(opts: {
     skillArtifactStore: opts.skillArtifactStore,
     agentStore: opts.agentStore,
     defaultSandboxEnv: opts.defaultSandboxEnv,
+    managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
   });
 
   return {
@@ -600,6 +604,79 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     const id = sandboxClient.created[0];
     expect(sandboxClient.createOptsOf(id).env).toMatchObject({
       VFS_TOKEN: "default-tok",
+    });
+  });
+
+  it("keeps deployment-managed sandbox env authoritative over Agent overrides", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      persistence,
+      defaultSandboxEnv: { VFS_TOKEN: "default-vfs" },
+      managedSandboxEnvByAgentId: {
+        [sandboxedAgent.id]: {
+          OPENGROVE_WW_BASE_URL: "https://managed.example.test",
+          OPENGROVE_WW_ACCESS_TOKEN: "managed-token",
+        },
+      },
+    });
+    const envAgent: Agent = {
+      ...sandboxedAgent,
+      sandbox: {
+        enabled: true,
+        env: {
+          VFS_TOKEN: "agent-vfs",
+          OPENGROVE_WW_BASE_URL: "https://agent.example.test",
+          OPENGROVE_WW_ACCESS_TOKEN: "agent-token",
+        },
+      },
+    };
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: envAgent.id,
+      agent: envAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, envAgent);
+
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
+      VFS_TOKEN: "agent-vfs",
+      OPENGROVE_WW_BASE_URL: "https://managed.example.test",
+      OPENGROVE_WW_ACCESS_TOKEN: "managed-token",
+    });
+  });
+
+  it("does not inject one Agent's managed sandbox env into another Agent", async () => {
+    const persistence = new FakeWorkspacePersistence();
+    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      persistence,
+      defaultSandboxEnv: { VFS_TOKEN: "default-vfs" },
+      managedSandboxEnvByAgentId: {
+        agent_allowed: {
+          OPENGROVE_WW_BASE_URL: "https://managed.example.test",
+          OPENGROVE_WW_ACCESS_TOKEN: "managed-token",
+        },
+      },
+    });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1",
+      agentId: sandboxedAgent.id,
+      agent: sandboxedAgent,
+      workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "read the file");
+
+    await router.handleNewEvent(session.id, sandboxedAgent);
+
+    const id = sandboxClient.created[0];
+    expect(sandboxClient.createOptsOf(id).env).toEqual({
+      VFS_TOKEN: "default-vfs",
     });
   });
 

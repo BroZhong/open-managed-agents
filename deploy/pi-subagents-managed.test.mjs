@@ -28,6 +28,7 @@ test("the tintinweb extension exposes only the managed Sandbox-backed Agent type
   assert.match(agent, /^run_in_background: false$/m);
   assert.match(agent, /^prompt_mode: append$/m);
   assert.match(agent, /^max_turns: 30$/m);
+  assert.doesNotMatch(agent, /^(?:model|thinking):/m);
   assert.match(agent, /Treat `\/home\/user` as the only Workspace root/);
   assert.match(agent, /Equipped Skills are\s+projected under `\/skills\/`/);
   assert.doesNotMatch(agent, /Treat `\/workspace` as the only Workspace root/);
@@ -75,6 +76,7 @@ test("the pinned package patch injects managed tools and persistent child usage"
   const source = `
 import type { ExtensionContext, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
+  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking;
   const builtinToolNameSet = new Set(toolNames);
   const allowedTools = [...toolNames, ...extensionToolNames].filter((t) => {
     if (EXCLUDED_TOOL_NAMES.includes(t)) return false;
@@ -84,6 +86,7 @@ const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
   });
   const sessionOpts: Parameters<typeof createAgentSession>[0] = {
     cwd: effectiveCwd,
+    modelRegistry: ctx.modelRegistry,
     model,
     tools: allowedTools,
     resourceLoader: loader,
@@ -128,4 +131,7 @@ export async function resumeAgent(session: AgentSession, prompt: string) {
     patched,
     /export async function resumeAgent\(session: AgentSession, prompt: string\)[\s\S]*?await session\.prompt\(prompt\)/,
   );
+  assert.match(patched, /modelRuntime,/);
+  assert.doesNotMatch(patched, /modelRegistry: ctx.modelRegistry/);
+  assert.match(patched, /getSupportedThinkingLevels\(model\)\.at\(-1\)/);
 });

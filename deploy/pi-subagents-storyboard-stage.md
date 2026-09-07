@@ -4,8 +4,6 @@ display_name: Storyboard Stage
 tools: "*"
 extensions: false
 skills: false
-model: openai-codex/gpt-5.5
-thinking: medium
 max_turns: 30
 run_in_background: false
 inherit_context: false

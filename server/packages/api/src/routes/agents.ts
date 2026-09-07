@@ -19,6 +19,20 @@ type Env = {
 
 const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
 
+function validateSandbox(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "sandbox must be an object";
+  const sandbox = value as Record<string, unknown>;
+  if (sandbox.enabled !== undefined && typeof sandbox.enabled !== "boolean") return "sandbox.enabled must be a boolean";
+  if (sandbox.image !== undefined && (typeof sandbox.image !== "string" || !sandbox.image.trim())) return "sandbox.image must be a non-empty string";
+  if (sandbox.env !== undefined) {
+    if (!sandbox.env || typeof sandbox.env !== "object" || Array.isArray(sandbox.env)) return "sandbox.env must be an object";
+    if (Object.entries(sandbox.env).some(([name, value]) =>
+      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || typeof value !== "string" || value.includes("\0"))) {
+      return "sandbox.env must contain valid environment names and string values";
+    }
+  }
+}
+
 export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
 
@@ -66,6 +80,10 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     }
     if (skills !== undefined && !Array.isArray(skills)) {
       return c.json({ error: "skills must be an array" }, 400);
+    }
+    if (sandbox !== undefined) {
+      const error = validateSandbox(sandbox);
+      if (error) return c.json({ error }, 400);
     }
 
     const agent = await agentStore.create({
@@ -175,6 +193,10 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     }
 
     const updateInput: Record<string, unknown> = {};
+    if (body.sandbox !== undefined) {
+      const error = validateSandbox(body.sandbox);
+      if (error) return c.json({ error }, 400);
+    }
     if (body.name !== undefined) updateInput.name = body.name;
     if (body.description !== undefined) updateInput.description = body.description;
     if (body.model !== undefined) updateInput.model = body.model;

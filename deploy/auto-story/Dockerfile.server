@@ -1,0 +1,22 @@
+# Upgrade only the auto-story runtime on top of the verified agentry Host.
+# The base preserves its internal Sandbox Manager routing and egress fixes.
+ARG BASE_IMAGE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:0437c0b0ab46f8750311a78dc05c3d7e6c39cb063417862524d32b0005857a5c
+FROM ${BASE_IMAGE}
+WORKDIR /app
+COPY adapter/packages/pi-agent/package.json adapter/packages/pi-agent/package.json
+COPY adapter/packages/pi-agent/src/ adapter/packages/pi-agent/src/
+COPY adapter/pnpm-lock.yaml adapter/pnpm-lock.yaml
+COPY server/pnpm-lock.yaml server/pnpm-lock.yaml
+RUN cd adapter && pnpm install --frozen-lockfile && cd ../server && pnpm install --frozen-lockfile
+COPY server/packages/api/src/lib/sandbox-env.ts server/packages/api/src/lib/sandbox-env.ts
+COPY server/packages/api/src/routes/agents.ts server/packages/api/src/routes/agents.ts
+COPY deploy/pi-models.json /opt/pi-agent-seed/models.json
+COPY deploy/patch-tintinweb-pi-subagents.mjs /tmp/patch-tintinweb-pi-subagents.mjs
+# Restore only this pinned package's source before applying the current overlay.
+RUN cd /tmp && npm pack @tintinweb/pi-subagents@0.13.0 --pack-destination /tmp && \
+    tar -xzf tintinweb-pi-subagents-0.13.0.tgz --strip-components=1 -C /opt/pi-agent-seed/npm/node_modules/@tintinweb/pi-subagents && \
+    node /tmp/patch-tintinweb-pi-subagents.mjs /opt/pi-agent-seed/npm/node_modules/@tintinweb/pi-subagents && \
+    rm /tmp/tintinweb-pi-subagents-0.13.0.tgz
+COPY deploy/pi-subagents-settings.json /opt/pi-agent-seed/subagents.json
+COPY deploy/pi-subagents-storyboard-stage.md /opt/pi-agent-seed/agents/storyboard-stage.md
+WORKDIR /app/server/packages/api
