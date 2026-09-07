@@ -1,5 +1,5 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { SessionEvent } from "@open-managed-agents/adapter-core";
+import type { ContentBlock, SessionEvent } from "@open-managed-agents/adapter-core";
 import {
   generateEventId,
   generateTimestamp,
@@ -235,12 +235,7 @@ export class PiEventTranslator {
           id: generateEventId(),
           timestamp: generateTimestamp(),
           toolUseId: event.toolCallId,
-          content: [
-            {
-              type: "text" as const,
-              text: normalizeResult(event.result),
-            },
-          ],
+          content: normalizeResult(event.result),
           isError: event.isError ?? false,
         };
         if (mcpInvocation) {
@@ -364,29 +359,29 @@ function toolCallAt(
 /**
  * The SDK's `tool_execution_end.result` is typed `any`. It may be a plain
  * string, an `AgentToolResult` (with a `content` array of text/image blocks),
- * or arbitrary JSON. Flatten it to a single text string for the canonical
- * `agent.tool_result` event.
+ * or arbitrary JSON. Preserve image bytes in canonical blocks so a subsequent
+ * turn can replay a sandbox image read through the durable event log.
  */
-function normalizeResult(result: unknown): string {
-  if (typeof result === "string") return result;
+function normalizeResult(result: unknown): ContentBlock[] {
+  if (typeof result === "string") return [{ type: "text", text: result }];
   if (result && typeof result === "object") {
     const content = (result as { content?: unknown }).content;
     if (Array.isArray(content)) {
-      const text = content
-        .map((block) => {
-          if (block && typeof block === "object" && "text" in block) {
-            return String((block as { text: unknown }).text ?? "");
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join("");
-      if (text) return text;
+      const blocks: ContentBlock[] = [];
+      for (const block of content) {
+        if (!block || typeof block !== "object") continue;
+        if (block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+          blocks.push({ type: "image", source: { type: "base64", mediaType: block.mimeType, data: block.data } });
+        } else if ("text" in block) {
+          blocks.push({ type: "text", text: String(block.text ?? "") });
+        }
+      }
+      if (blocks.length) return blocks;
     }
   }
   try {
-    return JSON.stringify(result);
+    return [{ type: "text", text: JSON.stringify(result) ?? String(result) }];
   } catch {
-    return String(result);
+    return [{ type: "text", text: String(result) }];
   }
 }

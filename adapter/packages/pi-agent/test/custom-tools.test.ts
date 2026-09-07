@@ -30,6 +30,13 @@ class MemExecutor implements ToolExecutor {
   async *exec(command: string[], opts?: ExecOptions): AsyncIterable<ExecOutputChunk> {
     this.calls.push(`exec ${command.join(" ")} @${opts?.cwd ?? "."}`);
     this.lastExecOpts = opts;
+    if (command[0] === "python3" && command[3]?.includes("import base64")) {
+      const content = this.files.get(command[4]);
+      yield { stream: "stdout", text: JSON.stringify(content === undefined
+        ? { error: `ENOENT: ${command[4]}` }
+        : { data: Buffer.from(content).toString("base64"), mimeType: null }) };
+      return;
+    }
     yield { stream: "stdout", text: `ran: ${command[command.length - 1]}` };
   }
 
@@ -129,7 +136,8 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const tools = buildCustomTools(ex);
     const out = await run(toolByName(tools, "read"), { path: "note.txt" });
     expect(out).toBe("read-me");
-    expect(ex.calls).toContain("read note.txt");
+    expect(ex.calls.some((call) => call.startsWith("exec python3") && call.endsWith("note.txt 33554432 @."))).toBe(true);
+    expect(ex.calls).not.toContain("read note.txt");
   });
 
   it("keeps /skills absolute and outside the /home/user Workspace mapping", async () => {
@@ -140,7 +148,7 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const out = await run(toolByName(tools, "read"), { path: skillPath });
 
     expect(out).toBe("# Projected Skill");
-    expect(ex.calls).toContain(`read ${skillPath}`);
+    expect(ex.calls.some((call) => call.startsWith("exec python3") && call.endsWith(`${skillPath} 33554432 @.`))).toBe(true);
     expect(ex.calls).not.toContain("read skills/skill_abc/SKILL.md");
     expect(ex.calls).not.toContain("read /home/user/skills/skill_abc/SKILL.md");
   });
