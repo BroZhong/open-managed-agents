@@ -72,7 +72,7 @@ Gemini 判断核心叙事成立、旁白一致、画外音与结尾完整，同�
 
 ## 本轮修复与限制
 
-- Pi 原先把 PNG/pyc 当 UTF-8，NUL 导致 PostgreSQL JSONB 中断。现在原字节经 sandbox exec/base64 传输，按 magic 识图；非支持二进制明确拒绝，grep 跳过含 NUL 文件。图片以原生 content block 保存并跨回合回放。真实 Session seq 320 看图成功，后续多次真实图片读取成功。
+- 本项目的 Pi sandbox 适配层原先缺少 `detectImageMimeType`，且经 UTF-8 字符串接口读取 PNG；自写的 Python grep 也将 pyc 当文本。输出中的 NUL 触发本平台 PostgreSQL JSONB 存储错误，导致回合中断。原版 Pi 0.80.10 的默认 read 已支持原始字节和图片识别，默认 grep 使用 ripgrep；本次修复归属于本项目适配层。用同一参考图对照，原版 read 返回 text + image，而旧 sandbox operations 返回含 NUL 的 text。现在原字节经 sandbox exec/base64 传输，按 magic 识图；非支持二进制明确拒绝，grep 跳过含 NUL 文件。本项目事件转换器也改为保留图片 content block，以支持跨回合回放。真实 Session seq 320 看图成功，后续多次真实图片读取成功。
 - Host 增量镜像同时刷新 pnpm 的实际 `file:` 依赖快照，避免仅覆盖源码但运行旧工具。修复提交 `5fe3aa6`、`c8300f5`。
 - Gemini 后台音频/Files 路线失败，固定使用经验证的同步路线。SDK 2.22.0 Interactions 隐式重试已关闭；真实离线 transport 测试要求 503/读取超时只发一次 POST。
 - 单独的 3 秒 Agentic canary 曾把纯音误判成人声：配对证明能力执行，不保证内容正确。其后台诊断上传 `files/goldpw4eaamn` 尚无可靠终态，继续保留；Files 返回到期时间 2026-09-09 15:44:47 UTC。此诊断清理待定不影响已经完成并清理的同步成片审片。收据在 `/private/tmp/oma-auto-story/agentic-canary*.json`。
