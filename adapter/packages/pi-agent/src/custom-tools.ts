@@ -52,11 +52,7 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
         operations: bashOperations(executor),
       }),
     ),
-    defineTool(
-      createReadToolDefinition(SANDBOX_WORKSPACE_ROOT, {
-        operations: readOperations(executor),
-      }),
-    ),
+    defineTool(createSandboxReadToolDefinition(executor)),
     defineTool(
       createWriteToolDefinition(SANDBOX_WORKSPACE_ROOT, {
         operations: writeOperations(executor),
@@ -139,10 +135,34 @@ function bashOperations(executor: ToolExecutor): BashOperations {
   };
 }
 
-function readOperations(executor: ToolExecutor): ReadOperations {
+function createSandboxReadToolDefinition(executor: ToolExecutor) {
+  const native = createReadToolDefinition(SANDBOX_WORKSPACE_ROOT);
+  const execute: typeof native.execute = (id, args, signal, onUpdate, ctx) => {
+    // Keep bytes scoped to this invocation: MIME detection and read share one
+    // sandbox read, while concurrent or subsequent reads never share a cache.
+    return createReadToolDefinition(SANDBOX_WORKSPACE_ROOT, {
+      operations: readOperations(executor, signal),
+    }).execute(id, args, signal, onUpdate, ctx);
+  };
+  return { ...native, execute };
+}
+
+function readOperations(executor: ToolExecutor, signal?: AbortSignal): ReadOperations {
+  const reads = new Map<string, Promise<{ bytes: Buffer; mimeType?: string }>>();
+  const read = (absolutePath: string) => {
+    let pending = reads.get(absolutePath);
+    if (!pending) {
+      pending = readSandboxBytes(executor, toRelative(absolutePath), signal);
+      reads.set(absolutePath, pending);
+    }
+    return pending;
+  };
   return {
     async readFile(absolutePath) {
-      return Buffer.from(await executor.readFile(toRelative(absolutePath)));
+      return (await read(absolutePath)).bytes;
+    },
+    async detectImageMimeType(absolutePath) {
+      return (await read(absolutePath)).mimeType;
     },
     // The executor has no dedicated readability probe; a failed read is the
     // access failure. Reading here would double-read, so probe via `list`.
@@ -151,6 +171,79 @@ function readOperations(executor: ToolExecutor): ReadOperations {
     },
   };
 }
+
+const MAX_SANDBOX_READ_BYTES = 32 * 1024 * 1024;
+
+async function readSandboxBytes(executor: ToolExecutor, path: string, signal?: AbortSignal) {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  signal?.addEventListener("abort", forwardAbort, { once: true });
+  if (signal?.aborted) forwardAbort();
+  let output = "";
+  try {
+    for await (const chunk of executor.exec(
+      ["python3", "-I", "-c", SANDBOX_READ_PROGRAM, path, String(MAX_SANDBOX_READ_BYTES)],
+      { cwd: ".", timeoutSeconds: 30, signal: controller.signal },
+    )) {
+      if (chunk.stream !== "stdout") continue;
+      if (output.length + chunk.text.length > Math.ceil(MAX_SANDBOX_READ_BYTES / 3) * 4 + 4096) {
+        controller.abort();
+        throw new Error("Read output exceeded its transport limit; use bash or a media tool to inspect or resize the file.");
+      }
+      output += chunk.text;
+    }
+    if (signal?.aborted) throw new Error("Operation aborted");
+    let response: { data?: string; mimeType?: string; error?: string };
+    try {
+      response = JSON.parse(output);
+    } catch {
+      throw new Error("Sandbox read failed to return file bytes; inspect the file with bash or a media tool.");
+    }
+    if (response.error) throw new Error(response.error);
+    if (typeof response.data !== "string") throw new Error("Sandbox read returned no file bytes.");
+    return { bytes: Buffer.from(response.data, "base64"), mimeType: response.mimeType };
+  } finally {
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+}
+
+// ToolExecutor.readFile is UTF-8-only. Transfer raw bytes through sandbox exec,
+// never through that lossy string seam or a Host filesystem fallback. Pi owns
+// image processing/base64 content blocks and text pagination after this read.
+const SANDBOX_READ_PROGRAM = String.raw`
+import base64
+import json
+import sys
+from pathlib import Path
+
+try:
+    maximum = int(sys.argv[2])
+    with Path(sys.argv[1]).open("rb") as source:
+        data = source.read(maximum + 1)
+    if len(data) > maximum:
+        raise ValueError("File exceeds the 32 MiB read limit; use bash or a media tool to inspect or resize it.")
+    mime = None
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
+        mime = "image/png"
+    elif data.startswith(b"\xff\xd8\xff") and data[3:4] != b"\xf7":
+        mime = "image/jpeg"
+    elif data[:6] in (b"GIF87a", b"GIF89a"):
+        mime = "image/gif"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        mime = "image/webp"
+    elif data.startswith(b"BM") and len(data) >= 26:
+        mime = "image/bmp"
+    if mime is None:
+        try:
+            if b"\x00" in data:
+                raise ValueError("NUL bytes")
+            data.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            raise ValueError("Unsupported binary file: read supports UTF-8 text and PNG/JPEG/GIF/WebP/BMP images. Use bash or a media tool to inspect or convert this file.")
+    print(json.dumps({"data": base64.b64encode(data).decode("ascii"), "mimeType": mime}))
+except Exception as error:
+    print(json.dumps({"error": str(error)}))
+`;
 
 function writeOperations(executor: ToolExecutor): WriteOperations {
   return {
@@ -398,7 +491,11 @@ try:
         )
         if not matches_glob(relative, candidate.name, config["glob"]):
             continue
-        lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+        contents = candidate.read_bytes()
+        # Like a text search, skip binary files rather than returning their NULs.
+        if b"\x00" in contents:
+            continue
+        lines = contents.decode("utf-8", errors="replace").splitlines()
         for index, line in enumerate(lines):
             if expression.search(line) is None:
                 continue

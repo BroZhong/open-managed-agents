@@ -1,0 +1,6 @@
+# Binary-safe Pi tool reads on the already verified agentry runtime.
+# Supply the currently deployed digest; preserve dependencies and routing.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY adapter/packages/pi-agent/src/custom-tools.ts /app/adapter/packages/pi-agent/src/custom-tools.ts
+COPY adapter/packages/pi-agent/src/translator.ts /app/adapter/packages/pi-agent/src/translator.ts

@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { LocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { buildCustomTools } from "../src/custom-tools.js";
 
+const execFileAsync = promisify(execFile);
 let root: string;
 let executor: LocalToolExecutor;
 
@@ -45,6 +48,40 @@ async function seed(path: string, content: string): Promise<void> {
 }
 
 describe("sandbox grep program", () => {
+  it("skips NUL-containing binary files, including compiled Python bytecode", async () => {
+    const source = 'AudioContentMimeType = "audio/wav"';
+    await seed("types/audiocontent.py", source);
+    const bytecodePath = join(root, "types/audiocontent.pyc");
+    await execFileAsync("python3", [
+      "-I", "-c",
+      "import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)",
+      join(root, "types/audiocontent.py"), bytecodePath,
+    ]);
+    const bytecode = await readFile(bytecodePath);
+    expect(bytecode.includes(0)).toBe(true);
+    expect(bytecode.includes(Buffer.from("audio/wav"))).toBe(true);
+    // The bytes, not the extension, determine whether a file is binary.
+    await writeFile(join(root, "types/binary.txt"), bytecode);
+
+    const output = await runGrep({
+      pattern: "AudioContentMimeType|audio/x-wav|audio/wav",
+      path: "types",
+    });
+
+    expect(output).toBe(`audiocontent.py:1: ${source}`);
+    expect(await runGrep({
+      pattern: "audio/wav", path: "types/audiocontent.pyc",
+    })).toBe("No matches found");
+  });
+
+  it("preserves normal UTF-8 text, emoji, and literal Unicode escapes", async () => {
+    const source = '音频 😀 audio/wav literal \\u0000';
+    await seed("文本.pyc", source);
+
+    expect(await runGrep({ pattern: "音频", path: "." }))
+      .toBe(`文本.pyc:1: ${source}`);
+  });
+
   it("searches regex matches and applies recursive globs", async () => {
     await seed("src/a.ts", "first\nconst Needle = 1;\nlast");
     await seed("src/nested/b.ts", "Needless");
