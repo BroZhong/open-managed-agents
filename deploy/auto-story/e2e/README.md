@@ -58,6 +58,15 @@ The agentic canary exposed a content error: its source contains a continuous 440
 
 `--processing-timeout` defaults to 180 seconds for file activation; `--interaction-timeout` defaults to 600 seconds per interaction. Explicit background execution polls until terminal completion. On timeout or an interrupted polling request, cleanup attempts cancellation when a job ID is known and waits up to another 30 seconds for terminal status before deleting the upload. API requests also have bounded transport timeouts. If submission or cancellation cannot be confirmed, the helper exits unsuccessfully and retains the upload with its name and any known interaction ID for follow-up cleanup. A get/cancel HTTP 400 after a successful submission does not prove the job is terminal and does not authorize automatic file deletion.
 
+The pinned SDK gives Interactions a separate implicit retry policy. The helper
+disables it with `client.interactions.sdk_configuration.retry_config = None`:
+an ambiguous submission reaches recovery immediately instead of repeating a
+paid POST. Setting `HttpOptions.retry_options.attempts=1` alone does not disable
+this policy in version 2.22.0. Real SDK transport tests intercept all requests
+offline and require exactly one POST for both HTTP 503 and read timeout, in
+sync and background modes. Files retain their own policy; explicit reads of
+known jobs continue to work.
+
 Each CLI prints one JSON result and exits zero only when `ok` is true. This flag verifies execution, required processing evidence, and upload cleanup; the review itself may still identify quality problems requiring edits.
 
 | Artifact / field | Contract |
