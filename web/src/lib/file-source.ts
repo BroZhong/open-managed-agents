@@ -258,9 +258,10 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
       if (isText && size <= WS_MAX_TEXT_PREVIEW) {
         return { path, text: await res.text(), contentType, size, isBinary: false };
       }
-      // Drain to release the connection; binary is rendered via previewUrl.
-      await res.arrayBuffer().catch(() => undefined);
-      return { path, text: null, contentType, size, isBinary: true };
+      // Binary is rendered via previewUrl. Use the body we already drain for
+      // its size, since proxies can omit Content-Length or report compressed bytes.
+      const body = await res.arrayBuffer().catch(() => undefined);
+      return { path, text: null, contentType, size: body?.byteLength ?? size, isBinary: true };
     },
 
     async write(path: string, content: string): Promise<void> {

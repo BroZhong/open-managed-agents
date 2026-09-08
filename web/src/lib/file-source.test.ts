@@ -253,6 +253,24 @@ describe("WorkspaceFileSource", () => {
   });
 
   it.each([
+    { name: "non-empty", bytes: Uint8Array.from([0x00, 0xff, 0x80, 0x01]) },
+    { name: "empty", bytes: new Uint8Array() },
+  ])("reads the actual size of a $name binary without Content-Length", async ({ bytes }) => {
+    const response = new Response(bytes, { headers: { "content-type": "audio/wav" } });
+    expect(response.headers.has("content-length")).toBe(false);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    vi.stubGlobal("localStorage", { getItem: () => "test-token" });
+
+    expect(await s.read("voice.wav")).toEqual({
+      path: "voice.wav",
+      text: null,
+      contentType: "audio/wav",
+      size: bytes.byteLength,
+      isBinary: true,
+    });
+  });
+
+  it.each([
     ["voice.mp3", "application/octet-stream", "audio/mpeg"],
     ["voice.M4A", "text/plain", "audio/mp4"],
     ["voice.m4b", "application/octet-stream", "audio/mp4"],
