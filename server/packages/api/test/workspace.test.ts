@@ -509,6 +509,67 @@ describe("POST /v1/sessions/:id/workspace/files/upload", () => {
     expect(await artifactStore.get("dev", "ws_1", "docs/readme.txt")).not.toBeNull();
   });
 
+  it("uploads a folder beneath the destination without flattening nested names or changing audio", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const fixtures = [
+      {
+        name: "旁白.mp3",
+        relativePath: "故事 素材/章节 一/音频/旁白.mp3",
+        storedPath: "assets/imports/故事 素材/章节 一/音频/旁白.mp3",
+        contentType: "audio/mpeg",
+        bytes: Uint8Array.from([0x49, 0x44, 0x33, 0x00, 0xff, 0x81]),
+      },
+      {
+        name: "旁白.mp3",
+        relativePath: "故事 素材/章节 二/音频/旁白.mp3",
+        storedPath: "assets/imports/故事 素材/章节 二/音频/旁白.mp3",
+        contentType: "audio/mpeg",
+        bytes: Uint8Array.from([0x49, 0x44, 0x33, 0x80, 0x00, 0xfe, 0x02]),
+      },
+      {
+        name: "说明.txt",
+        relativePath: "故事 素材/说明.txt",
+        storedPath: "assets/imports/故事 素材/说明.txt",
+        contentType: "text/plain",
+        bytes: new TextEncoder().encode("来自拖入目录的说明"),
+      },
+    ];
+    const form = new FormData();
+    form.set("destDir", "assets/imports");
+    for (const fixture of fixtures) {
+      form.append(
+        "files",
+        new File([fixture.bytes], fixture.name, { type: fixture.contentType }),
+        fixture.relativePath,
+      );
+    }
+
+    const upload = await app.request(
+      `/v1/sessions/${session.id}/workspace/files/upload`,
+      { method: "POST", body: form },
+    );
+    expect(upload.status).toBe(200);
+    expect(await upload.json()).toEqual({
+      data: fixtures.map((fixture) => ({ path: fixture.storedPath })),
+    });
+
+    const listing = await app.request(`/v1/sessions/${session.id}/workspace/files`);
+    expect(listing.status).toBe(200);
+    const listed = (await listing.json()).data as Array<{ path: string; size: number }>;
+    expect(listed.map((file) => file.path).sort()).toEqual(
+      fixtures.map((fixture) => fixture.storedPath).sort(),
+    );
+    for (const fixture of fixtures) {
+      expect(listed.find((file) => file.path === fixture.storedPath)?.size).toBe(fixture.bytes.length);
+      const encodedPath = fixture.storedPath.split("/").map(encodeURIComponent).join("/");
+      const read = await app.request(`/v1/sessions/${session.id}/workspace/files/${encodedPath}`);
+      expect(read.status).toBe(200);
+      expect(read.headers.get("content-type")).toBe(fixture.contentType);
+      expect(new Uint8Array(await read.arrayBuffer())).toEqual(fixture.bytes);
+    }
+  });
+
   it("rejects a traversal destination with 400", async () => {
     const { app, sessionStore } = createTestApp();
     const session = await seedSession(sessionStore);

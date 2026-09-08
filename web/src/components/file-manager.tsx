@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { TextFileEditor } from "@/components/text-file-editor";
 import { AudioPreview } from "@/components/audio-preview";
 import { buildTree, formatSize, type TreeNode } from "@/lib/workspace-tree";
+import { collectUploadFiles, type UploadInput } from "@/lib/upload-files";
 import {
   classifyMedia,
   methodsOf,
@@ -63,7 +64,7 @@ export interface FileManagerProps {
 // ─── Tree rendering (mirrors workspace-panel's TreeRow visual language) ────────
 
 /** File drags stay inside the manager, including while writes are disabled. */
-function useFileDrop(onFiles?: (files: File[]) => void) {
+function useFileDrop(onFiles?: (input: UploadInput) => void) {
   const [dragging, setDragging] = useState(false);
   const onDragOver = (event: DragEvent<HTMLElement>) => {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -87,8 +88,10 @@ function useFileDrop(onFiles?: (files: File[]) => void) {
         event.preventDefault();
         event.stopPropagation();
         setDragging(false);
-        const files = Array.from(event.dataTransfer.files);
-        if (files.length) onFiles?.(files);
+        // Directory drags expose a placeholder File, not the files inside it.
+        // Pass the transfer synchronously so its entries can be captured while
+        // the drop event still permits access to the drag data store.
+        if (Array.from(event.dataTransfer.types).includes("Files")) onFiles?.(event.dataTransfer);
       },
     },
   };
@@ -111,7 +114,7 @@ function TreeRow({
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
-  onDropFiles?: (files: File[], destDir: string) => void;
+  onDropFiles?: (input: UploadInput, destDir: string) => void;
 }) {
   const isOpen = expanded.has(node.path);
   const isSelected = node.isDir ? node.path === uploadDir : node.path === selectedPath;
@@ -557,15 +560,18 @@ function Dropzone({
   disabled,
   disabledReason,
   destDir,
+  allowDirectories,
 }: {
-  onFiles: (files: File[]) => void;
+  onFiles: (input: UploadInput) => void;
   uploading: boolean;
   disabled: boolean;
   disabledReason: string | null;
   destDir: string;
+  allowDirectories: boolean;
 }) {
   const drop = useFileDrop(disabled ? undefined : onFiles);
   const inputRef = useRef<HTMLInputElement>(null);
+  const directoryInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div
@@ -589,6 +595,21 @@ function Dropzone({
           e.target.value = "";
         }}
       />
+      {allowDirectories && (
+        <input
+          ref={directoryInputRef}
+          type="file"
+          // @ts-expect-error non-standard directory-picker attribute
+          webkitdirectory=""
+          multiple
+          hidden
+          disabled={disabled}
+          onChange={(event) => {
+            if (!disabled && event.target.files?.length) onFiles(Array.from(event.target.files));
+            event.target.value = "";
+          }}
+        />
+      )}
       <UploadCloud className="h-5 w-5 text-[var(--color-fg-subtle)]" />
       <button
         type="button"
@@ -598,6 +619,16 @@ function Dropzone({
       >
         {uploading ? "Uploading…" : "Drag files here or click to select"}
       </button>
+      {allowDirectories && (
+        <button
+          type="button"
+          disabled={disabled}
+          className="text-xs text-[var(--color-fg-muted)] underline disabled:no-underline"
+          onClick={() => directoryInputRef.current?.click()}
+        >
+          Choose folder
+        </button>
+      )}
       <span className="max-w-full truncate font-mono text-[10px] text-[var(--color-fg-subtle)]" title={`Upload to /${destDir}`}>
         Upload to /{destDir}
       </span>
@@ -650,6 +681,11 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   const [writeError, setWriteError] = useState<string | undefined>();
   const [uploading, setUploading] = useState(false);
   const uploadInFlight = useRef(false);
+  const uploadContext = useRef<{ source: FileSource; locked: boolean } | null>(null);
+  useEffect(() => {
+    uploadContext.current = { source, locked: actions.writeDisabledReason !== null };
+    return () => { uploadContext.current = null; };
+  }, [source, actions.writeDisabledReason]);
   const [busy, setBusy] = useState(false); // rename/delete in flight
 
   const nested = source.capabilities.hierarchy === "nested" && actions.showDirs;
@@ -791,8 +827,8 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   }, [source, selectedPath]);
 
   const handleUpload = useCallback(
-    async (files: File[], explicitDestDir?: string) => {
-      if (!source.upload || files.length === 0 || actions.writeDisabledReason || uploadInFlight.current) return;
+    async (input: UploadInput, explicitDestDir?: string) => {
+      if (!source.upload || actions.writeDisabledReason || uploadInFlight.current) return;
       uploadInFlight.current = true;
       setUploading(true);
       setListError(null);
@@ -801,6 +837,11 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
           ? (explicitDestDir ?? uploadDir) || undefined
           : undefined;
         setUploadDir(destDir ?? "");
+        const files = await collectUploadFiles(input);
+        // A directory scan can outlive a source change or the start of a Turn.
+        if (uploadContext.current?.source !== source) return;
+        if (uploadContext.current.locked) throw new Error(WRITE_LOCKED_RETRY);
+        if (!files.length) throw new Error("The folder contains no files. Empty folders cannot be uploaded.");
         await source.upload(files, destDir);
         await refreshSelected();
         if (destDir) {
@@ -1025,6 +1066,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
                 disabled={uploadDisabled}
                 disabledReason={actions.writeDisabledReason}
                 destDir={actions.allowSubdirs ? uploadDir : ""}
+                allowDirectories={actions.allowSubdirs}
               />
             </div>
           )}
