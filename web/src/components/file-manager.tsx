@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent } from "react";
 import {
   RefreshCw,
   Download,
@@ -11,6 +12,7 @@ import {
   FileWarning,
   Image as ImageIcon,
   Film,
+  Music,
   AlertTriangle,
   Pencil,
   Trash2,
@@ -19,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TextFileEditor } from "@/components/text-file-editor";
+import { AudioPreview } from "@/components/audio-preview";
 import { buildTree, formatSize, type TreeNode } from "@/lib/workspace-tree";
 import {
   classifyMedia,
@@ -42,7 +45,7 @@ import {
  * {@link resolveFileActions} and {@link classifyMedia} from `file-source.ts`.
  *
  *  - tree      ← `source.list()`  (nested → buildTree; flat → depth-1 list)
- *  - selection ← `source.read(path)` → `classifyMedia` → text / image / video / binary
+ *  - selection ← `source.read(path)` → `classifyMedia` → text / image / video / audio / binary
  *  - buttons   ← `resolveFileActions(capabilities, methodsOf(source), turnStatus)`
  *  - writes    ← `source.write / rename / delete / upload`
  *  - media     ← `source.previewUrl` (image: large-image opt-in; video: silent re-sign)
@@ -59,10 +62,43 @@ export interface FileManagerProps {
 
 // ─── Tree rendering (mirrors workspace-panel's TreeRow visual language) ────────
 
+/** File drags stay inside the manager, including while writes are disabled. */
+function useFileDrop(onFiles?: (files: File[]) => void) {
+  const [dragging, setDragging] = useState(false);
+  const onDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = onFiles ? "copy" : "none";
+    setDragging(!!onFiles);
+  };
+
+  return {
+    dragging: dragging && !!onFiles,
+    handlers: {
+      onDragEnter: onDragOver,
+      onDragOver,
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+        setDragging(false);
+      },
+      onDragEnd: () => setDragging(false),
+      onDrop: (event: DragEvent<HTMLElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setDragging(false);
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length) onFiles?.(files);
+      },
+    },
+  };
+}
+
 function TreeRow({
   node,
   depth,
   selectedPath,
+  uploadDir,
   expanded,
   onToggle,
   onSelect,
@@ -71,35 +107,32 @@ function TreeRow({
   node: TreeNode;
   depth: number;
   selectedPath: string | null;
+  uploadDir: string;
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
   onDropFiles?: (files: File[], destDir: string) => void;
 }) {
   const isOpen = expanded.has(node.path);
-  const isSelected = !node.isDir && node.path === selectedPath;
+  const isSelected = node.isDir ? node.path === uploadDir : node.path === selectedPath;
   const kind: MediaKind | null = node.isDir ? null : classifyMedia(node.path, "");
+  const destDir = node.isDir ? node.path : currentDir(node.path) ?? "";
+  const drop = useFileDrop(onDropFiles ? (files) => onDropFiles(files, destDir) : undefined);
 
   return (
     <>
       <button
         type="button"
         onClick={() => (node.isDir ? onToggle(node.path) : onSelect(node.path))}
-        onDragOver={(e) => {
-          if (node.isDir && onDropFiles) e.preventDefault();
-        }}
-        onDrop={(e) => {
-          if (!node.isDir || !onDropFiles) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const files = Array.from(e.dataTransfer.files);
-          if (files.length) onDropFiles(files, node.path);
-        }}
+        {...drop.handlers}
+        aria-expanded={node.isDir ? isOpen : undefined}
+        title={onDropFiles ? `Drop files into /${destDir}` : undefined}
         className={cn(
           "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors",
           isSelected
             ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
             : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]",
+          drop.dragging && "bg-[var(--color-accent-muted)] ring-2 ring-inset ring-[var(--color-primary)]",
         )}
         style={{ paddingLeft: `${depth * 12 + 6}px` }}
       >
@@ -137,6 +170,7 @@ function TreeRow({
             node={child}
             depth={depth + 1}
             selectedPath={selectedPath}
+            uploadDir={uploadDir}
             expanded={expanded}
             onToggle={onToggle}
             onSelect={onSelect}
@@ -151,6 +185,7 @@ function TreeKindIcon({ kind }: { kind: MediaKind }) {
   const c = "h-3.5 w-3.5 flex-shrink-0 text-[var(--color-fg-subtle)]";
   if (kind === "image") return <ImageIcon className={c} />;
   if (kind === "video") return <Film className={c} />;
+  if (kind === "audio") return <Music className={c} />;
   return <FileIcon className={c} />;
 }
 
@@ -196,6 +231,16 @@ function MediaPreview({
   if (presentation === "image") {
     return (
       <ImagePreview
+        key={content.path}
+        content={content}
+        getPreviewUrl={getPreviewUrl}
+        onDownload={onDownload}
+      />
+    );
+  }
+  if (presentation === "audio") {
+    return (
+      <AudioPreview
         key={content.path}
         content={content}
         getPreviewUrl={getPreviewUrl}
@@ -511,32 +556,23 @@ function Dropzone({
   uploading,
   disabled,
   disabledReason,
+  destDir,
 }: {
   onFiles: (files: File[]) => void;
   uploading: boolean;
   disabled: boolean;
   disabledReason: string | null;
+  destDir: string;
 }) {
-  const [dragging, setDragging] = useState(false);
+  const drop = useFileDrop(disabled ? undefined : onFiles);
   const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div
-      onDragOver={(e) => {
-        if (disabled) return;
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        if (disabled) return;
-        if (e.dataTransfer.files.length) onFiles(Array.from(e.dataTransfer.files));
-      }}
+      {...drop.handlers}
       className={cn(
         "flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed p-3 text-center transition-colors",
-        dragging
+        drop.dragging
           ? "border-[var(--color-primary)] bg-[var(--color-accent-muted)]"
           : "border-[var(--color-border)]",
         disabled && "opacity-50",
@@ -547,8 +583,9 @@ function Dropzone({
         type="file"
         multiple
         hidden
+        disabled={disabled}
         onChange={(e) => {
-          if (e.target.files?.length) onFiles(Array.from(e.target.files));
+          if (!disabled && e.target.files?.length) onFiles(Array.from(e.target.files));
           e.target.value = "";
         }}
       />
@@ -561,6 +598,9 @@ function Dropzone({
       >
         {uploading ? "Uploading…" : "Drag files here or click to select"}
       </button>
+      <span className="max-w-full truncate font-mono text-[10px] text-[var(--color-fg-subtle)]" title={`Upload to /${destDir}`}>
+        Upload to /{destDir}
+      </span>
       {disabled && disabledReason && (
         <span className="text-[10px] text-[var(--color-fg-subtle)]">{disabledReason}</span>
       )}
@@ -598,6 +638,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   const [listError, setListError] = useState<string | null>(null);
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [uploadDir, setUploadDir] = useState("");
   const [content, setContent] = useState<FileContent | null>(null);
   const [contentRevision, setContentRevision] = useState(0);
   const [contentLoading, setContentLoading] = useState(false);
@@ -608,6 +649,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   const [saved, setSaved] = useState(false);
   const [writeError, setWriteError] = useState<string | undefined>();
   const [uploading, setUploading] = useState(false);
+  const uploadInFlight = useRef(false);
   const [busy, setBusy] = useState(false); // rename/delete in flight
 
   const nested = source.capabilities.hierarchy === "nested" && actions.showDirs;
@@ -628,8 +670,9 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   }, [source]);
 
   const openFile = useCallback(
-    async (path: string) => {
+    async (path: string, selectUploadDir = true) => {
       setSelectedPath(path);
+      if (selectUploadDir) setUploadDir(currentDir(path) ?? "");
       setContentLoading(true);
       setContentError(null);
       setWriteError(undefined);
@@ -654,7 +697,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       const nextNodes = await refresh();
       if (!nextNodes || !path) return;
       if (nextNodes.some((node) => node.path === path && !node.isDir)) {
-        await openFile(path);
+        await openFile(path, false);
       } else {
         setSelectedPath(null);
         setContent(null);
@@ -678,6 +721,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   }, [source, refreshKey]);
 
   const toggle = useCallback((path: string) => {
+    setUploadDir(path);
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
@@ -748,22 +792,33 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
 
   const handleUpload = useCallback(
     async (files: File[], explicitDestDir?: string) => {
-      if (!source.upload || files.length === 0) return;
+      if (!source.upload || files.length === 0 || actions.writeDisabledReason || uploadInFlight.current) return;
+      uploadInFlight.current = true;
       setUploading(true);
       setListError(null);
       try {
         const destDir = actions.allowSubdirs
-          ? explicitDestDir ?? currentDir(selectedPath)
+          ? (explicitDestDir ?? uploadDir) || undefined
           : undefined;
+        setUploadDir(destDir ?? "");
         await source.upload(files, destDir);
         await refreshSelected();
+        if (destDir) {
+          setExpanded((previous) => {
+            const next = new Set(previous);
+            const segments = destDir.split("/");
+            segments.forEach((_, index) => next.add(segments.slice(0, index + 1).join("/")));
+            return next;
+          });
+        }
       } catch (err) {
         setListError(writeErrorMessage(err));
       } finally {
+        uploadInFlight.current = false;
         setUploading(false);
       }
     },
-    [source, actions.allowSubdirs, selectedPath, refreshSelected],
+    [source, actions.allowSubdirs, actions.writeDisabledReason, uploadDir, refreshSelected],
   );
 
   const handleNewFile = useCallback(async () => {
@@ -826,9 +881,23 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
 
   // Write actions are disabled up front while idle-gated mid-turn.
   const writeGated = actions.writeDisabledReason !== null;
+  const uploadDisabled = writeGated || uploading;
+  const rootDrop = useFileDrop(
+    actions.canUpload && !uploadDisabled ? (files) => void handleUpload(files, "") : undefined,
+  );
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      onDragOver={(event) => {
+        if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "none";
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length) event.preventDefault();
+      }}
+    >
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
         <span className="min-w-0 truncate text-xs font-medium text-[var(--color-fg-muted)]">
@@ -890,6 +959,22 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       {/* Body: tree + selected-file pane */}
       <div className="flex min-h-0 flex-1">
         <div className="flex w-64 flex-shrink-0 flex-col border-r border-[var(--color-border)]">
+          {nested && actions.canUpload && (
+            <button
+              type="button"
+              onClick={() => setUploadDir("")}
+              {...rootDrop.handlers}
+              title="Drop files into /"
+              className={cn(
+                "mx-2 mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs text-[var(--color-fg-muted)]",
+                uploadDir === "" && "bg-[var(--color-bg-muted)] text-[var(--color-fg)]",
+                rootDrop.dragging && "bg-[var(--color-accent-muted)] ring-2 ring-inset ring-[var(--color-primary)]",
+              )}
+            >
+              <FolderOpen className="h-3.5 w-3.5 flex-shrink-0" />
+              Root directory /
+            </button>
+          )}
           <div className="min-h-0 flex-1 overflow-auto p-2">
             {listError ? (
               <div className="px-2 py-4 text-xs text-[var(--color-danger)]">{listError}</div>
@@ -906,10 +991,11 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
                   node={node}
                   depth={0}
                   selectedPath={selectedPath}
+                  uploadDir={uploadDir}
                   expanded={expanded}
                   onToggle={toggle}
                   onSelect={openFile}
-                  onDropFiles={actions.canUpload && !writeGated ? handleUpload : undefined}
+                  onDropFiles={actions.canUpload && !uploadDisabled ? handleUpload : undefined}
                 />
               ))
             ) : (
@@ -922,6 +1008,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
                     node={{ name: n.path, path: n.path, isDir: false, size: n.size, children: [] }}
                     depth={0}
                     selectedPath={selectedPath}
+                    uploadDir={uploadDir}
                     expanded={expanded}
                     onToggle={toggle}
                     onSelect={openFile}
@@ -935,8 +1022,9 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
               <Dropzone
                 onFiles={handleUpload}
                 uploading={uploading}
-                disabled={writeGated}
+                disabled={uploadDisabled}
                 disabledReason={actions.writeDisabledReason}
+                destDir={actions.allowSubdirs ? uploadDir : ""}
               />
             </div>
           )}

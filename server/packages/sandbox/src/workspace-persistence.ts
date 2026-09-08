@@ -628,6 +628,26 @@ function contentTypeForPath(path: string): string | undefined {
       return "video/x-matroska";
     case "ogv":
       return "video/ogg";
+    case "mp3":
+      return "audio/mpeg";
+    case "wav":
+      return "audio/wav";
+    case "m4a":
+    case "m4b":
+      return "audio/mp4";
+    case "weba":
+      return "audio/webm";
+    case "aac":
+      return "audio/aac";
+    case "ogg":
+    case "oga":
+    case "opus":
+      return "audio/ogg";
+    case "flac":
+      return "audio/flac";
+    case "aif":
+    case "aiff":
+      return "audio/aiff";
     default:
       return undefined;
   }

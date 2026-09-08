@@ -284,4 +284,47 @@ describe("S3WorkspacePersistence binary safety", () => {
     expect(puts[0].body).toEqual(png);
     expect(puts[0].contentType).toBe("image/png");
   });
+
+  it.each([
+    ["mp3", "audio/mpeg"],
+    ["wav", "audio/wav"],
+    ["m4a", "audio/mp4"],
+    ["m4b", "audio/mp4"],
+    ["weba", "audio/webm"],
+    ["aac", "audio/aac"],
+    ["ogg", "audio/ogg"],
+    ["oga", "audio/ogg"],
+    ["opus", "audio/ogg"],
+    ["flac", "audio/flac"],
+    ["aif", "audio/aiff"],
+    ["aiff", "audio/aiff"],
+    ["MP3", "audio/mpeg"],
+  ])("syncs .%s audio bytes with a playable MIME", async (extension, contentType) => {
+    const puts: ArtifactPutInput[] = [];
+    const store: ArtifactStore = {
+      list: async () => [],
+      get: async () => null,
+      exists: async () => false,
+      put: async (input) => {
+        puts.push(input);
+        const size = typeof input.body === "string"
+          ? Buffer.byteLength(input.body)
+          : input.body.byteLength;
+        return { path: input.path, size };
+      },
+      delete: async () => false,
+    };
+    const persistence = new S3WorkspacePersistence(store);
+    const { client, id } = await makeSandbox();
+    const fs = fsAccessFor(client, id);
+    const session = await persistence.hydrate(targetFor(fs));
+    const bytes = Uint8Array.from([0x00, 0xff, 0x80, 0x01]);
+    const path = `audio/voice.${extension}`;
+
+    await client.writeFileBytes(id, `/workspace/${path}`, bytes);
+    await persistence.sync(session, targetFor(fs));
+
+    expect(puts).toHaveLength(1);
+    expect(puts[0]).toMatchObject({ path, body: bytes, contentType });
+  });
 });
