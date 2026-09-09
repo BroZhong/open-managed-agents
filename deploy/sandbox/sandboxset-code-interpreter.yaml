@@ -36,9 +36,11 @@ spec:
         alibabacloud.com/compute-qos: default
     spec:
       automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ali-shanghai
       containers:
         - name: sandbox
-          image: registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
+          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:1cf094551dd4822ccb184fa95da7bd170af001b3a1a23ae45e1499eb5007391d
           resources:
             requests:
               cpu: "1"

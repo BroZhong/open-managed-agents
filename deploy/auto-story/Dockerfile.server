@@ -5,7 +5,11 @@ FROM ${BASE_IMAGE}
 WORKDIR /app
 COPY adapter/packages/pi-agent/package.json adapter/packages/pi-agent/package.json
 COPY adapter/packages/pi-agent/src/ adapter/packages/pi-agent/src/
+COPY adapter/pnpm-workspace.yaml adapter/pnpm-workspace.yaml
+COPY adapter/patches/ adapter/patches/
 COPY adapter/pnpm-lock.yaml adapter/pnpm-lock.yaml
+COPY server/pnpm-workspace.yaml server/pnpm-workspace.yaml
+COPY server/patches/ server/patches/
 COPY server/pnpm-lock.yaml server/pnpm-lock.yaml
 RUN cd adapter && pnpm install --frozen-lockfile && cd ../server && pnpm install --frozen-lockfile
 COPY server/packages/api/src/lib/sandbox-env.ts server/packages/api/src/lib/sandbox-env.ts

@@ -55,6 +55,18 @@ ARG SANDBOX_USER=user
 ARG VFS_CLI_VERSION=v0.3.14
 ARG MEDIAKIT_CLI_VERSION=0.2.1
 USER root
+# Pi search binaries are staged from pinned, checksum-verified upstream releases.
+# Keep this in the final stage so RUNTIME_IMAGE reuse also gets the new tools.
+COPY bin/rg bin/fd /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/rg /usr/local/bin/fd && \
+    printf '%s\n' \
+      'ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2  /usr/local/bin/rg' \
+      '0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8  /usr/local/bin/fd' | sha256sum --check - && \
+    mkdir -p /opt/pi-search && \
+    rg --version > /opt/pi-search/rg-version.txt && \
+    fd --version > /opt/pi-search/fd-version.txt && \
+    grep -Fx 'fd 10.4.2' /opt/pi-search/fd-version.txt && \
+    sha256sum /usr/local/bin/rg /usr/local/bin/fd > /opt/pi-search/tool-sha256.txt
 # Linux binaries are staged and checked before build. No runtime installation
 # and no installer side effects in HOME or the equipped Skill projections.
 COPY bin/vfs-cli bin/mediakit-cli /usr/local/bin/

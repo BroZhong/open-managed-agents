@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
 import type { ExecOutputChunk } from "@open-managed-agents/adapter-core";
+import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import {
   LocalToolExecutor,
   createLocalToolExecutor,
@@ -87,6 +89,75 @@ describe("LocalToolExecutor", () => {
       );
       expect(stdout).toBe("out");
       expect(stderr).toBe("err");
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("reports a nonzero exit once after streaming output", async () => {
+    const { executor, dispose } = await createLocalToolExecutor();
+    try {
+      const events: unknown[] = [];
+      for await (const chunk of executor.exec([process.execPath, "-e", "process.stdout.write('match'); process.exitCode = 2"], {
+        onExit: (result) => events.push(result),
+      })) events.push(chunk);
+      expect(events).toEqual([{ stream: "stdout", text: "match" }, { exitCode: 2 }]);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("preserves Unicode characters split across stdout and stderr writes", async () => {
+    const { executor, dispose } = await createLocalToolExecutor();
+    try {
+      const result = await collectExec(executor.exec([process.execPath, "-e", `
+        const stdout = Buffer.from("中文😀");
+        const stderr = Buffer.from("错误🎬");
+        process.stdout.write(stdout.subarray(0, 1));
+        process.stderr.write(stderr.subarray(0, 2));
+        setTimeout(() => {
+          process.stdout.write(stdout.subarray(1, 8));
+          process.stderr.write(stderr.subarray(2, 9));
+          setTimeout(() => {
+            process.stdout.write(stdout.subarray(8));
+            process.stderr.write(stderr.subarray(9));
+          }, 50);
+        }, 50);
+      `]));
+      expect(result).toEqual({ stdout: "中文😀", stderr: "错误🎬" });
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("aborting kills the process group before a descendant can write a marker", async () => {
+    const { executor, dispose } = await createLocalToolExecutor();
+    const controller = new AbortController();
+    const onExit = vi.fn();
+    try {
+      const running = (async () => {
+        for await (const chunk of executor.exec([
+          "/bin/sh", "-c", "(sleep 0.2; printf leaked > marker) & printf started; wait",
+        ], { signal: controller.signal, onExit })) {
+          if (chunk.text.includes("started")) controller.abort();
+        }
+      })();
+      await expect(running).rejects.toMatchObject({ name: "AbortError" });
+      expect(onExit).toHaveBeenCalledExactlyOnceWith({ exitCode: null, signal: "SIGKILL" });
+      await delay(300);
+      await expect(executor.readFile("marker")).rejects.toThrow(/ENOENT/);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("does not launch a command when its signal is already aborted", async () => {
+    const { executor, dispose } = await createLocalToolExecutor();
+    try {
+      await expect(collectExec(executor.exec(["/bin/sh", "-c", "echo leaked > marker"], {
+        signal: AbortSignal.abort(),
+      }))).rejects.toBeInstanceOf(ExecAbortedBeforeStartError);
+      await expect(executor.readFile("marker")).rejects.toThrow(/ENOENT/);
     } finally {
       await dispose();
     }

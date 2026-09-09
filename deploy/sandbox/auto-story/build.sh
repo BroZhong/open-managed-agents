@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-0.1.1}"
+VERSION="${VERSION:-0.1.2}"
 REGISTRY="${REGISTRY:-registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox}"
 TAG="${TAG:-auto-story-${VERSION}}"
 IMAGE="${REGISTRY}:${TAG}"
@@ -23,6 +23,7 @@ case "${1:-}" in
   *) echo "Usage: $0 [--prepare-only]" >&2; exit 2 ;;
 esac
 
+python3 ../prepare-search-binaries.py bin
 mkdir -p bin
 if [[ -n "${VFS_CLI_SRC:-}" ]]; then
   install -m 0755 "$VFS_CLI_SRC" bin/vfs-cli

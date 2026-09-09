@@ -66,6 +66,27 @@ describe("SandboxManager / SandboxSession", () => {
     expect(sandboxClient.liveCount).toBe(0);
   });
 
+  it("forwards process exit status and cancellation through the executor boundary", async () => {
+    const controller = new AbortController();
+    const exits: unknown[] = [];
+    const sandboxClient = new FakeSandboxClient({
+      execHandler(command, _files, opts) {
+        if (command[0] !== "rg") return undefined;
+        expect(opts?.signal).toBe(controller.signal);
+        opts?.onExit?.({ exitCode: 2 });
+        return [{ stream: "stderr", text: "regex parse error" }];
+      },
+    });
+    const { manager } = makeManager({ sandboxClient });
+    const session = manager.open(specFor());
+    await drainExec(session.exec(["rg", "["], {
+      signal: controller.signal,
+      onExit: (result) => exits.push(result),
+    }));
+    expect(exits).toEqual([{ exitCode: 2 }]);
+    await session.dispose();
+  });
+
   it("the first primitive triggers exactly one create + hydrate", async () => {
     const { manager, sandboxClient } = makeManager({ seed: [["main.py", "hi"]] });
     const session = manager.open(specFor());

@@ -2,8 +2,10 @@ import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import type {
   ExecOptions,
+  ExecExitResult,
   ExecOutputChunk,
   FileListEntry,
   ToolExecutor,
@@ -52,19 +54,42 @@ export class LocalToolExecutor implements ToolExecutor {
     }
     const cwd = this.resolveInside(opts?.cwd, "cwd");
     await mkdir(cwd, { recursive: true });
+    if (opts?.signal?.aborted) {
+      throw new ExecAbortedBeforeStartError();
+    }
 
     const [cmd, ...args] = command;
     const child = spawn(cmd, args, {
       cwd,
       env: { ...process.env, ...(opts?.env ?? {}) },
       stdio: ["ignore", "pipe", "pipe"],
+      // A separate process group lets cancellation stop shell descendants too.
+      detached: process.platform !== "win32",
     });
 
+    const kill = () => {
+      try {
+        if (process.platform !== "win32" && child.pid) {
+          process.kill(-child.pid, "SIGKILL");
+        } else {
+          child.kill("SIGKILL");
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+        // Some host sandboxes permit terminating a child but reject process
+        // group signals. The direct child still needs to be reaped normally.
+        try {
+          if (child.kill("SIGKILL")) return;
+        } catch {
+          // Preserve the original failure through the iterator, never throw
+          // from an AbortSignal listener or timer callback.
+        }
+        killError = error instanceof Error ? error : new Error(String(error));
+      }
+    };
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     if (opts?.timeoutSeconds) {
-      timeoutId = setTimeout(() => {
-        child.kill("SIGTERM");
-      }, opts.timeoutSeconds * 1000);
+      timeoutId = setTimeout(kill, opts.timeoutSeconds * 1000);
     }
 
     // Bridge the two byte streams into a single ordered async queue.
@@ -72,6 +97,15 @@ export class LocalToolExecutor implements ToolExecutor {
     let resolveNext: (() => void) | undefined;
     let done = false;
     let error: Error | undefined;
+    let killError: Error | undefined;
+    let exitResult: ExecExitResult | undefined;
+    let exitReported = false;
+    const reportExit = () => {
+      if (!exitReported && exitResult) {
+        exitReported = true;
+        opts?.onExit?.(exitResult);
+      }
+    };
 
     const wake = () => {
       if (resolveNext) {
@@ -81,21 +115,28 @@ export class LocalToolExecutor implements ToolExecutor {
       }
     };
 
-    const push = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
-      queue.push({ stream, text: chunk.toString("utf8") });
+    const push = (stream: "stdout" | "stderr") => (text: string) => {
+      queue.push({ stream, text });
       wake();
     };
-    child.stdout.on("data", push("stdout"));
-    child.stderr.on("data", push("stderr"));
+    // Each pipe retains its own decoder state across byte chunks and flushes
+    // at EOF. A chunk boundary can split a Chinese character or an emoji.
+    child.stdout.setEncoding("utf8").on("data", push("stdout"));
+    child.stderr.setEncoding("utf8").on("data", push("stderr"));
     child.on("error", (e) => {
       error = e instanceof Error ? e : new Error(String(e));
+    });
+    const closed = new Promise<void>((resolveClosed) => child.on("close", (exitCode, signal) => {
+      if (!error) exitResult = { exitCode, ...(signal ? { signal } : {}) };
       done = true;
       wake();
-    });
-    child.on("close", () => {
-      done = true;
-      wake();
-    });
+      resolveClosed();
+    }));
+    const onAbort = () => {
+      if (!done) kill();
+    };
+    opts?.signal?.addEventListener("abort", onAbort, { once: true });
+    if (opts?.signal?.aborted) onAbort();
 
     try {
       while (true) {
@@ -104,7 +145,12 @@ export class LocalToolExecutor implements ToolExecutor {
           continue;
         }
         if (done) {
+          reportExit();
+          if (killError) throw killError;
           if (error) throw error;
+          if (opts?.signal?.aborted && exitResult?.signal) {
+            throw new DOMException("Command aborted", "AbortError");
+          }
           return;
         }
         await new Promise<void>((r) => {
@@ -113,7 +159,12 @@ export class LocalToolExecutor implements ToolExecutor {
       }
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
-      if (!done) child.kill("SIGTERM");
+      opts?.signal?.removeEventListener("abort", onAbort);
+      if (!done) {
+        kill();
+        await closed;
+      }
+      reportExit();
     }
   }
 

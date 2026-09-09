@@ -8,13 +8,30 @@ It inherits the exact existing production sandbox digest
 including its VFS/OpenMontage toolchain and FFmpeg installation.
 
 The image includes Linux amd64 `vfs-cli` v0.3.14, `mediakit-cli` 0.2.1,
-FFmpeg/ffprobe, and the official `google-genai` Python SDK 2.22.0. VFS CLI
+FFmpeg/ffprobe, ripgrep (`rg`), fd, and the official `google-genai` Python SDK 2.22.0. VFS CLI
 v0.3.14 adds SeedAudio generation and audio Resource registration. Python, pip, Node and
 the CLIs resolve on a non-login PATH. MediaKit local output defaults to
 `/home/user/media`, which participates in Workspace persistence.
 
 Skills are equipped onto the Agent from the existing local Skill folders and
 projected under `/skills` by the Host. They are not bundled into this image.
+
+## Native Pi search
+
+The Host uses the pinned Pi 0.80.10 [process hook patch](../../../adapter/patches/README.md)
+to run Pi's original `grep` and `find` implementations with sandbox `rg` and
+`fd` processes. Both the adapter and server workspace must install that patch.
+Search does not fall back to Host binaries, Python regular expressions, or a
+file-list glob implementation if an executable is missing; the native tool
+returns the process error. Shell calls can also invoke the same binaries.
+
+The image includes exact upstream Linux amd64 releases: rg 15.1.0 and fd
+10.4.2, matching the versions used in local/cloud parity checks. Preparation
+verifies the published archive hashes and derived binary hashes; the Dockerfile
+independently checks the binary hashes before running them. The final stage
+copies these binaries even when an existing `RUNTIME_IMAGE` is reused. No
+runtime internet access is needed to discover or install them. CLI versions
+and SHA-256 checksums are recorded in `/opt/pi-search/`.
 
 ## Environment variables
 
@@ -63,6 +80,12 @@ for a host without GitHub access. Supplying a custom MediaKit version also
 requires its matching `MEDIAKIT_ARCHIVE_SHA256` when downloading. CLI versions
 are checked again inside the Linux image.
 
+`RG_SRC` and `FD_SRC` can supply the verified Linux binaries for a build host
+without GitHub access. Otherwise preparation downloads the pinned official
+archives. Existing `bin/rg` and `bin/fd` are reused only when their checksums
+match. Copy the entire committed sandbox recipe tree to the build host because
+both build scripts call the shared `../prepare-search-binaries.py` helper.
+
 On `vfs-dev`, transfer this directory with its prepared `bin/` contents into a
 new temporary build directory, then run `./build.sh`. The default pinned parent
 is available on the Shanghai VPC. `BASE_IMAGE` can also select the raw ACS
@@ -86,15 +109,15 @@ PUSH=1 ./build.sh
 ```
 
 `REGISTRY`, `TAG` and `VERSION` select the release destination. The default is
-`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.1`.
+`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.2`.
 Record the resulting digest in the SandboxSet before a production rollout.
 
-For the 0.1.1 CLI update, reuse the verified 0.1.0 runtime by immutable digest.
+For the 0.1.2 search update, reuse the verified 0.1.1 runtime by immutable digest.
 This skips reinstalling unchanged Python/OpenMontage dependencies while the
-final stage still verifies both CLI versions and reruns all image checks:
+final stage verifies all CLI versions and reruns all image checks:
 
 ```bash
-RUNTIME_IMAGE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:96ab935b6d775aeac5cd8a3f0c8fc5f1faf1d715f1345ba8ab57bc8467b0fd3f \
+RUNTIME_IMAGE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:bdf9bdc74ad8e1f289b3993bb8154e388a505a43c3e24d47cbaae874e5ad49f4 \
   VFS_CLI_SRC=/path/to/verified-v0.3.14-linux-amd64/vfs-cli \
   PUSH=1 ./build.sh
 ```
@@ -103,7 +126,9 @@ Omit `RUNTIME_IMAGE` to build the runtime stage from the original pinned
 OpenMontage parent. Skills remain Host projections in either build mode.
 
 `verify-image.sh IMAGE` runs the actual binaries as `user`, with no network,
-no host mounts and a minimal PATH. It generates a one-second H.264/AAC fixture,
+no host mounts and a minimal PATH. It verifies rg's Unicode regex, brace glob
+and `.gitignore` support and fd's recursive basename and path glob searches.
+It generates a one-second H.264/AAC fixture,
 checks ffprobe and MediaKit's metadata result, verifies embedded VFS skill
 discovery, imports Gemini Files/Interactions APIs, and checks environment
 injection without printing values. Audio contract checks inspect the exact
