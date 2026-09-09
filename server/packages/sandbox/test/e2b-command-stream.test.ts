@@ -9,6 +9,7 @@ type ProcessEvent = EventStream extends AsyncIterable<infer Event> ? Event : nev
 
 const require = createRequire(import.meta.url);
 let handles: Record<"cjs" | "esm", CommandHandleConstructor>;
+let sdks: Record<"cjs" | "esm", typeof import("e2b")>;
 
 beforeAll(async () => {
   // Exercise both published runtime bundles, not a replacement decoder or a
@@ -25,6 +26,7 @@ beforeAll(async () => {
     await handle.wait();
     return handle.constructor as CommandHandleConstructor;
   };
+  sdks = { cjs, esm };
   handles = { cjs: await constructor(cjs), esm: await constructor(esm) };
 });
 
@@ -72,13 +74,17 @@ function run(kind: "cjs" | "esm", chunks: ProcessEvent[], exitCode = 0) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const pty: Uint8Array[] = [];
+  const stdoutBytes: Uint8Array[] = [];
+  const stderrBytes: Uint8Array[] = [];
   const handle = new handles[kind](
     123, () => {}, async () => true, events(chunks, exitCode),
     (text) => { stdout.push(text); },
     (text) => { stderr.push(text); },
     (bytes) => { pty.push(bytes); },
+    (bytes) => { stdoutBytes.push(bytes); },
+    (bytes) => { stderrBytes.push(bytes); },
   );
-  return { handle, stdout, stderr, pty };
+  return { handle, stdout, stderr, pty, stdoutBytes, stderrBytes };
 }
 
 describe.each(["cjs", "esm"] as const)("real E2B CommandHandle %s streaming", (kind) => {
@@ -136,6 +142,42 @@ describe.each(["cjs", "esm"] as const)("real E2B CommandHandle %s streaming", (k
     await expect(handle.wait()).rejects.toMatchObject({ exitCode: 2, stdout: "中", stderr: "e�" });
     expect(stdout.join("")).toBe("中");
     expect(stderr.join("")).toBe("e�");
+  });
+
+  it("preserves raw NUL, BOM and invalid UTF-8 alongside decoded text", async () => {
+    const rawOut = [[0xef], [0xbb, 0xbf, 0x00, 0xff], [0xe4, 0xb8]];
+    const rawErr = [[0x00, 0xfe, 0xf0], [0x9f, 0x98, 0x80]];
+    const { handle, stdoutBytes, stderrBytes, stdout, stderr } = run(kind, [
+      data("stdout", rawOut[0]), data("stderr", rawErr[0]),
+      data("stdout", rawOut[1]), data("stderr", rawErr[1]), data("stdout", rawOut[2]),
+    ]);
+    const result = await handle.wait();
+    expect(stdoutBytes).toEqual(rawOut.map((bytes) => Uint8Array.from(bytes)));
+    expect(stderrBytes).toEqual(rawErr.map((bytes) => Uint8Array.from(bytes)));
+    expect(result.stdout).toBe("\uFEFF\0��");
+    expect(result.stderr).toBe("\0�😀");
+    expect(stdout.join("")).toBe(result.stdout);
+    expect(stderr.join("")).toBe(result.stderr);
+  });
+
+  it.each(["run", "connect"] as const)("forwards public commands.%s raw callbacks to the real handle", async (method) => {
+    const sandbox = new sdks[kind].Sandbox({ sandboxId: "raw-byte-test", envdVersion: "0.2.0", domain: "invalid" });
+    const chunks = [data("stdout", [0x00, 0xff]), data("stderr", [0xef, 0xbb, 0xbf, 0xfe])];
+    Object.defineProperty(sandbox.commands, "rpc", {
+      value: { start: () => events(chunks, 0), connect: () => events(chunks, 0) },
+    });
+    const stdout: Uint8Array[] = [];
+    const stderr: Uint8Array[] = [];
+    const callbacks = {
+      onStdoutBytes: (bytes: Uint8Array) => { stdout.push(bytes); },
+      onStderrBytes: (bytes: Uint8Array) => { stderr.push(bytes); },
+    };
+    const handle = method === "run"
+      ? await sandbox.commands.run("true", { background: true, timeoutMs: 0, ...callbacks })
+      : await sandbox.commands.connect(123, callbacks);
+    expect(await handle.wait()).toMatchObject({ stdout: "\0�", stderr: "\uFEFF�", exitCode: 0 });
+    expect(stdout).toEqual([Uint8Array.from([0x00, 0xff])]);
+    expect(stderr).toEqual([Uint8Array.from([0xef, 0xbb, 0xbf, 0xfe])]);
   });
 
   it("passes PTY bytes through without text decoding", async () => {

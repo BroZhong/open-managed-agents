@@ -14,10 +14,13 @@
  * is talking to.
  */
 
+import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
+
 /** A chunk of output from a running command inside the sandbox. */
 export interface SandboxExecChunk {
   stream: "stdout" | "stderr";
   text: string;
+  bytes?: Uint8Array;
 }
 
 /** Options for a single sandbox `exec` invocation. */
@@ -76,6 +79,9 @@ export interface SandboxHandle {
  * kruise CRD; a fake implements the same surface in-memory for tests.
  */
 export interface SandboxClient {
+  /** Native I/O primitives at absolute sandbox paths, separate from persistence. */
+  fileSystem?(id: string): ToolFileSystem;
+
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
 

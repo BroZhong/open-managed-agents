@@ -51,6 +51,9 @@ export type { Adapter } from "./interface.js";
 
 export type {
   ToolExecutor,
+  ToolFileSystem,
+  ToolFileSystemOptions,
+  ToolFileStat,
   ExecOutputChunk,
   ExecExitResult,
   ExecOptions,

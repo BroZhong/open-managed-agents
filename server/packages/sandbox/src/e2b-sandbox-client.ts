@@ -1,5 +1,7 @@
 import { Sandbox } from "e2b";
 import { ExecAbortedBeforeStartError, SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
+import { createSandboxFileSystem } from "./sandbox-file-system.js";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -29,6 +31,8 @@ export interface E2BCommandOptions {
   signal?: AbortSignal;
   onStdout?: (data: string) => void | Promise<void>;
   onStderr?: (data: string) => void | Promise<void>;
+  onStdoutBytes?: (data: Uint8Array) => void | Promise<void>;
+  onStderrBytes?: (data: Uint8Array) => void | Promise<void>;
 }
 
 /**
@@ -110,6 +114,21 @@ export class E2BSandboxClient implements SandboxClient {
   private readonly createSandbox: CreateSandboxFn;
   /** id -> live sandbox handle, so subsequent ops resolve the instance. */
   private readonly sandboxes = new Map<string, E2BSandbox>();
+  private readonly fileSystems = new Map<string, ToolFileSystem>();
+
+  fileSystem(id: string): ToolFileSystem {
+    this.require(id);
+    let fileSystem = this.fileSystems.get(id);
+    if (!fileSystem) {
+      fileSystem = createSandboxFileSystem({
+        exec: (command, options) => this.exec(id, command, options),
+        writeFileBytes: (path, content) => this.writeFileBytes(id, path, content),
+        remove: (path) => this.remove(id, path),
+      });
+      this.fileSystems.set(id, fileSystem);
+    }
+    return fileSystem;
+  }
 
   constructor(opts: E2BSandboxClientOptions) {
     if (!opts.domain) throw new Error("E2BSandboxClient requires a domain");
@@ -233,6 +252,7 @@ export class E2BSandboxClient implements SandboxClient {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox) return; // already gone — idempotent.
     this.sandboxes.delete(id);
+    this.fileSystems.delete(id);
     try {
       await sandbox.kill();
     } catch {
@@ -339,7 +359,21 @@ async function* streamRun(
     }
   };
   const push = (stream: "stdout" | "stderr") => (data: string) => {
+    // The patched SDK invokes its raw callback before the legacy text callback.
+    // Test/legacy transports that only provide text still retain their surface.
+    if (rawStreams.has(stream)) return;
     queue.push({ stream, text: data });
+    wake();
+  };
+  const rawStreams = new Set<"stdout" | "stderr">();
+  const decoders = {
+    stdout: new TextDecoder("utf-8", { ignoreBOM: true }),
+    stderr: new TextDecoder("utf-8", { ignoreBOM: true }),
+  };
+  const pushBytes = (stream: "stdout" | "stderr") => (data: Uint8Array) => {
+    rawStreams.add(stream);
+    const bytes = new Uint8Array(data);
+    queue.push({ stream, bytes, text: decoders[stream].decode(bytes, { stream: true }) });
     wake();
   };
 
@@ -355,6 +389,8 @@ async function* streamRun(
         background: true,
         onStdout: push("stdout"),
         onStderr: push("stderr"),
+        onStdoutBytes: pushBytes("stdout"),
+        onStderrBytes: pushBytes("stderr"),
       });
       // Attach both handlers before killing; a fast SIGKILL must not produce
       // an unhandled rejection while the kill RPC is still pending.
@@ -387,6 +423,12 @@ async function* streamRun(
         try { await handle.disconnect(); } catch { /* Preserve the original error. */ }
       }
     } finally {
+      if (exitResult) {
+        for (const stream of rawStreams) {
+          const text = decoders[stream].decode();
+          if (text) queue.push({ stream, text, bytes: new Uint8Array() });
+        }
+      }
       done = true;
       wake();
     }

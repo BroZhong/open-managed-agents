@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import type { ToolExecutor } from "@open-managed-agents/adapter-core";
+import { describe, it, expect, vi } from "vitest";
+import type { ToolExecutor, ToolFileSystem } from "@open-managed-agents/adapter-core";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import {
   FakeWorkspacePersistence,
@@ -84,6 +84,63 @@ describe("SandboxManager / SandboxSession", () => {
       onExit: (result) => exits.push(result),
     }));
     expect(exits).toEqual([{ exitCode: 2 }]);
+    await session.dispose();
+  });
+
+  it("forwards native filesystem paths, bytes and cancellation through a stable lazy capability", async () => {
+    const binary = new Uint8Array([255, 0, 239, 187, 191]);
+    const fs: ToolFileSystem = {
+      readFile: vi.fn(async () => binary),
+      writeFile: vi.fn(async () => {}),
+      appendFile: vi.fn(async () => {}),
+      access: vi.fn(async () => {}),
+      stat: vi.fn(async () => ({ isFile: true, isDirectory: false, isSymbolicLink: false, size: 5, mtimeMs: 123 })),
+      lstat: vi.fn(async () => ({ isFile: false, isDirectory: false, isSymbolicLink: true, size: 4, mtimeMs: 123 })),
+      realpath: vi.fn(async () => "/skills/example/SKILL.md"),
+      readdir: vi.fn(async () => ["empty", "file"]),
+      mkdir: vi.fn(async () => {}),
+      createTempFile: vi.fn(async () => "/tmp/oma-pi-result/output.log"),
+    };
+    const sandboxClient = Object.assign(new FakeSandboxClient(), { fileSystem: vi.fn((_id: string) => fs) });
+    const { manager } = makeManager({ sandboxClient });
+    const session = manager.open(specFor());
+    const capability = session.fileSystem!;
+    const options = { signal: new AbortController().signal };
+    expect(sandboxClient.created).toEqual([]);
+    expect(await capability.readFile("image", options)).toBe(binary);
+    await capability.writeFile("image", binary, options);
+    await capability.appendFile("/tmp/output", binary, options);
+    await capability.access("/skills/example", 4, options);
+    await capability.stat("image", options);
+    await capability.lstat("link", options);
+    expect(await capability.realpath("link", options)).toBe("/skills/example/SKILL.md");
+    expect(await capability.readdir(".", options)).toEqual(["empty", "file"]);
+    await capability.mkdir("empty", options);
+    const temporary = await capability.createTempFile(options);
+    await capability.readFile(temporary, options);
+    expect(fs.writeFile).toHaveBeenCalledWith("/home/user/image", binary, options);
+    expect(fs.appendFile).toHaveBeenCalledWith("/tmp/output", binary, options);
+    expect(fs.access).toHaveBeenCalledWith("/skills/example", 4, options);
+    expect(fs.stat).toHaveBeenCalledWith("/home/user/image", options);
+    expect(fs.lstat).toHaveBeenCalledWith("/home/user/link", options);
+    expect(fs.readdir).toHaveBeenCalledWith("/home/user", options);
+    expect(fs.mkdir).toHaveBeenCalledWith("/home/user/empty", options);
+    expect(fs.readFile).toHaveBeenLastCalledWith(temporary, options);
+    const oldId = sandboxClient.created[0];
+    sandboxClient.reclaim(oldId);
+    await capability.access("new", undefined, options);
+    expect(session.fileSystem).toBe(capability);
+    expect(sandboxClient.created).toHaveLength(2);
+    expect(sandboxClient.fileSystem).toHaveBeenLastCalledWith(sandboxClient.created[1]);
+    await session.dispose();
+    await expect(capability.readdir(".")).rejects.toBeInstanceOf(SandboxSessionClosed);
+  });
+
+  it("does not provision a sandbox for pre-aborted native I/O", async () => {
+    const { manager, sandboxClient } = makeManager();
+    const session = manager.open(specFor());
+    await expect(session.fileSystem!.mkdir("unused", { signal: AbortSignal.abort() })).rejects.toMatchObject({ name: "AbortError" });
+    expect(sandboxClient.created).toEqual([]);
     await session.dispose();
   });
 

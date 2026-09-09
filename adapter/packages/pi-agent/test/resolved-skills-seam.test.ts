@@ -1,3 +1,4 @@
+import { MemoryFileSystem } from "./memory-file-system.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type {
@@ -106,6 +107,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 
 const noopExecutor: ToolExecutor = {
+  fileSystem: new MemoryFileSystem(),
   async *exec() {},
   async readFile() {
     return "";

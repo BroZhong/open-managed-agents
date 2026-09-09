@@ -101,7 +101,7 @@ describe("LocalToolExecutor", () => {
       for await (const chunk of executor.exec([process.execPath, "-e", "process.stdout.write('match'); process.exitCode = 2"], {
         onExit: (result) => events.push(result),
       })) events.push(chunk);
-      expect(events).toEqual([{ stream: "stdout", text: "match" }, { exitCode: 2 }]);
+      expect(events).toEqual([{ stream: "stdout", text: "match", bytes: new Uint8Array(Buffer.from("match")) }, { exitCode: 2 }]);
     } finally {
       await dispose();
     }

@@ -4,6 +4,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExecOptions, ExecOutputChunk, ToolExecutor } from "@open-managed-agents/adapter-core";
+import { MemoryFileSystem } from "./memory-file-system.js";
 import { buildCustomTools } from "../src/custom-tools.js";
 
 const original = {
@@ -33,26 +34,34 @@ class CapturingExecutor implements ToolExecutor {
   omitExit = false;
   newline = false;
   duringStat?: () => void;
+  readonly probes: string[] = [];
+  readonly fileSystem = Object.assign(new MemoryFileSystem(), {
+    stat: async (path: string) => {
+      this.probes.push(`stat ${path}`);
+      this.duringStat?.();
+      return { isDirectory: true, isFile: false, isSymbolicLink: false, size: 0, mtimeMs: 0 };
+    },
+    access: async (path: string) => {
+      this.probes.push(`access ${path}`);
+      if (!path.endsWith("/.git")) this.duringStat?.();
+      if (path.endsWith("/.git")) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    },
+    readFile: async (path: string) => {
+      this.probes.push(`read ${path}`);
+      return Buffer.from("before\nNeedle\nafter");
+    },
+  });
   async *exec(command: string[], options?: ExecOptions): AsyncIterable<ExecOutputChunk> {
     this.calls.push({ command, options });
-    if (command[0] === "python3") {
-      this.duringStat?.();
-      const action = command[4];
-      const result = action === "stat" ? { isDirectory: true }
-        : action === "exists" ? { exists: false }
-        : { data: Buffer.from("before\nNeedle\nafter").toString("base64") };
-      yield { stream: "stdout", text: JSON.stringify(result) };
-    } else {
-      if (this.stderr) yield { stream: "stderr", text: this.stderr };
-      if (this.code === 0) {
-        // No final newline: close must follow readline's last buffered line.
-        yield { stream: "stdout", text: command[0] === "fd"
-          ? "/skills/fixture/nested/a.ts"
-          : JSON.stringify({ type: "match", data: {
-            path: { text: "/home/user/src/a.ts" }, line_number: 2,
-            lines: { text: "Needle\n" },
-          } }) + (this.newline ? "\n" : "") };
-      }
+    if (this.stderr) yield { stream: "stderr", text: this.stderr };
+    if (this.code === 0) {
+      // No final newline: close must follow readline's last buffered line.
+      yield { stream: "stdout", text: command[0] === "fd"
+        ? "/skills/fixture/nested/a.ts"
+        : JSON.stringify({ type: "match", data: {
+          path: { text: "/home/user/src/a.ts" }, line_number: 2,
+          lines: { text: "Needle\n" },
+        } }) + (this.newline ? "\n" : "") };
     }
     if (!this.omitExit) options?.onExit?.({ exitCode: this.code });
   }
@@ -90,8 +99,8 @@ describe("native search sandbox boundary", () => {
       "fd", "--glob", "--color=never", "--hidden", "--no-require-git", "--max-results", "1000",
       "--full-path", "--", "**/src/?hild.ts", "/skills/fixture",
     ]);
-    expect(executor.calls.filter(({ command }) => command[4] === "exists").map(({ command }) => command[5]))
-      .toEqual(["/skills/fixture/.git", "/skills/.git", "/.git"]);
+    expect(executor.probes.filter((call) => call.startsWith("access ") && call.endsWith("/.git")))
+      .toEqual(["access /skills/fixture/.git", "access /skills/.git", "access /.git"]);
     expect(forbidden).not.toHaveBeenCalled();
   });
 
@@ -114,7 +123,7 @@ describe("native search sandbox boundary", () => {
     const controller = new AbortController();
     executor.duringStat = () => controller.abort();
     await expect(run(executor, name, { pattern: "Needle" }, controller.signal)).rejects.toThrow();
-    expect(executor.calls.every(({ command }) => command[0] === "python3")).toBe(true);
+    expect(executor.calls).toEqual([]);
     expect(forbidden).not.toHaveBeenCalled();
   });
 

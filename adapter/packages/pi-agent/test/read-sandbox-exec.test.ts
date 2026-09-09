@@ -1,3 +1,4 @@
+import { createReadToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,7 +28,7 @@ function readTool() {
   return buildCustomTools(executor).find(({ name }) => name === "read")!;
 }
 
-describe("sandbox read program through Pi's native read tool", () => {
+describe("raw filesystem seam through Pi's native read tool", () => {
   it.each([
     { path: "reference.jpg", bytes: PNG, mimeType: "image/png" },
     { path: "portrait.png", bytes: JPEG, mimeType: "image/jpeg" },
@@ -56,13 +57,12 @@ describe("sandbox read program through Pi's native read tool", () => {
   it.each([
     { name: "audio.wav", bytes: Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x57, 0x41, 0x56, 0x45]) },
     { name: "invalid-utf8.bin", bytes: Buffer.from([0xff, 0xfe, 0x80]) },
-  ])("rejects unsupported binary $name with an actionable, NUL-free error", async ({ name, bytes }) => {
+  ])("matches native replacement/NUL decoding for $name", async ({ name, bytes }) => {
     await writeFile(join(root, name), bytes);
-    const error = await readTool().execute("read-binary", { path: name } as never, undefined, undefined, {} as never)
-      .then(() => { throw new Error("Expected binary read to fail"); }, (error: Error) => error);
-    expect(error.message).toContain("Unsupported binary file");
-    expect(error.message).toContain("Use bash or a media tool");
-    expect(error.message).not.toContain("\0");
+    const expected = await createReadToolDefinition(root).execute("native-binary", { path: name }, undefined, undefined, {} as never);
+    const actual = await readTool().execute("sandbox-binary", { path: name } as never, undefined, undefined, {} as never);
+    expect(actual).toEqual(expected);
+    expect(actual.content).toEqual([{ type: "text", text: bytes.toString("utf8") }]);
   });
 
   it("does not reuse stale file bytes between calls", async () => {

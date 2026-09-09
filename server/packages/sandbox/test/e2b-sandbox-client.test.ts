@@ -22,6 +22,8 @@ interface RunCall {
     background?: boolean;
     onStdout?: (data: string) => void | Promise<void>;
     onStderr?: (data: string) => void | Promise<void>;
+    onStdoutBytes?: (data: Uint8Array) => void | Promise<void>;
+    onStderrBytes?: (data: Uint8Array) => void | Promise<void>;
   };
 }
 
@@ -234,6 +236,41 @@ describe("E2BSandboxClient", () => {
     ]);
     const echoCall = sandboxes[0].runCalls.at(-1)!;
     expect(echoCall.cmd).toBe("cd '/workspace' && exec 'echo' 'hello'");
+  });
+
+  it("forwards raw SDK bytes once and flushes decoded text before reporting exit", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].processWait = async () => {
+      const options = sandboxes[0].runCalls.at(-1)!.opts!;
+      await options.onStdoutBytes!(new Uint8Array([0xef, 0xbb]));
+      await options.onStdout!("");
+      await options.onStderrBytes!(new Uint8Array([255, 0]));
+      await options.onStderr!("�\0");
+      await options.onStdoutBytes!(new Uint8Array([0xbf, 0xe4, 0xb8, 0xad, 0xe4]));
+      await options.onStdout!("\uFEFF中");
+      await options.onStdout!("�");
+      return { exitCode: 0, stdout: "\uFEFF中�", stderr: "�\0" };
+    };
+    const chunks: SandboxExecChunk[] = [];
+    const onExit = vi.fn(() => {
+      expect(chunks.filter((chunk) => chunk.stream === "stdout").map((chunk) => chunk.text).join("")).toBe("\uFEFF中�");
+    });
+    for await (const chunk of client.exec(id, ["raw-command"], { onExit })) chunks.push(chunk);
+    expect(Buffer.concat(chunks.filter((chunk) => chunk.stream === "stdout").map((chunk) => chunk.bytes!))).toEqual(Buffer.from([0xef, 0xbb, 0xbf, 0xe4, 0xb8, 0xad, 0xe4]));
+    expect(Buffer.concat(chunks.filter((chunk) => chunk.stream === "stderr").map((chunk) => chunk.bytes!))).toEqual(Buffer.from([255, 0]));
+    expect(chunks.filter((chunk) => chunk.stream === "stderr").map((chunk) => chunk.text).join("")).toBe("�\0");
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ exitCode: 0 });
+  });
+
+  it("provides a stable native filesystem capability scoped to a live sandbox", async () => {
+    const { client } = makeClient();
+    const a = await client.create();
+    const b = await client.create();
+    expect(client.fileSystem(a.id)).toBe(client.fileSystem(a.id));
+    expect(client.fileSystem(a.id)).not.toBe(client.fileSystem(b.id));
+    await client.destroy(a.id);
+    expect(() => client.fileSystem(a.id)).toThrow("No live sandbox");
   });
 
   it("exec surfaces a non-zero exit as streamed stderr, not a throw", async () => {
