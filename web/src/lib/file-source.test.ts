@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   classifyMedia,
   resolveFilePresentation,
@@ -141,7 +141,7 @@ describe("resolveFilePresentation", () => {
     ).toBe("text");
   });
 
-  it("previews only known image/video kinds and honors download-only sources", () => {
+  it("previews known image kinds and honors download-only sources", () => {
     const image = {
       path: "cover.png",
       text: null,
@@ -151,6 +151,19 @@ describe("resolveFilePresentation", () => {
     };
     expect(resolveFilePresentation(image, "preview")).toBe("image");
     expect(resolveFilePresentation(image, "download")).toBe("download");
+  });
+
+  it("previews audio only when the source can provide a preview URL", () => {
+    const audio = {
+      path: "voice.mp3",
+      text: null,
+      contentType: "application/octet-stream",
+      size: 1024,
+      isBinary: true,
+    };
+    expect(resolveFilePresentation(audio, "preview")).toBe("audio");
+    expect(resolveFilePresentation(audio, "download")).toBe("download");
+    expect(resolveFilePresentation(audio, "none")).toBe("download");
   });
 });
 
@@ -165,9 +178,25 @@ describe("classifyMedia", () => {
     expect(classifyMedia("clip.mp4", "application/x-www-form-urlencoded")).toBe("video");
   });
 
+  it.each(["mp3", "wav", "m4a", "m4b", "weba", "aac", "ogg", "oga", "opus", "flac", "aif", "aiff", "MP3"])(
+    "classifies .%s audio even when its stored MIME is generic or incorrect",
+    (extension) => {
+      expect(classifyMedia(`audio/voice.${extension}`, "application/octet-stream")).toBe("audio");
+      expect(classifyMedia(`audio/voice.${extension}`, "text/plain")).toBe("audio");
+    },
+  );
+
   it("falls back to MIME when there is no extension", () => {
     expect(classifyMedia("screenshot", "image/png")).toBe("image");
     expect(classifyMedia("recording", "video/mp4")).toBe("video");
+    expect(classifyMedia("voice", "audio/mpeg")).toBe("audio");
+  });
+
+  it("uses audio MIME for unknown extensions while preserving known file types", () => {
+    expect(classifyMedia("voice.recording", "audio/webm")).toBe("audio");
+    expect(classifyMedia("notes.md", "audio/mp4")).toBe("text");
+    expect(classifyMedia("cover.png", "audio/mp4")).toBe("image");
+    expect(classifyMedia("clip.mp4", "audio/mp4")).toBe("video");
   });
 
   it("treats known text extensions as text", () => {
@@ -204,6 +233,11 @@ describe("SkillFileSource", () => {
 });
 
 describe("WorkspaceFileSource", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   const s = createWorkspaceFileSource("sess_123");
   it("has nested, idle-gated capabilities", () => {
     expect(s.capabilities).toEqual({ hierarchy: "nested", idleGated: true });
@@ -216,6 +250,49 @@ describe("WorkspaceFileSource", () => {
       upload: true,
       previewUrl: true,
     });
+  });
+
+  it.each([
+    { name: "non-empty", bytes: Uint8Array.from([0x00, 0xff, 0x80, 0x01]) },
+    { name: "empty", bytes: new Uint8Array() },
+  ])("reads the actual size of a $name binary without Content-Length", async ({ bytes }) => {
+    const response = new Response(bytes, { headers: { "content-type": "audio/wav" } });
+    expect(response.headers.has("content-length")).toBe(false);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+    vi.stubGlobal("localStorage", { getItem: () => "test-token" });
+
+    expect(await s.read("voice.wav")).toEqual({
+      path: "voice.wav",
+      text: null,
+      contentType: "audio/wav",
+      size: bytes.byteLength,
+      isBinary: true,
+    });
+  });
+
+  it.each([
+    ["voice.mp3", "application/octet-stream", "audio/mpeg"],
+    ["voice.M4A", "text/plain", "audio/mp4"],
+    ["voice.m4b", "application/octet-stream", "audio/mp4"],
+    ["voice.weba", "application/octet-stream", "audio/webm"],
+    ["voice.ogg", "audio/ogg; codecs=opus", "audio/ogg;codecs=opus"],
+  ])("previews %s with an audio Blob MIME and unchanged bytes", async (path, storedType, expectedType) => {
+    const bytes = Uint8Array.from([0x00, 0xff, 0x80, 0x01]);
+    const fetchFile = vi.fn().mockResolvedValue(new Response(bytes, {
+      headers: { "content-type": storedType },
+    }));
+    vi.stubGlobal("fetch", fetchFile);
+    vi.stubGlobal("localStorage", { getItem: () => "test-token" });
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:audio");
+
+    expect(await s.previewUrl!(path)).toBe("blob:audio");
+    expect(fetchFile).toHaveBeenCalledWith(expect.stringContaining(path), {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    const blob = createObjectURL.mock.calls[0][0];
+    if (!(blob instanceof Blob)) throw new Error("Expected a preview Blob");
+    expect(blob.type).toBe(expectedType);
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
   });
 });
 
