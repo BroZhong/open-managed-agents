@@ -1,19 +1,22 @@
-# auto-story 0.2.0 verification
+# auto-story 0.2.1 verification
 
-Built, tested and pushed on 2026-09-09, then deployed to the production
-`auto-story` SandboxSet after approval. Packaging and live validation are
-recorded separately below.
+Built, tested and published on 2026-09-09 for Shanghai `agent-platform`.
+This release adds the pinned native Pi search tools to the clean 0.2.0 image
+recipe and retains access to the clean ACS scientific packages. Historical
+0.1.x acceptance is preserved in [VERIFICATION-0.1.2.md](./VERIFICATION-0.1.2.md).
 
 ## Published image
 
 ```text
-registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.2.0
+registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.2.1
 ```
 
-- OCI index digest: `sha256:65482ebbc3a0f42bbd64a122a79126aa62643e93c7e4284136d42f42ce81dd98`
-- Linux amd64 manifest: `sha256:b85d8c0ca1f58c34c349f0934024d8b37a0164444427cec5f09315e20524669a`
-- Registry verification: `docker buildx imagetools inspect` resolved the published tag and both digests.
-- `docker image ls` displayed **3.96 GB**, compared with **8.83 GB** for `auto-story-0.1.2` (about 55% smaller; this is Docker's displayed local size, not download size).
+- OCI index digest: `sha256:16112ce4b3b8ccb2b8e42c4c5c6ad8bf0d71363ee5d54338fee601a178effbec`
+- Linux amd64 manifest: `sha256:50b647c0f6ea9a431710ebe9b3cf97b4ee978ddffd1f69ff6e83cdeb0b7a7c2e`
+- The additional unknown/unknown manifest is the build provenance attestation.
+- `docker buildx imagetools inspect` confirmed the published tag and digests.
+- Docker displayed **3.97 GB** local disk usage and **942 MB** content size,
+  compared with **8.83 GB** local disk usage for `auto-story-0.1.2`.
 
 ## Contents
 
@@ -23,62 +26,82 @@ registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.2.0
 | FFmpeg / ffprobe | 9.0.1 |
 | google-genai | 2.22.0 |
 | mediakit-cli | 0.2.1 |
+| ripgrep / fd | 15.1.0 / 10.4.2 |
+| Retained ACS numpy / pandas | 1.26.4 / 2.2.3 |
 
-All three downloaded source/binary archives passed SHA-256 verification.
+Official source archives and CLI binaries passed their pinned SHA-256 checks.
 FFmpeg's detached release signature also passed GPG verification against
 fingerprint `FCF986EA15E6E293A5644F10B4322F04D67658D8` in an isolated keyring.
 
-The image derives directly from the pinned ACS base. OpenMontage and Whisper
-binaries, source directories, installed distributions, and model directories
-are absent. FFmpeg is explicitly configured with `--disable-whisper`.
+The image derives directly from the digest-pinned clean ACS base. OpenMontage
+and Whisper binaries, source directories and installed distributions are
+absent; their model weights are not downloaded. FFmpeg is configured with
+`--disable-whisper`. The obsolete story-seed launcher is no longer bundled.
 
-## Acceptance
+## Image acceptance
 
-`verify-image.sh` passed all ten checks with `--network none`, the non-root
-`user`, `HOME=/home/user`, and `PATH=/usr/local/bin:/usr/bin:/bin`:
+`verify-image.sh` passed all **13 checks** with `--network none`, UID 1000,
+`HOME=/home/user`, and `PATH=/usr/local/bin:/usr/bin:/bin`:
 
-1. Required environment variable injection (presence only, value not logged).
+1. Creation environment marker presence without logging its value.
 2. Exact executable versions and vfs-cli architecture.
-3. Gemini Files/Interactions API shape in the isolated Python environment.
-4. OpenMontage/Whisper exclusion and `story-seed` launcher availability.
-5. Workspace write/read/cleanup.
-6. FFmpeg H.264/AAC encoding and ffprobe stream/duration validation.
-7. FFmpeg subtitle burn-in through libass.
-8. MediaKit local trim.
-9. MediaKit local concat, preserving the actual input durations.
-10. MediaKit local subtitle rendering through OpenH264.
+3. Gemini Files/Interactions SDK availability without network calls.
+4. `python3 -I` selects the Gemini venv and can import the original ACS numpy/pandas.
+5. OpenMontage/Whisper exclusion across the SDK, base and system environments.
+6. Workspace write/read and temporary-file cleanup.
+7. rg Unicode regex, brace globs and `.gitignore`; fd recursive and path globs.
+8. Embedded VFS Skills, SeedAudio schema, generation dry-run, and audio Resource URL/file dry-runs.
+9. FFmpeg H.264/AAC encoding and ffprobe stream/duration validation.
+10. FFmpeg subtitle burn-in through libass.
+11. MediaKit local trim.
+12. MediaKit local concat preserving actual input durations.
+13. MediaKit local subtitle rendering through OpenH264.
 
-The inherited ACS entrypoint then started Jupyter successfully in a separate
-container with no network; `/api/status` returned HTTP 200. Image entrypoint
-and CMD were also compared with the base and matched exactly.
+The inherited ACS entrypoint started Jupyter successfully in a separate
+container with no network; `/api/status` returned HTTP 200. Entrypoint and CMD
+were compared with the base and matched exactly. Push ran only after these
+checks passed. No model generation or authenticated cloud media call was made.
 
-No Gemini, VFS or cloud MediaKit API calls were made during image acceptance.
+## Repository checks
 
-## Production rollout and E2B validation
+- Sandbox: 108 tests, including default selection and explicit Agent override.
+- Adapter: 297 tests, including native-search parity and sandbox boundary checks.
+- Server CI path: 564 tests; 3 existing opt-in integration cases skipped.
+- Relevant TypeScript checks and OpenAPI artifact verification passed.
+- Deployment contracts: 9 passed, 1 optional package-overlay case skipped.
+- Both sandbox build entrypoints passed dry-run checks; 11 isolated deployment
+  checks verified pool selection, image overrides and cluster/apply gates.
+- GitHub PR CI passed contract, server, adapter-and-deploy and web checks.
 
-Verified on 2026-09-09 at approximately 17:55 Asia/Shanghai:
+## Production default rollout and E2B validation
 
-- Cluster: Shanghai `agent-platform`; namespace: `sandbox-system`.
-- SandboxSet: `auto-story`, generation **4**, revision `7fb5559987`.
-- Pinned the published OCI index digest above, replacing image digest
-  `sha256:dd6437954752ff8527225bd2198245b89c75598a43c2e17d652d3d43279a4a72`
-  (`auto-story-0.1.2`). Only the image field was changed in the live resource.
-- The controller replaced the old warm sandbox. The updated pool reached
-  **1/1 available and updated replicas**.
+Verified on 2026-09-09 at approximately 18:21 Asia/Shanghai:
 
-`verify-live.mjs` ran inside `oma-server` using its installed E2B SDK and
-gateway `sandbox.agentry.welltop.tech`. It created sandbox
-`sandbox-system--auto-story-nlpsm` with a five-minute maximum lifetime and
-verified:
+- Cluster: Shanghai `agent-platform`; sandbox namespace: `sandbox-system`.
+- SandboxSet `auto-story`: generation **5**, revision `6996f47d7b`.
+- Patched only its image from the 0.2.0 digest
+  `sha256:65482ebbc3a0f42bbd64a122a79126aa62643e93c7e4284136d42f42ce81dd98`
+  to the published 0.2.1 digest above; the pool reached **1/1 available and updated replicas**.
+- Patched only `oma-server-config.data.SANDBOX_TEMPLATE` from
+  `code-interpreter-vfscli` to **`auto-story`**, then restarted `oma-server`.
+  The Deployment returned to **1/1 ready and updated replicas** with the same
+  application image; the new process confirmed `SANDBOX_TEMPLATE=auto-story`.
+- The Server's existing Agent allowlist and scoped credential configuration
+  were preserved. Agents with explicit templates keep their selections;
+  existing Session sandboxes pick up the image only when rebuilt.
 
-1. Sandbox creation through the gateway using the `auto-story` template.
-2. Creation-time environment injection.
-3. Filesystem write/read through the SDK.
-4. Reconnection to the same sandbox and reading the existing file.
-5. All ten image acceptance checks, executing as UID 1000 through E2B commands.
-6. Reclaiming the test sandbox through the gateway.
+`verify-live.mjs` ran inside the restarted Server against
+`sandbox.agentry.welltop.tech`. It imported the deployed `E2BSandboxClient`,
+configured it exactly as the Host does, and called `create` **without an image
+or template override**. Sandbox `sandbox-system--auto-story-gs5lw` was allocated
+from the auto-story pool with a five-minute maximum lifetime.
 
-All checks passed. The pool replenished a new ready sandbox after the test.
-The deployment manifest is [sandboxset-auto-story.yaml](../sandboxset-auto-story.yaml).
-This tests the real sandbox gateway and runtime; it does not make paid model
-calls or run an Agent conversation.
+All six gateway checks passed: global-default creation, creation-time
+environment injection, client file write/read, SDK reconnection, all **13 image
+acceptance checks** through E2B commands as UID 1000, and test-sandbox reclamation.
+The pool replenished and returned to **1/1 available and updated replicas**.
+
+This validates the real default sandbox creation and runtime, including rg/fd
+search and media operations. It does not run an Agent conversation or submit
+paid model generation. The canonical image and pool settings are in
+[sandboxset-auto-story.yaml](../sandboxset-auto-story.yaml).

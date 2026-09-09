@@ -151,6 +151,8 @@ kubectl --kubeconfig ~/.kube/agent-platform-config -n oma-infra exec -i deployme
   -- node --input-type=module < deploy/sandbox/auto-story/verify-live.mjs
 ```
 
-Run this command from the repository root. It creates a short-lived test
-sandbox, checks environment injection and file write/read/reconnect, runs
-the image acceptance checks through E2B commands, and reclaims the sandbox.
+Run this command from the repository root. It requires the Host's configured
+default to be `auto-story`, then uses its installed `E2BSandboxClient` to create
+a short-lived sandbox without an image override. It checks environment
+injection and file write/read/reconnect, runs the image acceptance checks
+through E2B commands, and reclaims the sandbox.
