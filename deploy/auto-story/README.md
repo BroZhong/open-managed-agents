@@ -114,15 +114,21 @@ Manager routing and egress fixes. It updates Pi to the locally verified version,
 refreshes the file-based server dependency, and reapplies the pinned subagent
 bridge against pristine extension source.
 
-[Dockerfile.tools](Dockerfile.tools) applies the Pi read/grep/image-history
-fixes to an already verified Host image selected by its immutable `BASE_IMAGE`.
+[Dockerfile.tools](Dockerfile.tools) updates the Pi tool source in an already
+verified Host image selected by its immutable `BASE_IMAGE`. Its preflight
+requires the patched Pi filesystem, edit-preview, filesystem-scoped mutation
+queues, MIME detection export and Bash output sink, plus backend native
+filesystem operations and E2B raw-byte callbacks. An older base must first be rebuilt with
+`deploy/Dockerfile.server`; this source overlay cannot supply missing backend
+or dependency changes.
 The API's pnpm `file:` dependency is a snapshot: copying updated files only to
 `/app/adapter` leaves the API importing old code. The recipe also resolves
 `@open-managed-agents/adapter-pi-agent` from `/app/server/packages/api` and copies
-`custom-tools.ts` and `translator.ts` into that actual dependency directory.
+`custom-tools.ts`, `native-files.ts`, `mutation-path.ts`, `sandbox-search.ts` and
+`translator.ts` into that actual dependency directory.
 Keep this snapshot refresh when extending the overlay; it does not require
 reinstalling or changing pinned dependencies. Verify the resolved import path,
-both file hashes against the source files, and successful module import from
+all five file hashes against the source files, and successful module import from
 the API working directory in the built image and deployed Pod.
 
 Update both Host containers (`server` and `seed-pi-auth`) to the same new image.

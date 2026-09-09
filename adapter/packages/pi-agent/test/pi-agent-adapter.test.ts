@@ -320,6 +320,8 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("retains provider-reported child usage when the parent is aborted", async () => {
       let settlePrompt: (() => void) | undefined;
+      let markPromptStarted!: () => void;
+      const promptStarted = new Promise<void>((resolve) => { markPromptStarted = resolve; });
       const adapter = new PiAgentAdapter({
         _sessionFactory: async (args): Promise<PiSessionLike> => ({
           subscribe: () => () => {},
@@ -333,6 +335,7 @@ describe("PiAgentAdapter (SDK)", () => {
             });
             return new Promise<void>((resolve) => {
               settlePrompt = resolve;
+              markPromptStarted();
             });
           },
           abort() {
@@ -346,7 +349,7 @@ describe("PiAgentAdapter (SDK)", () => {
       input.signal = controller.signal;
 
       const eventsPromise = collectEvents(adapter.run(input));
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await promptStarted;
       controller.abort();
       const events = await eventsPromise;
       const spans = events.filter(

@@ -13,6 +13,8 @@ on:
       - "deploy/*.test.mjs"
       - "server/packages/api/**"
       - "server/packages/session-router/**"
+      - "server/packages/sandbox/**"
+      - "server/patches/**"
       - "server/packages/store/**"
       - "server/packages/store-memory/**"
       - "server/pnpm-lock.yaml"
@@ -32,6 +34,8 @@ on:
       - "deploy/*.test.mjs"
       - "server/packages/api/**"
       - "server/packages/session-router/**"
+      - "server/packages/sandbox/**"
+      - "server/patches/**"
       - "server/packages/store/**"
       - "server/packages/store-memory/**"
       - "server/pnpm-lock.yaml"
@@ -63,6 +67,7 @@ jobs:
           --filter @oma-server/store
           --filter @oma-server/store-memory
           --filter @oma-server/session-router
+          --filter @oma-server/sandbox
           --filter @oma-server/api test
       - name: Type-check the accounting path
         run: >-
@@ -70,6 +75,7 @@ jobs:
           --filter @oma-server/store
           --filter @oma-server/store-memory
           --filter @oma-server/session-router
+          --filter @oma-server/sandbox
           --filter @oma-server/api typecheck
 
   adapter-and-deploy:

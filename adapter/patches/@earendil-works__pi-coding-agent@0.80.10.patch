@@ -1,5 +1,302 @@
+diff --git a/dist/core/tools/bash.d.ts b/dist/core/tools/bash.d.ts
+index 18f6bd6..b5303e0 100644
+--- a/dist/core/tools/bash.d.ts
++++ b/dist/core/tools/bash.d.ts
+@@ -1,6 +1,8 @@
+ import type { AgentTool } from "@earendil-works/pi-agent-core";
+ import { type Static, Type } from "typebox";
+ import type { ToolDefinition } from "../extensions/types.ts";
++import type { BashOutputSink } from "./output-accumulator.ts";
++export type { BashOutputSink } from "./output-accumulator.ts";
+ import { type TruncationResult } from "./truncate.ts";
+ declare const bashSchema: Type.TObject<{
+     command: Type.TString;
+@@ -48,6 +50,10 @@ export interface BashSpawnContext {
+ }
+ export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
+ export interface BashToolOptions {
++    /** Environment before spawnHook. Default: pi's local shell environment. Use {} for a remote backend's own environment. */
++    env?: NodeJS.ProcessEnv;
++    /** Lazily create full-output storage when output is truncated. Default: a local temp file. */
++    createOutputSink?: () => BashOutputSink | Promise<BashOutputSink>;
+     /** Custom operations for command execution. Default: local shell */
+     operations?: BashOperations;
+     /** Command prefix prepended to every command (for example shell setup commands) */
+diff --git a/dist/core/tools/bash.js b/dist/core/tools/bash.js
+index 36de477..a65c3f3 100644
+--- a/dist/core/tools/bash.js
++++ b/dist/core/tools/bash.js
+@@ -111,8 +111,8 @@ export function createLocalBashOperations(options) {
+         },
+     };
+ }
+-function resolveSpawnContext(command, cwd, spawnHook) {
+-    const baseContext = { command, cwd, env: { ...getShellEnv() } };
++function resolveSpawnContext(command, cwd, spawnHook, env) {
++    const baseContext = { command, cwd, env: { ...(env ?? getShellEnv()) } };
+     return spawnHook ? spawnHook(baseContext) : baseContext;
+ }
+ const BASH_PREVIEW_LINES = 5;
+@@ -210,9 +210,10 @@ export function createBashToolDefinition(cwd, options) {
+         promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+         parameters: bashSchema,
+         async execute(_toolCallId, { command, timeout }, signal, onUpdate, _ctx) {
++            resolveTimeoutMs(timeout);
+             const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
+-            const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
+-            const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
++            const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, options?.env);
++            const output = new OutputAccumulator({ tempFilePrefix: "pi-bash", createOutputSink: options?.createOutputSink });
+             let acceptingOutput = true;
+             let updateTimer;
+             let updateDirty = false;
+@@ -266,9 +267,9 @@ export function createBashToolDefinition(cwd, options) {
+                 output.finish();
+                 clearUpdateTimer();
+                 emitOutputUpdate();
+-                const snapshot = output.snapshot({ persistIfTruncated: true });
++                output.snapshot({ persistIfTruncated: true });
+                 await output.closeTempFile();
+-                return snapshot;
++                return output.snapshot();
+             };
+             const formatOutput = (snapshot, emptyText = "(no output)") => {
+                 const truncation = snapshot.truncation;
+diff --git a/dist/core/tools/edit-diff.d.ts b/dist/core/tools/edit-diff.d.ts
+index daac17e..dba6f10 100644
+--- a/dist/core/tools/edit-diff.d.ts
++++ b/dist/core/tools/edit-diff.d.ts
+@@ -89,6 +89,14 @@ export interface EditDiffResult {
+     diff: string;
+     firstChangedLine: number | undefined;
+ }
++export interface EditDiffOptions {
++    homeDir?: string;
++    /** Read-only filesystem access used by the preview. Default: local filesystem. */
++    operations?: {
++        access: (absolutePath: string) => Promise<void>;
++        readFile: (absolutePath: string) => Promise<Buffer>;
++    };
++}
+ export interface EditDiffError {
+     error: string;
+ }
+@@ -96,11 +104,11 @@ export interface EditDiffError {
+  * Compute the diff for one or more edit operations without applying them.
+  * Used for preview rendering in the TUI before the tool executes.
+  */
+-export declare function computeEditsDiff(path: string, edits: Edit[], cwd: string): Promise<EditDiffResult | EditDiffError>;
++export declare function computeEditsDiff(path: string, edits: Edit[], cwd: string, options?: EditDiffOptions): Promise<EditDiffResult | EditDiffError>;
+ /**
+  * Compute the diff for a single edit operation without applying it.
+  * Kept as a convenience wrapper for single-edit callers.
+  */
+-export declare function computeEditDiff(path: string, oldText: string, newText: string, cwd: string): Promise<EditDiffResult | EditDiffError>;
++export declare function computeEditDiff(path: string, oldText: string, newText: string, cwd: string, options?: EditDiffOptions): Promise<EditDiffResult | EditDiffError>;
+ export {};
+ //# sourceMappingURL=edit-diff.d.ts.map
+\ No newline at end of file
+diff --git a/dist/core/tools/edit-diff.js b/dist/core/tools/edit-diff.js
+index 954958c..8f55faa 100644
+--- a/dist/core/tools/edit-diff.js
++++ b/dist/core/tools/edit-diff.js
+@@ -390,19 +390,24 @@ export function generateDiffString(oldContent, newContent, contextLines = 4) {
+  * Compute the diff for one or more edit operations without applying them.
+  * Used for preview rendering in the TUI before the tool executes.
+  */
+-export async function computeEditsDiff(path, edits, cwd) {
+-    const absolutePath = resolveToCwd(path, cwd);
++export async function computeEditsDiff(path, edits, cwd, options) {
++    const absolutePath = resolveToCwd(path, cwd, options?.homeDir);
+     try {
+         // Check if file exists and is readable
+         try {
+-            await access(absolutePath, constants.R_OK);
++            if (options?.operations)
++                await options.operations.access(absolutePath);
++            else
++                await access(absolutePath, constants.R_OK);
+         }
+         catch (error) {
+             const errorMessage = error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
+             return { error: `Could not edit file: ${path}. ${errorMessage}.` };
+         }
+         // Read the file
+-        const rawContent = await readFile(absolutePath, "utf-8");
++        const rawContent = options?.operations
++            ? (await options.operations.readFile(absolutePath)).toString("utf-8")
++            : await readFile(absolutePath, "utf-8");
+         // Strip BOM before matching (LLM won't include invisible BOM in oldText)
+         const { text: content } = stripBom(rawContent);
+         const normalizedContent = normalizeToLF(content);
+@@ -418,7 +423,7 @@ export async function computeEditsDiff(path, edits, cwd) {
+  * Compute the diff for a single edit operation without applying it.
+  * Kept as a convenience wrapper for single-edit callers.
+  */
+-export async function computeEditDiff(path, oldText, newText, cwd) {
+-    return computeEditsDiff(path, [{ oldText, newText }], cwd);
++export async function computeEditDiff(path, oldText, newText, cwd, options) {
++    return computeEditsDiff(path, [{ oldText, newText }], cwd, options);
+ }
+ //# sourceMappingURL=edit-diff.js.map
+\ No newline at end of file
+diff --git a/dist/core/tools/edit.d.ts b/dist/core/tools/edit.d.ts
+index fa66ef9..8738443 100644
+--- a/dist/core/tools/edit.d.ts
++++ b/dist/core/tools/edit.d.ts
+@@ -28,14 +28,20 @@ export interface EditToolDetails {
+  * Override these to delegate file editing to remote systems (for example SSH).
+  */
+ export interface EditOperations {
++    /** Resolve symlink aliases for mutation locking in this filesystem. */
++    realpath?: (absolutePath: string) => Promise<string>;
+     /** Read file contents as a Buffer */
+     readFile: (absolutePath: string) => Promise<Buffer>;
+     /** Write content to a file */
+     writeFile: (absolutePath: string, content: string) => Promise<void>;
+-    /** Check if file is readable and writable (throw if not) */
+-    access: (absolutePath: string) => Promise<void>;
++    /** Check access (throw if denied). Default mode is readable and writable; preview requests R_OK. */
++    access: (absolutePath: string, mode?: number) => Promise<void>;
+ }
+ export interface EditToolOptions {
++    /** Shared identity for one filesystem's mutation queues. With a scope, no local realpath fallback is used. */
++    mutationScope?: object;
++    /** Home directory used for ~ expansion. Default: local process home. */
++    homeDir?: string;
+     /** Custom operations for file editing. Default: local filesystem */
+     operations?: EditOperations;
+ }
+diff --git a/dist/core/tools/edit.js b/dist/core/tools/edit.js
+index 1940549..e7e1bdd 100644
+--- a/dist/core/tools/edit.js
++++ b/dist/core/tools/edit.js
+@@ -23,7 +23,7 @@ const editSchema = Type.Object({
+ const defaultEditOperations = {
+     readFile: (path) => fsReadFile(path),
+     writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
+-    access: (path) => fsAccess(path, constants.R_OK | constants.W_OK),
++    access: (path, mode = constants.R_OK | constants.W_OK) => fsAccess(path, mode),
+ };
+ function prepareEditArguments(input) {
+     if (!input || typeof input !== "object") {
+@@ -173,7 +173,7 @@ export function createEditToolDefinition(cwd, options) {
+         prepareArguments: prepareEditArguments,
+         async execute(_toolCallId, input, signal, _onUpdate, _ctx) {
+             const { path, edits } = validateEditInput(input);
+-            const absolutePath = resolveToCwd(path, cwd);
++            const absolutePath = resolveToCwd(path, cwd, options?.homeDir);
+             return withFileMutationQueue(absolutePath, async () => {
+                 // Do not reject from an abort event listener here: that would release the
+                 // mutation queue while an in-flight filesystem operation may still finish.
+@@ -218,7 +218,7 @@ export function createEditToolDefinition(cwd, options) {
+                     ],
+                     details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
+                 };
+-            });
++            }, { scope: options?.mutationScope, realpath: ops.realpath });
+         },
+         renderCall(args, theme, context) {
+             const component = getEditCallRenderComponent(context.state, context.lastComponent);
+@@ -235,7 +235,13 @@ export function createEditToolDefinition(cwd, options) {
+             if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
+                 component.previewPending = true;
+                 const requestKey = argsKey;
+-                void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd).then((preview) => {
++                void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd, {
++                    homeDir: options?.homeDir,
++                    operations: options?.operations ? {
++                        access: (path) => ops.access(path, constants.R_OK),
++                        readFile: (path) => ops.readFile(path),
++                    } : undefined,
++                }).then((preview) => {
+                     if (component.previewArgsKey === requestKey) {
+                         setEditPreview(component, preview, requestKey);
+                         context.invalidate();
+diff --git a/dist/core/tools/file-mutation-queue.d.ts b/dist/core/tools/file-mutation-queue.d.ts
+index 40eabfe..af51ae4 100644
+--- a/dist/core/tools/file-mutation-queue.d.ts
++++ b/dist/core/tools/file-mutation-queue.d.ts
+@@ -1,6 +1,12 @@
++export interface FileMutationQueueOptions {
++    /** Stable identity shared by tools using the same filesystem. */
++    scope?: object;
++    /** Resolve aliases in that filesystem. A scope without this hook uses the absolute input path. */
++    realpath?: (absolutePath: string) => Promise<string>;
++}
+ /**
+  * Serialize file mutation operations targeting the same file.
+  * Operations for different files still run in parallel.
+  */
+-export declare function withFileMutationQueue<T>(filePath: string, fn: () => Promise<T>): Promise<T>;
++export declare function withFileMutationQueue<T>(filePath: string, fn: () => Promise<T>, options?: FileMutationQueueOptions): Promise<T>;
+ //# sourceMappingURL=file-mutation-queue.d.ts.map
+\ No newline at end of file
+diff --git a/dist/core/tools/file-mutation-queue.js b/dist/core/tools/file-mutation-queue.js
+index c223839..0c09050 100644
+--- a/dist/core/tools/file-mutation-queue.js
++++ b/dist/core/tools/file-mutation-queue.js
+@@ -1,17 +1,30 @@
+ import { realpath } from "node:fs/promises";
+ import { resolve } from "node:path";
+-const fileMutationQueues = new Map();
+-let registrationQueue = Promise.resolve();
++const defaultState = { fileMutationQueues: new Map(), registrationQueue: Promise.resolve() };
++const scopedStates = new WeakMap();
++function getMutationState(scope) {
++    if (!scope)
++        return defaultState;
++    let state = scopedStates.get(scope);
++    if (!state) {
++        state = { fileMutationQueues: new Map(), registrationQueue: Promise.resolve() };
++        scopedStates.set(scope, state);
++    }
++    return state;
++}
+ function isMissingPathError(error) {
+     return (typeof error === "object" &&
+         error !== null &&
+         "code" in error &&
+         (error.code === "ENOENT" || error.code === "ENOTDIR"));
+ }
+-async function getMutationQueueKey(filePath) {
++async function getMutationQueueKey(filePath, options) {
+     const resolvedPath = resolve(filePath);
++    const resolveRealpath = options?.realpath ?? (options?.scope ? undefined : realpath);
++    if (!resolveRealpath)
++        return resolvedPath;
+     try {
+-        return await realpath(resolvedPath);
++        return await resolveRealpath(resolvedPath);
+     }
+     catch (error) {
+         if (isMissingPathError(error)) {
+@@ -24,9 +37,11 @@ async function getMutationQueueKey(filePath) {
+  * Serialize file mutation operations targeting the same file.
+  * Operations for different files still run in parallel.
+  */
+-export async function withFileMutationQueue(filePath, fn) {
+-    const registration = registrationQueue.then(async () => {
+-        const key = await getMutationQueueKey(filePath);
++export async function withFileMutationQueue(filePath, fn, options) {
++    const state = getMutationState(options?.scope);
++    const { fileMutationQueues } = state;
++    const registration = state.registrationQueue.then(async () => {
++        const key = await getMutationQueueKey(filePath, options);
+         const currentQueue = fileMutationQueues.get(key) ?? Promise.resolve();
+         let releaseNext;
+         const nextQueue = new Promise((resolveQueue) => {
+@@ -36,7 +51,7 @@ export async function withFileMutationQueue(filePath, fn) {
+         fileMutationQueues.set(key, chainedQueue);
+         return { key, currentQueue, chainedQueue, releaseNext };
+     });
+-    registrationQueue = registration.then(() => undefined, () => undefined);
++    state.registrationQueue = registration.then(() => undefined, () => undefined);
+     const { key, currentQueue, chainedQueue, releaseNext } = await registration;
+     await currentQueue;
+     try {
 diff --git a/dist/core/tools/find.d.ts b/dist/core/tools/find.d.ts
-index 7a3fc0a9180b58b03a68bcb2e8a6cbf584ed94ed..bc60fb0d0888ade191b4fd072af1f2c79f57faf9 100644
+index 7a3fc0a..8fd9df7 100644
 --- a/dist/core/tools/find.d.ts
 +++ b/dist/core/tools/find.d.ts
 @@ -1,6 +1,7 @@
@@ -31,7 +328,7 @@ index 7a3fc0a9180b58b03a68bcb2e8a6cbf584ed94ed..bc60fb0d0888ade191b4fd072af1f2c7
  export declare function createFindToolDefinition(cwd: string, options?: FindToolOptions): ToolDefinition<typeof findSchema, FindToolDetails | undefined>;
  export declare function createFindTool(cwd: string, options?: FindToolOptions): AgentTool<typeof findSchema>;
 diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
-index b492459b32b2805b2553fc300943de4576109c78..e8ca8ca7fec7b6cd3fe718019458d896e00168d3 100644
+index b492459..749d889 100644
 --- a/dist/core/tools/find.js
 +++ b/dist/core/tools/find.js
 @@ -96,7 +96,7 @@ export function createFindToolDefinition(cwd, options) {
@@ -75,7 +372,7 @@ index b492459b32b2805b2553fc300943de4576109c78..e8ca8ca7fec7b6cd3fe718019458d896
                          let stderr = "";
                          const lines = [];
 diff --git a/dist/core/tools/grep.d.ts b/dist/core/tools/grep.d.ts
-index fd073cd9babb37f3d00f0131bc460c39b84c5a1c..57b8f6bb74da8939d237bd0447f08b479c31aee5 100644
+index fd073cd..8b8ab5d 100644
 --- a/dist/core/tools/grep.d.ts
 +++ b/dist/core/tools/grep.d.ts
 @@ -1,6 +1,7 @@
@@ -98,7 +395,7 @@ index fd073cd9babb37f3d00f0131bc460c39b84c5a1c..57b8f6bb74da8939d237bd0447f08b47
  export declare function createGrepToolDefinition(cwd: string, options?: GrepToolOptions): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined>;
  export declare function createGrepTool(cwd: string, options?: GrepToolOptions): AgentTool<typeof grepSchema>;
 diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
-index a8d520b025e14cff479e55c34e8745b31c427bdd..6a1c7a5cc8105c5bc2c4ec04d9b831377e2ceeb8 100644
+index a8d520b..bda53b4 100644
 --- a/dist/core/tools/grep.js
 +++ b/dist/core/tools/grep.js
 @@ -92,12 +92,12 @@ export function createGrepToolDefinition(cwd, options) {
@@ -129,21 +426,215 @@ index a8d520b025e14cff479e55c34e8745b31c427bdd..6a1c7a5cc8105c5bc2c4ec04d9b83137
                          const rl = createInterface({ input: child.stdout });
                          let stderr = "";
                          let matchCount = 0;
+diff --git a/dist/core/tools/index.d.ts b/dist/core/tools/index.d.ts
+index fbf87f9..fb376c3 100644
+--- a/dist/core/tools/index.d.ts
++++ b/dist/core/tools/index.d.ts
+@@ -1,6 +1,6 @@
+-export { type BashOperations, type BashSpawnContext, type BashSpawnHook, type BashToolDetails, type BashToolInput, type BashToolOptions, createBashTool, createBashToolDefinition, createLocalBashOperations, } from "./bash.ts";
++export { type BashOperations, type BashOutputSink, type BashSpawnContext, type BashSpawnHook, type BashToolDetails, type BashToolInput, type BashToolOptions, createBashTool, createBashToolDefinition, createLocalBashOperations, } from "./bash.ts";
+ export { createEditTool, createEditToolDefinition, type EditOperations, type EditToolDetails, type EditToolInput, type EditToolOptions, } from "./edit.ts";
+-export { withFileMutationQueue } from "./file-mutation-queue.ts";
++export { type FileMutationQueueOptions, withFileMutationQueue } from "./file-mutation-queue.ts";
+ export { createFindTool, createFindToolDefinition, type FindOperations, type FindToolDetails, type FindToolInput, type FindToolOptions, } from "./find.ts";
+ export { createGrepTool, createGrepToolDefinition, type GrepOperations, type GrepToolDetails, type GrepToolInput, type GrepToolOptions, } from "./grep.ts";
+ export { createLsTool, createLsToolDefinition, type LsOperations, type LsToolDetails, type LsToolInput, type LsToolOptions, } from "./ls.ts";
+diff --git a/dist/core/tools/ls.d.ts b/dist/core/tools/ls.d.ts
+index f9de5f3..7d1bda3 100644
+--- a/dist/core/tools/ls.d.ts
++++ b/dist/core/tools/ls.d.ts
+@@ -28,6 +28,8 @@ export interface LsOperations {
+     readdir: (absolutePath: string) => Promise<string[]> | string[];
+ }
+ export interface LsToolOptions {
++    /** Home directory used for ~ expansion. Default: local process home. */
++    homeDir?: string;
+     /** Custom operations for directory listing. Default: local filesystem */
+     operations?: LsOperations;
+ }
+diff --git a/dist/core/tools/ls.js b/dist/core/tools/ls.js
+index 8e0a39b..987a495 100644
+--- a/dist/core/tools/ls.js
++++ b/dist/core/tools/ls.js
+@@ -69,7 +69,7 @@ export function createLsToolDefinition(cwd, options) {
+                 signal?.addEventListener("abort", onAbort, { once: true });
+                 (async () => {
+                     try {
+-                        const dirPath = resolveToCwd(path || ".", cwd);
++                        const dirPath = resolveToCwd(path || ".", cwd, options?.homeDir);
+                         const effectiveLimit = limit ?? DEFAULT_LIMIT;
+                         // Check if path exists.
+                         if (!(await ops.exists(dirPath))) {
+diff --git a/dist/core/tools/output-accumulator.d.ts b/dist/core/tools/output-accumulator.d.ts
+index fbd581f..d8b763c 100644
+--- a/dist/core/tools/output-accumulator.d.ts
++++ b/dist/core/tools/output-accumulator.d.ts
+@@ -1,5 +1,13 @@
+ import { type TruncationResult } from "./truncate.ts";
++/** Full-output storage supplied by a remote execution backend. Writes are ordered and close is awaited. */
++export interface BashOutputSink {
++    /** Path shown in the native tool result. */
++    path: string;
++    write(data: Buffer): void | Promise<void>;
++    close(): void | Promise<void>;
++}
+ export interface OutputAccumulatorOptions {
++    createOutputSink?: () => BashOutputSink | Promise<BashOutputSink>;
+     maxLines?: number;
+     maxBytes?: number;
+     tempFilePrefix?: string;
+@@ -21,6 +29,10 @@ export declare class OutputAccumulator {
+     private readonly maxBytes;
+     private readonly maxRollingBytes;
+     private readonly tempFilePrefix;
++    private readonly createOutputSink;
++    private sinkPromise;
++    private sinkWrites;
++    private sinkClosePromise;
+     private readonly decoder;
+     private rawChunks;
+     private tailText;
+@@ -48,5 +60,6 @@ export declare class OutputAccumulator {
+     private getSnapshotText;
+     private shouldUseTempFile;
+     private ensureTempFile;
++    private enqueueSinkWrite;
+ }
+ //# sourceMappingURL=output-accumulator.d.ts.map
+\ No newline at end of file
+diff --git a/dist/core/tools/output-accumulator.js b/dist/core/tools/output-accumulator.js
+index 7241668..c214f2d 100644
+--- a/dist/core/tools/output-accumulator.js
++++ b/dist/core/tools/output-accumulator.js
+@@ -22,6 +22,10 @@ export class OutputAccumulator {
+     maxBytes;
+     maxRollingBytes;
+     tempFilePrefix;
++    createOutputSink;
++    sinkPromise;
++    sinkWrites;
++    sinkClosePromise;
+     decoder = new TextDecoder();
+     rawChunks = [];
+     tailText = "";
+@@ -41,6 +45,7 @@ export class OutputAccumulator {
+         this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+         this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
+         this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
++        this.createOutputSink = options.createOutputSink;
+     }
+     append(data) {
+         if (this.finished) {
+@@ -48,12 +53,15 @@ export class OutputAccumulator {
+         }
+         this.totalRawBytes += data.length;
+         this.appendDecodedText(this.decoder.decode(data, { stream: true }));
+-        if (this.tempFileStream || this.shouldUseTempFile()) {
++        if (this.tempFileStream || this.sinkPromise || this.shouldUseTempFile()) {
+             this.ensureTempFile();
+-            this.tempFileStream?.write(data);
++            if (this.sinkPromise)
++                this.enqueueSinkWrite(data);
++            else
++                this.tempFileStream?.write(data);
+         }
+         else if (data.length > 0) {
+-            this.rawChunks.push(data);
++            this.rawChunks.push(this.createOutputSink ? Buffer.from(data) : data);
+         }
+     }
+     finish() {
+@@ -94,6 +102,32 @@ export class OutputAccumulator {
+         };
+     }
+     async closeTempFile() {
++        if (this.sinkPromise) {
++            this.sinkClosePromise ??= (async () => {
++                const sink = await this.sinkPromise;
++                let failed = false;
++                let failure;
++                try {
++                    await this.sinkWrites;
++                }
++                catch (error) {
++                    failed = true;
++                    failure = error;
++                }
++                try {
++                    await sink.close();
++                }
++                catch (error) {
++                    if (!failed) {
++                        failed = true;
++                        failure = error;
++                    }
++                }
++                if (failed)
++                    throw failure;
++            })();
++            return this.sinkClosePromise;
++        }
+         if (!this.tempFileStream) {
+             return;
+         }
+@@ -170,7 +204,20 @@ export class OutputAccumulator {
+         return (this.totalRawBytes > this.maxBytes || this.totalDecodedBytes > this.maxBytes || this.totalLines > this.maxLines);
+     }
+     ensureTempFile() {
+-        if (this.tempFilePath) {
++        if (this.tempFilePath || this.sinkPromise) {
++            return;
++        }
++        if (this.createOutputSink) {
++            this.sinkPromise = Promise.resolve().then(() => this.createOutputSink()).then((sink) => {
++                this.tempFilePath = sink.path;
++                return sink;
++            });
++            this.sinkWrites = this.sinkPromise.then(() => undefined);
++            // Output callbacks are synchronous; defer failures to closeTempFile without unhandled rejections.
++            this.sinkWrites.catch(() => { });
++            for (const chunk of this.rawChunks)
++                this.enqueueSinkWrite(chunk);
++            this.rawChunks = [];
+             return;
+         }
+         this.tempFilePath = defaultTempFilePath(this.tempFilePrefix);
+@@ -180,5 +227,13 @@ export class OutputAccumulator {
+         }
+         this.rawChunks = [];
+     }
++    enqueueSinkWrite(data) {
++        const chunk = Buffer.from(data);
++        this.sinkWrites = this.sinkWrites.then(async () => {
++            const sink = await this.sinkPromise;
++            await sink.write(chunk);
++        });
++        this.sinkWrites.catch(() => { });
++    }
+ }
+ //# sourceMappingURL=output-accumulator.js.map
+\ No newline at end of file
 diff --git a/dist/core/tools/path-utils.d.ts b/dist/core/tools/path-utils.d.ts
-index 5df8b6b11ad347bbd630621310b3c119a5c2506d..995ea4fc414040339e337ad7208696dc9ffe5e4f 100644
+index 5df8b6b..d0e15be 100644
 --- a/dist/core/tools/path-utils.d.ts
 +++ b/dist/core/tools/path-utils.d.ts
-@@ -4,7 +4,7 @@ export declare function expandPath(filePath: string): string;
+@@ -4,7 +4,10 @@ export declare function expandPath(filePath: string): string;
   * Resolve a path relative to the given cwd.
   * Handles ~ expansion and absolute paths.
   */
 -export declare function resolveToCwd(filePath: string, cwd: string): string;
 +export declare function resolveToCwd(filePath: string, cwd: string, homeDir?: string): string;
  export declare function resolveReadPath(filePath: string, cwd: string): string;
- export declare function resolveReadPathAsync(filePath: string, cwd: string): Promise<string>;
- //# sourceMappingURL=path-utils.d.ts.map
+-export declare function resolveReadPathAsync(filePath: string, cwd: string): Promise<string>;
+-//# sourceMappingURL=path-utils.d.ts.map
+\ No newline at end of file
++export declare function resolveReadPathAsync(filePath: string, cwd: string, options?: {
++    homeDir?: string;
++    exists?: (absolutePath: string) => Promise<boolean>;
++}): Promise<string>;
++//# sourceMappingURL=path-utils.d.ts.map
 diff --git a/dist/core/tools/path-utils.js b/dist/core/tools/path-utils.js
-index 47382b52446ad2ed3dd8b1c4b7b1b6d00e7a1d05..fac29e253725b441b573223c43933a4abc71a18c 100644
+index 47382b5..e3541e0 100644
 --- a/dist/core/tools/path-utils.js
 +++ b/dist/core/tools/path-utils.js
 @@ -39,8 +39,8 @@ export function expandPath(filePath) {
@@ -157,9 +648,90 @@ index 47382b52446ad2ed3dd8b1c4b7b1b6d00e7a1d05..fac29e253725b441b573223c43933a4a
  }
  export function resolveReadPath(filePath, cwd) {
      const resolved = resolveToCwd(filePath, cwd);
+@@ -69,29 +69,30 @@ export function resolveReadPath(filePath, cwd) {
+     }
+     return resolved;
+ }
+-export async function resolveReadPathAsync(filePath, cwd) {
+-    const resolved = resolveToCwd(filePath, cwd);
+-    if (await pathExists(resolved)) {
++export async function resolveReadPathAsync(filePath, cwd, options) {
++    const exists = options?.exists ?? pathExists;
++    const resolved = resolveToCwd(filePath, cwd, options?.homeDir);
++    if (await exists(resolved)) {
+         return resolved;
+     }
+     // Try macOS AM/PM variant (narrow no-break space before AM/PM)
+     const amPmVariant = tryMacOSScreenshotPath(resolved);
+-    if (amPmVariant !== resolved && (await pathExists(amPmVariant))) {
++    if (amPmVariant !== resolved && (await exists(amPmVariant))) {
+         return amPmVariant;
+     }
+     // Try NFD variant (macOS stores filenames in NFD form)
+     const nfdVariant = tryNFDVariant(resolved);
+-    if (nfdVariant !== resolved && (await pathExists(nfdVariant))) {
++    if (nfdVariant !== resolved && (await exists(nfdVariant))) {
+         return nfdVariant;
+     }
+     // Try curly quote variant (macOS uses U+2019 in screenshot names)
+     const curlyVariant = tryCurlyQuoteVariant(resolved);
+-    if (curlyVariant !== resolved && (await pathExists(curlyVariant))) {
++    if (curlyVariant !== resolved && (await exists(curlyVariant))) {
+         return curlyVariant;
+     }
+     // Try combined NFD + curly quote (for French macOS screenshots like "Capture d'écran")
+     const nfdCurlyVariant = tryCurlyQuoteVariant(nfdVariant);
+-    if (nfdCurlyVariant !== resolved && (await pathExists(nfdCurlyVariant))) {
++    if (nfdCurlyVariant !== resolved && (await exists(nfdCurlyVariant))) {
+         return nfdCurlyVariant;
+     }
+     return resolved;
+diff --git a/dist/core/tools/read.d.ts b/dist/core/tools/read.d.ts
+index 21d889d..46c6438 100644
+--- a/dist/core/tools/read.d.ts
++++ b/dist/core/tools/read.d.ts
+@@ -20,10 +20,14 @@ export interface ReadOperations {
+     readFile: (absolutePath: string) => Promise<Buffer>;
+     /** Check if file is readable (throw if not) */
+     access: (absolutePath: string) => Promise<void>;
++    /** Probe path candidates without requiring readability. Defaults to access when omitted. */
++    exists?: (absolutePath: string) => Promise<boolean>;
+     /** Detect image MIME type, return null or undefined for non-images */
+     detectImageMimeType?: (absolutePath: string) => Promise<string | null | undefined>;
+ }
+ export interface ReadToolOptions {
++    /** Home directory used for ~ expansion. Default: local process home. */
++    homeDir?: string;
+     /** Whether to auto-resize images to 2000x2000 max. Default: true */
+     autoResizeImages?: boolean;
+     /** Custom operations for file reading. Default: local filesystem */
+diff --git a/dist/core/tools/read.js b/dist/core/tools/read.js
+index d97dffc..6ae16a3 100644
+--- a/dist/core/tools/read.js
++++ b/dist/core/tools/read.js
+@@ -151,7 +151,18 @@ export function createReadToolDefinition(cwd, options) {
+                 signal?.addEventListener("abort", onAbort, { once: true });
+                 (async () => {
+                     try {
+-                        const absolutePath = await resolveReadPathAsync(path, cwd);
++                        const absolutePath = await resolveReadPathAsync(path, cwd, {
++                            homeDir: options?.homeDir,
++                            exists: options?.operations ? (ops.exists ?? (async (candidate) => {
++                                try {
++                                    await ops.access(candidate);
++                                    return true;
++                                }
++                                catch {
++                                    return false;
++                                }
++                            })) : undefined,
++                        });
+                         if (aborted)
+                             return;
+                         // Check if file exists and is readable.
 diff --git a/dist/core/tools/search-process.d.ts b/dist/core/tools/search-process.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..ae2da57f069c4db01284389859c584bcf6fe14b5
+index 0000000..ae2da57
 --- /dev/null
 +++ b/dist/core/tools/search-process.d.ts
 @@ -0,0 +1,18 @@
@@ -181,3 +753,79 @@ index 0000000000000000000000000000000000000000..ae2da57f069c4db01284389859c584bc
 +    args: string[],
 +    options: { stdio: ["ignore", "pipe", "pipe"] },
 +) => SearchToolProcess;
+diff --git a/dist/core/tools/write.d.ts b/dist/core/tools/write.d.ts
+index d30c83f..d317e5f 100644
+--- a/dist/core/tools/write.d.ts
++++ b/dist/core/tools/write.d.ts
+@@ -11,12 +11,18 @@ export type WriteToolInput = Static<typeof writeSchema>;
+  * Override these to delegate file writing to remote systems (for example SSH).
+  */
+ export interface WriteOperations {
++    /** Resolve symlink aliases for mutation locking in this filesystem. */
++    realpath?: (absolutePath: string) => Promise<string>;
+     /** Write content to a file */
+     writeFile: (absolutePath: string, content: string) => Promise<void>;
+     /** Create directory recursively */
+     mkdir: (dir: string) => Promise<void>;
+ }
+ export interface WriteToolOptions {
++    /** Shared identity for one filesystem's mutation queues. With a scope, no local realpath fallback is used. */
++    mutationScope?: object;
++    /** Home directory used for ~ expansion. Default: local process home. */
++    homeDir?: string;
+     /** Custom operations for file writing. Default: local filesystem */
+     operations?: WriteOperations;
+ }
+diff --git a/dist/core/tools/write.js b/dist/core/tools/write.js
+index a80b81d..0e8e578 100644
+--- a/dist/core/tools/write.js
++++ b/dist/core/tools/write.js
+@@ -138,7 +138,7 @@ export function createWriteToolDefinition(cwd, options) {
+         promptGuidelines: ["Use write only for new files or complete rewrites."],
+         parameters: writeSchema,
+         async execute(_toolCallId, { path, content }, signal, _onUpdate, _ctx) {
+-            const absolutePath = resolveToCwd(path, cwd);
++            const absolutePath = resolveToCwd(path, cwd, options?.homeDir);
+             const dir = dirname(absolutePath);
+             return withFileMutationQueue(absolutePath, async () => {
+                 // Do not reject from an abort event listener here: that would release the
+@@ -160,7 +160,7 @@ export function createWriteToolDefinition(cwd, options) {
+                     content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
+                     details: undefined,
+                 };
+-            });
++            }, { scope: options?.mutationScope, realpath: ops.realpath });
+         },
+         renderCall(args, theme, context) {
+             const renderArgs = args;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index ea5cd61..8eb8214 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -21,7 +21,7 @@ export { type CompactionSettings, type DefaultProjectTrust, type ImageSettings,
+ export { formatSkillsForPrompt, type LoadSkillsFromDirOptions, type LoadSkillsResult, loadSkills, loadSkillsFromDir, type Skill, type SkillFrontmatter, } from "./core/skills.ts";
+ export { createSyntheticSourceInfo } from "./core/source-info.ts";
+ export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
+-export { type BashOperations, type BashSpawnContext, type BashSpawnHook, type BashToolDetails, type BashToolInput, type BashToolOptions, createBashToolDefinition, createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLocalBashOperations, createLsToolDefinition, createReadToolDefinition, createWriteToolDefinition, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type EditOperations, type EditToolDetails, type EditToolInput, type EditToolOptions, type FindOperations, type FindToolDetails, type FindToolInput, type FindToolOptions, formatSize, type GrepOperations, type GrepToolDetails, type GrepToolInput, type GrepToolOptions, type LsOperations, type LsToolDetails, type LsToolInput, type LsToolOptions, type ReadOperations, type ReadToolDetails, type ReadToolInput, type ReadToolOptions, type ToolsOptions, type TruncationOptions, type TruncationResult, truncateHead, truncateLine, truncateTail, type WriteOperations, type WriteToolInput, type WriteToolOptions, withFileMutationQueue, } from "./core/tools/index.ts";
++export { type BashOperations, type BashOutputSink, type FileMutationQueueOptions, type BashSpawnContext, type BashSpawnHook, type BashToolDetails, type BashToolInput, type BashToolOptions, createBashToolDefinition, createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLocalBashOperations, createLsToolDefinition, createReadToolDefinition, createWriteToolDefinition, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type EditOperations, type EditToolDetails, type EditToolInput, type EditToolOptions, type FindOperations, type FindToolDetails, type FindToolInput, type FindToolOptions, formatSize, type GrepOperations, type GrepToolDetails, type GrepToolInput, type GrepToolOptions, type LsOperations, type LsToolDetails, type LsToolInput, type LsToolOptions, type ReadOperations, type ReadToolDetails, type ReadToolInput, type ReadToolOptions, type ToolsOptions, type TruncationOptions, type TruncationResult, truncateHead, truncateLine, truncateTail, type WriteOperations, type WriteToolInput, type WriteToolOptions, withFileMutationQueue, } from "./core/tools/index.ts";
+ export { hasTrustRequiringProjectResources, type ProjectTrustDecision, ProjectTrustStore, type ProjectTrustStoreEntry, type ProjectTrustUpdate, } from "./core/trust-manager.ts";
+ export { type MainOptions, main } from "./main.ts";
+ export { InteractiveMode, type InteractiveModeOptions, type ModelInfo, type PrintModeOptions, RpcClient, type RpcClientOptions, type RpcCommand, type RpcEventListener, type RpcExtensionUIRequest, type RpcExtensionUIResponse, type RpcResponse, type RpcSessionState, runPrintMode, runRpcMode, } from "./modes/index.ts";
+@@ -32,4 +32,5 @@ export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";
+ export { convertToPng } from "./utils/image-convert.ts";
+ export { formatDimensionNote, type ResizedImage, resizeImage } from "./utils/image-resize.ts";
+ export { getShellConfig } from "./utils/shell.ts";
++export { detectSupportedImageMimeType } from "./utils/mime.ts";
+ //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/dist/index.js b/dist/index.js
+index 624a3da..4d975fc 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -44,4 +44,5 @@ export { convertToPng } from "./utils/image-convert.js";
+ export { formatDimensionNote, resizeImage } from "./utils/image-resize.js";
+ // Shell utilities
+ export { getShellConfig } from "./utils/shell.js";
++export { detectSupportedImageMimeType } from "./utils/mime.js";
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file

@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
+import { access, appendFile, lstat, mkdtemp, mkdir, open, readFile, realpath, writeFile, rm, stat, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
@@ -9,6 +11,9 @@ import type {
   ExecOutputChunk,
   FileListEntry,
   ToolExecutor,
+  ToolFileSystem,
+  ToolFileSystemOptions,
+  ToolFileStat,
 } from "@open-managed-agents/adapter-core";
 
 export interface LocalToolExecutorOptions {
@@ -31,16 +36,50 @@ export interface LocalToolExecutorOptions {
  */
 export class LocalToolExecutor implements ToolExecutor {
   readonly root: string;
+  readonly fileSystem: ToolFileSystem;
 
   constructor(options: LocalToolExecutorOptions) {
     this.root = resolve(options.root);
+    const target = (path: string) => this.resolveInside(path, "path");
+    // Check cancellation around metadata calls too. Never race a mutation:
+    // callers can release their mutation lock only after the I/O has settled.
+    const run = async <T>(options: ToolFileSystemOptions | undefined, operation: () => Promise<T>): Promise<T> => {
+      options?.signal?.throwIfAborted();
+      const result = await operation();
+      options?.signal?.throwIfAborted();
+      return result;
+    };
+    const describe = (value: Stats): ToolFileStat => ({
+      isFile: value.isFile(),
+      isDirectory: value.isDirectory(),
+      isSymbolicLink: value.isSymbolicLink(),
+      size: value.size,
+      mtimeMs: value.mtimeMs,
+    });
+    this.fileSystem = {
+      readFile: (path, options) => run(options, () => readFile(target(path), options)),
+      writeFile: (path, content, options) => run(options, () => writeFile(target(path), content, options)),
+      access: (path, mode, options) => run(options, () => access(target(path), mode)),
+      stat: (path, options) => run(options, async () => describe(await stat(target(path)))),
+      lstat: (path, options) => run(options, async () => describe(await lstat(target(path)))),
+      realpath: (path, options) => run(options, () => realpath(target(path))),
+      readdir: (path, options) => run(options, () => readdir(target(path))),
+      mkdir: (path, options) => run(options, async () => { await mkdir(target(path), { recursive: true }); }),
+      createTempFile: (options) => run(options, async () => {
+        const path = join(this.root, `.oma-tmp-${randomUUID()}.log`);
+        const file = await open(path, "wx", 0o600);
+        await file.close();
+        return path;
+      }),
+      appendFile: (path, content, options) => run(options, () => appendFile(target(path), content)),
+    };
   }
 
   private resolveInside(p: string | undefined, label: string): string {
     const target = resolve(this.root, p ?? ".");
     const rel = relative(this.root, target);
     if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new Error(`${label} escapes executor root: ${p}`);
+      throw Object.assign(new Error(`${label} escapes executor root: ${p}`), { code: "EACCES", path: p });
     }
     return target;
   }
@@ -53,7 +92,6 @@ export class LocalToolExecutor implements ToolExecutor {
       throw new Error("exec requires a non-empty command");
     }
     const cwd = this.resolveInside(opts?.cwd, "cwd");
-    await mkdir(cwd, { recursive: true });
     if (opts?.signal?.aborted) {
       throw new ExecAbortedBeforeStartError();
     }
@@ -115,14 +153,21 @@ export class LocalToolExecutor implements ToolExecutor {
       }
     };
 
-    const push = (stream: "stdout" | "stderr") => (text: string) => {
-      queue.push({ stream, text });
-      wake();
-    };
-    // Each pipe retains its own decoder state across byte chunks and flushes
-    // at EOF. A chunk boundary can split a Chinese character or an emoji.
-    child.stdout.setEncoding("utf8").on("data", push("stdout"));
-    child.stderr.setEncoding("utf8").on("data", push("stderr"));
+    // Retain exact bytes as well as independently decoded text. ignoreBOM
+    // matches Buffer.toString("utf8"): a leading BOM is content, not metadata.
+    for (const [stream, pipe] of [["stdout", child.stdout], ["stderr", child.stderr]] as const) {
+      const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+      pipe.on("data", (data: Buffer) => {
+        const bytes = new Uint8Array(data);
+        queue.push({ stream, text: decoder.decode(bytes, { stream: true }), bytes });
+        wake();
+      });
+      pipe.on("end", () => {
+        const text = decoder.decode();
+        if (text) queue.push({ stream, text, bytes: new Uint8Array() });
+        wake();
+      });
+    }
     child.on("error", (e) => {
       error = e instanceof Error ? e : new Error(String(e));
     });

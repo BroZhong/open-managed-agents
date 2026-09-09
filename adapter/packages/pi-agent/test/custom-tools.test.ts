@@ -6,11 +6,13 @@ import type {
   FileListEntry,
   ToolExecutor,
 } from "@open-managed-agents/adapter-core";
+import { MemoryFileSystem } from "./memory-file-system.js";
 import { buildCustomTools } from "../src/custom-tools.js";
 
 /**
  * A purely in-memory {@link ToolExecutor} — a map from workspace-relative path
- * to file content, no host filesystem at all. Every fs/exec call is recorded in
+ * to file content plus a faithful byte/metadata filesystem fixture, no Host
+ * filesystem at all. Every fs/exec call is recorded in
  * {@link MemExecutor.calls} so a test can assert the operations landed here and
  * never touched the Host disk. `list` mirrors the real contract: directories
  * are omitted; a file path returns exactly that entry; a directory returns all
@@ -19,8 +21,10 @@ import { buildCustomTools } from "../src/custom-tools.js";
 class MemExecutor implements ToolExecutor {
   readonly files = new Map<string, string>();
   readonly calls: string[] = [];
+  readonly fileSystem = new MemoryFileSystem(this.files, this.calls);
   /** The `opts` object of the most recent `exec` call, for timeout/signal assertions. */
   lastExecOpts?: ExecOptions;
+  duringExec?: () => void;
 
   seed(path: string, content: string): this {
     this.files.set(path, content);
@@ -30,14 +34,9 @@ class MemExecutor implements ToolExecutor {
   async *exec(command: string[], opts?: ExecOptions): AsyncIterable<ExecOutputChunk> {
     this.calls.push(`exec ${command.join(" ")} @${opts?.cwd ?? "."}`);
     this.lastExecOpts = opts;
-    if (command[0] === "python3" && command[3]?.includes("import base64")) {
-      const content = this.files.get(command[4]);
-      yield { stream: "stdout", text: JSON.stringify(content === undefined
-        ? { error: `ENOENT: ${command[4]}` }
-        : { data: Buffer.from(content).toString("base64"), mimeType: null }) };
-      return;
-    }
+    this.duringExec?.();
     yield { stream: "stdout", text: `ran: ${command[command.length - 1]}` };
+    opts?.onExit?.({ exitCode: 0 });
   }
 
   async readFile(path: string): Promise<string> {
@@ -100,6 +99,15 @@ async function run(
 }
 
 describe("buildCustomTools — Pi native factories redirected into the executor", () => {
+  it("rejects a legacy text-only executor instead of falling back to Host filesystem", () => {
+    const inner = new MemExecutor();
+    const legacy: ToolExecutor = {
+      exec: inner.exec.bind(inner), readFile: inner.readFile.bind(inner),
+      writeFile: inner.writeFile.bind(inner), list: inner.list.bind(inner),
+    };
+    expect(() => buildCustomTools(legacy)).toThrow("native fileSystem operations");
+    expect(inner.calls).toEqual([]);
+  });
   it("exposes the Pi-native tool set with native names", () => {
     const tools = buildCustomTools(new MemExecutor());
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -136,8 +144,8 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const tools = buildCustomTools(ex);
     const out = await run(toolByName(tools, "read"), { path: "note.txt" });
     expect(out).toBe("read-me");
-    expect(ex.calls.some((call) => call.startsWith("exec python3") && call.endsWith("note.txt 33554432 @."))).toBe(true);
-    expect(ex.calls).not.toContain("read note.txt");
+    expect(ex.calls).toContain("read note.txt");
+    expect(ex.calls.some((call) => call.startsWith("exec "))).toBe(false);
   });
 
   it("keeps /skills absolute and outside the /home/user Workspace mapping", async () => {
@@ -148,7 +156,7 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const out = await run(toolByName(tools, "read"), { path: skillPath });
 
     expect(out).toBe("# Projected Skill");
-    expect(ex.calls.some((call) => call.startsWith("exec python3") && call.endsWith(`${skillPath} 33554432 @.`))).toBe(true);
+    expect(ex.calls).toContain(`read ${skillPath}`);
     expect(ex.calls).not.toContain("read skills/skill_abc/SKILL.md");
     expect(ex.calls).not.toContain("read /home/user/skills/skill_abc/SKILL.md");
   });
@@ -164,22 +172,21 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     expect(ex.calls).toContain("write code.ts");
   });
 
-  it("bash runs the command as /bin/sh -c through the executor", async () => {
+  it("bash runs the command as bash through the executor", async () => {
     const ex = new MemExecutor();
     const tools = buildCustomTools(ex);
     const out = await run(toolByName(tools, "bash"), { command: "echo hi" });
     expect(out).toContain("ran: echo hi");
-    expect(ex.calls).toContain("exec /bin/sh -c echo hi @.");
+    expect(ex.calls.some((call) => /^exec (?:\/bin\/)?bash -c echo hi @\.$/.test(call))).toBe(true);
   });
 
-  it("bash forwards Pi's timeout (SECONDS) straight through — not divided by 1000 (#81)", async () => {
-    // Pi's bash schema defines `timeout` in SECONDS. The old code did
-    // `options.timeout / 1000`, turning 40s into 0.04s and killing the command
-    // in ~44ms ([deadline_exceeded]). The executor must receive 40, not 0.04.
+  it("keeps the backend deadline disabled when Pi owns a timeout", async () => {
+    // Native Pi validates and renders seconds. The bridge owns its timer so
+    // deadline output and cancellation remain distinguishable; a second
+    // backend deadline would race it and lose the native error context.
     const ex = new MemExecutor();
-    const tools = buildCustomTools(ex);
-    await run(toolByName(tools, "bash"), { command: "sleep 1", timeout: 40 });
-    expect(ex.lastExecOpts?.timeoutSeconds).toBe(40);
+    await run(toolByName(buildCustomTools(ex), "bash"), { command: "sleep 1", timeout: 40 });
+    expect(ex.lastExecOpts?.timeoutSeconds).toBe(0);
   });
 
   it("bash with no model timeout disables the timeout via timeoutSeconds: 0 (#81)", async () => {
@@ -192,14 +199,13 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     expect(ex.lastExecOpts?.timeoutSeconds).toBe(0);
   });
 
-  it("bash forwards Pi's AbortSignal into the executor (#84)", async () => {
-    // The turn's native abort signal reaches the tool's execute() and must be
-    // threaded into the executor so a hung exec can be cancelled.
+  it("forwards Pi cancellation into the executor's process signal (#84)", async () => {
     const ex = new MemExecutor();
-    const tools = buildCustomTools(ex);
     const controller = new AbortController();
-    await run(toolByName(tools, "bash"), { command: "echo hi" }, controller.signal);
-    expect(ex.lastExecOpts?.signal).toBe(controller.signal);
+    ex.duringExec = () => controller.abort();
+    await expect(run(toolByName(buildCustomTools(ex), "bash"), { command: "echo hi" }, controller.signal))
+      .rejects.toThrow("Command aborted");
+    expect(ex.lastExecOpts?.signal?.aborted).toBe(true);
   });
 
   it("ls lists a directory's immediate children via the executor", async () => {
@@ -212,7 +218,7 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     // Immediate children only: two files plus the nested directory (with a
     // trailing slash from Pi's directory indicator).
     expect(out.split("\n").sort()).toEqual(["a.txt", "b.txt", "nested/"].sort());
-    expect(ex.calls.some((c) => c.startsWith("list dir"))).toBe(true);
+    expect(ex.calls).toContain("readdir dir");
   });
 
   it("a missing read rejects (the executor's ENOENT), never falling back to Host disk", async () => {
@@ -220,6 +226,6 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const tools = buildCustomTools(ex);
     await expect(run(toolByName(tools, "read"), { path: "nope.txt" })).rejects.toThrow();
     // Only executor calls happened — no host fs access.
-    expect(ex.calls.every((c) => /^(read|write|list|exec) /.test(c))).toBe(true);
+    expect(ex.calls.every((c) => /^(read|write|list|exec|access|stat|realpath|mkdir|readdir) /.test(c))).toBe(true);
   });
 });

@@ -277,6 +277,16 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
     const wrap = (inner: ToolExecutor, tag: string): ToolExecutor => {
       seenBy.set(inner, []);
       return {
+        fileSystem: new Proxy(inner.fileSystem!, {
+          get(target, key) {
+            if (key === "writeFile") return (p: string, c: Uint8Array, options?: { signal?: AbortSignal }) => {
+              seenBy.get(inner)!.push(`write ${p}:${tag}`);
+              return target.writeFile(p, c, options);
+            };
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        }),
         exec(command: string[], opts?: ExecOptions): AsyncIterable<ExecOutputChunk> {
           seenBy.get(inner)!.push(command.join(" "));
           return inner.exec(command, opts);

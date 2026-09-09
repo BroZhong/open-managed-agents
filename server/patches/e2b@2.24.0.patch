@@ -1,8 +1,25 @@
 diff --git a/dist/index.js b/dist/index.js
-index c2030a9831879f0109da03082f850e103346ef5b..4efabf7d00a58ede821b7f7880aaaa65ab40ecbb 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -1511,6 +1511,8 @@ var CommandHandle = class {
+@@ -1430,7 +1430,7 @@
+    * @internal
+    * @access protected
+    */
+-  constructor(pid, handleDisconnect, handleKill, events, onStdout, onStderr, onPty) {
++  constructor(pid, handleDisconnect, handleKill, events, onStdout, onStderr, onPty, onStdoutBytes, onStderrBytes) {
+     this.pid = pid;
+     this.handleDisconnect = handleDisconnect;
+     this.handleKill = handleKill;
+@@ -1438,6 +1438,8 @@
+     this.onStdout = onStdout;
+     this.onStderr = onStderr;
+     this.onPty = onPty;
++    this.onStdoutBytes = onStdoutBytes;
++    this.onStderrBytes = onStderrBytes;
+     this._stdout = "";
+     this._stderr = "";
+     this._wait = this.handleEvents();
+@@ -1511,6 +1513,8 @@
    iterateEvents() {
      return __asyncGenerator(this, null, function* () {
        var _a3;
@@ -11,22 +28,24 @@ index c2030a9831879f0109da03082f850e103346ef5b..4efabf7d00a58ede821b7f7880aaaa65
        try {
          for (var iter = __forAwait(this.events), more, temp, error; more = !(temp = yield new __await(iter.next())).done; more = false) {
            const event = temp.value;
-@@ -1520,12 +1522,12 @@ var CommandHandle = class {
+@@ -1520,12 +1524,14 @@
              case "data":
                switch (e.value.output.case) {
                  case "stdout":
 -                  out = new TextDecoder().decode(e.value.output.value);
++                  this.onStdoutBytes?.(e.value.output.value);
 +                  out = stdoutDecoder.decode(e.value.output.value, { stream: true });
                    this._stdout += out;
                    yield [out, null, null];
                    break;
                  case "stderr":
 -                  out = new TextDecoder().decode(e.value.output.value);
++                  this.onStderrBytes?.(e.value.output.value);
 +                  out = stderrDecoder.decode(e.value.output.value, { stream: true });
                    this._stderr += out;
                    yield [null, out, null];
                    break;
-@@ -1535,6 +1537,16 @@ var CommandHandle = class {
+@@ -1535,6 +1541,16 @@
                }
                break;
              case "end":
@@ -43,11 +62,50 @@ index c2030a9831879f0109da03082f850e103346ef5b..4efabf7d00a58ede821b7f7880aaaa65
                this.result = {
                  exitCode: e.value.exitCode,
                  error: e.value.error,
+@@ -3522,7 +3538,9 @@
+         events,
+         opts == null ? void 0 : opts.onStdout,
+         opts == null ? void 0 : opts.onStderr,
+-        void 0
++        void 0,
++        opts == null ? void 0 : opts.onStdoutBytes,
++        opts == null ? void 0 : opts.onStderrBytes
+       );
+     } catch (err) {
+       cleanup();
+@@ -3573,7 +3591,9 @@
+         events,
+         opts == null ? void 0 : opts.onStdout,
+         opts == null ? void 0 : opts.onStderr,
+-        void 0
++        void 0,
++        opts == null ? void 0 : opts.onStdoutBytes,
++        opts == null ? void 0 : opts.onStderrBytes
+       );
+     } catch (err) {
+       cleanup();
 diff --git a/dist/index.mjs b/dist/index.mjs
-index a92bf7e8b309a4fb7441d0a4b698a9ab86729d10..2751badd9ae52c069f244f50663bda6189f3a313 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -1455,6 +1455,8 @@ var CommandHandle = class {
+@@ -1374,7 +1374,7 @@
+    * @internal
+    * @access protected
+    */
+-  constructor(pid, handleDisconnect, handleKill, events, onStdout, onStderr, onPty) {
++  constructor(pid, handleDisconnect, handleKill, events, onStdout, onStderr, onPty, onStdoutBytes, onStderrBytes) {
+     this.pid = pid;
+     this.handleDisconnect = handleDisconnect;
+     this.handleKill = handleKill;
+@@ -1382,6 +1382,8 @@
+     this.onStdout = onStdout;
+     this.onStderr = onStderr;
+     this.onPty = onPty;
++    this.onStdoutBytes = onStdoutBytes;
++    this.onStderrBytes = onStderrBytes;
+     this._stdout = "";
+     this._stderr = "";
+     this._wait = this.handleEvents();
+@@ -1455,6 +1457,8 @@
    iterateEvents() {
      return __asyncGenerator(this, null, function* () {
        var _a3;
@@ -56,22 +114,24 @@ index a92bf7e8b309a4fb7441d0a4b698a9ab86729d10..2751badd9ae52c069f244f50663bda61
        try {
          for (var iter = __forAwait(this.events), more, temp, error; more = !(temp = yield new __await(iter.next())).done; more = false) {
            const event = temp.value;
-@@ -1464,12 +1466,12 @@ var CommandHandle = class {
+@@ -1464,12 +1468,14 @@
              case "data":
                switch (e.value.output.case) {
                  case "stdout":
 -                  out = new TextDecoder().decode(e.value.output.value);
++                  this.onStdoutBytes?.(e.value.output.value);
 +                  out = stdoutDecoder.decode(e.value.output.value, { stream: true });
                    this._stdout += out;
                    yield [out, null, null];
                    break;
                  case "stderr":
 -                  out = new TextDecoder().decode(e.value.output.value);
++                  this.onStderrBytes?.(e.value.output.value);
 +                  out = stderrDecoder.decode(e.value.output.value, { stream: true });
                    this._stderr += out;
                    yield [null, out, null];
                    break;
-@@ -1479,6 +1481,16 @@ var CommandHandle = class {
+@@ -1479,6 +1485,16 @@
                }
                break;
              case "end":
@@ -88,3 +148,115 @@ index a92bf7e8b309a4fb7441d0a4b698a9ab86729d10..2751badd9ae52c069f244f50663bda61
                this.result = {
                  exitCode: e.value.exitCode,
                  error: e.value.error,
+@@ -3479,7 +3495,9 @@
+         events,
+         opts == null ? void 0 : opts.onStdout,
+         opts == null ? void 0 : opts.onStderr,
+-        void 0
++        void 0,
++        opts == null ? void 0 : opts.onStdoutBytes,
++        opts == null ? void 0 : opts.onStderrBytes
+       );
+     } catch (err) {
+       cleanup();
+@@ -3530,7 +3548,9 @@
+         events,
+         opts == null ? void 0 : opts.onStdout,
+         opts == null ? void 0 : opts.onStderr,
+-        void 0
++        void 0,
++        opts == null ? void 0 : opts.onStdoutBytes,
++        opts == null ? void 0 : opts.onStderrBytes
+       );
+     } catch (err) {
+       cleanup();
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -4115,6 +4115,8 @@
+     private readonly onStdout?;
+     private readonly onStderr?;
+     private readonly onPty?;
++    private readonly onStdoutBytes?;
++    private readonly onStderrBytes?;
+     private _stdout;
+     private _stderr;
+     private result?;
+@@ -4125,7 +4127,7 @@
+      * @internal
+      * @access protected
+      */
+-    constructor(pid: number, handleDisconnect: () => void, handleKill: () => Promise<boolean>, events: AsyncIterable<ConnectResponse | StartResponse>, onStdout?: ((stdout: string) => void | Promise<void>) | undefined, onStderr?: ((stderr: string) => void | Promise<void>) | undefined, onPty?: ((pty: Uint8Array) => void | Promise<void>) | undefined);
++    constructor(pid: number, handleDisconnect: () => void, handleKill: () => Promise<boolean>, events: AsyncIterable<ConnectResponse | StartResponse>, onStdout?: ((stdout: string) => void | Promise<void>) | undefined, onStderr?: ((stderr: string) => void | Promise<void>) | undefined, onPty?: ((pty: Uint8Array) => void | Promise<void>) | undefined, onStdoutBytes?: ((data: Uint8Array) => void | Promise<void>) | undefined, onStderrBytes?: ((data: Uint8Array) => void | Promise<void>) | undefined);
+     /**
+      * Command execution exit code.
+      * `0` if the command finished successfully.
+@@ -7137,10 +7139,14 @@
+      * Callback for command stdout output.
+      */
+     onStdout?: (data: string) => void | Promise<void>;
++    /** Original protobuf output bytes, delivered before text decoding. */
++    onStdoutBytes?: (data: Uint8Array) => void | Promise<void>;
+     /**
+      * Callback for command stderr output.
+      */
+     onStderr?: (data: string) => void | Promise<void>;
++    /** Original protobuf output bytes, delivered before text decoding. */
++    onStderrBytes?: (data: Uint8Array) => void | Promise<void>;
+     /**
+      * If true, command stdin is kept open and you can send data to it using {@link Commands.sendStdin} or {@link CommandHandle.sendStdin}.
+      * @default false
+@@ -7156,7 +7162,7 @@
+ /**
+  * Options for connecting to a command.
+  */
+-type CommandConnectOpts = Pick<CommandStartOpts, 'onStderr' | 'onStdout' | 'timeoutMs'> & CommandRequestOpts;
++type CommandConnectOpts = Pick<CommandStartOpts, 'onStderr' | 'onStdout' | 'onStderrBytes' | 'onStdoutBytes' | 'timeoutMs'> & CommandRequestOpts;
+ /**
+  * Information about a command, PTY session or start command running in the sandbox as process.
+  */
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -4115,6 +4115,8 @@
+     private readonly onStdout?;
+     private readonly onStderr?;
+     private readonly onPty?;
++    private readonly onStdoutBytes?;
++    private readonly onStderrBytes?;
+     private _stdout;
+     private _stderr;
+     private result?;
+@@ -4125,7 +4127,7 @@
+      * @internal
+      * @access protected
+      */
+-    constructor(pid: number, handleDisconnect: () => void, handleKill: () => Promise<boolean>, events: AsyncIterable<ConnectResponse | StartResponse>, onStdout?: ((stdout: string) => void | Promise<void>) | undefined, onStderr?: ((stderr: string) => void | Promise<void>) | undefined, onPty?: ((pty: Uint8Array) => void | Promise<void>) | undefined);
++    constructor(pid: number, handleDisconnect: () => void, handleKill: () => Promise<boolean>, events: AsyncIterable<ConnectResponse | StartResponse>, onStdout?: ((stdout: string) => void | Promise<void>) | undefined, onStderr?: ((stderr: string) => void | Promise<void>) | undefined, onPty?: ((pty: Uint8Array) => void | Promise<void>) | undefined, onStdoutBytes?: ((data: Uint8Array) => void | Promise<void>) | undefined, onStderrBytes?: ((data: Uint8Array) => void | Promise<void>) | undefined);
+     /**
+      * Command execution exit code.
+      * `0` if the command finished successfully.
+@@ -7137,10 +7139,14 @@
+      * Callback for command stdout output.
+      */
+     onStdout?: (data: string) => void | Promise<void>;
++    /** Original protobuf output bytes, delivered before text decoding. */
++    onStdoutBytes?: (data: Uint8Array) => void | Promise<void>;
+     /**
+      * Callback for command stderr output.
+      */
+     onStderr?: (data: string) => void | Promise<void>;
++    /** Original protobuf output bytes, delivered before text decoding. */
++    onStderrBytes?: (data: Uint8Array) => void | Promise<void>;
+     /**
+      * If true, command stdin is kept open and you can send data to it using {@link Commands.sendStdin} or {@link CommandHandle.sendStdin}.
+      * @default false
+@@ -7156,7 +7162,7 @@
+ /**
+  * Options for connecting to a command.
+  */
+-type CommandConnectOpts = Pick<CommandStartOpts, 'onStderr' | 'onStdout' | 'timeoutMs'> & CommandRequestOpts;
++type CommandConnectOpts = Pick<CommandStartOpts, 'onStderr' | 'onStdout' | 'onStderrBytes' | 'onStdoutBytes' | 'timeoutMs'> & CommandRequestOpts;
+ /**
+  * Information about a command, PTY session or start command running in the sandbox as process.
+  */

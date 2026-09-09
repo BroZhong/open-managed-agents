@@ -20,6 +20,38 @@
 export interface ExecOutputChunk {
   stream: "stdout" | "stderr";
   text: string;
+  /** Original bytes, when the backend exposes them without text decoding. */
+  bytes?: Uint8Array;
+}
+
+/** Cancellation for filesystem I/O; cancellation never races a pending mutation. */
+export interface ToolFileSystemOptions {
+  signal?: AbortSignal;
+}
+
+export interface ToolFileStat {
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymbolicLink: boolean;
+  size: number;
+  mtimeMs: number;
+}
+
+/** Native filesystem primitives, distinct from Workspace persistence helpers. */
+export interface ToolFileSystem {
+  readFile(path: string, options?: ToolFileSystemOptions): Promise<Uint8Array>;
+  /** Does not create missing parent directories. */
+  writeFile(path: string, content: Uint8Array, options?: ToolFileSystemOptions): Promise<void>;
+  access(path: string, mode?: number, options?: ToolFileSystemOptions): Promise<void>;
+  stat(path: string, options?: ToolFileSystemOptions): Promise<ToolFileStat>;
+  lstat(path: string, options?: ToolFileSystemOptions): Promise<ToolFileStat>;
+  realpath(path: string, options?: ToolFileSystemOptions): Promise<string>;
+  readdir(path: string, options?: ToolFileSystemOptions): Promise<string[]>;
+  /** Create a directory and any missing parents. */
+  mkdir(path: string, options?: ToolFileSystemOptions): Promise<void>;
+  /** Create an empty, unique file and return its usable absolute path. */
+  createTempFile(options?: ToolFileSystemOptions): Promise<string>;
+  appendFile(path: string, content: Uint8Array, options?: ToolFileSystemOptions): Promise<void>;
 }
 
 /** Completion of a process, separate from its stdout/stderr stream. */
@@ -84,11 +116,15 @@ export interface FileListEntry {
 /**
  * Abstract, infrastructure-free file + command executor.
  *
- * All paths are interpreted relative to the executor's own root; an
- * implementation MUST NOT let a path escape that root. Nothing here references
- * a sandbox, S3, a database, or any concrete backend — that is the point.
+ * Relative paths use the executor's workspace. Each backend defines its
+ * isolation boundary: LocalToolExecutor confines lexical paths to its root;
+ * a sandbox executor can also access absolute projection and temporary paths
+ * inside that sandbox. Nothing here depends on S3 or a concrete backend.
  */
 export interface ToolExecutor {
+  /** Stable identity per executor. Required by Pi's native I/O hooks. */
+  readonly fileSystem?: ToolFileSystem;
+
   /**
    * Run a command (argv form — no shell parsing implied) and stream its
    * output. The returned iterable completes when the process exits.

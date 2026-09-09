@@ -2,10 +2,11 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { GrepToolOptions } from "@earendil-works/pi-coding-agent";
 import {
-  SANDBOX_WORKSPACE_ROOT,
   type ExecExitResult,
   type ToolExecutor,
 } from "@open-managed-agents/adapter-core";
+
+import { executorFileSystem, fileExists, toExecutorPath } from "./native-files.js";
 
 type SearchSpawn = NonNullable<GrepToolOptions["spawn"]>;
 
@@ -48,7 +49,7 @@ class SandboxSearchProcess extends EventEmitter {
       })) {
         // Pi's readline consumer kills rg at the match limit. Discard further
         // queued output while the backend confirms process termination.
-        if (!this.killed) this[chunk.stream].write(chunk.text);
+        if (!this.killed) this[chunk.stream].write(chunk.bytes ?? chunk.text);
       }
       if (!result) throw new Error("Search executor did not report process exit status");
     } catch (error) {
@@ -77,66 +78,15 @@ class SandboxSearchProcess extends EventEmitter {
 
 /** Filesystem operations only; search itself always runs the real rg/fd. */
 export function sandboxSearchFiles(executor: ToolExecutor, signal?: AbortSignal) {
-  async function query(action: "stat" | "exists" | "read", absolutePath: string) {
-    if (signal?.aborted) throw new Error("Operation aborted");
-    const prefix = `${SANDBOX_WORKSPACE_ROOT}/`;
-    const filePath = absolutePath === SANDBOX_WORKSPACE_ROOT ? "."
-      : absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
-    let output = "";
-    for await (const chunk of executor.exec(
-      ["python3", "-I", "-c", SEARCH_FILE_PROGRAM, action, filePath],
-      { cwd: ".", timeoutSeconds: 0, signal },
-    )) {
-      if (chunk.stream === "stdout") output += chunk.text;
-    }
-    if (signal?.aborted) throw new Error("Operation aborted");
-    const response = JSON.parse(output) as {
-      error?: string; exists?: boolean; isDirectory?: boolean; data?: string;
-    };
-    if (response.error) throw new Error(response.error);
-    return response;
-  }
+  const fs = executorFileSystem(executor);
   return {
     async isDirectory(path: string): Promise<boolean> {
-      const result = await query("stat", path);
-      if (typeof result.isDirectory !== "boolean") throw new Error("Invalid sandbox stat result");
-      return result.isDirectory;
+      return (await fs.stat(toExecutorPath(path), { signal })).isDirectory;
     },
-    async exists(path: string): Promise<boolean> {
-      const result = await query("exists", path);
-      if (typeof result.exists !== "boolean") throw new Error("Invalid sandbox exists result");
-      return result.exists;
-    },
+    exists: (path: string) => fileExists(fs, path, signal),
     async readFile(path: string): Promise<string> {
-      const result = await query("read", path);
-      if (typeof result.data !== "string") throw new Error("Invalid sandbox read result");
-      // Match fs.readFile(path, 'utf8'), including BOM and replacement decoding.
-      return Buffer.from(result.data, "base64").toString("utf8");
+      // Match native Node UTF-8 decoding, including BOM and invalid bytes.
+      return Buffer.from(await fs.readFile(toExecutorPath(path), { signal })).toString("utf8");
     },
   };
 }
-
-// Isolated Python provides stat/access/raw bytes missing from ToolExecutor's
-// file-list/text-only surface. It performs no matching, traversal or formatting.
-const SEARCH_FILE_PROGRAM = String.raw`
-import base64
-import json
-import os
-import stat
-import sys
-from pathlib import Path
-
-try:
-    action, name = sys.argv[1:]
-    if action == "exists":
-        result = {"exists": os.access(name, os.F_OK)}
-    elif action == "stat":
-        result = {"isDirectory": stat.S_ISDIR(os.stat(name).st_mode)}
-    elif action == "read":
-        result = {"data": base64.b64encode(Path(name).read_bytes()).decode("ascii")}
-    else:
-        raise ValueError("Unknown filesystem operation")
-    print(json.dumps(result))
-except Exception as error:
-    print(json.dumps({"error": str(error)}))
-`;
