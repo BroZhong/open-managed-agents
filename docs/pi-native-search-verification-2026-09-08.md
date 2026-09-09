@@ -1,9 +1,14 @@
 # Pi native grep/find sandbox verification — 2026-09-08
 
-The implementation now runs Pi 0.80.10's native `grep` and `find` logic through
-sandbox filesystem/process operations. Code and isolated cloud verification
-are complete. This change has not been committed, merged, or deployed to the
-shared Host or sandbox templates.
+This is the historical pre-release snapshot from 2026-09-08. Its test results
+and then-current deployment status are preserved below. It is superseded by
+the [2026-09-09 release verification](pi-native-search-release-verification-2026-09-09.md),
+including the published images with pinned rg/fd binaries.
+
+At the close of this verification, the implementation ran Pi 0.80.10's native
+`grep` and `find` logic through sandbox filesystem/process operations. Code and
+isolated cloud verification were complete. The change had not yet been
+committed, merged, or deployed to the shared Host or sandbox templates.
 
 ## Implementation
 

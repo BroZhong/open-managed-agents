@@ -23,7 +23,7 @@ spec:
         - name: ali-shanghai
       containers:
         - name: sandbox
-          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:bdf9bdc74ad8e1f289b3993bb8154e388a505a43c3e24d47cbaae874e5ad49f4
+          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:dd6437954752ff8527225bd2198245b89c75598a43c2e17d652d3d43279a4a72
           resources:
             requests:
               cpu: "2"

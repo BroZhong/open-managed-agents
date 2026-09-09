@@ -1,6 +1,39 @@
-# Image verification — 2026-09-07
+# Image verification records
 
-## auto-story 0.1.1
+## auto-story 0.1.2 — 2026-09-09
+
+Built and pushed on `vfs-dev` from commit
+`d6460a20c0e1a09f61601594bcd4e91dca68ab43` for Linux amd64:
+`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.2`.
+Published digest:
+`sha256:dd6437954752ff8527225bd2198245b89c75598a43c2e17d652d3d43279a4a72`.
+
+The image reuses the exact 0.1.1 runtime digest below, retaining VFS CLI
+v0.3.14, MediaKit 0.2.1, Gemini SDK 2.22.0, FFmpeg and OpenMontage. It adds
+upstream rg 15.1.0 and fd 10.4.2, matching the native local/cloud parity tests.
+Official GitHub release archive hashes were verified before extraction; the
+Dockerfile independently checks the exact binary hashes:
+
+- rg: `ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2`.
+- fd: `0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8`.
+
+Both the build-time smoke and separate acceptance container passed, including
+the retained media, audio dry-run and environment-injection checks documented
+for 0.1.1 below. Additional checks exercise rg's Unicode regex, brace globs
+and `.gitignore`, plus fd's recursive basename and path globs. Separate image
+acceptance runs as `user`, with no network, no host mounts and a minimal PATH.
+
+The published digest was applied to the auto-story SandboxSet on 2026-09-09;
+its replacement warm Pod became Running and Ready. Sandbox image availability
+and shared Host/Agent acceptance are separate checks. Current deployment and
+end-to-end results are recorded in the
+[2026-09-09 release verification](../../../docs/pi-native-search-release-verification-2026-09-09.md).
+
+Build logs and the three-template image receipt are retained locally under
+`/private/tmp/oma-pi-search-release-builds-20260909/`. The earlier sections
+below preserve their historical verification results.
+
+## auto-story 0.1.1 — 2026-09-07
 
 Built and pushed on `vfs-dev` for Linux amd64:
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.1`.

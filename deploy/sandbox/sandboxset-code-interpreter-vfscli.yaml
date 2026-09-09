@@ -1,6 +1,6 @@
-# OPTIONAL, NOT CURRENTLY DEPLOYED. Prototype warm pool for a custom
-# `code-interpreter-vfscli` template on agent-platform. Production uses the
-# stock `code-interpreter` pool from sandboxset-code-interpreter.yaml.
+# Opt-in `code-interpreter-vfscli` warm pool on agent-platform. The native
+# search overlay below was deployed on 2026-09-09; the production default
+# remains `code-interpreter` from sandboxset-code-interpreter.yaml.
 #
 # The SandboxSet name IS the E2B templateID. Agents opt in with
 # `sandbox.image: "code-interpreter-vfscli"`; the default `code-interpreter`
@@ -12,9 +12,8 @@
 #
 # ⚠️ Private ACR pull: the CRD has no dedicated imagePullSecrets field, but the
 # pod template passes it through — hence template.spec.imagePullSecrets below.
-# The `ali-shanghai` Secret must exist in sandbox-system before this optional
-# pool is enabled. CUSTOM_SANDBOX_IMAGE is a release-time placeholder; replace
-# it with an immutable image from the Shanghai ACR before applying.
+# The `ali-shanghai` Secret must exist in sandbox-system. Keep the container
+# image pinned to a verified immutable release from the Shanghai ACR.
 #
 # Apply (idempotent):
 #   KUBECONFIG=~/.kube/agent-platform-config kubectl apply -f deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml
@@ -45,7 +44,7 @@ spec:
         - name: ali-shanghai
       containers:
         - name: sandbox
-          image: CUSTOM_SANDBOX_IMAGE
+          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:f910f7b3aaefba6271f1dfe131874e90bfa62673bf6e043ef31b49b4169eb024
           resources:
             requests:
               cpu: "1"
