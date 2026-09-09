@@ -170,6 +170,9 @@ export const SkillSchema = z
     ownerType: SkillOwnerTypeSchema,
     ownerId: z.string(),
     sourceSkillId: z.string().nullable().optional(),
+    createdAt: DateTimeSchema.nullable().describe(
+      "Upload or fork creation time. Null for legacy Skills whose creation time is unknown.",
+    ),
     updatedAt: DateTimeSchema,
   })
   .openapi("Skill");
@@ -179,6 +182,9 @@ export const SkillSummarySchema = z
     id: z.string(),
     name: z.string(),
     description: z.string(),
+    createdAt: DateTimeSchema.nullable().describe(
+      "Upload time. Null for legacy Skills whose upload time is unknown.",
+    ),
     updatedAt: DateTimeSchema,
   })
   .openapi("SkillSummary");
@@ -189,6 +195,9 @@ export const EquippedSkillSchema = z
     name: z.string(),
     description: z.string(),
     sourceSkillId: z.string().nullable(),
+    createdAt: DateTimeSchema.nullable().describe(
+      "Fork creation time. Null for legacy Skills whose creation time is unknown.",
+    ),
     updatedAt: DateTimeSchema,
   })
   .openapi("EquippedSkill");

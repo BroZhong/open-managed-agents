@@ -238,6 +238,13 @@ describe("OpenAPI contract", () => {
       "mock",
     ]);
     expect(schemas.Agent.properties).toHaveProperty("description");
+    for (const name of ["Skill", "SkillSummary", "EquippedSkill"]) {
+      expect(schemas[name].required).toContain("createdAt");
+      expect(schemas[name].properties.createdAt).toMatchObject({
+        type: ["string", "null"],
+        format: "date-time",
+      });
+    }
     expect(schemas.Agent.properties.mcpServers.items).toEqual({
       $ref: "#/components/schemas/ManagedMcpServerRef",
     });

@@ -580,6 +580,8 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/skills/{id}/files/content",
     operationId: "putSkillFileContent",
     summary: "Create or replace a Skill text file",
+    description:
+      "Saving the root SKILL.md refreshes the Skill name and description. Edits preserve createdAt and advance updatedAt; editing an Agent Skill affects only its private copy.",
     tags: ["Skills/Files"],
     request: { params: idParams, body: jsonBody(SkillFileContentSchema) },
     responses: {
