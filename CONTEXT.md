@@ -2,6 +2,20 @@
 
 Open Managed Agents coordinates long-running AI coding agents across sessions and turns while preserving their working state.
 
+## Production deployment
+
+Production runs on the Shanghai (`cn-shanghai`) **agent-platform** cluster.
+Use `kubectl --kubeconfig "$HOME/.kube/agent-platform-config"` explicitly;
+the machine's default context may point to another cluster. The Host and web
+console are in `oma-infra`; SandboxSets are in `sandbox-system`.
+
+The Host enables sandboxes with global default template
+`auto-story` and E2B domain `sandbox.agentry.welltop.tech`.
+Sandbox images come from the Shanghai ACR repository
+`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
+See `deploy/k8s.yaml` and `deploy/sandbox/README.md` for deployment configuration.
+Historical test reports describe their original runs, not the current deployment.
+
 ## Language
 
 **Agent**:

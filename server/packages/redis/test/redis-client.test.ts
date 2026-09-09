@@ -9,14 +9,14 @@ describe("redisConfigFromEnv", () => {
 
   it("reads discrete host/port/password/db fields", () => {
     const cfg = redisConfigFromEnv({
-      REDIS_HOST: "10.0.56.147",
+      REDIS_HOST: "192.0.2.10",
       REDIS_PORT: "6379",
       REDIS_PASSWORD: "secret",
       REDIS_DB: "3",
     } as NodeJS.ProcessEnv);
     expect(cfg).toEqual({
       url: undefined,
-      host: "10.0.56.147",
+      host: "192.0.2.10",
       port: 6379,
       password: "secret",
       db: 3,

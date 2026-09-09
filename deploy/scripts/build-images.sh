@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Server, Web, and optional custom Sandbox release images.
+# Build the Server, Web, and Sandbox release images.
 #
 # Design constraints:
 #   - all runtime images are linux/amd64 because agent-platform runs amd64;
@@ -28,6 +28,7 @@ push=false
 dry_run=false
 allow_dirty=false
 tag=""
+sandbox_template="auto-story"
 components=()
 
 usage() {
@@ -38,22 +39,28 @@ Build OMA release images from the pinned Shanghai base images.
 
 Options:
   --tag TAG       Image tag. Defaults to the current Git short SHA.
+  --sandbox-template auto-story|code-interpreter-vfscli
+                  Sandbox recipe to build (default: auto-story).
   --push          Push to the Shanghai ACR instead of loading locally.
   --allow-dirty   Permit a dirty checkout. The auto tag gains a dirty timestamp.
   --dry-run       Print commands without running Docker.
   -h, --help      Show this help.
 
-With no component arguments, server and web are built. Building sandbox also
-requires VFS_CLI_SRC or an already staged executable at
-deploy/sandbox/code-interpreter-vfscli/bin/vfs-cli.
+With no component arguments, server and web are built. The sandbox component
+builds and verifies auto-story from its pinned releases. The optional
+code-interpreter-vfscli recipe requires VFS_CLI_SRC or an already staged
+executable at deploy/sandbox/code-interpreter-vfscli/bin/vfs-cli.
 EOF
 }
 
 while (($# > 0)); do
   case "$1" in
-    --tag)
-      (($# >= 2)) || { echo "--tag requires a value" >&2; exit 2; }
-      tag="$2"
+    --tag|--sandbox-template)
+      (($# >= 2)) || { echo "$1 requires a value" >&2; exit 2; }
+      case "$1" in
+        --tag) tag="$2" ;;
+        --sandbox-template) sandbox_template="$2" ;;
+      esac
       shift
       ;;
     --push) push=true ;;
@@ -65,6 +72,11 @@ while (($# > 0)); do
   esac
   shift
 done
+
+if [[ "${sandbox_template}" != auto-story && "${sandbox_template}" != code-interpreter-vfscli ]]; then
+  echo "--sandbox-template must be auto-story or code-interpreter-vfscli." >&2
+  exit 2
+fi
 
 cd "${REPO_ROOT}"
 git rev-parse --is-inside-work-tree >/dev/null
@@ -185,7 +197,7 @@ build_with_cache() {
 
 server_image="${REGISTRY}/oma-server:${tag}"
 web_image="${REGISTRY}/oma-web:${tag}"
-sandbox_image="${REGISTRY}/oma-sandbox:code-interpreter-vfscli-${tag}"
+sandbox_image="${REGISTRY}/oma-sandbox:${sandbox_template}-${tag}"
 
 for component in "${components[@]}"; do
   case "${component}" in
@@ -214,14 +226,18 @@ for component in "${components[@]}"; do
       sandbox_command=(
         env
         "REGISTRY=${REGISTRY}/oma-sandbox"
-        "TAG=code-interpreter-vfscli-${tag}"
-        "BASE_IMAGE=${SANDBOX_BASE_IMAGE}"
+        "TAG=${sandbox_template}-${tag}"
         "PUSH=${sandbox_push}"
       )
+      if [[ "${sandbox_template}" == code-interpreter-vfscli ]]; then
+        sandbox_command+=("BASE_IMAGE=${SANDBOX_BASE_IMAGE}")
+      elif [[ -n "${AUTO_STORY_BASE_IMAGE:-}" ]]; then
+        sandbox_command+=("BASE_IMAGE=${AUTO_STORY_BASE_IMAGE}")
+      fi
       if [[ -n "${VFS_CLI_SRC:-}" ]]; then
         sandbox_command+=("VFS_CLI_SRC=${VFS_CLI_SRC}")
       fi
-      sandbox_command+=(bash "${REPO_ROOT}/deploy/sandbox/code-interpreter-vfscli/build.sh")
+      sandbox_command+=(bash "${REPO_ROOT}/deploy/sandbox/${sandbox_template}/build.sh")
       run "${sandbox_command[@]}"
       ;;
   esac

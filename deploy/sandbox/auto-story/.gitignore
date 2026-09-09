@@ -1,4 +1,7 @@
+sources/
 bin/
-.buildx-cache/
-.buildx-cache-next/
+build-metadata.json
+verification.json
+live-verification.json
+story-seed-launcher
 __pycache__/

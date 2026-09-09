@@ -2,8 +2,8 @@
 
 The production deployment runs on the Alibaba Cloud `agent-platform` ACS
 cluster in `cn-shanghai`. This document and the manifests in this directory are
-the current deployment reference. The dated Hong Kong E2E report under `docs/`
-is historical and must not be used as a runbook.
+the current deployment reference. Dated E2E reports under `docs/` describe their
+original runs and must not be used as current runbooks.
 
 ## Topology
 
@@ -11,7 +11,7 @@ is historical and must not be used as a runbook.
 | --- | --- | --- |
 | OMA application | `oma-infra` | `oma-server`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
-| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway and the `code-interpreter` SandboxSet |
+| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; default `auto-story` and optional `code-interpreter` / `code-interpreter-vfscli` SandboxSets |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to `oma-server` and all other paths to `oma-web`. The Server therefore
@@ -19,8 +19,10 @@ runs with `API_BASE_PATH=/api`, and its readiness endpoint is `/api/health`.
 
 The application images are stored in the Shanghai `welltop` ACR. Pods pull
 through the VPC endpoint with the `ali-shanghai` image-pull Secret. The active
-sandbox pool uses the stock Shanghai ACS image declared in
-`sandbox/sandboxset-code-interpreter.yaml`.
+sandbox default is `auto-story`, whose immutable image digest is declared in
+`sandbox/sandboxset-auto-story.yaml`. It includes VFS CLI, FFmpeg, Gemini's
+Python SDK, MediaKit and native `rg`/`fd` search, without OpenMontage or Whisper.
+The other pools remain available through explicit Agent `sandbox.image` values.
 
 ## Image pipeline
 
@@ -31,6 +33,7 @@ these pinned bases in the Shanghai ACR:
 | --- | --- |
 | Server and Web build stage | `welltop/node-base:22-slim-pnpm-10.12.4` |
 | Web runtime | `welltop/nginx-base:1.27-alpine` |
+| Default `auto-story` sandbox | Clean Shanghai ACS `code-interpreter` image, pinned in `sandbox/auto-story/versions.json` |
 | Optional custom sandbox | `welltop/sandbox-base:code-interpreter-v1.6` |
 
 Prepare or refresh the bases from the `vfs-dev` checkout:
@@ -55,13 +58,28 @@ The default image tag is the current 12-character Git SHA. Local caches under
 the same-origin `/api` endpoint by default; override it with `WEB_API_URL` only
 when building for a different ingress layout.
 
-The custom sandbox remains opt-in and additionally needs a Linux AMD64
-`vfs-cli` binary:
+Build the default sandbox with the same release entrypoint. Its recipe fetches
+checksum-verified upstream releases, builds FFmpeg, and runs offline image
+acceptance before pushing:
 
 ```bash
 ssh vfs-dev \
   'cd ~/workspace/yuzhong/open-managed-agents && \
-   VFS_CLI_SRC=/path/to/vfs-cli deploy/scripts/build-images.sh --push --tag <tag> sandbox'
+   deploy/scripts/build-images.sh --push --tag <tag> sandbox'
+```
+
+This produces `oma-sandbox:auto-story-<tag>`. The standalone recipe defaults to
+its versioned release tag; see [sandbox/auto-story/README.md](sandbox/auto-story/README.md)
+for preparation, version pins and image checks. `AUTO_STORY_BASE_IMAGE` can
+override the clean base for this wrapper; it must satisfy the recipe's checks.
+
+The optional custom sandbox additionally needs a Linux AMD64 `vfs-cli` binary:
+
+```bash
+ssh vfs-dev \
+  'cd ~/workspace/yuzhong/open-managed-agents && \
+   VFS_CLI_SRC=/path/to/vfs-cli deploy/scripts/build-images.sh --push --tag <tag> \
+     --sandbox-template code-interpreter-vfscli sandbox'
 ```
 
 Both build scripts support `--dry-run`. A dirty checkout is rejected unless
@@ -93,17 +111,21 @@ on exit and is never committed.
 SandboxSet validation and deployment use the same safety gate:
 
 ```bash
-# Current stock production pool: dry-run only
-deploy/scripts/deploy-sandbox.sh --pool stock
+# Default auto-story pool: dry-run only
+deploy/scripts/deploy-sandbox.sh
+deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-production
 
-# Optional custom pool
+# Optional stock and custom pools
+deploy/scripts/deploy-sandbox.sh --pool stock
 deploy/scripts/deploy-sandbox.sh --pool custom --image <immutable-image>
 deploy/scripts/deploy-sandbox.sh --pool custom --image <immutable-image> \
   --apply --confirm-production
 ```
 
-Creating the custom pool does not change the Server's default
-`SANDBOX_TEMPLATE=code-interpreter`.
+Pool deployment does not change the Server's `SANDBOX_TEMPLATE` setting.
+The ConfigMap and the SDK fallback default to `auto-story`; explicit Agent
+template selection still takes precedence. Existing Session sandboxes need a
+rebuild or a new Session to pick up a changed image or template.
 
 ## What the repository owns
 
@@ -137,9 +159,8 @@ pool:
 ```bash
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-server
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-web
-KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset code-interpreter
+KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset auto-story
 ```
 
-The `code-interpreter-vfscli` directory is retained as an optional custom-image
-prototype. It is not part of the current production topology and must not be
-treated as the default sandbox deployment.
+The `code-interpreter` and `code-interpreter-vfscli` pools are independent
+options. The default build and deploy commands above target `auto-story`.

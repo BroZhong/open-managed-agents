@@ -1,10 +1,10 @@
 # Opt-in `code-interpreter-vfscli` warm pool on agent-platform. The native
-# search overlay below was deployed on 2026-09-09; the production default
-# remains `code-interpreter` from sandboxset-code-interpreter.yaml.
+# search overlay below was deployed on 2026-09-09. The production default is
+# `auto-story` from sandboxset-auto-story.yaml.
 #
 # The SandboxSet name IS the E2B templateID. Agents opt in with
-# `sandbox.image: "code-interpreter-vfscli"`; the default `code-interpreter`
-# pool (sandboxset-code-interpreter.yaml) is left untouched.
+# `sandbox.image: "code-interpreter-vfscli"`; this pool is independent of the
+# default `auto-story` pool (sandboxset-auto-story.yaml).
 #
 # Only two things are meant to be tuned here:
 #   - spec.replicas      → warm-pool size
