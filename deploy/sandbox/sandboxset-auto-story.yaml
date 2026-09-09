@@ -1,6 +1,14 @@
-# Independent E2B template: Agent sandbox.image = "auto-story".
-# Build and push deploy/sandbox/auto-story first; keep credentials in each
-# sandbox's Environment Spec, never in a reusable warm-pool Pod template.
+# Warm pool for the `auto-story` E2B template on the Shanghai agent-platform
+# cluster. The image is auto-story 0.2.1, pinned to its published OCI index digest.
+# It includes vfs-cli, FFmpeg, the Gemini SDK and MediaKit, without OpenMontage
+# or Whisper. Build and verification sources live in deploy/sandbox/auto-story/.
+#
+# The SandboxSet name IS the E2B templateID. This is the Server default; Agents
+# may also select it explicitly with `sandbox.image: "auto-story"`.
+#
+# Apply / verify:
+#   kubectl --kubeconfig "$HOME/.kube/agent-platform-config" apply -f deploy/sandbox/sandboxset-auto-story.yaml
+#   kubectl --kubeconfig "$HOME/.kube/agent-platform-config" get sbs -n sandbox-system auto-story
 apiVersion: agents.kruise.io/v1alpha1
 kind: SandboxSet
 metadata:
@@ -8,9 +16,13 @@ metadata:
   namespace: sandbox-system
 spec:
   replicas: 1
+  persistentContents:
+    - filesystem
   runtimes:
     - name: csi
     - name: agent-runtime
+  updateStrategy:
+    maxUnavailable: "20%"
   template:
     metadata:
       labels:
@@ -23,7 +35,7 @@ spec:
         - name: ali-shanghai
       containers:
         - name: sandbox
-          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:dd6437954752ff8527225bd2198245b89c75598a43c2e17d652d3d43279a4a72
+          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:16112ce4b3b8ccb2b8e42c4c5c6ad8bf0d71363ee5d54338fee601a178effbec
           resources:
             requests:
               cpu: "2"

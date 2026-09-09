@@ -176,6 +176,24 @@ describe("E2BSandboxClient", () => {
     );
   });
 
+  it("defaults to auto-story while preserving explicit Agent template selection", async () => {
+    const templates: string[] = [];
+    const client = new E2BSandboxClient({
+      domain: "sandbox.example.com",
+      apiKey: "gw-key",
+      createSandbox: async (template) => {
+        templates.push(template);
+        return new FakeSandbox(`default-${templates.length}`);
+      },
+    });
+
+    await client.create();
+    await client.create({ image: "legacy/container:latest" });
+    await client.create({ image: "code-interpreter" });
+
+    expect(templates).toEqual(["auto-story", "auto-story", "code-interpreter"]);
+  });
+
   it("create passes templateID + apiKey + domain and returns the sandboxId", async () => {
     const { client, factoryCalls } = makeClient();
     const handle = await client.create({

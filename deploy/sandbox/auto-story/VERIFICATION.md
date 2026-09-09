@@ -1,127 +1,107 @@
-# Image verification records
+# auto-story 0.2.1 verification
 
-## auto-story 0.1.2 — 2026-09-09
+Built, tested and published on 2026-09-09 for Shanghai `agent-platform`.
+This release adds the pinned native Pi search tools to the clean 0.2.0 image
+recipe and retains access to the clean ACS scientific packages. Historical
+0.1.x acceptance is preserved in [VERIFICATION-0.1.2.md](./VERIFICATION-0.1.2.md).
 
-Built and pushed on `vfs-dev` from commit
-`d6460a20c0e1a09f61601594bcd4e91dca68ab43` for Linux amd64:
-`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.2`.
-Published digest:
-`sha256:dd6437954752ff8527225bd2198245b89c75598a43c2e17d652d3d43279a4a72`.
+## Published image
 
-The image reuses the exact 0.1.1 runtime digest below, retaining VFS CLI
-v0.3.14, MediaKit 0.2.1, Gemini SDK 2.22.0, FFmpeg and OpenMontage. It adds
-upstream rg 15.1.0 and fd 10.4.2, matching the native local/cloud parity tests.
-Official GitHub release archive hashes were verified before extraction; the
-Dockerfile independently checks the exact binary hashes:
+```text
+registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.2.1
+```
 
-- rg: `ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2`.
-- fd: `0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8`.
+- OCI index digest: `sha256:16112ce4b3b8ccb2b8e42c4c5c6ad8bf0d71363ee5d54338fee601a178effbec`
+- Linux amd64 manifest: `sha256:50b647c0f6ea9a431710ebe9b3cf97b4ee978ddffd1f69ff6e83cdeb0b7a7c2e`
+- The additional unknown/unknown manifest is the build provenance attestation.
+- `docker buildx imagetools inspect` confirmed the published tag and digests.
+- Docker displayed **3.97 GB** local disk usage and **942 MB** content size,
+  compared with **8.83 GB** local disk usage for `auto-story-0.1.2`.
 
-Both the build-time smoke and separate acceptance container passed, including
-the retained media, audio dry-run and environment-injection checks documented
-for 0.1.1 below. Additional checks exercise rg's Unicode regex, brace globs
-and `.gitignore`, plus fd's recursive basename and path globs. Separate image
-acceptance runs as `user`, with no network, no host mounts and a minimal PATH.
+## Contents
 
-The published digest was applied to the auto-story SandboxSet on 2026-09-09;
-its replacement warm Pod became Running and Ready. Sandbox image availability
-and shared Host/Agent acceptance are separate checks. Current deployment and
-end-to-end results are recorded in the
-[2026-09-09 release verification](../../../docs/pi-native-search-release-verification-2026-09-09.md).
+| Component | Verified version |
+| --- | --- |
+| vfs-cli | 0.3.15, linux/amd64 |
+| FFmpeg / ffprobe | 9.0.1 |
+| google-genai | 2.22.0 |
+| mediakit-cli | 0.2.1 |
+| ripgrep / fd | 15.1.0 / 10.4.2 |
+| Retained ACS numpy / pandas | 1.26.4 / 2.2.3 |
 
-Build logs and the three-template image receipt are retained locally under
-`/private/tmp/oma-pi-search-release-builds-20260909/`. The earlier sections
-below preserve their historical verification results.
+Official source archives and CLI binaries passed their pinned SHA-256 checks.
+FFmpeg's detached release signature also passed GPG verification against
+fingerprint `FCF986EA15E6E293A5644F10B4322F04D67658D8` in an isolated keyring.
 
-## auto-story 0.1.1 — 2026-09-07
+The image derives directly from the digest-pinned clean ACS base. OpenMontage
+and Whisper binaries, source directories and installed distributions are
+absent; their model weights are not downloaded. FFmpeg is configured with
+`--disable-whisper`. The obsolete story-seed launcher is no longer bundled.
 
-Built and pushed on `vfs-dev` for Linux amd64:
-`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.1`.
-Published digest:
-`sha256:bdf9bdc74ad8e1f289b3993bb8154e388a505a43c3e24d47cbaae874e5ad49f4`.
+## Image acceptance
 
-The recipe was committed as `eee6247d7333d55ab19746d80a41c8b2db43a11f`
-on `codex/auto-story-narration-test`. Dockerfile SHA-256:
-`f182dfdf3889e42d7f727eb5cdc5295546556f57b376221d82232ba13cfa422d`.
-The release uses the published 0.1.0 digest below as `RUNTIME_IMAGE`, retaining
-MediaKit 0.2.1, Gemini SDK 2.22.0, FFmpeg and the OpenMontage runtime. An explicit
-Docker inspection confirmed that all parent filesystem layers, ENTRYPOINT and
-CMD are preserved. The normal full runtime build remains available.
+`verify-image.sh` passed all **13 checks** with `--network none`, UID 1000,
+`HOME=/home/user`, and `PATH=/usr/local/bin:/usr/bin:/bin`:
 
-The VFS binary came from the public v0.3.14 Linux amd64 release, built from
-`ac531bc24f13ed9db1bd4ecc42ab6ddfb9377dc5` with `CGO_ENABLED=0` and
-`vcs.modified=false`. Its archive matched the published checksum:
+1. Creation environment marker presence without logging its value.
+2. Exact executable versions and vfs-cli architecture.
+3. Gemini Files/Interactions SDK availability without network calls.
+4. `python3 -I` selects the Gemini venv and can import the original ACS numpy/pandas.
+5. OpenMontage/Whisper exclusion across the SDK, base and system environments.
+6. Workspace write/read and temporary-file cleanup.
+7. rg Unicode regex, brace globs and `.gitignore`; fd recursive and path globs.
+8. Embedded VFS Skills, SeedAudio schema, generation dry-run, and audio Resource URL/file dry-runs.
+9. FFmpeg H.264/AAC encoding and ffprobe stream/duration validation.
+10. FFmpeg subtitle burn-in through libass.
+11. MediaKit local trim.
+12. MediaKit local concat preserving actual input durations.
+13. MediaKit local subtitle rendering through OpenH264.
 
-- Release archive SHA-256: `bbce352f858fafd3116c1849a96260982091846f09b15185e573c5b6af08831f`.
-- Extracted binary SHA-256: `213e16ad0e717252e410ee52aa344b55269543b2ca9e481b4827a959fe6a1fdb`.
+The inherited ACS entrypoint started Jupyter successfully in a separate
+container with no network; `/api/status` returned HTTP 200. Entrypoint and CMD
+were compared with the base and matched exactly. Push ran only after these
+checks passed. No model generation or authenticated cloud media call was made.
 
-Both the build-time smoke and separate image acceptance passed. The latter
-ran with `--network none`, no host mounts, user `user`, cwd `/home/user`, and
-the minimal PATH `/usr/local/bin:/usr/bin:/bin`. Verified:
+## Repository checks
 
-- VFS CLI v0.3.14, embedded Skill discovery, MediaKit 0.2.1 and Gemini SDK 2.22.0.
-- Writable Workspace and a real H.264/AAC fixture with spaces in its filename.
-- FFmpeg generation, ffprobe streams and actual MediaKit local metadata.
-- Gemini Files upload/get/delete and Interactions SDK methods, without API calls.
-- Injected `AUTO_STORY_SMOKE_VALUE` presence, without printing its value.
-- Exact `seed-audio-1.0` schema, enabled subtitles and audio reference limits.
-- Pure-text audio generation request preview with unchanged Unicode prompt.
-- Audio Resource type discovery and URL/local-WAV registration previews.
-- Successful dry-run exit code 10; no real token or endpoint used.
+- Sandbox: 108 tests, including default selection and explicit Agent override.
+- Adapter: 297 tests, including native-search parity and sandbox boundary checks.
+- Server CI path: 564 tests; 3 existing opt-in integration cases skipped.
+- Relevant TypeScript checks and OpenAPI artifact verification passed.
+- Deployment contracts: 9 passed, 1 optional package-overlay case skipped.
+- Both sandbox build entrypoints passed dry-run checks; 11 isolated deployment
+  checks verified pool selection, image overrides and cluster/apply gates.
+- GitHub PR CI passed contract, server, adapter-and-deploy and web checks.
 
-The build log is retained locally at
-`/private/tmp/oma-auto-story/sandbox-0.1.1-build.log`. The SandboxSet manifest
-now references the published 0.1.1 digest. Applying it and exercising real
-audio generation in a fresh Agent Session are separate deployment acceptance
-steps; the offline checks above do not establish cloud generation success.
+## Production default rollout and E2B validation
 
-The exact 0.1.1 digest was subsequently applied to the test auto-story
-SandboxSet. Session `sess_HFJ2dDQcgt3GrsT27Df8B` ran on this runtime (initial
-Pod `auto-story-hqn4j`) and generated a real 27-second SeedAudio master,
-Resource `103932`, plus GPT Image 2 reference `103933`. Its 14-second and
-13-second WAV slices were uploaded and registered as audio Resources `103935`
-and `103934`. This supplies live evidence for generation and audio uploads;
-the complete story acceptance is recorded in
-[the narration report](../../../docs/auto-story-narration-e2e-2026-09-07.md).
+Verified on 2026-09-09 at approximately 18:21 Asia/Shanghai:
 
-## auto-story 0.1.0
+- Cluster: Shanghai `agent-platform`; sandbox namespace: `sandbox-system`.
+- SandboxSet `auto-story`: generation **5**, revision `6996f47d7b`.
+- Patched only its image from the 0.2.0 digest
+  `sha256:65482ebbc3a0f42bbd64a122a79126aa62643e93c7e4284136d42f42ce81dd98`
+  to the published 0.2.1 digest above; the pool reached **1/1 available and updated replicas**.
+- Patched only `oma-server-config.data.SANDBOX_TEMPLATE` from
+  `code-interpreter-vfscli` to **`auto-story`**, then restarted `oma-server`.
+  The Deployment returned to **1/1 ready and updated replicas** with the same
+  application image; the new process confirmed `SANDBOX_TEMPLATE=auto-story`.
+- The Server's existing Agent allowlist and scoped credential configuration
+  were preserved. Agents with explicit templates keep their selections;
+  existing Session sandboxes pick up the image only when rebuilt.
 
-Built on `vfs-dev` for Linux amd64. The image is locally available there as
-`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:auto-story-0.1.0`.
-Local manifest/image ID:
-`sha256:96ab935b6d775aeac5cd8a3f0c8fc5f1faf1d715f1345ba8ab57bc8467b0fd3f`.
-This build was not pushed and its SandboxSet was not applied during image
-verification; publication and real Agent acceptance are separate steps.
+`verify-live.mjs` ran inside the restarted Server against
+`sandbox.agentry.welltop.tech`. It imported the deployed `E2BSandboxClient`,
+configured it exactly as the Host does, and called `create` **without an image
+or template override**. Sandbox `sandbox-system--auto-story-gs5lw` was allocated
+from the auto-story pool with a five-minute maximum lifetime.
 
-The local and remote Dockerfiles have identical SHA-256:
-`b959a3876213e7ebbf18d17cd5e1ea05601ec0de645c8dc478134e5683997f4a`.
-All production parent filesystem layers, ENTRYPOINT and CMD are preserved.
+All six gateway checks passed: global-default creation, creation-time
+environment injection, client file write/read, SDK reconnection, all **13 image
+acceptance checks** through E2B commands as UID 1000, and test-sandbox reclamation.
+The pool replenished and returned to **1/1 available and updated replicas**.
 
-Passed both during build and in a separate container with no network, no host
-mounts, user `user`, cwd `/home/user`, and a minimal non-login PATH:
-
-- Writable Workspace and temporary-file cleanup.
-- Real one-second 160×90 H.264/AAC fixture, with spaces in its filename.
-- FFmpeg generation and ffprobe video/audio stream verification.
-- MediaKit 0.2.1 local metadata, including dimensions, AAC codec and duration.
-- VFS CLI v0.3.13 version and embedded Skill discovery.
-- Official Gemini SDK 2.22.0 Files upload/get/delete and Interactions methods.
-- Runtime environment-variable presence without exposing its value.
-
-An additional explicit `env -i HOME=/home/user
-PATH=/usr/local/bin:/usr/bin:/bin python3` check passed as `user`, confirming
-`sys.prefix == "/opt/auto-story/venv"` and successful SDK imports. Python uses
-an exec launcher because a symlink outside a venv can lose `pyvenv.cfg`
-discovery. Build-time checks explicitly enter `/home/user`, matching the
-Environment Spec; the parent's `/root` working directory is inaccessible to
-the runtime user and causes MediaKit to reject `stat .`.
-
-These are image and local-processing checks. They do not claim remote VFS,
-MediaKit cloud, Gemini authentication, or a provisioned Agent Session passed.
-
-### 0.1.0 publication and live acceptance
-
-After deployment authorization, this exact image was pushed to the existing
-Shanghai registry and deployed by immutable digest. The auto-story SandboxSet
-became available. Real Agent/Skill/Cloud acceptance subsequently passed; see
-[the live acceptance report](../../../docs/auto-story-e2e-2026-09-07.md).
+This validates the real default sandbox creation and runtime, including rg/fd
+search and media operations. It does not run an Agent conversation or submit
+paid model generation. The canonical image and pool settings are in
+[sandboxset-auto-story.yaml](../sandboxset-auto-story.yaml).

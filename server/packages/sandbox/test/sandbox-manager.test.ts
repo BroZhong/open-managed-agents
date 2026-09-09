@@ -195,7 +195,7 @@ describe("SandboxManager / SandboxSession", () => {
     // and a projected Skill as `/skills/<id>/SKILL.md`. If readFile/list re-base
     // every path under workspaceDir, a projected Skill read becomes
     // `/home/user/skills/…` and is unreadable (the invisible-Skill bug found in
-    // the HK E2E). Absolute paths must pass through untouched.
+    // an earlier E2E run). Absolute paths must pass through untouched.
     const { manager, provision } = makeManager({
       seed: [["main.py", "print('hi')"]],
     });

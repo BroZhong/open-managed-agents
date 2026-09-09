@@ -9,7 +9,7 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-agent-platform}"
 NAMESPACE="sandbox-system"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-300}"
 
-pool="stock"
+pool="auto-story"
 image=""
 apply=false
 confirm_production=false
@@ -19,16 +19,16 @@ usage() {
 Usage: deploy/scripts/deploy-sandbox.sh [options]
 
 Validate or deploy an agent-platform SandboxSet. The default is the production
-stock code-interpreter pool in server-side dry-run mode.
+auto-story pool in server-side dry-run mode.
 
 Options:
-  --pool stock|custom       SandboxSet to process (default: stock).
-  --image IMAGE             Required for the custom pool.
+  --pool auto-story|stock|custom  SandboxSet to process (default: auto-story).
+  --image IMAGE             Override the manifest image; required for custom.
   --apply                   Apply and wait for an available warm-pool replica.
   --confirm-production      Required together with --apply.
   -h, --help                Show this help.
 
-Deploying the custom pool does not change oma-server's SANDBOX_TEMPLATE.
+Deploying a pool does not change oma-server's SANDBOX_TEMPLATE.
 EOF
 }
 
@@ -50,8 +50,8 @@ while (($# > 0)); do
   shift
 done
 
-if [[ "${pool}" != stock && "${pool}" != custom ]]; then
-  echo "--pool must be stock or custom." >&2
+if [[ "${pool}" != auto-story && "${pool}" != stock && "${pool}" != custom ]]; then
+  echo "--pool must be auto-story, stock or custom." >&2
   exit 2
 fi
 if [[ "${pool}" == custom && -z "${image}" ]]; then
@@ -83,14 +83,24 @@ fi
 render_dir="$(mktemp -d "${TMPDIR:-/tmp}/oma-sandbox-deploy.XXXXXX")"
 trap 'rm -rf "${render_dir}"' EXIT
 
-if [[ "${pool}" == stock ]]; then
-  manifest="${REPO_ROOT}/deploy/sandbox/sandboxset-code-interpreter.yaml"
-  resource_name="code-interpreter"
-else
-  manifest="${render_dir}/sandboxset-code-interpreter-vfscli.yaml"
-  resource_name="code-interpreter-vfscli"
-  sed -e "s#CUSTOM_SANDBOX_IMAGE#${image}#g" \
-    "${REPO_ROOT}/deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml" >"${manifest}"
+case "${pool}" in
+  auto-story) resource_name="auto-story" ;;
+  stock) resource_name="code-interpreter" ;;
+  custom) resource_name="code-interpreter-vfscli" ;;
+esac
+source_manifest="${REPO_ROOT}/deploy/sandbox/sandboxset-${resource_name}.yaml"
+manifest="${source_manifest}"
+if [[ -n "${image}" ]]; then
+  # Each supported SandboxSet has one container. Replace its pinned image,
+  # including manifests that no longer contain a release placeholder.
+  image_count="$(awk '$1 == "image:" { count += 1 } END { print count + 0 }' "${source_manifest}")"
+  if [[ "${image_count}" != 1 ]]; then
+    echo "Expected one container image in ${source_manifest}." >&2
+    exit 1
+  fi
+  manifest="${render_dir}/sandboxset-${resource_name}.yaml"
+  sed -E "s#^([[:space:]]*)image:.*#\1image: ${image}#" \
+    "${source_manifest}" >"${manifest}"
 fi
 
 echo "Target: ${KUBE_CONTEXT}/${NAMESPACE} (production)"

@@ -63,7 +63,7 @@ then run from the repository root:
 
 ```bash
 VFS_CLI_SRC=~/vfs-cli \
-  deploy/scripts/build-images.sh --push --tag <tag> sandbox
+  deploy/scripts/build-images.sh --push --tag <tag> --sandbox-template code-interpreter-vfscli sandbox
 ```
 
 Authenticate Docker to the target Shanghai ACR before using `PUSH=1`.
@@ -77,9 +77,8 @@ the final two layers, not the whole image.
 
 ## Optional deployment
 
-Do not perform these steps as part of a normal production release. Production
-must continue to use `SANDBOX_TEMPLATE=code-interpreter` unless the custom pool
-has been deliberately reviewed and enabled.
+This pool is optional. Production uses `SANDBOX_TEMPLATE=auto-story`; Agents
+can select `code-interpreter-vfscli` explicitly when they need this image.
 
 1. Validate the custom pool against `agent-platform`, then explicitly apply it:
 

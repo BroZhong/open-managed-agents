@@ -37,8 +37,8 @@ import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
-// egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
-// OpenAI/Anthropic; the in-cluster sing-box proxy tunnels past it. Node's fetch
+// egress proxy when configured. The in-cluster sing-box proxy provides the
+// configured outbound route for external LLM providers. Node's fetch
 // (undici) ignores HTTP(S)_PROXY env, so we must install a global dispatcher.
 const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
 if (proxyUrl) {

@@ -2,13 +2,13 @@
 
 Date: 2026-07-06 Asia/Shanghai
 
-Scope: frontend end-to-end testing for `https://console.sandbox.brozhong.com/`.
+Scope: frontend end-to-end testing of the deployment used on 2026-07-06.
 Boundary: test and record only; no fixes were attempted.
 
-Cluster correction: the deployment verification in this report uses the `brozhong`
-Aliyun account and the Hong Kong ACK cluster. An earlier local kubectl context
-pointed at a different Shanghai cluster; conclusions from that context were
-discarded.
+This report records a retired environment. Its test findings are historical
+evidence, not verification of the current deployment. Retired connection
+addresses, cluster identifiers, and deployment configuration have been removed.
+For current deployment instructions, see [the sandbox deployment guide](../deploy/sandbox/README.md).
 
 ## Summary
 
@@ -19,12 +19,12 @@ The main Pi Agent console flow is partially working:
 - Agent Files are saved and injected into the Pi Agent prompt.
 - Workspace artifacts can be listed, previewed, and downloaded after a turn completes.
 - Local `vfs-cli` works end to end for the provided VFS project: health check, 10-shot storyboard creation, video generation, and resource query.
-- The brozhong Hong Kong deployment is connected to PostgreSQL, Redis, S3 workspace storage, and sandbox execution.
+- The tested deployment was connected to PostgreSQL, Redis, S3 workspace storage, and sandbox execution.
 - PostgreSQL contains the tested Agent, Agent Files, Session, event log, and event counter.
 - Redis active-turn and per-turn delta stream keys were observed while a probe turn was running, then cleaned up after turn completion.
 - The session event log contains enough structured data to reconstruct Pi Agent history in principle: user messages, assistant messages, tool calls, tool results, model metadata, and matching `toolUseId` values are present.
 
-However, several acceptance criteria fail in the current deployed environment:
+However, several acceptance criteria failed in the tested environment:
 
 - Equipped Skills are persisted on the Agent but are not visible to Pi Agent at runtime.
 - The Pi Agent sandbox becomes unavailable across turns, breaking later tool calls and workspace sync.
@@ -34,7 +34,6 @@ However, several acceptance criteria fail in the current deployed environment:
 
 ## Test Entities
 
-- Console URL: `https://console.sandbox.brozhong.com/`
 - Test user: `brozhong`
 - Agent: `agent_y_nj1FyuvTVI1md7L5h1m`
 - Agent name: `E2E Pi Agent 2026-07-05T15-52-31-805Z`
@@ -47,40 +46,10 @@ However, several acceptance criteria fail in the current deployed environment:
 
 ## Deployment Verification
 
-Verified with Aliyun profile `brozhong`, region `cn-hongkong`.
-
-- ACK cluster: `cloud-agent-hk`
-- Cluster ID: `c2626526892cf4a0592b4bc06660ae047`
-- Kubernetes context: `207189382891364128-c2626526892cf4a0592b4bc06660ae047`
-- API server: `https://8.217.40.193:6443`
-- Namespace: `oma-infra`
-- Deployments: `oma-server`, `oma-web`, `redis`, `sing-box`
-- Server image: `crpi-egv1p3qc9sh5spft.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-server:be5a721`
-
-`oma-server` startup logs confirmed:
-
-```text
-Connected to PostgreSQL (pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com:5432, schema=oma)
-Connected to Redis (pending queue + delta streams + active-turn map)
-Workspace artifact store enabled (S3 at http://172.17.108.247:80/storage/v1)
-Sandbox ToolExecutor enabled (e2b SDK, hydrate from S3)
-Adapters: claude-code, codex, pi-agent
-```
-
-Relevant non-secret config:
-
-```text
-PG_DATABASE=supabase_db
-PG_HOST=pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com
-PG_SCHEMA=oma
-PG_USER=oma_app
-REDIS_HOST=10.0.56.147
-REDIS_PORT=6379
-S3_BUCKET=workspace
-S3_ENDPOINT=http://172.17.108.247:80/storage/v1
-SANDBOX_ENABLED=true
-SANDBOX_TEMPLATE=code-interpreter
-```
+At the time of testing, `oma-server` startup logs confirmed connections to
+PostgreSQL and Redis, S3-backed Workspace artifacts, and the E2B SDK sandbox
+ToolExecutor. The available adapters were `claude-code`, `codex`, and `pi-agent`.
+These observations apply only to the retired deployment tested on the report date.
 
 ## Passed Checks
 
@@ -189,7 +158,7 @@ Video generation succeeded:
 
 ### PostgreSQL Storage
 
-Queried the Hong Kong RDS through the running `oma-server` pod.
+Queried the tested deployment's RDS through its running `oma-server` pod.
 
 The original E2E session is stored in PostgreSQL:
 

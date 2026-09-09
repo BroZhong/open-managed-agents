@@ -72,7 +72,7 @@ export type CreateSandboxFn = (
   },
 ) => Promise<E2BSandbox>;
 
-const DEFAULT_TEMPLATE = "code-interpreter";
+const DEFAULT_TEMPLATE = "auto-story";
 // E2B's recommended user directory — the exec `user`'s own home, so it exists
 // and is writable without a chown. Mkdir'ing the old root-owned `/workspace` as
 // the non-privileged user failed silently (issue #85); `/home/user` sidesteps
@@ -81,7 +81,7 @@ const DEFAULT_TEMPLATE = "code-interpreter";
 const DEFAULT_WORKSPACE_DIR = SANDBOX_WORKSPACE_ROOT;
 
 export interface E2BSandboxClientOptions {
-  /** E2B domain (e.g. "sandbox.brozhong.com"); SDK resolves api.<domain>. */
+  /** E2B domain (e.g. "sandbox.agentry.welltop.tech"); SDK resolves api.<domain>. */
   domain: string;
   /** Gateway API key. */
   apiKey: string;

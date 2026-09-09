@@ -5,37 +5,45 @@ Sandbox (OpenKruise Agents, `agents.kruise.io`), which is E2B-protocol
 compatible. Sandboxes are served from warm pools declared as `SandboxSet`
 resources in the `sandbox-system` namespace.
 
-Production currently has one active pool: `code-interpreter`. The older
-`code-interpreter-vfscli` assets are an optional prototype and are not deployed
-or selected by the production Server.
+The default template is `auto-story`. The stock `code-interpreter` and custom
+`code-interpreter-vfscli` templates remain available for explicit Agent
+selection through `sandbox.image`. An existing Session keeps its sandbox until
+it is rebuilt; new sandboxes without an explicit template use `auto-story`.
 
 ## The name is the templateID
 
 A `SandboxSet`'s `metadata.name` IS the E2B **templateID**. When a client calls
 
 ```ts
-Sandbox.create("code-interpreter")
+Sandbox.create("auto-story")
 ```
 
-the E2B endpoint hands back a pre-warmed pod from the `code-interpreter`
+the E2B endpoint hands back a pre-warmed pod from the `auto-story`
 SandboxSet. If no SandboxSet exists for a template, `POST /sandboxes` fails with
 `400 "Template or Checkpoint not found"` — there is no implicit / on-demand
-template. This manifest is what makes the `code-interpreter` template exist.
+template. Each manifest defines the corresponding E2B template.
 
 ## Manifest
 
 [`sandboxset-auto-story.yaml`](./sandboxset-auto-story.yaml) defines the
-independent `auto-story` media template for `agentry.welltop.tech` (Shanghai).
-It supplies VFS CLI, MediaKit, FFmpeg and Gemini's Python SDK, accepts per-Agent
+default `auto-story` media template for `agentry.welltop.tech` (Shanghai).
+It supplies VFS CLI, MediaKit, FFmpeg, Gemini's Python SDK and native `rg`/`fd`
+search, with no OpenMontage or Whisper. It accepts per-Agent
 environment variables, and loads equipped Skills through the existing Host
 projection mechanism. Build and verification instructions are in
 [`auto-story/README.md`](./auto-story/README.md).
 
-[`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) defines
-the `code-interpreter` pool:
+| Template | CPU / memory | Ephemeral storage request | Selection |
+| --- | --- | --- | --- |
+| `auto-story` | 2 vCPU / 4Gi | 50Gi | Default |
+| `code-interpreter` | 1 vCPU / 1Gi | 30Gi | Explicit `sandbox.image` |
+| `code-interpreter-vfscli` | 1 vCPU / 1Gi | 30Gi | Explicit `sandbox.image` |
 
-- **image** — `registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6`
-  (the ACS-provided code-interpreter image; VPC ACR mirror).
+[`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) defines
+the optional `code-interpreter` pool:
+
+- **image** — the pinned Shanghai ACR digest in its manifest, based on the
+  ACS code-interpreter runtime with the native search tools overlay.
 - **runtimes** — `csi` (NAS/OSS mounts) + `agent-runtime` (injects the e2b
   `envd` daemon that the E2B protocol talks to).
 - **ECI scheduling labels** — the pod template carries
@@ -49,18 +57,23 @@ the `code-interpreter` pool:
 Only two things are meant to change:
 
 - `spec.replicas` — the warm-pool size (how many pods sit ready).
-- the container image tag — to roll a new code-interpreter image.
+- the container image digest — to roll a verified release.
 
 No other resource needs editing to resize the pool.
 
 ## Apply / verify
 
 ```bash
-KUBECONFIG=~/.kube/agent-platform-config kubectl apply -f deploy/sandbox/sandboxset-code-interpreter.yaml
-KUBECONFIG=~/.kube/agent-platform-config kubectl get sbs -n sandbox-system code-interpreter
+# Default auto-story pool: validate the pinned manifest without changing it.
+deploy/scripts/deploy-sandbox.sh
+# Apply a verified release and wait for an available replica.
+deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-production
+KUBECONFIG=~/.kube/agent-platform-config kubectl get sbs -n sandbox-system auto-story
 ```
 
 `apply` is idempotent. The SandboxSet is ready once `AVAILABLE >= 1`.
+Use `--pool stock` or `--pool custom --image <immutable-image>` to manage the
+other pools. Pool deployment does not rewrite the Host's template setting.
 
 ## Mandatory sandbox (issue #54)
 
@@ -71,8 +84,9 @@ Server wiring (see `deploy/k8s.yaml`):
 
 - `SANDBOX_ENABLED=true` — in the `oma-server-config` ConfigMap (non-secret).
   This turns on the sandbox-backed `ToolExecutor`.
-- `SANDBOX_TEMPLATE=code-interpreter` — ConfigMap; the E2B templateID, i.e. the
-  SandboxSet name above.
+- `SANDBOX_TEMPLATE=auto-story` — ConfigMap; the E2B templateID, i.e. the
+  SandboxSet name above. The E2B client also defaults to `auto-story` when this
+  setting is omitted. An explicit Agent `sandbox.image` takes precedence.
 - `E2B_DOMAIN` + `E2B_API_KEY` — provided via the `oma-secrets` Secret
   (`secretKeyRef`), **never baked into the image**. Add them alongside the other
   secrets:
