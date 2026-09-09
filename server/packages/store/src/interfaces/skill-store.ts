@@ -30,6 +30,8 @@ export interface Skill {
   ownerId: string;
   /** For a fork: the Library Skill id it was forked from. Null for Library Skills. */
   sourceSkillId?: string | null;
+  /** Upload/fork creation time; null for legacy Skills whose creation time is unknown. */
+  createdAt: Date | null;
   updatedAt: Date;
 }
 
@@ -38,6 +40,7 @@ export interface SkillSummary {
   id: string;
   name: string;
   description: string;
+  createdAt: Date | null;
   updatedAt: Date;
 }
 

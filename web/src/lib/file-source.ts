@@ -148,7 +148,7 @@ export type SkillFileSource = FileSource & {
   capabilities: { hierarchy: "nested"; idleGated: false };
 };
 
-export function createSkillFileSource(skillId: string): SkillFileSource {
+export function createSkillFileSource(skillId: string, onChanged?: () => void): SkillFileSource {
   const base = `/v1/skills/${skillId}/files`;
   return {
     capabilities: { hierarchy: "nested", idleGated: false },
@@ -177,6 +177,7 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
         method: "PUT",
         body: JSON.stringify({ path, content }),
       });
+      onChanged?.();
     },
 
     async rename(from: string, to: string): Promise<void> {
@@ -184,12 +185,14 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
         method: "POST",
         body: JSON.stringify({ from, to }),
       });
+      onChanged?.();
     },
 
     async delete(path: string): Promise<void> {
       await apiFetch(`${base}/content?path=${encodeURIComponent(path)}`, {
         method: "DELETE",
       });
+      onChanged?.();
     },
 
     async upload(files: File[], destDir?: string): Promise<void> {
@@ -209,6 +212,7 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
           method: "PUT",
           body: JSON.stringify({ path, content }),
         });
+        onChanged?.();
       }
     },
     // No previewUrl: Skills are text.

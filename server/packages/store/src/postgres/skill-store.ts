@@ -18,6 +18,7 @@ interface SkillRow {
   owner_type: string;
   owner_id: string;
   source_skill_id: string | null;
+  created_at: Date | null;
   updated_at: Date;
 }
 
@@ -30,6 +31,7 @@ function rowToSkill(row: SkillRow): Skill {
     ownerType: (row.owner_type as SkillOwnerType) ?? "library",
     ownerId: row.owner_id,
     sourceSkillId: row.source_skill_id ?? null,
+    createdAt: row.created_at == null ? null : new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
 }
@@ -44,8 +46,8 @@ export class PgSkillStore implements SkillStore {
     // A Library Skill is owned by its tenant; a fork carries an explicit ownerId.
     const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
     const { rows } = await this.pool.query<SkillRow>(
-      `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, source_skill_id, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, source_skill_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
        RETURNING *`,
       [id, input.tenantId, input.name, input.description, ownerType, ownerId, input.sourceSkillId ?? null, now],
     );

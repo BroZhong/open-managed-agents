@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { FileManager } from "@/components/file-manager";
 import { createSkillFileSource } from "@/lib/file-source";
 
@@ -14,8 +15,14 @@ import { createSkillFileSource } from "@/lib/file-source";
  * receives never gates its writes — we pass the constant `"idle"`. Skills are
  * text-only (no `previewUrl`), so binary files fall back to download.
  */
-export function SkillFilesEditor({ skillId }: { skillId: string }) {
-  const source = useMemo(() => createSkillFileSource(skillId), [skillId]);
+export function SkillFilesEditor({ skillId, agentId }: { skillId: string; agentId?: string }) {
+  const queryClient = useQueryClient();
+  const source = useMemo(() => createSkillFileSource(skillId, () => {
+    void queryClient.invalidateQueries({ queryKey: ["skills"] });
+    if (agentId) {
+      void queryClient.invalidateQueries({ queryKey: ["agents", agentId, "skills"] });
+    }
+  }), [skillId, agentId, queryClient]);
   return (
     <FileManager
       key={skillId}
