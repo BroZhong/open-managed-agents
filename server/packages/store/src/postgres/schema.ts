@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS ${s}.skills (
   owner_type      TEXT NOT NULL DEFAULT 'library',
   owner_id        TEXT NOT NULL DEFAULT '',
   source_skill_id TEXT,
+  created_at      TIMESTAMPTZ,
   updated_at      TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (tenant_id, skill_id)
 );
@@ -94,6 +95,10 @@ ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_type      TEXT NOT NULL D
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_id        TEXT NOT NULL DEFAULT '';
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS source_skill_id TEXT;
 UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND owner_id = '';
+
+-- Preserve unknown upload times for legacy Skills; updated_at cannot tell us
+-- when a Skill was uploaded. New uploads and forks explicitly set created_at.
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
 
 -- Workspaces are tenant-owned; the S3-authoritative home of a Session's
 -- artifacts. A user-supplied id is used as-is, else auto-generated. The

@@ -2,7 +2,7 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { SkillStore, SkillArtifactStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
-import { detectSkills, type DroppedFile } from "../skills/detect-skills.js";
+import { detectSkills, parseSkillMetadata, type DroppedFile } from "../skills/detect-skills.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -108,6 +108,7 @@ export function skillRoutes(
         id: s.id,
         name: s.name,
         description: s.description,
+        createdAt: s.createdAt,
         updatedAt: s.updatedAt,
       })),
       has_more: result.hasMore,
@@ -193,7 +194,13 @@ export function skillRoutes(
       return c.json({ error: "content is required" }, 400);
     }
     await skillArtifacts.put(skill.tenantId, skill.id, path, body.content);
-    await skillStore.update(skill.id, {}); // bump updatedAt
+    // Keep summaries in sync with the edited entry point. A missing name keeps
+    // the Skill's current name, matching upload parsing without renaming it to
+    // a generic fallback. Other files only advance updatedAt.
+    const metadata = path === "SKILL.md"
+      ? parseSkillMetadata(body.content, skill.name)
+      : {};
+    await skillStore.update(skill.id, metadata);
     return c.json({ path, content: body.content });
   });
 

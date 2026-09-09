@@ -20,7 +20,7 @@ export interface Agent {
   model: string;
   system: string;
   runtime: string;
-  /** Equipped Skill ids (by reference into the tenant Skill Library). */
+  /** Equipped Agent Skill fork ids (private copies of Library Skills). */
   skills?: string[];
   /** MCP connections configured for this Agent (not a tenant-wide library). */
   mcpServers?: ManagedMcpServerRef[];

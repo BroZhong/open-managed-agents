@@ -214,6 +214,7 @@ class TinySkillStore implements SkillStore {
   private nextId = 1;
 
   async create(input: SkillStoreCreateInput): Promise<Skill> {
+    const now = new Date();
     const ownerType: SkillOwnerType = input.ownerType ?? "library";
     const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
     const skill: Skill = {
@@ -224,7 +225,8 @@ class TinySkillStore implements SkillStore {
       ownerType,
       ownerId,
       sourceSkillId: input.sourceSkillId ?? null,
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
     this.skills.push(skill);
     return skill;

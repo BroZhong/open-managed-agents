@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { ApiKeyStore } from "../src/types.js";
 import {
@@ -173,6 +173,10 @@ describe("Skill directory file editing (issue #73)", () => {
     process.env.AUTH_DISABLED = "true";
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("lists, reads, writes, deletes and renames files on a Library Skill", async () => {
     const { app, skillStore, skillArtifactStore } = setup();
     const libId = await makeLibrarySkill(skillStore, skillArtifactStore, [
@@ -217,27 +221,69 @@ describe("Skill directory file editing (issue #73)", () => {
     expect(final.data).toEqual(["SKILL.md"]);
   });
 
-  it("editing a fork does not change the Library Skill (and vice versa)", async () => {
+  it("online fork edits update its summary and timestamps independently of the Library Skill", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const uploadedAt = "2026-09-08T01:00:00.000Z";
+    const forkedAt = "2026-09-08T02:00:00.000Z";
+    const editedAt = "2026-09-08T03:00:00.000Z";
+    vi.setSystemTime(new Date(uploadedAt));
     const { app, skillStore, skillArtifactStore } = setup();
     const agentId = await makeAgent(app);
     const libId = await makeLibrarySkill(skillStore, skillArtifactStore);
-    const forkId = (await (await app.request(`/v1/agents/${agentId}/skills`, {
+    vi.setSystemTime(new Date(forkedAt));
+    const fork = await (await app.request(`/v1/agents/${agentId}/skills`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ skillId: libId }),
-    })).json()).id;
+    })).json();
+    const forkId = fork.id;
+    expect(fork.createdAt).toBe(forkedAt);
+    expect(fork.updatedAt).toBe(forkedAt);
 
     // Edit the fork's SKILL.md.
-    await app.request(`/v1/skills/${forkId}/files/content`, {
+    vi.setSystemTime(new Date(editedAt));
+    const forkEdit = "---\nname: agent-greeter\ndescription: Agent greeting\n---\nFORK EDIT";
+    const saved = await app.request(`/v1/skills/${forkId}/files/content`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "SKILL.md", content: "FORK EDIT" }),
+      body: JSON.stringify({ path: "SKILL.md", content: forkEdit }),
     });
+    expect(saved.status).toBe(200);
 
     const libContent = await (await app.request(`/v1/skills/${libId}/files/content?path=SKILL.md`)).json();
     const forkContent = await (await app.request(`/v1/skills/${forkId}/files/content?path=SKILL.md`)).json();
-    expect(forkContent.content).toBe("FORK EDIT");
+    expect(forkContent.content).toBe(forkEdit);
     expect(libContent.content).toContain("Equipped SKILL marker");
+
+    const expectedFork = {
+      id: forkId,
+      name: "agent-greeter",
+      description: "Agent greeting",
+      sourceSkillId: libId,
+      createdAt: forkedAt,
+      updatedAt: editedAt,
+    };
+    const equipped = await (await app.request(`/v1/agents/${agentId}/skills`)).json();
+    expect(equipped.data).toEqual([expectedFork]);
+    const library = await (await app.request(`/v1/skills/${libId}`)).json();
+    expect(library).toMatchObject({
+      name: "greeter",
+      description: "Greets warmly",
+      createdAt: uploadedAt,
+      updatedAt: uploadedAt,
+    });
+
+    // Updating the Library afterwards must not overwrite the fork's metadata.
+    vi.setSystemTime(new Date("2026-09-08T04:00:00.000Z"));
+    const librarySaved = await app.request(`/v1/skills/${libId}/files/content`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "SKILL.md", content: "---\nname: library-greeter\ndescription: Library greeting\n---" }),
+    });
+    expect(librarySaved.status).toBe(200);
+    const forkDetail = await (await app.request(`/v1/skills/${forkId}`)).json();
+    expect(forkDetail).toMatchObject(expectedFork);
+    expect(await skillStore.getById(libId)).toMatchObject({ name: "library-greeter", description: "Library greeting" });
   });
 
   it("rejects path traversal", async () => {

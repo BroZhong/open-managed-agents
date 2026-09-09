@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { PgSkillStore } from "../src/postgres/skill-store.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
@@ -17,6 +17,47 @@ describe("PgSkillStore (ADR-0004 owner columns)", () => {
   beforeEach(async () => {
     await harness.reset();
     store = new PgSkillStore(harness.pool);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("preserves the upload time while metadata and file edits advance updatedAt", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const uploadedAt = new Date("2026-09-08T01:00:00.000Z");
+    vi.setSystemTime(uploadedAt);
+    const skill = await store.create({ tenantId: "t1", name: "S", description: "d" });
+    expect(skill.createdAt).toEqual(uploadedAt);
+    expect(skill.updatedAt).toEqual(uploadedAt);
+
+    const editedAt = new Date("2026-09-08T02:00:00.000Z");
+    vi.setSystemTime(editedAt);
+    await store.update(skill.id, { description: "Edited" });
+    const listed = (await store.list("t1")).data[0];
+    expect(listed.createdAt).toEqual(uploadedAt);
+    expect(listed.updatedAt).toEqual(editedAt);
+
+    const fileEditedAt = new Date("2026-09-08T03:00:00.000Z");
+    vi.setSystemTime(fileEditedAt);
+    await store.update(skill.id, {});
+    expect(await store.getById(skill.id)).toMatchObject({
+      description: "Edited",
+      createdAt: uploadedAt,
+      updatedAt: fileEditedAt,
+    });
+  });
+
+  it("keeps unknown legacy creation times null across reads and edits", async () => {
+    await harness.pool.query(
+      `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      ["skill_legacy", "t1", "Legacy", "d", "library", "t1", new Date("2026-01-01T00:00:00Z")],
+    );
+    expect((await store.getById("skill_legacy"))?.createdAt).toBeNull();
+    const updated = await store.update("skill_legacy", { description: "Edited" });
+    expect(updated?.createdAt).toBeNull();
+    expect((await store.list("t1")).data[0].createdAt).toBeNull();
   });
 
   it("defaults create() to a Library Skill owned by the tenant", async () => {

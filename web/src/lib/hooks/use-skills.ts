@@ -10,6 +10,7 @@ export interface Skill {
   id: string;
   name: string;
   description: string;
+  createdAt: string | null;
   updatedAt: string;
 }
 
@@ -62,6 +63,7 @@ export interface EquippedSkill {
   name: string;
   description: string;
   sourceSkillId: string | null;
+  createdAt: string | null;
   updatedAt: string;
 }
 

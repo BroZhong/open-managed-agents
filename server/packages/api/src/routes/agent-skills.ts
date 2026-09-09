@@ -57,6 +57,7 @@ export function agentSkillRoutes(
         name: s.name,
         description: s.description,
         sourceSkillId: s.sourceSkillId ?? null,
+        createdAt: s.createdAt,
         updatedAt: s.updatedAt,
       })),
       has_more: false,
