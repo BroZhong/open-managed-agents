@@ -33,10 +33,14 @@ export interface SandboxExecOptions {
   /** Extra environment variables layered onto the command. */
   env?: Record<string, string>;
   /**
-   * The turn's abort signal (issue #84). Forwarded into the e2b command run so a
-   * hung command is cancelled when the router aborts the turn.
+   * Abort the running process, not just the transport receiving its output.
    */
   signal?: AbortSignal;
+  /**
+   * Called once on an observed process exit, before the iterable completes.
+   * Startup/transport failures without an exit result do not call this hook.
+   */
+  onExit?: (result: { exitCode: number | null; signal?: string }) => void;
 }
 
 /** A file entry returned by {@link SandboxClient.list}. */

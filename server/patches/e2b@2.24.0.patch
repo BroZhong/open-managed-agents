@@ -1,0 +1,90 @@
+diff --git a/dist/index.js b/dist/index.js
+index c2030a9831879f0109da03082f850e103346ef5b..4efabf7d00a58ede821b7f7880aaaa65ab40ecbb 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1511,6 +1511,8 @@ var CommandHandle = class {
+   iterateEvents() {
+     return __asyncGenerator(this, null, function* () {
+       var _a3;
++      const stdoutDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
++      const stderrDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+       try {
+         for (var iter = __forAwait(this.events), more, temp, error; more = !(temp = yield new __await(iter.next())).done; more = false) {
+           const event = temp.value;
+@@ -1520,12 +1522,12 @@ var CommandHandle = class {
+             case "data":
+               switch (e.value.output.case) {
+                 case "stdout":
+-                  out = new TextDecoder().decode(e.value.output.value);
++                  out = stdoutDecoder.decode(e.value.output.value, { stream: true });
+                   this._stdout += out;
+                   yield [out, null, null];
+                   break;
+                 case "stderr":
+-                  out = new TextDecoder().decode(e.value.output.value);
++                  out = stderrDecoder.decode(e.value.output.value, { stream: true });
+                   this._stderr += out;
+                   yield [null, out, null];
+                   break;
+@@ -1535,6 +1537,16 @@ var CommandHandle = class {
+               }
+               break;
+             case "end":
++              out = stdoutDecoder.decode();
++              if (out) {
++                this._stdout += out;
++                yield [out, null, null];
++              }
++              out = stderrDecoder.decode();
++              if (out) {
++                this._stderr += out;
++                yield [null, out, null];
++              }
+               this.result = {
+                 exitCode: e.value.exitCode,
+                 error: e.value.error,
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a92bf7e8b309a4fb7441d0a4b698a9ab86729d10..2751badd9ae52c069f244f50663bda6189f3a313 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1455,6 +1455,8 @@ var CommandHandle = class {
+   iterateEvents() {
+     return __asyncGenerator(this, null, function* () {
+       var _a3;
++      const stdoutDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
++      const stderrDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+       try {
+         for (var iter = __forAwait(this.events), more, temp, error; more = !(temp = yield new __await(iter.next())).done; more = false) {
+           const event = temp.value;
+@@ -1464,12 +1466,12 @@ var CommandHandle = class {
+             case "data":
+               switch (e.value.output.case) {
+                 case "stdout":
+-                  out = new TextDecoder().decode(e.value.output.value);
++                  out = stdoutDecoder.decode(e.value.output.value, { stream: true });
+                   this._stdout += out;
+                   yield [out, null, null];
+                   break;
+                 case "stderr":
+-                  out = new TextDecoder().decode(e.value.output.value);
++                  out = stderrDecoder.decode(e.value.output.value, { stream: true });
+                   this._stderr += out;
+                   yield [null, out, null];
+                   break;
+@@ -1479,6 +1481,16 @@ var CommandHandle = class {
+               }
+               break;
+             case "end":
++              out = stdoutDecoder.decode();
++              if (out) {
++                this._stdout += out;
++                yield [out, null, null];
++              }
++              out = stderrDecoder.decode();
++              if (out) {
++                this._stderr += out;
++                yield [null, out, null];
++              }
+               this.result = {
+                 exitCode: e.value.exitCode,
+                 error: e.value.error,

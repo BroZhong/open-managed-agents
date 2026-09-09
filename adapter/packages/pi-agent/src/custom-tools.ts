@@ -11,7 +11,6 @@ import {
 import type {
   BashOperations,
   EditOperations,
-  FindOperations,
   LsOperations,
   ReadOperations,
   ToolDefinition,
@@ -21,14 +20,15 @@ import {
   SANDBOX_WORKSPACE_ROOT,
   type ToolExecutor,
 } from "@open-managed-agents/adapter-core";
+import { sandboxSearchFiles, sandboxSearchSpawn } from "./sandbox-search.js";
 
 /**
  * Build the set of Pi `ToolDefinition`s the model calls, using Pi's own native
  * tool factories (ADR-0005 §2, design doc "方案一"). We do NOT hand-write any
  * schema: each `create*ToolDefinition` owns the exact schema, argument
- * validation, and rendering Pi ships. Six tools use Pi's pluggable operation
- * seams; grep retains Pi's schema/renderers but replaces execute because Pi
- * 0.80.3 still Host-spawns `rg` with custom `GrepOperations`. Every operation
+ * validation, and rendering Pi ships. A pinned Pi patch exposes per-tool
+ * process hooks for native rg/fd, alongside the filesystem operation seams.
+ * Every operation
  * ultimately goes through the injected {@link ToolExecutor} (the sandbox), so
  * nothing touches the Host's local disk.
  *
@@ -69,11 +69,7 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
       }),
     ),
     defineTool(createSandboxGrepToolDefinition(executor)),
-    defineTool(
-      createFindToolDefinition(SANDBOX_WORKSPACE_ROOT, {
-        operations: findOperations(executor),
-      }),
-    ),
+    defineTool(createSandboxFindToolDefinition(executor)),
   ];
 }
 
@@ -89,13 +85,6 @@ function toRelative(absolutePath: string): string {
   if (absolutePath === SANDBOX_WORKSPACE_ROOT) return ".";
   const prefix = `${SANDBOX_WORKSPACE_ROOT}/`;
   return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
-}
-
-/** Map a workspace-relative executor path back into Pi's absolute space. */
-function toAbsolute(relativePath: string): string {
-  return relativePath === "."
-    ? SANDBOX_WORKSPACE_ROOT
-    : `${SANDBOX_WORKSPACE_ROOT}/${relativePath}`;
 }
 
 /**
@@ -288,268 +277,27 @@ function lsOperations(executor: ToolExecutor): LsOperations {
   };
 }
 
-/**
- * Keep Pi's native grep schema and renderers, but replace its
- * implementation. Pi 0.80.3's `GrepOperations` virtualize stat/read only; the
- * native execute path still spawns Host `rg` against the model-visible cwd.
- * A sandbox-backed tool must instead perform the complete search through the
- * injected executor.
- */
+/** Per-invocation operations keep cancellation and file access scoped to a Turn. */
 function createSandboxGrepToolDefinition(executor: ToolExecutor) {
   const native = createGrepToolDefinition(SANDBOX_WORKSPACE_ROOT);
-  const execute: typeof native.execute = async (
-    _toolCallId,
-    { pattern, path: searchDir, glob, ignoreCase, literal, context, limit },
-    signal,
-  ) => {
-    if (signal?.aborted) throw new Error("Operation aborted");
-
-    const request = {
-      pattern,
-      path: resolveExecutorPath(searchDir),
-      glob: glob ?? null,
-      ignoreCase: ignoreCase ?? false,
-      literal: literal ?? false,
-      context: context && context > 0 ? Math.floor(context) : 0,
-      limit: Math.max(1, Math.floor(limit ?? 100)),
-    };
-    const executionController = new AbortController();
-    const forwardAbort = () => executionController.abort();
-    signal?.addEventListener("abort", forwardAbort, { once: true });
-    // Close the narrow race between the initial check and listener install.
-    if (signal?.aborted) forwardAbort();
-
-    let stdout = "";
-    let stderr = "";
-    let transportBytes = 0;
-    try {
-      for await (const chunk of executor.exec(
-        ["python3", "-I", "-c", SANDBOX_GREP_PROGRAM, JSON.stringify(request)],
-        {
-          cwd: ".",
-          timeoutSeconds: 30,
-          signal: executionController.signal,
-        },
-      )) {
-        const chunkBytes = Buffer.byteLength(chunk.text, "utf8");
-        if (transportBytes + chunkBytes > MAX_SANDBOX_GREP_TRANSPORT_BYTES) {
-          executionController.abort();
-          throw new Error(
-            "Sandbox grep output exceeded 512KB transport limit",
-          );
-        }
-        transportBytes += chunkBytes;
-        if (chunk.stream === "stdout") stdout += chunk.text;
-        else stderr += chunk.text;
-      }
-    } catch (error) {
-      if (signal?.aborted) throw new Error("Operation aborted");
-      throw error;
-    } finally {
-      signal?.removeEventListener("abort", forwardAbort);
-    }
-    if (signal?.aborted) throw new Error("Operation aborted");
-
-    let response: SandboxGrepResponse;
-    try {
-      response = JSON.parse(stdout.trim()) as SandboxGrepResponse;
-    } catch {
-      const reason = stderr.trim() || "sandbox grep returned invalid output";
-      throw new Error(reason);
-    }
-    if (response.error) throw new Error(response.error);
-
-    const details: {
-      matchLimitReached?: number;
-      linesTruncated?: boolean;
-    } = {};
-    if (response.matchLimitReached !== undefined) {
-      details.matchLimitReached = response.matchLimitReached;
-    }
-    if (response.linesTruncated) details.linesTruncated = true;
-
-    return {
-      content: [{ type: "text", text: response.output ?? "No matches found" }],
-      details: Object.keys(details).length > 0 ? details : undefined,
-    };
-  };
-  return {
-    ...native,
-    // The executor API exposes a file tree, not gitignore semantics, and this
-    // implementation does not apply Pi's byte/line truncators. Do not retain
-    // native copy that promises behavior unavailable at this boundary.
-    description:
-      "Search sandbox file contents for a pattern. Returns matching lines " +
-      "with file paths and line numbers, up to the requested limit " +
-      "(default: 100 matches).",
-    promptSnippet: "Search sandbox file contents for patterns",
-    execute,
-  };
+  const execute: typeof native.execute = (id, args, signal, onUpdate, ctx) =>
+    createGrepToolDefinition(SANDBOX_WORKSPACE_ROOT, {
+      operations: sandboxSearchFiles(executor, signal),
+      spawn: sandboxSearchSpawn(executor),
+      homeDir: SANDBOX_WORKSPACE_ROOT,
+    }).execute(id, args, signal, onUpdate, ctx);
+  return { ...native, execute };
 }
 
-/** Resolve a raw grep path into the path vocabulary understood by ToolExecutor. */
-function resolveExecutorPath(searchPath = "."): string {
-  if (searchPath.startsWith("/")) return toRelative(searchPath);
-  return searchPath.replace(/^\.\//, "") || ".";
-}
-
-interface SandboxGrepResponse {
-  output?: string;
-  error?: string;
-  matchLimitReached?: number;
-  linesTruncated?: boolean;
-}
-
-/**
- * Defense in depth around a sandbox process that is expected to emit at most
- * 50KB of JSON. JSON escaping can expand that payload, so allow generous
- * framing headroom while still bounding Host memory if the process is faulty
- * or hostile.
- */
-const MAX_SANDBOX_GREP_TRANSPORT_BYTES = 512 * 1024;
-
-/**
- * Executed by isolated-mode `python3 -I -c` inside the ToolExecutor boundary.
- * Isolated mode prevents a Workspace file such as `json.py` from shadowing a
- * standard-library import. Regex evaluation, directory traversal, file reads,
- * and output truncation therefore consume disposable Sandbox resources rather
- * than the resident Host process.
- */
-const SANDBOX_GREP_PROGRAM = String.raw`
-import fnmatch
-import json
-import re
-import sys
-from pathlib import Path
-
-MAX_LINE_CHARS = 500
-MAX_OUTPUT_LINES = 2000
-MAX_OUTPUT_BYTES = 50 * 1024
-
-def truncate_line(value):
-    if len(value) <= MAX_LINE_CHARS:
-        return value, False
-    return value[:MAX_LINE_CHARS] + "... [truncated]", True
-
-def matches_glob(relative_path, name, pattern):
-    if not pattern:
-        return True
-    target = relative_path if "/" in pattern else name
-    if fnmatch.fnmatchcase(target, pattern):
-        return True
-    return pattern.startswith("**/") and fnmatch.fnmatchcase(
-        relative_path, pattern[3:]
-    )
-
-def cap_output(lines):
-    kept = []
-    used = 0
-    truncated = False
-    for line in lines:
-        encoded = line.encode("utf-8")
-        extra = len(encoded) + (1 if kept else 0)
-        if len(kept) >= MAX_OUTPUT_LINES or used + extra > MAX_OUTPUT_BYTES:
-            truncated = True
-            break
-        kept.append(line)
-        used += extra
-    if truncated:
-        notice = "[Output truncated at 2000 lines or 50KB]"
-        notice_bytes = len(notice.encode("utf-8")) + (1 if kept else 0)
-        while kept and used + notice_bytes > MAX_OUTPUT_BYTES:
-            removed = kept.pop()
-            used -= len(removed.encode("utf-8")) + (1 if kept else 0)
-        kept.append(notice)
-    return "\n".join(kept), truncated
-
-try:
-    config = json.loads(sys.argv[1])
-    target = Path(config["path"])
-    if not target.exists():
-        raise FileNotFoundError(f"Path not found: {config['path']}")
-
-    is_directory = target.is_dir()
-    candidates = (
-        sorted((path for path in target.rglob("*") if path.is_file()),
-               key=lambda path: path.as_posix())
-        if is_directory else [target]
-    )
-    flags = re.IGNORECASE if config["ignoreCase"] else 0
-    source = re.escape(config["pattern"]) if config["literal"] else config["pattern"]
-    expression = re.compile(source, flags)
-    context = config["context"]
-    limit = config["limit"]
-    output = []
-    matches = 0
-    limit_reached = False
-    lines_truncated = False
-
-    for candidate in candidates:
-        relative = (
-            candidate.relative_to(target).as_posix()
-            if is_directory else candidate.name
-        )
-        if not matches_glob(relative, candidate.name, config["glob"]):
-            continue
-        contents = candidate.read_bytes()
-        # Like a text search, skip binary files rather than returning their NULs.
-        if b"\x00" in contents:
-            continue
-        lines = contents.decode("utf-8", errors="replace").splitlines()
-        for index, line in enumerate(lines):
-            if expression.search(line) is None:
-                continue
-            matches += 1
-            first = max(0, index - context)
-            last = min(len(lines) - 1, index + context)
-            for context_index in range(first, last + 1):
-                rendered, was_truncated = truncate_line(lines[context_index])
-                lines_truncated = lines_truncated or was_truncated
-                separator = ":" if context_index == index else "-"
-                output.append(
-                    f"{relative}{separator}{context_index + 1}{separator} {rendered}"
-                )
-            if matches >= limit:
-                limit_reached = True
-                break
-        if limit_reached:
-            break
-
-    if not output:
-        output.append("No matches found")
-    if limit_reached:
-        output.extend([
-            "",
-            f"[{limit} matches limit reached. Use limit={limit * 2} for more, or refine pattern]",
-        ])
-    if lines_truncated:
-        output.extend(["", "[Some lines truncated to 500 characters]"])
-    rendered, output_truncated = cap_output(output)
-    print(json.dumps({
-        "output": rendered,
-        "matchLimitReached": limit if limit_reached else None,
-        "linesTruncated": lines_truncated,
-        "outputTruncated": output_truncated,
-    }, ensure_ascii=False))
-except Exception as error:
-    print(json.dumps({"error": str(error)}, ensure_ascii=False))
-`;
-
-function findOperations(executor: ToolExecutor): FindOperations {
-  return {
-    async exists(absolutePath) {
-      return (await executor.list(toRelative(absolutePath))).length > 0;
-    },
-    async glob(pattern, cwd, options) {
-      // The executor's `list` takes one glob relative to its own root. Anchor
-      // the caller's pattern under the search dir, list matches, then hand Pi
-      // back absolute paths (it relativizes them against `cwd` itself).
-      const searchDir = toRelative(cwd);
-      const scoped = searchDir === "." ? pattern : `${searchDir}/${pattern}`;
-      const entries = await executor.list(scoped);
-      return entries.slice(0, options.limit).map((e) => toAbsolute(e.path));
-    },
-  };
+function createSandboxFindToolDefinition(executor: ToolExecutor) {
+  const native = createFindToolDefinition(SANDBOX_WORKSPACE_ROOT);
+  const execute: typeof native.execute = (id, args, signal, onUpdate, ctx) =>
+    createFindToolDefinition(SANDBOX_WORKSPACE_ROOT, {
+      operations: { exists: sandboxSearchFiles(executor, signal).exists },
+      spawn: sandboxSearchSpawn(executor),
+      homeDir: SANDBOX_WORKSPACE_ROOT,
+    }).execute(id, args, signal, onUpdate, ctx);
+  return { ...native, execute };
 }
 
 /**

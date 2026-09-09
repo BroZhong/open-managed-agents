@@ -319,6 +319,7 @@ class SandboxSessionImpl implements SandboxSession {
       timeoutSeconds: opts?.timeoutSeconds,
       env: opts?.env,
       signal: opts?.signal,
+      onExit: opts?.onExit,
     });
   }
 

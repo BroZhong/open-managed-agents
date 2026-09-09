@@ -46,6 +46,7 @@ fi
 # ── Stage the vfs-cli binary into the build context ──────────────────────────
 # The Dockerfile COPYs bin/vfs-cli. If VFS_CLI_SRC is given, stage it; otherwise
 # require that bin/vfs-cli already exists (e.g. placed by a prior run or scp).
+python3 ../prepare-search-binaries.py bin
 mkdir -p bin
 if [[ -n "${VFS_CLI_SRC:-}" ]]; then
   echo "==> staging vfs-cli from ${VFS_CLI_SRC}"

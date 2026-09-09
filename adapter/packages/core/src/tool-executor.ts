@@ -22,6 +22,23 @@ export interface ExecOutputChunk {
   text: string;
 }
 
+/** Completion of a process, separate from its stdout/stderr stream. */
+export interface ExecExitResult {
+  exitCode: number | null;
+  /** Terminating signal when the process was killed. */
+  signal?: string;
+}
+
+/** Cancellation confirmed before a backend attempted to start the process. */
+export class ExecAbortedBeforeStartError extends Error {
+  readonly code = "EXEC_ABORTED_BEFORE_START";
+
+  constructor() {
+    super("Command aborted");
+    this.name = "AbortError";
+  }
+}
+
 /**
  * Canonical model-visible root of a sandboxed Agent's writable Workspace.
  *
@@ -46,11 +63,14 @@ export interface ExecOptions {
   /** Extra environment variables to layer onto the command. */
   env?: Record<string, string>;
   /**
-   * The turn's abort signal (issue #84). Passed straight through to the backend
-   * so a hung command is cancelled when the router aborts the turn — a pure
-   * passthrough of the runtime's native cancel, not a separate watchdog.
+   * Abort the running process, not just the transport receiving its output.
    */
   signal?: AbortSignal;
+  /**
+   * Called once on an observed process exit, before the iterable completes.
+   * Startup/transport failures without an exit result do not call this hook.
+   */
+  onExit?: (result: ExecExitResult) => void;
 }
 
 /** An entry returned by `list`. */

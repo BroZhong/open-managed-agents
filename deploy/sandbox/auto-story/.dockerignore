@@ -5,3 +5,5 @@
 !bin/
 !bin/vfs-cli
 !bin/mediakit-cli
+!bin/rg
+!bin/fd

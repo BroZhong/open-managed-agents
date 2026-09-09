@@ -1,0 +1,183 @@
+diff --git a/dist/core/tools/find.d.ts b/dist/core/tools/find.d.ts
+index 7a3fc0a9180b58b03a68bcb2e8a6cbf584ed94ed..bc60fb0d0888ade191b4fd072af1f2c79f57faf9 100644
+--- a/dist/core/tools/find.d.ts
++++ b/dist/core/tools/find.d.ts
+@@ -1,6 +1,7 @@
+ import type { AgentTool } from "@earendil-works/pi-agent-core";
+ import { type Static, Type } from "typebox";
+ import type { ToolDefinition } from "../extensions/types.ts";
++import type { SearchToolSpawn } from "./search-process.ts";
+ import { type TruncationResult } from "./truncate.ts";
+ declare const findSchema: Type.TObject<{
+     pattern: Type.TString;
+@@ -20,7 +21,7 @@ export interface FindOperations {
+     /** Check if path exists */
+     exists: (absolutePath: string) => Promise<boolean> | boolean;
+     /** Find files matching glob pattern. Returns relative or absolute paths. */
+-    glob: (pattern: string, cwd: string, options: {
++    glob?: (pattern: string, cwd: string, options: {
+         ignore: string[];
+         limit: number;
+     }) => Promise<string[]> | string[];
+@@ -28,6 +29,10 @@ export interface FindOperations {
+ export interface FindToolOptions {
+     /** Custom operations for find. Default: local filesystem plus fd */
+     operations?: FindOperations;
++    /** Run fd in the operations' environment. Skips local binary discovery/download. */
++    spawn?: SearchToolSpawn;
++    /** Home directory for path expansion. Default: the local user's home directory. */
++    homeDir?: string;
+ }
+ export declare function createFindToolDefinition(cwd: string, options?: FindToolOptions): ToolDefinition<typeof findSchema, FindToolDetails | undefined>;
+ export declare function createFindTool(cwd: string, options?: FindToolOptions): AgentTool<typeof findSchema>;
+diff --git a/dist/core/tools/find.js b/dist/core/tools/find.js
+index b492459b32b2805b2553fc300943de4576109c78..e8ca8ca7fec7b6cd3fe718019458d896e00168d3 100644
+--- a/dist/core/tools/find.js
++++ b/dist/core/tools/find.js
+@@ -96,7 +96,7 @@ export function createFindToolDefinition(cwd, options) {
+                 signal?.addEventListener("abort", onAbort, { once: true });
+                 (async () => {
+                     try {
+-                        const searchPath = resolveToCwd(searchDir || ".", cwd);
++                        const searchPath = resolveToCwd(searchDir || ".", cwd, options?.homeDir);
+                         const effectiveLimit = limit ?? DEFAULT_LIMIT;
+                         const ops = customOps ?? defaultFindOperations;
+                         // If custom operations provide glob(), use that instead of fd.
+@@ -154,7 +154,7 @@ export function createFindToolDefinition(cwd, options) {
+                             return;
+                         }
+                         // Default implementation uses fd.
+-                        const fdPath = await ensureTool("fd", true);
++                        const fdPath = options?.spawn ? "fd" : await ensureTool("fd", true);
+                         if (signal?.aborted) {
+                             settle(() => reject(new Error("Operation aborted")));
+                             return;
+@@ -170,7 +170,7 @@ export function createFindToolDefinition(cwd, options) {
+                         // https://github.com/earendil-works/pi/issues/5960
+                         let insideGitRepo = false;
+                         for (let current = searchPath;;) {
+-                            if (await pathExists(path.join(current, ".git"))) {
++                            if (await ops.exists(path.join(current, ".git"))) {
+                                 insideGitRepo = true;
+                                 break;
+                             }
+@@ -193,7 +193,11 @@ export function createFindToolDefinition(cwd, options) {
+                             }
+                         }
+                         args.push("--", effectivePattern, searchPath);
+-                        const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
++                        if (signal?.aborted) {
++                            settle(() => reject(new Error("Operation aborted")));
++                            return;
++                        }
++                        const child = (options?.spawn ?? spawn)(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+                         const rl = createInterface({ input: child.stdout });
+                         let stderr = "";
+                         const lines = [];
+diff --git a/dist/core/tools/grep.d.ts b/dist/core/tools/grep.d.ts
+index fd073cd9babb37f3d00f0131bc460c39b84c5a1c..57b8f6bb74da8939d237bd0447f08b479c31aee5 100644
+--- a/dist/core/tools/grep.d.ts
++++ b/dist/core/tools/grep.d.ts
+@@ -1,6 +1,7 @@
+ import type { AgentTool } from "@earendil-works/pi-agent-core";
+ import { type Static, Type } from "typebox";
+ import type { ToolDefinition } from "../extensions/types.ts";
++import type { SearchToolSpawn } from "./search-process.ts";
+ import { type TruncationResult } from "./truncate.ts";
+ declare const grepSchema: Type.TObject<{
+     pattern: Type.TString;
+@@ -30,6 +31,10 @@ export interface GrepOperations {
+ export interface GrepToolOptions {
+     /** Custom operations for grep. Default: local filesystem plus ripgrep */
+     operations?: GrepOperations;
++    /** Run ripgrep in the operations' environment. Skips local binary discovery/download. */
++    spawn?: SearchToolSpawn;
++    /** Home directory for path expansion. Default: the local user's home directory. */
++    homeDir?: string;
+ }
+ export declare function createGrepToolDefinition(cwd: string, options?: GrepToolOptions): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined>;
+ export declare function createGrepTool(cwd: string, options?: GrepToolOptions): AgentTool<typeof grepSchema>;
+diff --git a/dist/core/tools/grep.js b/dist/core/tools/grep.js
+index a8d520b025e14cff479e55c34e8745b31c427bdd..6a1c7a5cc8105c5bc2c4ec04d9b831377e2ceeb8 100644
+--- a/dist/core/tools/grep.js
++++ b/dist/core/tools/grep.js
+@@ -92,12 +92,12 @@ export function createGrepToolDefinition(cwd, options) {
+                 };
+                 (async () => {
+                     try {
+-                        const rgPath = await ensureTool("rg", true);
++                        const rgPath = options?.spawn ? "rg" : await ensureTool("rg", true);
+                         if (!rgPath) {
+                             settle(() => reject(new Error("ripgrep (rg) is not available and could not be downloaded")));
+                             return;
+                         }
+-                        const searchPath = resolveToCwd(searchDir || ".", cwd);
++                        const searchPath = resolveToCwd(searchDir || ".", cwd, options?.homeDir);
+                         const ops = customOps ?? defaultGrepOperations;
+                         let isDirectory;
+                         try {
+@@ -141,7 +141,11 @@ export function createGrepToolDefinition(cwd, options) {
+                         if (glob)
+                             args.push("--glob", glob);
+                         args.push("--", pattern, searchPath);
+-                        const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
++                        if (signal?.aborted) {
++                            settle(() => reject(new Error("Operation aborted")));
++                            return;
++                        }
++                        const child = (options?.spawn ?? spawn)(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+                         const rl = createInterface({ input: child.stdout });
+                         let stderr = "";
+                         let matchCount = 0;
+diff --git a/dist/core/tools/path-utils.d.ts b/dist/core/tools/path-utils.d.ts
+index 5df8b6b11ad347bbd630621310b3c119a5c2506d..995ea4fc414040339e337ad7208696dc9ffe5e4f 100644
+--- a/dist/core/tools/path-utils.d.ts
++++ b/dist/core/tools/path-utils.d.ts
+@@ -4,7 +4,7 @@ export declare function expandPath(filePath: string): string;
+  * Resolve a path relative to the given cwd.
+  * Handles ~ expansion and absolute paths.
+  */
+-export declare function resolveToCwd(filePath: string, cwd: string): string;
++export declare function resolveToCwd(filePath: string, cwd: string, homeDir?: string): string;
+ export declare function resolveReadPath(filePath: string, cwd: string): string;
+ export declare function resolveReadPathAsync(filePath: string, cwd: string): Promise<string>;
+ //# sourceMappingURL=path-utils.d.ts.map
+diff --git a/dist/core/tools/path-utils.js b/dist/core/tools/path-utils.js
+index 47382b52446ad2ed3dd8b1c4b7b1b6d00e7a1d05..fac29e253725b441b573223c43933a4abc71a18c 100644
+--- a/dist/core/tools/path-utils.js
++++ b/dist/core/tools/path-utils.js
+@@ -39,8 +39,8 @@ export function expandPath(filePath) {
+  * Resolve a path relative to the given cwd.
+  * Handles ~ expansion and absolute paths.
+  */
+-export function resolveToCwd(filePath, cwd) {
+-    return resolvePath(filePath, cwd, { normalizeUnicodeSpaces: true, stripAtPrefix: true });
++export function resolveToCwd(filePath, cwd, homeDir) {
++    return resolvePath(filePath, cwd, { normalizeUnicodeSpaces: true, stripAtPrefix: true, homeDir });
+ }
+ export function resolveReadPath(filePath, cwd) {
+     const resolved = resolveToCwd(filePath, cwd);
+diff --git a/dist/core/tools/search-process.d.ts b/dist/core/tools/search-process.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ae2da57f069c4db01284389859c584bcf6fe14b5
+--- /dev/null
++++ b/dist/core/tools/search-process.d.ts
+@@ -0,0 +1,18 @@
++import type { Readable } from "node:stream";
++
++/** The process surface consumed by Pi's native search implementations. */
++export interface SearchToolProcess {
++    stdout: Readable;
++    stderr: Readable | null;
++    killed: boolean;
++    kill(): boolean;
++    on(event: "error", listener: (error: Error) => void): this;
++    on(event: "close", listener: (code: number | null) => void): this;
++}
++
++/** Starts the original rg/fd argv without replacing Pi's search semantics. */
++export type SearchToolSpawn = (
++    command: string,
++    args: string[],
++    options: { stdio: ["ignore", "pipe", "pipe"] },
++) => SearchToolProcess;
