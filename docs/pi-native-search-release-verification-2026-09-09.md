@@ -48,6 +48,10 @@ The subsequent cloud probe recorded hashes from those actual deployed imports.
   including 26 native search comparisons, eight Host-I/O exclusion tests and
   twelve E2B entrypoint UTF-8 tests. Required typechecks passed. Deployment
   checks: nine passed, one optional skip. All four PR CI jobs passed.
+- CI explicitly stages the checksum-verified Linux rg/fd releases used by the
+  sandbox images. A subsequent CI run exposed unreliable implicit Pi binary
+  bootstrapping; missing binaries remain a failing prerequisite, and the
+  workflow now installs them before executing the unchanged parity tests.
 - Native reference: actual macOS Pi 0.80.10 with Pi-managed rg 15.1.0 and
   fd 10.4.2, running 54 observations across all seven tools.
 - Deployed auto-story: the installed Host code created a disposable sandbox

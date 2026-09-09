@@ -8,6 +8,7 @@ on:
       - "deploy/Dockerfile.web"
       - "deploy/k8s.yaml"
       - "deploy/migrations/**"
+      - "deploy/sandbox/prepare-search-binaries.py"
       - "deploy/patch-*.mjs"
       - "deploy/*.test.mjs"
       - "server/packages/api/**"
@@ -26,6 +27,7 @@ on:
       - "deploy/Dockerfile.web"
       - "deploy/k8s.yaml"
       - "deploy/migrations/**"
+      - "deploy/sandbox/prepare-search-binaries.py"
       - "deploy/patch-*.mjs"
       - "deploy/*.test.mjs"
       - "server/packages/api/**"
@@ -83,6 +85,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: adapter/pnpm-lock.yaml
       - run: pnpm --dir adapter install --frozen-lockfile
+      - name: Provision pinned native search binaries
+        run: |
+          python3 deploy/sandbox/prepare-search-binaries.py "$RUNNER_TEMP/pi-native-search-bin"
+          printf '%s\n' "$RUNNER_TEMP/pi-native-search-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/pi-native-search-bin/rg" --version
+          "$RUNNER_TEMP/pi-native-search-bin/fd" --version
       - name: Test provider usage translation
         run: pnpm --dir adapter test
       - name: Type-check adapters
