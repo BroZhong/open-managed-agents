@@ -52,11 +52,12 @@ export type { Adapter } from "./interface.js";
 export type {
   ToolExecutor,
   ExecOutputChunk,
+  ExecExitResult,
   ExecOptions,
   FileListEntry,
 } from "./tool-executor.js";
 
-export { SANDBOX_WORKSPACE_ROOT } from "./tool-executor.js";
+export { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "./tool-executor.js";
 
 export {
   generateEventId,

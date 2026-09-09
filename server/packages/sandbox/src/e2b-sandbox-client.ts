@@ -1,5 +1,5 @@
 import { Sandbox } from "e2b";
-import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import { ExecAbortedBeforeStartError, SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -9,6 +9,28 @@ import type {
   SandboxHandle,
 } from "./sandbox-client.js";
 
+export interface E2BCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}
+
+export interface E2BCommandHandle {
+  wait(): Promise<E2BCommandResult>;
+  kill(): Promise<boolean>;
+  disconnect(): Promise<void>;
+}
+
+export interface E2BCommandOptions {
+  cwd?: string;
+  envs?: Record<string, string>;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onStdout?: (data: string) => void | Promise<void>;
+  onStderr?: (data: string) => void | Promise<void>;
+}
+
 /**
  * The slice of the e2b `Sandbox` instance this client actually uses. Kept
  * structural so tests can pass a hand-rolled fake without dragging in the whole
@@ -17,22 +39,8 @@ import type {
 export interface E2BSandbox {
   readonly sandboxId: string;
   commands: {
-    run(
-      cmd: string,
-      opts?: {
-        cwd?: string;
-        envs?: Record<string, string>;
-        timeoutMs?: number;
-        /**
-         * Abort the in-flight command (issue #84). The e2b SDK's
-         * `CommandStartOpts` extends `Pick<ConnectionOpts, 'signal'>`, so `run`
-         * accepts an `AbortSignal`; aborting it cancels the underlying request.
-         */
-        signal?: AbortSignal;
-        onStdout?: (data: string) => void | Promise<void>;
-        onStderr?: (data: string) => void | Promise<void>;
-      },
-    ): Promise<{ exitCode: number; stdout: string; stderr: string; error?: string }>;
+    run(cmd: string, opts?: E2BCommandOptions & { background?: false }): Promise<E2BCommandResult>;
+    run(cmd: string, opts: E2BCommandOptions & { background: true }): Promise<E2BCommandHandle>;
   };
   files: {
     read(path: string, opts?: { format?: "text" }): Promise<string>;
@@ -90,10 +98,10 @@ export interface E2BSandboxClientOptions {
  * injected, never hardcoded). The `image` create option maps to an e2b
  * template (the SandboxSet name); when omitted, {@link defaultTemplate} is used.
  *
- * `exec` mirrors the old kruise semantics: the argv is wrapped in `sh -lc`
- * (honouring cwd/env), stdout/stderr are streamed chunk-by-chunk, and a
- * non-zero exit is NOT surfaced as a chunk or thrown — a failing command's
- * stderr is simply part of the stream, exactly as before.
+ * `exec` shell-quotes argv for the SDK's `bash -lc` wrapper (honouring cwd/env),
+ * replaces that shell with the command, streams stdout/stderr, and reports a
+ * non-zero exit is reported through `onExit`, while stdout/stderr retain their
+ * original streaming surface for existing consumers.
  */
 export class E2BSandboxClient implements SandboxClient {
   private readonly domain: string;
@@ -154,9 +162,8 @@ export class E2BSandboxClient implements SandboxClient {
       ...(opts?.timeoutSeconds != null
         ? { timeoutMs: opts.timeoutSeconds * 1000 }
         : {}),
-      // Forward the turn's abort signal so a hung command is cancelled when the
-      // router aborts the turn (issue #84).
       ...(opts?.signal ? { signal: opts.signal } : {}),
+      ...(opts?.onExit ? { onExit: opts.onExit } : {}),
     });
   }
 
@@ -275,9 +282,8 @@ export function resolveTemplate(
 
 /**
  * Run a command via the e2b SDK, bridging its `onStdout`/`onStderr` callbacks
- * into the `AsyncIterable<SandboxExecChunk>` the port requires. A non-zero exit
- * is not surfaced (matches the kruise client): the command's stderr is streamed
- * like any other output and `run` resolving/throwing on exit is swallowed.
+ * into the output iterable. Hold the background process handle so cancellation
+ * sends SIGKILL; aborting the SDK request alone only disconnects the stream.
  */
 async function* streamRun(
   sandbox: E2BSandbox,
@@ -287,12 +293,44 @@ async function* streamRun(
     envs?: Record<string, string>;
     timeoutMs?: number;
     signal?: AbortSignal;
+    onExit?: SandboxExecOptions["onExit"];
   },
 ): AsyncIterable<SandboxExecChunk> {
   const queue: SandboxExecChunk[] = [];
   let resolveNext: (() => void) | undefined;
   let done = false;
   let error: Error | undefined;
+  let handle: E2BCommandHandle | undefined;
+  let killPromise: Promise<void> | undefined;
+  let killError: Error | undefined;
+  let reportKillFailure!: (outcome: { reason: unknown }) => void;
+  const killFailure = new Promise<{ reason: unknown }>((resolve) => {
+    reportKillFailure = resolve;
+  });
+  let killed = false;
+  let cancelRequested = false;
+  let exitResult: Parameters<NonNullable<SandboxExecOptions["onExit"]>>[0] | undefined;
+  let exitReported = false;
+  const reportExit = () => {
+    if (!exitReported && exitResult) {
+      exitReported = true;
+      opts.onExit?.(exitResult);
+    }
+  };
+  const cancel = () => {
+    if (done) return;
+    cancelRequested = true;
+    if (!handle || killPromise) return;
+    // Do not pass the aborted turn signal to the kill request. Its transport
+    // must remain usable until the remote process has actually stopped.
+    killPromise = handle.kill().then(
+      (didKill) => { killed = didKill; },
+      (reason: unknown) => {
+        killError = reason instanceof Error ? reason : new Error(String(reason));
+        reportKillFailure({ reason: killError });
+      },
+    );
+  };
   const wake = () => {
     if (resolveNext) {
       const r = resolveNext;
@@ -305,48 +343,78 @@ async function* streamRun(
     wake();
   };
 
-  sandbox.commands
-    .run(cmd, {
-      ...opts,
-      onStdout: push("stdout"),
-      onStderr: push("stderr"),
-    })
-    .then(
-      () => {
-        done = true;
-        wake();
-      },
-      (e: unknown) => {
-        // A non-zero exit (CommandExitError) is expected command behavior, not
-        // a transport failure — its stderr already streamed via onStderr, so we
-        // finish cleanly. Only genuine SDK/transport errors are surfaced.
-        if (isCommandExitError(e)) {
-          done = true;
-        } else {
-          error = e instanceof Error ? e : new Error(String(e));
-          done = true;
+  if (opts.signal?.aborted) throw new ExecAbortedBeforeStartError();
+  opts.signal?.addEventListener("abort", cancel, { once: true });
+  const completion = (async () => {
+    try {
+      // Keep startup observable even if cancellation races with process
+      // creation. Once its PID/handle arrives, cancel() can reliably kill it.
+      const { signal: _signal, onExit: _onExit, ...runOptions } = opts;
+      handle = await sandbox.commands.run(cmd, {
+        ...runOptions,
+        background: true,
+        onStdout: push("stdout"),
+        onStderr: push("stderr"),
+      });
+      // Attach both handlers before killing; a fast SIGKILL must not produce
+      // an unhandled rejection while the kill RPC is still pending.
+      const waiting = handle.wait().then(
+        (result) => ({ result }),
+        (reason: unknown) => ({ reason }),
+      );
+      if (cancelRequested) cancel();
+      const outcome = await Promise.race([waiting, killFailure]);
+      await killPromise;
+      if (killError) throw killError;
+      if (cancelRequested && killed) {
+        exitResult = { exitCode: null, signal: "SIGKILL" };
+        error = new DOMException("Command aborted", "AbortError");
+      } else if ("result" in outcome) {
+        exitResult = { exitCode: outcome.result.exitCode };
+      } else if (isCommandExitError(outcome.reason)) {
+        exitResult = { exitCode: outcome.reason.exitCode };
+      } else {
+        throw outcome.reason;
+      }
+    } catch (reason) {
+      error = reason instanceof Error ? reason : new Error(String(reason));
+      if (handle) {
+        // A lost stream is not evidence that its process stopped. Attempt
+        // cleanup, then close the subscription without inventing an exit code.
+        if (!killPromise) {
+          try { await handle.kill(); } catch { /* Preserve the original error. */ }
         }
-        wake();
-      },
-    );
+        try { await handle.disconnect(); } catch { /* Preserve the original error. */ }
+      }
+    } finally {
+      done = true;
+      wake();
+    }
+  })();
 
-  while (true) {
-    if (queue.length > 0) {
-      yield queue.shift()!;
-      continue;
+  try {
+    while (true) {
+      if (queue.length > 0) {
+        yield queue.shift()!;
+        continue;
+      }
+      if (done) {
+        reportExit();
+        if (error) throw error;
+        return;
+      }
+      await new Promise<void>((r) => { resolveNext = r; });
     }
-    if (done) {
-      if (error) throw error;
-      return;
-    }
-    await new Promise<void>((r) => {
-      resolveNext = r;
-    });
+  } finally {
+    opts.signal?.removeEventListener("abort", cancel);
+    if (!done) cancel();
+    await completion;
+    reportExit();
   }
 }
 
 /** A non-zero exit surfaces as an object carrying a numeric `exitCode`. */
-function isCommandExitError(e: unknown): boolean {
+function isCommandExitError(e: unknown): e is { exitCode: number } {
   return (
     typeof e === "object" &&
     e !== null &&
@@ -361,8 +429,8 @@ function isMissingFileError(error: unknown): boolean {
 }
 
 /**
- * Wrap an argv into a `sh -lc` command string, honouring cwd + env. Mirrors the
- * kruise client so exec semantics (login shell, cd, env prefix) are unchanged.
+ * Quote argv for the SDK's shell, honouring cwd + env and replacing the shell
+ * with the executable so the SDK process handle can terminate it reliably.
  */
 export function wrapCommand(
   command: string[],
@@ -378,7 +446,9 @@ export function wrapCommand(
         .join(" ")
     : "";
   const cmd = command.map(shellQuote).join(" ");
-  parts.push(envPrefix ? `${envPrefix} ${cmd}` : cmd);
+  // Replace the SDK's wrapper shell so its process handle owns the executable
+  // itself; otherwise killing the shell can leave the search process running.
+  parts.push(envPrefix ? `${envPrefix} exec ${cmd}` : `exec ${cmd}`);
   return parts.join(" && ");
 }
 

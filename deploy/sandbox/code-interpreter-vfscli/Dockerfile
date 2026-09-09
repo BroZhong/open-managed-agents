@@ -42,6 +42,18 @@ ENV WORKSPACE_DIR=/home/user
 
 # ── Rarely-changing layers first (best cache hit) ────────────────────────────
 
+# Pi search binaries are staged from pinned, checksum-verified upstream releases.
+COPY bin/rg bin/fd /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/rg /usr/local/bin/fd && \
+    printf '%s\n' \
+      'ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2  /usr/local/bin/rg' \
+      '0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8  /usr/local/bin/fd' | sha256sum --check - && \
+    mkdir -p /opt/pi-search && \
+    rg --version > /opt/pi-search/rg-version.txt && \
+    fd --version > /opt/pi-search/fd-version.txt && \
+    grep -Fx 'fd 10.4.2' /opt/pi-search/fd-version.txt && \
+    sha256sum /usr/local/bin/rg /usr/local/bin/fd > /opt/pi-search/tool-sha256.txt
+
 # Expose python/pip from the venv on a minimal, non-login exec PATH, and ensure
 # the workspace exists and is owned by the account that exec runs as. This is
 # belt-and-braces because `/home/user` already belongs to that account.
@@ -64,6 +76,7 @@ RUN chmod +x /usr/local/bin/vfs-cli
 # Build-time sanity check: the three things this image exists to provide must
 # all resolve on a plain PATH, and the workspace must be user-writable.
 RUN /usr/local/bin/vfs-cli version >/dev/null && \
+    su -s /bin/sh "${SANDBOX_USER}" -c 'env -i HOME=/home/user PATH=/usr/local/bin:/usr/bin:/bin rg --version && env -i HOME=/home/user PATH=/usr/local/bin:/usr/bin:/bin fd --version' && \
     /usr/local/bin/python3 --version >/dev/null && \
     su -s /bin/sh "${SANDBOX_USER}" -c "touch ${WORKSPACE_DIR}/.write-probe && rm ${WORKSPACE_DIR}/.write-probe"
 

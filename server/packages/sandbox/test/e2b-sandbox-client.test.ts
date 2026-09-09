@@ -1,10 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import {
   E2BSandboxClient,
   parseFindOutput,
   resolveTemplate,
   type CreateSandboxFn,
   type E2BSandbox,
+  type E2BCommandResult,
+  type E2BCommandHandle,
 } from "../src/e2b-sandbox-client.js";
 import type { SandboxExecChunk } from "../src/sandbox-client.js";
 
@@ -16,6 +19,7 @@ interface RunCall {
     envs?: Record<string, string>;
     timeoutMs?: number;
     signal?: AbortSignal;
+    background?: boolean;
     onStdout?: (data: string) => void | Promise<void>;
     onStderr?: (data: string) => void | Promise<void>;
   };
@@ -35,6 +39,10 @@ class FakeSandbox implements E2BSandbox {
   running = true;
   /** When set, isRunning throws (simulates a not-found/transport error). */
   isRunningThrows = false;
+  backgroundStart?: () => Promise<void>;
+  processWait?: () => Promise<E2BCommandResult>;
+  processKill = vi.fn(async () => true);
+  processDisconnect = vi.fn(async () => {});
   private runHandler?: (
     cmd: string,
   ) =>
@@ -50,21 +58,29 @@ class FakeSandbox implements E2BSandbox {
   }
 
   commands = {
-    run: async (
+    run: (async (
       cmd: string,
       opts?: RunCall["opts"],
-    ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+    ): Promise<E2BCommandResult | E2BCommandHandle> => {
       this.runCalls.push({ cmd, opts });
-      const r = this.runHandler?.(cmd) ?? {};
-      if (r.stdout && opts?.onStdout) await opts.onStdout(r.stdout);
-      if (r.stderr && opts?.onStderr) await opts.onStderr(r.stderr);
-      const exitCode = r.exitCode ?? 0;
-      if (r.throwExit) {
-        // Mimic CommandExitError: an object carrying a numeric exitCode.
-        throw { exitCode, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      const wait = async () => {
+        if (this.processWait) return this.processWait();
+        const r = this.runHandler?.(cmd) ?? {};
+        if (r.stdout && opts?.onStdout) await opts.onStdout(r.stdout);
+        if (r.stderr && opts?.onStderr) await opts.onStderr(r.stderr);
+        const exitCode = r.exitCode ?? 0;
+        if (r.throwExit) {
+          // Mimic CommandExitError: an object carrying a numeric exitCode.
+          throw { exitCode, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+        }
+        return { exitCode, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      };
+      if (opts?.background) {
+        await this.backgroundStart?.();
+        return { wait, kill: this.processKill, disconnect: this.processDisconnect };
       }
-      return { exitCode, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-    },
+      return wait();
+    }) as E2BSandbox["commands"]["run"],
   };
 
   files = {
@@ -197,7 +213,7 @@ describe("E2BSandboxClient", () => {
     // /workspace could not be mkdir'd by the non-privileged exec user).
     // argv is shell-quoted per element: 'mkdir' '-p' '/home/user'.
     expect(
-      sb.runCalls.some((c) => c.cmd === "'mkdir' '-p' '/home/user'"),
+      sb.runCalls.some((c) => c.cmd === "exec 'mkdir' '-p' '/home/user'"),
     ).toBe(true);
   });
 
@@ -217,7 +233,7 @@ describe("E2BSandboxClient", () => {
       { stream: "stderr", text: "warn\n" },
     ]);
     const echoCall = sandboxes[0].runCalls.at(-1)!;
-    expect(echoCall.cmd).toBe("cd '/workspace' && 'echo' 'hello'");
+    expect(echoCall.cmd).toBe("cd '/workspace' && exec 'echo' 'hello'");
   });
 
   it("exec surfaces a non-zero exit as streamed stderr, not a throw", async () => {
@@ -260,12 +276,120 @@ describe("E2BSandboxClient", () => {
     expect(sandboxes[0].runCalls.at(-1)!.opts?.timeoutMs).toBe(0);
   });
 
-  it("exec forwards the AbortSignal into commands.run by identity (#84)", async () => {
+  it("exec retains a process handle without passing the turn signal to its stream", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create();
     const controller = new AbortController();
     await collect(client.exec(id, ["ls"], { signal: controller.signal }));
-    expect(sandboxes[0].runCalls.at(-1)!.opts?.signal).toBe(controller.signal);
+    expect(sandboxes[0].runCalls.at(-1)!.opts?.signal).toBeUndefined();
+    expect(sandboxes[0].runCalls.at(-1)!.opts?.background).toBe(true);
+  });
+
+  it.each([0, 1, 2, 7])("reports exit code %i once after output is consumed", async (exitCode) => {
+    const { client } = makeClient((cmd) => cmd.includes("'rg'")
+      ? { stdout: "matches\n", exitCode, throwExit: exitCode !== 0 }
+      : {});
+    const { id } = await client.create();
+    const events: unknown[] = [];
+    for await (const chunk of client.exec(id, ["rg", "a"], {
+      onExit: (result) => events.push(result),
+    })) events.push(chunk);
+    expect(events).toEqual([
+      { stream: "stdout", text: "matches\n" },
+      { exitCode },
+    ]);
+  });
+
+  it.each([false, true])("kills the process when cancellation occurs %s during startup", async (duringStartup) => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const sandbox = sandboxes[0];
+    const controller = new AbortController();
+    const onExit = vi.fn();
+    let releaseStart!: () => void;
+    let started!: () => void;
+    let waiting!: () => void;
+    let rejectWait!: (error: unknown) => void;
+    const startSeen = new Promise<void>((resolve) => { started = resolve; });
+    const waitSeen = new Promise<void>((resolve) => { waiting = resolve; });
+    const startup = new Promise<void>((resolve) => { releaseStart = resolve; });
+    sandbox.backgroundStart = async () => { started(); await startup; };
+    sandbox.processWait = () => {
+      waiting();
+      return new Promise((_resolve, reject) => { rejectWait = reject; });
+    };
+    sandbox.processKill.mockImplementation(async () => {
+      // wait() rejects before the kill RPC resolves, as a real fast SIGKILL can.
+      rejectWait({ exitCode: 137 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return true;
+    });
+    const running = collect(client.exec(id, ["rg", "a"], {
+      signal: controller.signal, onExit,
+    }));
+    const rejected = expect(running).rejects.toMatchObject({ name: "AbortError" });
+    await startSeen;
+    if (duringStartup) controller.abort();
+    releaseStart();
+    await waitSeen;
+    if (!duringStartup) controller.abort();
+    await rejected;
+    expect(sandbox.processKill).toHaveBeenCalledExactlyOnceWith();
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ exitCode: null, signal: "SIGKILL" });
+    expect(sandbox.runCalls.at(-1)!.opts?.signal).toBeUndefined();
+  });
+
+  it("does not start an already cancelled command", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const before = sandboxes[0].runCalls.length;
+    await expect(collect(client.exec(id, ["rg", "a"], {
+      signal: AbortSignal.abort(),
+    }))).rejects.toBeInstanceOf(ExecAbortedBeforeStartError);
+    expect(sandboxes[0].runCalls).toHaveLength(before);
+  });
+
+  it("surfaces a failed kill without claiming the process exited or waiting forever", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const sandbox = sandboxes[0];
+    const controller = new AbortController();
+    const onExit = vi.fn();
+    let waiting!: () => void;
+    const waitSeen = new Promise<void>((resolve) => { waiting = resolve; });
+    sandbox.processWait = () => {
+      waiting();
+      return new Promise(() => {});
+    };
+    sandbox.processKill.mockRejectedValue(new Error("kill RPC unavailable"));
+    const running = collect(client.exec(id, ["rg", "a"], {
+      signal: controller.signal, onExit,
+    }));
+    const rejected = expect(running).rejects.toThrow("kill RPC unavailable");
+    await waitSeen;
+    controller.abort();
+    await rejected;
+    expect(onExit).not.toHaveBeenCalled();
+    expect(sandbox.processDisconnect).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("kills and waits for the process when a stream consumer stops early", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const sandbox = sandboxes[0];
+    const onExit = vi.fn();
+    let rejectWait!: (reason: unknown) => void;
+    sandbox.processWait = () => {
+      void sandbox.runCalls.at(-1)!.opts!.onStdout!("one match\n");
+      return new Promise((_resolve, reject) => { rejectWait = reject; });
+    };
+    sandbox.processKill.mockImplementation(async () => {
+      rejectWait({ exitCode: 137 });
+      return true;
+    });
+    for await (const _chunk of client.exec(id, ["rg", "a"], { onExit })) break;
+    expect(sandbox.processKill).toHaveBeenCalledExactlyOnceWith();
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ exitCode: null, signal: "SIGKILL" });
   });
 
   it("readFile reads via files.read", async () => {

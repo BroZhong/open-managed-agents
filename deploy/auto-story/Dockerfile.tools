@@ -1,8 +1,31 @@
-# Binary-safe Pi tool reads on the already verified agentry runtime.
-# Supply the currently deployed digest; preserve dependencies and routing.
+# Source-only Pi tool overlay for a base that already has the native search
+# dependency patches and executor exit/cancellation support. Older bases must
+# first be rebuilt with deploy/Dockerfile.server.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
+RUN cd /app/server/packages/api && node --input-type=module -e '\
+  import { existsSync, readFileSync } from "node:fs"; \
+  import { createRequire } from "node:module"; \
+  import { dirname, join } from "node:path"; \
+  import { fileURLToPath } from "node:url"; \
+  try { \
+    const adapter = fileURLToPath(import.meta.resolve("@open-managed-agents/adapter-pi-agent")); \
+    const piName = "@earendil-works/pi-coding-agent"; \
+    const pi = createRequire(adapter).resolve.paths(piName).map(p => join(p, piName)).find(p => existsSync(join(p, "package.json"))); \
+    const requireText = (file, text) => { if (!readFileSync(file, "utf8").includes(text)) throw new Error(file + " lacks " + text); }; \
+    for (const tool of ["grep", "find"]) { \
+      requireText(join(pi, "dist/core/tools", tool + ".js"), "options?.spawn ?? spawn"); \
+      requireText(join(pi, "dist/core/tools", tool + ".js"), "options?.homeDir"); \
+    } \
+    const sandbox = fileURLToPath(import.meta.resolve("@oma-server/sandbox")); \
+    requireText(join(dirname(sandbox), "sandbox-manager.ts"), "onExit: opts?.onExit"); \
+    requireText(join(dirname(sandbox), "e2b-sandbox-client.ts"), "opts.onExit?.(exitResult)"); \
+    requireText(join(dirname(sandbox), "e2b-sandbox-client.ts"), "handle.kill()"); \
+    const e2bDist = dirname(createRequire(sandbox).resolve("e2b")); \
+    for (const file of ["index.js", "index.mjs"]) requireText(join(e2bDist, file), "stdoutDecoder.decode"); \
+  } catch (error) { throw new Error("BASE_IMAGE lacks native-search runtime prerequisites; build deploy/Dockerfile.server first. " + error.message); }'
 COPY adapter/packages/pi-agent/src/custom-tools.ts /app/adapter/packages/pi-agent/src/custom-tools.ts
+COPY adapter/packages/pi-agent/src/sandbox-search.ts /app/adapter/packages/pi-agent/src/sandbox-search.ts
 COPY adapter/packages/pi-agent/src/translator.ts /app/adapter/packages/pi-agent/src/translator.ts
 # pnpm file: dependencies are snapshots. Refresh the actual API import target,
 # too, without reinstalling or changing any pinned dependency.
@@ -11,5 +34,5 @@ RUN cd /app/server/packages/api && node --input-type=module -e '\
   import { dirname, join } from "node:path"; \
   import { fileURLToPath } from "node:url"; \
   const target = dirname(fileURLToPath(import.meta.resolve("@open-managed-agents/adapter-pi-agent"))); \
-  for (const file of ["custom-tools.ts", "translator.ts"]) \
+  for (const file of ["custom-tools.ts", "sandbox-search.ts", "translator.ts"]) \
     copyFileSync(join("/app/adapter/packages/pi-agent/src", file), join(target, file));'

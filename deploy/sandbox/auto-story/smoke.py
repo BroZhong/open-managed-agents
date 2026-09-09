@@ -68,11 +68,39 @@ def verify_vfs_audio_contract(cli="vfs-cli"):
                 assert preview["request_previews"][0]["type"] == "audio"
 
 
+def verify_native_search(workspace):
+    """Exercise the binaries and native syntax used by Pi, without network I/O."""
+    with tempfile.TemporaryDirectory(prefix=".auto-story-search-", dir=workspace) as temp:
+        root = Path(temp)
+        (root / ".git").mkdir()
+        (root / "src").mkdir()
+        (root / "ignored").mkdir()
+        (root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+        names = ("root.ts", ".hidden.ts", "src/child.ts", "src/script.js")
+        for name in (*names, "ignored/secret.ts"):
+            (root / name).write_text("故事 hello\n", encoding="utf-8")
+        events = [json.loads(line) for line in run(
+            "rg", "--json", "--line-number", "--color=never", "--hidden",
+            "--glob", "*.{ts,js}", "--", r"\p{L}+", str(root), cwd=temp).splitlines()]
+        matches = {Path(event["data"]["path"]["text"]).relative_to(root).as_posix()
+                   for event in events if event["type"] == "match"}
+        assert matches == set(names), "ripgrep Unicode/glob/gitignore check failed"
+        found = {Path(line).relative_to(root).as_posix() for line in run(
+            "fd", "--glob", "--color=never", "--hidden", "--max-results", "1000",
+            "--", "*.ts", str(root), cwd=temp).splitlines()}
+        assert found == {"root.ts", ".hidden.ts", "src/child.ts"}, "fd recursive basename/gitignore check failed"
+        found = run("fd", "--glob", "--color=never", "--hidden", "--full-path",
+                    "--", "**/src/?hild.ts", str(root), cwd=temp).splitlines()
+        assert found == [str(root / "src/child.ts")], "fd path glob check failed"
+    return {"rg": run("rg", "--version").splitlines()[0],
+            "fd": run("fd", "--version").strip()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-env", action="append", default=[], metavar="NAME")
     args = parser.parse_args()
-    required = ("vfs-cli", "mediakit-cli", "ffmpeg", "ffprobe", "python3", "node")
+    required = ("vfs-cli", "mediakit-cli", "ffmpeg", "ffprobe", "python3", "node", "rg", "fd")
     for executable in required:
         if not shutil.which(executable):
             raise RuntimeError(f"missing executable: {executable}")
@@ -91,6 +119,7 @@ def main():
         assert callable(client.interactions.create)
 
     workspace = Path(os.environ.get("WORKSPACE_DIR", "/home/user"))
+    search_versions = verify_native_search(workspace)
     with tempfile.TemporaryDirectory(prefix=".auto-story-smoke-", dir=workspace) as temp:
         media = Path(temp) / "fixture with spaces.mp4"
         run("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
@@ -118,7 +147,9 @@ def main():
     print(json.dumps({"ok": True, "vfs_cli": vfs["data"]["version"],
                       "mediakit_cli": run("mediakit-cli", "--version").strip(),
                       "google_genai": version("google-genai"),
+                      "native_search": search_versions,
                       "checks": ["workspace_write", "ffmpeg_h264_aac", "ffprobe",
+                                 "native_rg_unicode_glob_gitignore", "native_fd_recursive_and_path_glob",
                                  "mediakit_local_metadata", "vfs_embedded_skills",
                                  "vfs_audio_schema", "vfs_audio_generate_dry_run",
                                  "vfs_audio_resource_url_and_file_dry_run",

@@ -22,7 +22,9 @@ ENV CI=true \
 # The server workspace depends on the adapter core via a file: path, so both
 # workspaces' manifests must be present.
 COPY adapter/pnpm-workspace.yaml adapter/package.json adapter/pnpm-lock.yaml ./adapter/
+COPY adapter/patches/ ./adapter/patches/
 COPY server/pnpm-workspace.yaml server/package.json server/pnpm-lock.yaml ./server/
+COPY server/patches/ ./server/patches/
 # BEGIN WORKSPACE PACKAGE MANIFESTS
 # deploy/scripts/build-images.sh regenerates this block in a temporary
 # Dockerfile from the current workspace, preventing new packages from being

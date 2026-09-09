@@ -215,32 +215,6 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     expect(ex.calls.some((c) => c.startsWith("list dir"))).toBe(true);
   });
 
-  it("find globs through the executor and returns matches", async () => {
-    const ex = new MemExecutor()
-      .seed("src/main.ts", "")
-      .seed("src/util.ts", "")
-      .seed("src/readme.md", "");
-    const tools = buildCustomTools(ex);
-    const out = await run(toolByName(tools, "find"), { pattern: "*.ts", path: "src" });
-    expect(out.split("\n").sort()).toEqual(["main.ts", "util.ts"].sort());
-    // The glob was executed against the executor, not fd on the Host disk.
-    expect(ex.calls.some((c) => c.startsWith("list src/"))).toBe(true);
-  });
-
-  it("grep operations resolve directory + file reads through the executor", async () => {
-    // grep's search engine (ripgrep) is not driven here — we assert the two
-    // operations Pi delegates (isDirectory + readFile) land on the executor.
-    const ex = new MemExecutor().seed("dir/a.txt", "line1\nline2");
-    const tools = buildCustomTools(ex);
-    const grep = toolByName(tools, "grep");
-    // The tool's operations are the seam under test; drive them by reading the
-    // executor directly through the same paths grep would resolve.
-    expect(await ex.list("dir")).toHaveLength(1);
-    expect(await ex.readFile("dir/a.txt")).toBe("line1\nline2");
-    expect(grep.name).toBe("grep");
-    expect(ex.calls).toContain("read dir/a.txt");
-  });
-
   it("a missing read rejects (the executor's ENOENT), never falling back to Host disk", async () => {
     const ex = new MemExecutor();
     const tools = buildCustomTools(ex);
