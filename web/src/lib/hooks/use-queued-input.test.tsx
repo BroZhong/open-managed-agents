@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useQueuedInput } from "@/lib/hooks/use-queued-input";
@@ -135,6 +135,81 @@ it("reports an empty queue rather than throwing before the first read lands", ()
 
   expect(result.current.entries).toEqual([]);
   expect(result.current.entries.length).toBe(0);
+  expect(result.current.hasMore).toBe(false);
+});
+
+it.each(["sess_2", ""])(
+  "does not carry Queued Input into a different Session (%s)",
+  async (nextSessionId) => {
+    const fetchMock = vi.fn(() => {
+      if (fetchMock.mock.calls.length === 1) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            count: 2,
+            has_more: true,
+            data: [queuedEntry("pending_1", "Session A only")],
+          }),
+        } as Response);
+      }
+      // Hold the destination's read so a carried-over queue cannot be hidden
+      // by a fast response from the Host.
+      return new Promise<Response>(() => undefined);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useQueuedInput(sessionId, 0),
+      { wrapper, initialProps: { sessionId: "sess_1" } },
+    );
+    await waitFor(() => expect(result.current.entries).toHaveLength(1));
+    expect(result.current.hasMore).toBe(true);
+
+    rerender({ sessionId: nextSessionId });
+
+    expect(result.current).toEqual({ entries: [], hasMore: false });
+    expect(fetchMock).toHaveBeenCalledTimes(nextSessionId ? 2 : 1);
+  },
+);
+
+it("ignores a late queue response from a previously viewed Session", async () => {
+  let resolveFirst!: (response: Response) => void;
+  const fetchMock = vi.fn(() => {
+    if (fetchMock.mock.calls.length === 1) {
+      return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        count: 1,
+        data: [queuedEntry("pending_2", "Session B only")],
+      }),
+    } as Response);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const { result, rerender } = renderHook(
+    ({ sessionId }) => useQueuedInput(sessionId, 0),
+    { wrapper, initialProps: { sessionId: "sess_1" } },
+  );
+  rerender({ sessionId: "sess_2" });
+  await waitFor(() => expect(result.current.entries.map((p) => p.id)).toEqual(["pending_2"]));
+
+  await act(async () => {
+    resolveFirst({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        count: 2,
+        has_more: true,
+        data: [queuedEntry("pending_1", "Session A only")],
+      }),
+    } as Response);
+  });
+
+  expect(result.current.entries.map((p) => p.id)).toEqual(["pending_2"]);
   expect(result.current.hasMore).toBe(false);
 });
 

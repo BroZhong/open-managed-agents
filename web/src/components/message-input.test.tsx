@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MessageInput } from "@/components/message-input";
 
 afterEach(cleanup);
@@ -23,7 +23,7 @@ const skills = [
   },
 ];
 
-it("suggests equipped Skills for /skill: and sends the selected command", () => {
+it("suggests equipped Skills for /skill: and sends the selected command", async () => {
   const onSend = vi.fn();
   render(<MessageInput onSend={onSend} skills={skills} />);
 
@@ -40,8 +40,11 @@ it("suggests equipped Skills for /skill: and sends the selected command", () => 
   fireEvent.change(input, {
     target: { value: "/skill:storyboard split this scene" },
   });
-  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  await act(async () => {
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  });
   expect(onSend).toHaveBeenCalledWith("/skill:storyboard split this scene");
+  expect(input).toHaveProperty("value", "");
 });
 
 it("opens equipped Skill commands when the user types slash", () => {
@@ -98,7 +101,7 @@ it("shows Stop while a Turn is running and stops it on click (issue #113)", () =
   expect(onSend).not.toHaveBeenCalled();
 });
 
-it("shows Send when the Session is idle, unchanged", () => {
+it("shows Send when the Session is idle, unchanged", async () => {
   const onSend = vi.fn();
   const onInterrupt = vi.fn();
   render(<MessageInput onSend={onSend} onInterrupt={onInterrupt} running={false} />);
@@ -110,12 +113,14 @@ it("shows Send when the Session is idle, unchanged", () => {
   fireEvent.change(screen.getByPlaceholderText("Send a message..."), {
     target: { value: "hello" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  });
   expect(onSend).toHaveBeenCalledWith("hello");
   expect(onInterrupt).not.toHaveBeenCalled();
 });
 
-it("still queues typed messages while a Turn is running", () => {
+it("still sends typed messages while a Turn is running", async () => {
   // An Interrupt ends the current Turn only; the queue keeps running, so typing
   // ahead must stay possible even though the button says Stop.
   const onSend = vi.fn();
@@ -123,9 +128,88 @@ it("still queues typed messages while a Turn is running", () => {
 
   const input = screen.getByPlaceholderText("Send a message...");
   fireEvent.change(input, { target: { value: "next up" } });
-  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  await act(async () => {
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  });
 
   expect(onSend).toHaveBeenCalledWith("next up");
+});
+
+it("retains the draft until sending succeeds and never infers Queued Input", async () => {
+  let accept!: () => void;
+  const response = new Promise<void>((resolve) => { accept = resolve; });
+  const onSend = vi.fn(() => response);
+  const { rerender } = render(<MessageInput onSend={onSend} />);
+  const input = screen.getByPlaceholderText("Send a message...");
+  fireEvent.change(input, { target: { value: "  wait for acceptance  " } });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+  expect(onSend).toHaveBeenCalledWith("wait for acceptance");
+  expect(input).toHaveProperty("value", "  wait for acceptance  ");
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+
+  // Guard the gap before the parent updates the request's sending state, too.
+  fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  expect(onSend).toHaveBeenCalledTimes(1);
+
+  rerender(<MessageInput onSend={onSend} sending />);
+  expect(screen.getByRole("status").textContent).toBe("Sending...");
+  expect(input).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveProperty("disabled", true);
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+
+  await act(async () => { accept(); });
+  rerender(<MessageInput onSend={onSend} sending={false} />);
+  expect(input).toHaveProperty("value", "");
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+});
+
+it("preserves a rejected draft with an error and lets the user retry", async () => {
+  const onSend = vi.fn()
+    .mockRejectedValueOnce(new Error("The Host is unavailable"))
+    .mockResolvedValueOnce(undefined);
+  render(<MessageInput onSend={onSend} />);
+  const input = screen.getByPlaceholderText("Send a message...");
+  fireEvent.change(input, { target: { value: "  keep this draft  " } });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  });
+  expect(screen.getByRole("alert").textContent).toBe("The Host is unavailable");
+  expect(input).toHaveProperty("value", "  keep this draft  ");
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+
+  await act(async () => {
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+  });
+  expect(onSend).toHaveBeenCalledTimes(2);
+  expect(onSend).toHaveBeenLastCalledWith("keep this draft");
+  expect(input).toHaveProperty("value", "");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("shows a fallback error when sending rejects without an Error", async () => {
+  render(<MessageInput onSend={vi.fn().mockRejectedValue("offline")} />);
+  const input = screen.getByPlaceholderText("Send a message...");
+  fireEvent.change(input, { target: { value: "keep me" } });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  });
+  expect(screen.getByRole("alert").textContent).toBe("Failed to send message. Please try again.");
+  expect(input).toHaveProperty("value", "keep me");
+});
+
+it("keeps Interrupt available while a send is awaiting acceptance", () => {
+  const onInterrupt = vi.fn();
+  render(<MessageInput onSend={vi.fn()} onInterrupt={onInterrupt} running sending disabled />);
+
+  const stop = screen.getByRole("button", { name: "Stop generating" });
+  expect(stop).toHaveProperty("disabled", false);
+  fireEvent.click(stop);
+  expect(onInterrupt).toHaveBeenCalledTimes(1);
 });
 
 it("keeps the Send button when running without an interrupt handler", () => {

@@ -6,13 +6,14 @@
 // the next one starting, and it never came back after a reload.
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import SessionDetailPage from "@/pages/session-detail";
 import type { Session } from "@/lib/hooks/use-sessions";
 
 const SESSION_ID = "sess_queued";
+const OTHER_SESSION_ID = "sess_other";
 
 const session: Session = {
   id: SESSION_ID,
@@ -24,8 +25,12 @@ const session: Session = {
   updatedAt: "2026-07-29T00:00:00.000Z",
 };
 
-/** The queue the fake Host currently reports. Mutated mid-test. */
-let queued: Array<{ id: string; text: string }> = [];
+/** The Queued Input the fake Host currently reports for each Session. */
+let queued: Record<string, Array<{ id: string; text: string }>> = {};
+let otherSession: Session;
+let holdSends = false;
+let acceptSend: (() => void) | undefined;
+let rejectSend: (() => void) | undefined;
 /** Pushes SSE frames into the page's live stream. */
 let emit: (frame: string) => void = () => undefined;
 
@@ -34,6 +39,7 @@ function sseFrame(type: string, seq: number, data: unknown): string {
 }
 
 beforeEach(() => {
+  otherSession = { ...session, id: OTHER_SESSION_ID, status: "idle" };
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -43,19 +49,22 @@ beforeEach(() => {
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      const json = (body: unknown) =>
+      const sessionId = url.match(/\/sessions\/([^/?]+)/)?.[1];
+      const requestedSession = sessionId === OTHER_SESSION_ID ? otherSession : session;
+      const json = (body: unknown, status = 200) =>
         Promise.resolve({
-          ok: true,
-          status: 200,
+          ok: status < 400,
+          status,
           text: async () => JSON.stringify(body),
           json: async () => body,
         } as Response);
 
       if (url.includes("/pending")) {
+        const entries = queued[sessionId!] ?? [];
         return json({
-          count: queued.length,
+          count: entries.length,
           has_more: false,
-          data: queued.map((entry) => ({
+          data: entries.map((entry) => ({
             id: entry.id,
             type: "user.message",
             data: { content: [{ type: "text", text: entry.text }] },
@@ -67,9 +76,32 @@ beforeEach(() => {
       if (url.includes("/skills")) return json({ data: [] });
       if (url.includes("/workspace")) return json({ data: [] });
       if (url.includes("/events")) {
+        if (init?.method === "POST") {
+          const body = JSON.parse(init.body as string);
+          return new Promise<Response>((resolve) => {
+            acceptSend = () => {
+              const entries = queued[sessionId!] ??= [];
+              entries.push({
+                id: `pending_${entries.length + 1}`,
+                text: body.events[0].data.content[0].text,
+              });
+              resolve(json({}));
+            };
+            rejectSend = () => resolve(json({ message: "Host rejected input" }, 503));
+            if (!holdSends) acceptSend();
+          });
+        }
         const headers = init?.headers as Record<string, string> | undefined;
         if (headers?.Accept !== "text/event-stream") {
-          return json({ data: [], has_more: false });
+          return json({
+            data: [{
+              seq: 1,
+              type: `session.status_${requestedSession.status}`,
+              data: {},
+              ts: requestedSession.updatedAt,
+            }],
+            has_more: false,
+          });
         }
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -86,14 +118,17 @@ beforeEach(() => {
         });
         return Promise.resolve({ ok: true, status: 200, body } as Response);
       }
-      return json(session);
+      return json(requestedSession);
     }),
   );
 });
 
 afterEach(() => {
   cleanup();
-  queued = [];
+  queued = {};
+  holdSends = false;
+  acceptSend = undefined;
+  rejectSend = undefined;
   emit = () => undefined;
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
@@ -104,20 +139,25 @@ function renderPage() {
     defaultOptions: { queries: { retry: false } },
   });
   queryClient.setQueryData(["sessions", SESSION_ID], session);
-  return render(
+  queryClient.setQueryData(["sessions", OTHER_SESSION_ID], otherSession);
+  const router = createMemoryRouter(
+    [{ path: "/sessions/:id", element: <SessionDetailPage /> }],
+    { initialEntries: [`/sessions/${SESSION_ID}`] },
+  );
+  const result = render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/sessions/${SESSION_ID}`]}>
-        <Routes>
-          <Route path="/sessions/:id" element={<SessionDetailPage />} />
-        </Routes>
-      </MemoryRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   );
+  return {
+    ...result,
+    navigate: (sessionId: string) => router.navigate(`/sessions/${sessionId}`),
+  };
 }
 
 it("keeps the queued strip visible across an interrupted Turn's idle gap (issue #114)", async () => {
   // A Turn is running with one message queued behind it.
-  queued = [{ id: "pending_1", text: "run this next" }];
+  queued[SESSION_ID] = [{ id: "pending_1", text: "run this next" }];
   renderPage();
 
   await waitFor(() => expect(screen.getByText("run this next")).toBeTruthy());
@@ -136,7 +176,7 @@ it("keeps the queued strip visible across an interrupted Turn's idle gap (issue 
   expect(screen.getByText("queued")).toBeTruthy();
 
   // The next Turn starts and consumes the entry — now the strip clears.
-  queued = [];
+  queued[SESSION_ID] = [];
   await act(async () => {
     emit(sseFrame("session.status_running", 11, {}));
   });
@@ -148,7 +188,7 @@ it("keeps the queued strip visible across an interrupted Turn's idle gap (issue 
 it("restores the queued strip from the Host after a reload", async () => {
   // A fresh mount is what a reload looks like: no optimistic state exists, so
   // only a server read can show that input is still waiting.
-  queued = [{ id: "pending_1", text: "survives reload" }];
+  queued[SESSION_ID] = [{ id: "pending_1", text: "survives reload" }];
   renderPage();
 
   await waitFor(() => expect(screen.getByText("survives reload")).toBeTruthy());
@@ -158,7 +198,7 @@ it("restores the queued strip from the Host after a reload", async () => {
 it("keeps two identical queued messages as two rows", async () => {
   // Two identical messages are two distinct Queued Inputs. Bridging optimistic
   // sends by text would collapse them into one row and undercount the queue.
-  queued = [
+  queued[SESSION_ID] = [
     { id: "pending_1", text: "same text" },
     { id: "pending_2", text: "same text" },
   ];
@@ -169,10 +209,140 @@ it("keeps two identical queued messages as two rows", async () => {
 });
 
 it("shows nothing queued when the Host reports an empty queue", async () => {
-  queued = [];
+  queued[SESSION_ID] = [];
   renderPage();
 
   await waitFor(() => expect(screen.getByPlaceholderText("Send a message...")).toBeTruthy());
   expect(screen.queryByText("queued")).toBeNull();
   expect(screen.queryByLabelText("Queued input")).toBeNull();
 });
+
+it("shows Sending until acceptance, then reads Queued Input without a Turn lifecycle event", async () => {
+  holdSends = true;
+  renderPage();
+  await screen.findByRole("button", { name: "Stop generating" });
+
+  const composer = screen.getByPlaceholderText("Send a message...");
+  fireEvent.change(composer, { target: { value: "waiting for Host acceptance" } });
+  fireEvent.keyDown(composer, { key: "Enter" });
+
+  expect(screen.getByRole("status").textContent).toBe("Sending...");
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+  expect(screen.queryByText("waiting for Host acceptance", { selector: ":not(textarea)" })).toBeNull();
+  expect(screen.getByText("Send a message to start the conversation.")).toBeTruthy();
+
+  // The current Turn continues running throughout: acceptance must refresh the
+  // Host's queue without waiting for a lifecycle event or the polling interval.
+  await act(async () => acceptSend!());
+  await screen.findByText("waiting for Host acceptance", { selector: ":not(textarea)" });
+  expect(screen.queryByText("Sending...")).toBeNull();
+  expect(screen.getByLabelText("Queued input")).toBeTruthy();
+  expect(screen.getByText("Send a message to start the conversation.")).toBeTruthy();
+});
+
+it("moves identical Queued Inputs into canonical history one claim at a time", async () => {
+  renderPage();
+  await screen.findByRole("button", { name: "Stop generating" });
+  const composer = screen.getByPlaceholderText("Send a message...");
+
+  for (let count = 1; count <= 2; count += 1) {
+    fireEvent.change(composer, { target: { value: "same text" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Queued input")).getAllByText("same text")).toHaveLength(count);
+      expect((composer as HTMLTextAreaElement).disabled).toBe(false);
+    });
+  }
+  expect(screen.getAllByText("same text")).toHaveLength(2);
+  expect(screen.getByText("Send a message to start the conversation.")).toBeTruthy();
+
+  queued[SESSION_ID] = queued[SESSION_ID].slice(1);
+  await act(async () => {
+    emit(sseFrame("user.message", 10, { content: [{ type: "text", text: "same text" }] }));
+    emit(sseFrame("session.status_running", 11, {}));
+  });
+  await waitFor(() => {
+    expect(within(screen.getByLabelText("Queued input")).getAllByText("same text")).toHaveLength(1);
+  });
+  // One row is still queued and exactly one is now a durable user message.
+  expect(screen.getAllByText("same text")).toHaveLength(2);
+  expect(screen.queryByText("Send a message to start the conversation.")).toBeNull();
+
+  queued[SESSION_ID] = [];
+  await act(async () => {
+    emit(sseFrame("user.message", 12, { content: [{ type: "text", text: "same text" }] }));
+    emit(sseFrame("session.status_running", 13, {}));
+  });
+  await waitFor(() => expect(screen.queryByLabelText("Queued input")).toBeNull());
+  expect(screen.getAllByText("same text")).toHaveLength(2);
+});
+
+it("does not create Queued Input or conversation history for a rejected send", async () => {
+  holdSends = true;
+  renderPage();
+  await screen.findByRole("button", { name: "Stop generating" });
+  const composer = screen.getByPlaceholderText("Send a message...");
+  fireEvent.change(composer, { target: { value: "the Host will reject this" } });
+  fireEvent.keyDown(composer, { key: "Enter" });
+
+  expect(screen.getByRole("status").textContent).toBe("Sending...");
+  await act(async () => rejectSend!());
+  await waitFor(() => expect((composer as HTMLTextAreaElement).disabled).toBe(false));
+  expect(screen.queryByText("Sending...")).toBeNull();
+  expect(screen.queryByLabelText("Queued input")).toBeNull();
+  expect(screen.queryByText("the Host will reject this", { selector: ":not(textarea)" })).toBeNull();
+  expect(screen.getByText("Send a message to start the conversation.")).toBeTruthy();
+});
+
+it.each([
+  { sendCompleted: false, destinationStatus: "running" as const },
+  { sendCompleted: false, destinationStatus: "idle" as const },
+  { sendCompleted: true, destinationStatus: "running" as const },
+  { sendCompleted: true, destinationStatus: "idle" as const },
+])(
+  "isolates Queued Input when navigating to a $destinationStatus Session (send completed: $sendCompleted)",
+  async ({ sendCompleted, destinationStatus }) => {
+    holdSends = true;
+    otherSession.status = destinationStatus;
+    const page = renderPage();
+    await screen.findByRole("button", { name: "Stop generating" });
+
+    const composer = screen.getByPlaceholderText("Send a message...");
+    fireEvent.change(composer, { target: { value: "only for the first Session" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(acceptSend).toBeTypeOf("function"));
+    expect(screen.getByRole("status").textContent).toBe("Sending...");
+    expect(screen.queryByLabelText("Queued input")).toBeNull();
+    expect(screen.queryByText("only for the first Session", { selector: ":not(textarea)" })).toBeNull();
+
+    if (sendCompleted) {
+      await act(async () => acceptSend!());
+      await screen.findByText("only for the first Session", { selector: ":not(textarea)" });
+      await waitFor(() => expect((composer as HTMLTextAreaElement).disabled).toBe(false));
+    }
+
+    // Keep the app mounted and change only the route parameter: this is the
+    // navigation that previously carried the first Session's local input over.
+    await act(async () => page.navigate(OTHER_SESSION_ID));
+    await screen.findByRole("button", {
+      name: destinationStatus === "running" ? "Stop generating" : "Send message",
+    });
+    expect(screen.queryByLabelText("Queued input")).toBeNull();
+    // An idle destination used to show the leaked input in its conversation too.
+    expect(screen.queryByText("only for the first Session")).toBeNull();
+    expect(screen.queryByText("Sending...")).toBeNull();
+    expect((screen.getByPlaceholderText("Send a message...") as HTMLTextAreaElement).disabled).toBe(false);
+
+    if (!sendCompleted) {
+      await act(async () => acceptSend!());
+      expect(screen.queryByText("only for the first Session")).toBeNull();
+    }
+
+    // Acceptance belongs to the original Session even when its POST finishes
+    // after navigation. Its durable Queued Input must be restored on return.
+    await act(async () => page.navigate(SESSION_ID));
+    await waitFor(() => expect(screen.getByText("only for the first Session")).toBeTruthy());
+    expect(screen.getByLabelText("Queued input")).toBeTruthy();
+    expect(queued[OTHER_SESSION_ID] ?? []).toEqual([]);
+  },
+);

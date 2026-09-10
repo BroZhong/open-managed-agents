@@ -5,14 +5,16 @@ import type { EquippedSkill } from "@/lib/hooks/use-skills";
 
 /** One Queued Input to show above the composer, in the order it will run. */
 export interface QueuedInput {
-  /** Stable identity — the Host's pending-event id, or a local optimistic key. */
+  /** Stable identity — the Host's pending-event id. */
   id: string;
   text: string;
 }
 
 interface MessageInputProps {
-  onSend: (text: string) => void;
+  onSend: (text: string) => void | Promise<void>;
   disabled?: boolean;
+  /** Whether the Host is still accepting the current send request. */
+  sending?: boolean;
   /**
    * Input accepted by the Host but not yet executing, oldest first. Reflects the
    * server's queue rather than this component's own sends, so it stays correct
@@ -35,6 +37,7 @@ interface MessageInputProps {
 export function MessageInput({
   onSend,
   disabled = false,
+  sending = false,
   queuedInput = [],
   hasMoreQueuedInput = false,
   skills = [],
@@ -44,6 +47,8 @@ export function MessageInput({
   const [text, setText] = useState("");
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const skillQuery =
@@ -68,16 +73,26 @@ export function MessageInput({
     textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
   }, []);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
-    setText("");
-    requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
-    });
+    if (!trimmed || disabled || sending || submittingRef.current) return;
+    submittingRef.current = true;
+    setSendError(null);
+    try {
+      await onSend(trimmed);
+      setText((current) => current === text ? "" : current);
+      requestAnimationFrame(() => {
+        if (textareaRef.current && !textareaRef.current.value) {
+          textareaRef.current.style.height = "auto";
+        }
+      });
+    } catch (error) {
+      setSendError(error instanceof Error && error.message
+        ? error.message
+        : "Failed to send message. Please try again.");
+    } finally {
+      submittingRef.current = false;
+    }
   }
 
   function selectSkill(index: number) {
@@ -128,7 +143,7 @@ export function MessageInput({
   // no typed text to be meaningful. Enter still queues a message, so typing
   // ahead during a running Turn keeps working.
   const showStop = running && Boolean(onInterrupt);
-  const canSend = text.trim().length > 0 && !disabled;
+  const canSend = text.trim().length > 0 && !disabled && !sending;
   const buttonEnabled = showStop || canSend;
 
   return (
@@ -153,6 +168,16 @@ export function MessageInput({
         </div>
       )}
       <div className="mx-auto max-w-3xl">
+        {sending && (
+          <p role="status" className="mb-2 px-3 text-xs text-[var(--color-fg-subtle)]">
+            Sending...
+          </p>
+        )}
+        {sendError && (
+          <p role="alert" className="mb-2 px-3 text-sm text-red-500">
+            {sendError}
+          </p>
+        )}
         <div className="relative rounded-2xl bg-[var(--color-bg-surface)] shadow-sm ring-1 ring-[var(--color-border)]  focus-within:ring-[var(--color-fg-subtle)] transition-shadow">
           {skillSuggestions.length > 0 && (
             <div
@@ -201,7 +226,7 @@ export function MessageInput({
             }}
             onKeyDown={handleKeyDown}
             placeholder="Send a message..."
-            disabled={disabled}
+            disabled={disabled || sending}
             rows={1}
             aria-autocomplete="list"
             aria-controls={skillSuggestions.length > 0 ? "equipped-skill-suggestions" : undefined}

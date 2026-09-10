@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, FolderOpen, PanelRight, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,6 @@ import { useInterrupt } from "@/lib/hooks/use-interrupt";
 import { useAgentSkills } from "@/lib/hooks/use-skills";
 import { useQueuedInput } from "@/lib/hooks/use-queued-input";
 import { cn } from "@/lib/utils";
-import type { QueuedInput } from "@/components/message-input";
-import type { SessionEvent } from "@/lib/types";
 
 /** Read the display text out of a `user.message` event payload. */
 function messageText(data: unknown): string {
@@ -31,6 +29,12 @@ type Tab = "conversation" | "timeline" | "workspace";
 
 export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
+  // Route parameter changes reuse the page. Give each Session its own composer,
+  // queue observer, and event stream so none survive into another one.
+  return <SessionDetail key={id} id={id} />;
+}
+
+function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate();
   const { data: session, isLoading: sessionLoading } = useSession(id);
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
@@ -40,43 +44,6 @@ export default function SessionDetailPage() {
   const { interrupt, isPending: isInterrupting } = useInterrupt(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
-  const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
-
-  // Remove optimistic events once real ones arrive via SSE
-  useEffect(() => {
-    if (optimisticEvents.length === 0) return;
-    const hasConfirmed = events.some(
-      (e) =>
-        e.type === "user.message" &&
-        optimisticEvents.some((oe) => {
-          const oeData = oe.data as { content: Array<{ type: string; text: string }> };
-          const eData = e.data as { content: Array<{ type: string; text: string }> };
-          return oeData.content[0]?.text === eData.content[0]?.text;
-        }),
-    );
-    if (hasConfirmed) {
-      setOptimisticEvents([]);
-    }
-  }, [events, optimisticEvents]);
-
-  const unconfirmedEvents = useMemo(() => {
-    return optimisticEvents.filter(
-      (oe) =>
-        !events.some((e) => {
-          if (e.type !== "user.message") return false;
-          const oeData = oe.data as { content: Array<{ type: string; text: string }> };
-          const eData = e.data as { content: Array<{ type: string; text: string }> };
-          return oeData.content[0]?.text === eData.content[0]?.text;
-        }),
-    );
-  }, [events, optimisticEvents]);
-
-  const displayEvents = useMemo(() => {
-    if (unconfirmedEvents.length === 0) return events;
-    // Only show optimistic messages in conversation if agent is NOT running
-    if (status === "running") return events;
-    return [...events, ...unconfirmedEvents];
-  }, [events, unconfirmedEvents, status]);
 
   // Whether input is waiting to run is the Host's fact, re-read whenever a Turn
   // starts or ends. This is what keeps the `queued` strip visible through the gap
@@ -86,38 +53,10 @@ export default function SessionDetailPage() {
     turnLifecycleNonce,
   );
 
-  // The Host round-trip is not instant, so a just-sent message would flicker out
-  // of the strip without a local bridge. Bridge on count, not on text: two
-  // identical messages are two distinct Queued Inputs, and matching by text
-  // would collapse them into one row. Once the server reports at least as many
-  // entries as we sent optimistically, its list is authoritative and the local
-  // ones are dropped — including the case where an entry has since been claimed
-  // and is therefore executing rather than queued.
-  const queuedInput = useMemo<QueuedInput[]>(() => {
-    const fromServer = serverQueued.map((entry) => ({
-      id: entry.id,
-      text: messageText(entry.data),
-    }));
-    const unaccounted = unconfirmedEvents
-      .slice(fromServer.length)
-      .map((event) => ({ id: `optimistic:${event.seq}`, text: messageText(event.data) }));
-    return [...fromServer, ...unaccounted];
-  }, [serverQueued, unconfirmedEvents]);
-
-  const handleSend = useCallback(
-    async (text: string) => {
-      // Optimistically add user message
-      const optimistic: SessionEvent = {
-        seq: -Date.now(),
-        type: "user.message",
-        data: { content: [{ type: "text", text }] },
-        ts: new Date().toISOString(),
-      };
-      setOptimisticEvents((prev) => [...prev, optimistic]);
-      await send(text);
-    },
-    [send],
-  );
+  const queuedInput = serverQueued.map((entry) => ({
+    id: entry.id,
+    text: messageText(entry.data),
+  }));
 
   const handleInterrupt = useCallback(async () => {
     if (isInterrupting) return;
@@ -128,7 +67,6 @@ export default function SessionDetailPage() {
 
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
   const effectiveStatus = status === "running" ? "running" : (session?.status ?? "idle");
-  const inputDisabled = isPending;
 
   if (sessionLoading) {
     return (
@@ -224,14 +162,14 @@ export default function SessionDetailPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex-1 overflow-hidden">
               <ConversationView
-                events={displayEvents}
+                events={events}
                 activeDeltas={activeDeltas}
                 sessionStatus={status}
               />
             </div>
             <MessageInput
-              onSend={handleSend}
-              disabled={inputDisabled}
+              onSend={send}
+              sending={isPending}
               // Not gated on `status === "running"`: the queue outlives the Turn
               // that was running when it was filled (issue #114).
               queuedInput={queuedInput}

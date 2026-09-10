@@ -35,9 +35,9 @@ const EMPTY: QueuedInputState = { entries: [], hasMore: false };
  *
  * `revalidate` changes whenever the Session's Turn lifecycle moves, so the
  * queue is re-read at exactly the moments it can have changed — a Turn starting
- * claims an entry, a Turn ending may start the next one. The slow poll is a
- * backstop for a queue drained by another replica, whose lifecycle events this
- * client may not see.
+ * claims an entry, a Turn ending may start the next one. A successful send also
+ * invalidates this Session's queue. The slow poll is a backstop for changes from
+ * another client or replica whose lifecycle events this client may not see.
  */
 export function useQueuedInput(
   sessionId: string,
@@ -45,9 +45,10 @@ export function useQueuedInput(
 ): QueuedInputState {
   const { data } = useQuery({
     queryKey: ["sessions", sessionId, "pending", revalidate],
-    queryFn: async (): Promise<QueuedInputState> => {
+    queryFn: async ({ signal }): Promise<QueuedInputState> => {
       const res = await apiFetch<QueuedInputResponse>(
         `/v1/sessions/${sessionId}/pending`,
+        { signal },
       );
       return {
         entries: (res.data ?? []).map((event) => ({
@@ -64,9 +65,10 @@ export function useQueuedInput(
     // sent must not be served from a stale window.
     staleTime: 0,
     refetchInterval: 15_000,
-    // Keep the last known queue visible through a refetch so the indicator does
-    // not blink off — the blank window is the bug this fixes.
-    placeholderData: (previous) => previous,
+    // Keep the last known queue through lifecycle refetches within a Session,
+    // but never carry another Session's entries across a navigation.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === sessionId ? previous : undefined,
   });
 
   return data ?? EMPTY;
