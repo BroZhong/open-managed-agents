@@ -80,3 +80,46 @@ and [browser screenshot](../deploy/sandbox/oss-workspace/production-verification
 contain no credentials or signed URLs. Temporary local deployment credentials
 are removed after the release; production reads its dedicated least-privilege
 Host key from the managed Kubernetes Secret.
+
+## Novel-to-film acceptance — 2026-09-15
+
+A retained production Agent ran the `welltop-cn/auto-story-skills` package at
+`76f82520c7327afaf1207e2285dc0493e37c0b74` on `auto-story-v2`. Its 16 Skills and
+116 files were imported and individually read back; projections use
+`/skills/<skill-name>/`. The run fetched all 30 chapters and the outline for
+novel 73994, then adapted the end of EP1 and EP2 into a narrated short film.
+
+The final artifact is `novel-73994/final/film.mp4`: 120 seconds, 720×1280,
+24 fps, H.264/AAC, 14,019,408 bytes, with 262 English narration words and
+48 burned English subtitle cues. Its SHA-256 is
+`7bc97d91ce269c444d8c04b5170844152a0f1e7527a96d81288b21298eedc061`.
+Full decoding and normal-speed browser playback passed; the production browser
+decoded all 2,880 frames with zero dropped frames. The final audible-video
+Gemini review passed with no reported defects and nine paired media processing
+calls/results. Seven final review/delivery input hashes matched, and the local
+delivery was byte-identical to the canonical Workspace file. Both `review.json`
+and `delivery.json` are ready with no unresolved items.
+
+This was a complete artifact workflow with operator intervention, not an
+unattended reliability pass:
+
+- Two SeedAudio responses contained valid audio but omitted the subtitle field,
+  so VFS reported failure. Existing audio artifacts were recovered without
+  regeneration or billing changes; the Agent selected the complete candidate.
+- Two external VFS releases lost four in-flight video task records. Their
+  original successful provider artifacts were recovered after matching task
+  identities and prompts, without resubmitting generation or changing billing.
+- The Agent resumed from the persistent Workspace after an external Host
+  restart, and repaired its concurrent task-summary writes. Gemini review
+  retrieval used the existing interaction's stream after ordinary GET timeouts.
+- After the Agent's final response and delivery validation, the active-turn
+  write gate still returned 423. An explicit interrupt ended the completed
+  execution, after which independent verification records were uploaded and
+  read back. The retained execution-state issue is not claimed fixed here.
+
+Agentry was production; the existing real VFS provider configuration used
+`RUNTIME_ENV=test`. Agent `agent_m39Qg5bPzpjXQFQnovzuN`, Session
+`sess_1Rfcfh_Vvbr-vwyyZn9PS`, all Skills and generated media remain available.
+The Workspace includes `final/operator-run-report.md` and the final review and
+delivery evidence. The temporary access key was revoked and verified to return
+401; temporary local credentials and the preview server were removed.
