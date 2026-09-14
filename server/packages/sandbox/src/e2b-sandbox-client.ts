@@ -298,8 +298,10 @@ export class E2BSandboxClient implements SandboxClient {
     // `find` prints: <mtime-epoch-seconds> <size-bytes> <path>, one per file.
     // We use it (rather than the SDK's `files.list`) so size + mtime are always
     // present and the listing is fully recursive, the ToolExecutor listing contract.
+    // CSI exposes the Workspace root as a symlink. -H follows that command-line
+    // root while preserving find's normal handling of links inside the tree.
     const res = await sandbox.commands.run(
-      `find ${shellQuote(dir)} -type f -printf '%T@ %s %p\\n'`,
+      `find -H ${shellQuote(dir)} -type f -printf '%T@ %s %p\\n'`,
     );
     if (res.exitCode !== 0)
       throw new Error("Sandbox file list failed; retry after storage recovers");

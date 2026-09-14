@@ -152,11 +152,17 @@ async function main() {
         record('adapter-upload-edit-passed');
         await shell(executor, `from pathlib import Path;import base64,os;p=Path('.');assert str(p.resolve()).startswith('/run/csi/mount-root/oss/');assert os.environ['HOME']=='/home/user';(p/'生成 图片.png').write_bytes(base64.b64decode('${binary.toString('base64')}'));(p/'shell-created.txt').write_text('created-by-shell');print('OMA_PROBE_OK')`);
         record('adapter-shell-create-passed');
+        const listed = await executor.list('.');
+        const listedPaths = listed.map(entry => entry.path);
+        assert.ok(listedPaths.includes('上传.txt'));
+        assert.ok(listedPaths.includes('生成 图片.png'));
+        assert.ok(listedPaths.includes('shell-created.txt'));
+        record('tool-executor-list-traverses-workspace-symlink', { paths: listedPaths });
         const skillPath = input.agent.skillDescriptors?.[0]?.path;
-        assert.ok(skillPath);
-        assert.ok(skillPath.startsWith('/skills/'));
+        assert.equal(skillPath, '/skills/probe-skill/SKILL.md');
+        assert.deepEqual(input.agent.skillPaths, ['/skills/probe-skill']);
         assert.equal(await executor.readFile(skillPath), '# Probe Skill\nversion one');
-        yield answer('Uploaded file edited; shell-created files and projected Skill read successfully.');
+        yield answer(`Uploaded file edited; shell-created files and projected Skill read successfully at ${skillPath}. Files: ${listedPaths.join(', ')}`);
       } else if (mode.startsWith('parallel-')) {
         await executor.writeFile(`${mode}.txt`, mode);
         parallelCount++;

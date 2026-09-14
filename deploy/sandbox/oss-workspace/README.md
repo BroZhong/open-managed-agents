@@ -203,3 +203,12 @@ The process records its exact created Sandbox IDs and Workspace prefixes, then
 terminates those Sessions and instances and deletes only those prefixes in
 `finally`. This application run is independent from the 65-minute credential
 soak, so it can run while that proof is waiting.
+
+Live acceptance also caught OSS rejecting signed GET requests containing a
+`response-content-type` override. Alibaba documents this restriction in
+[error 0017-00000902](https://help.aliyun.com/en/oss/user-guide/0017-00000902).
+Signed reads now use the object's actual metadata; the Host proxy still infers
+MIME for generic ossfs metadata. The observed ossfs-generated PNG and MP4 returned
+`image/png` and `video/mp4` respectively through the public signed URL, with
+bytes matching the Host read. This observation does not guarantee MIME metadata
+for every file extension or producer.
