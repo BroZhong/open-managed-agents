@@ -71,7 +71,8 @@ export class SupabaseStorageClient {
   }
 
   private objectUrl(key: string): string {
-    return `${this.endpoint}/object/${this.bucket}/${key}`;
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    return `${this.endpoint}/object/${encodeURIComponent(this.bucket)}/${encodedKey}`;
   }
 
   /** Upsert an object at an absolute (already-prefixed) key. */
@@ -96,7 +97,7 @@ export class SupabaseStorageClient {
       method: "GET",
       headers: this.authHeaders(),
     });
-    if (res.status === 404 || res.status === 400) return null;
+    if (res.status === 404) return null;
     if (!res.ok) {
       throw new Error(`Supabase getObject failed: ${res.status} ${await safeText(res)}`);
     }
@@ -112,7 +113,7 @@ export class SupabaseStorageClient {
       method: "DELETE",
       headers: this.authHeaders(),
     });
-    if (res.status === 404 || res.status === 400) return false;
+    if (res.status === 404) return false;
     if (!res.ok) {
       throw new Error(`Supabase deleteObject failed: ${res.status} ${await safeText(res)}`);
     }
@@ -126,7 +127,7 @@ export class SupabaseStorageClient {
   async listRecursive(listPrefix: string, onFile: (fullKey: string) => void): Promise<void> {
     let offset = 0;
     for (;;) {
-      const res = await this.fetchImpl(`${this.endpoint}/object/list/${this.bucket}`, {
+      const res = await this.fetchImpl(`${this.endpoint}/object/list/${encodeURIComponent(this.bucket)}`, {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
