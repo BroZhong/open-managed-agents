@@ -3,6 +3,8 @@ import type {
   ExecOutputChunk,
   FileListEntry,
   ToolExecutor,
+  ToolFileSystem,
+  ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { SandboxClient, SandboxFsAccess } from "./sandbox-client.js";
@@ -59,6 +61,7 @@ export interface SandboxManager {
 }
 
 export interface SandboxSession {
+  readonly fileSystem: ToolFileSystem;
   exec(command: string[], opts?: ExecOptions): AsyncIterable<ExecOutputChunk>;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
@@ -88,6 +91,7 @@ export class DefaultSandboxManager implements SandboxManager {
 }
 
 class SandboxSessionImpl implements SandboxSession {
+  readonly fileSystem: ToolFileSystem;
   private readonly target: WorkspaceMountTarget;
   private projections: readonly ReadonlyProjection[];
   /** Targets that may contain files, including a partially failed projection. */
@@ -122,6 +126,30 @@ class SandboxSessionImpl implements SandboxSession {
     };
     this.projections = spec.projections ?? [];
     this.assertProjections(this.projections);
+
+    // Keep identity stable across sandbox reclamation: Pi scopes mutation
+    // queues to this capability while each operation resolves the live handle.
+    const current = async (options?: ToolFileSystemOptions) => {
+      options?.signal?.throwIfAborted();
+      const id = await this.ensure();
+      options?.signal?.throwIfAborted();
+      if (!this.deps.sandboxClient.fileSystem) throw new Error("Sandbox client does not support native filesystem primitives");
+      return this.deps.sandboxClient.fileSystem(id);
+    };
+    this.fileSystem = {
+      readFile: async (path, options) => (await current(options)).readFile(this.resolve(path), options),
+      writeFile: async (path, content, options) => (await current(options)).writeFile(this.resolve(path), content, options),
+      appendFile: async (path, content, options) => (await current(options)).appendFile(this.resolve(path), content, options),
+      access: async (path, mode, options) => (await current(options)).access(this.resolve(path), mode, options),
+      stat: async (path, options) => (await current(options)).stat(this.resolve(path), options),
+      lstat: async (path, options) => (await current(options)).lstat(this.resolve(path), options),
+      realpath: async (path, options) => (await current(options)).realpath(this.resolve(path), options),
+      readdir: async (path, options) => (await current(options)).readdir(this.resolve(path), options),
+      mkdir: async (path, options) => (await current(options)).mkdir(this.resolve(path), options),
+      createTempFile: async (options) => (await current(options)).createTempFile(options),
+    };
+
+
   }
 
   async *exec(
@@ -134,6 +162,7 @@ class SandboxSessionImpl implements SandboxSession {
       timeoutSeconds: opts?.timeoutSeconds,
       env: opts?.env,
       signal: opts?.signal,
+      onExit: opts?.onExit,
     });
   }
   async readFile(path: string): Promise<string> {

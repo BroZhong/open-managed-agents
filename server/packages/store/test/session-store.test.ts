@@ -234,6 +234,76 @@ describe("PgSessionStore", () => {
     expect(page2.hasMore).toBe(false);
   });
 
+  it("lists a Loop's Sessions newest first with stable cursor pagination", async () => {
+    const workspaceId = await newWorkspace();
+    const created = await Promise.all([
+      store.create({
+        tenantId: "tenant1",
+        agentId: mockAgent.id,
+        agent: mockAgent,
+        workspaceId,
+        loopId: "loop_review",
+      }),
+      store.create({
+        tenantId: "tenant1",
+        agentId: mockAgent.id,
+        agent: mockAgent,
+        workspaceId,
+        loopId: "loop_review",
+      }),
+      store.create({
+        tenantId: "tenant1",
+        agentId: mockAgent.id,
+        agent: mockAgent,
+        workspaceId,
+        loopId: "loop_review",
+      }),
+    ]);
+    const rows = [
+      { from: created[0].id, to: "sess_a_old", at: "2026-07-14T00:05:00.000Z" },
+      { from: created[1].id, to: "sess_m_mid", at: "2026-07-14T00:10:00.000Z" },
+      { from: created[2].id, to: "sess_z_new", at: "2026-07-14T00:15:00.000Z" },
+    ];
+    for (const row of rows) {
+      await harness.pool.query(
+        `UPDATE sessions SET id = $2, created_at = $3 WHERE id = $1`,
+        [row.from, row.to, row.at],
+      );
+    }
+
+    const page1 = await store.list("tenant1", { loopId: "loop_review", limit: 2 });
+    expect(page1.data.map((session) => session.id)).toEqual(["sess_z_new", "sess_m_mid"]);
+    expect(page1.hasMore).toBe(true);
+
+    const page2 = await store.list("tenant1", {
+      loopId: "loop_review",
+      limit: 2,
+      cursor: page1.data[1].id,
+    });
+    expect(page2.data.map((session) => session.id)).toEqual(["sess_a_old"]);
+    expect(page2.hasMore).toBe(false);
+  });
+
+  it("excludes Loop-owned Sessions at the query boundary", async () => {
+    const workspaceId = await newWorkspace();
+    const loose = await store.create({
+      tenantId: "tenant1",
+      agentId: mockAgent.id,
+      agent: mockAgent,
+      workspaceId,
+    });
+    await store.create({
+      tenantId: "tenant1",
+      agentId: mockAgent.id,
+      agent: mockAgent,
+      workspaceId,
+      loopId: "loop_review",
+    });
+
+    const result = await store.list("tenant1", { withoutLoop: true });
+    expect(result.data.map((session) => session.id)).toEqual([loose.id]);
+  });
+
   it("should isolate sessions by tenant", async () => {
     const ws1 = await newWorkspace("tenant1");
     const ws2 = await newWorkspace("tenant2");

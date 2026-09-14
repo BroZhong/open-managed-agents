@@ -29,6 +29,7 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       type: event.type,
       data: event.data,
       sessionThreadId: event.sessionThreadId,
+      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
       arrivedAt: new Date(),
     };
     const queue = this.queues.get(sessionId) ?? [];

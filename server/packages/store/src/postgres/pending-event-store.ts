@@ -14,6 +14,7 @@ interface PendingRow {
   type: string;
   data: unknown;
   session_thread_id: string;
+  api_key_id: string | null;
   arrived_at: Date;
   claim_owner?: string | null;
   claim_expires_at?: Date | null;
@@ -27,6 +28,7 @@ function rowToEvent(row: PendingRow): PendingEvent {
     type: row.type,
     data: row.data,
     sessionThreadId: row.session_thread_id,
+    ...(row.api_key_id ? { apiKeyId: row.api_key_id } : {}),
     arrivedAt: new Date(row.arrived_at),
   };
 }
@@ -42,10 +44,10 @@ export class PgPendingEventStore implements PendingEventIngressStore {
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const { rows } = await this.pool.query<PendingRow>(
-      `INSERT INTO pending_events (id, session_id, type, data, session_thread_id, arrived_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, session_id, type, data, session_thread_id, arrived_at`,
-      [nanoid(), sessionId, event.type, JSON.stringify(event.data ?? null), event.sessionThreadId, new Date()],
+      `INSERT INTO pending_events (id, session_id, type, data, session_thread_id, api_key_id, arrived_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at`,
+      [nanoid(), sessionId, event.type, JSON.stringify(event.data ?? null), event.sessionThreadId, event.apiKeyId ?? null, new Date()],
     );
     return rowToEvent(rows[0]);
   }
@@ -62,6 +64,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       type: event.type,
       data: JSON.stringify(event.data ?? null),
       sessionThreadId: event.sessionThreadId,
+      apiKeyId: event.apiKeyId ?? null,
       arrivedAt: new Date(),
     }));
     const client = await this.pool.connect();
@@ -84,15 +87,16 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       const inserted: PendingEvent[] = [];
       for (const event of prepared) {
         const { rows } = await client.query<PendingRow>(
-          `INSERT INTO pending_events (id, session_id, type, data, session_thread_id, arrived_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING id, session_id, type, data, session_thread_id, arrived_at`,
+          `INSERT INTO pending_events (id, session_id, type, data, session_thread_id, api_key_id, arrived_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at`,
           [
             event.id,
             sessionId,
             event.type,
             event.data,
             event.sessionThreadId,
+            event.apiKeyId,
             event.arrivedAt,
           ],
         );
@@ -117,7 +121,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     try {
       await client.query("BEGIN");
       const head = await client.query<PendingRow>(
-        `SELECT id, session_id, type, data, session_thread_id, arrived_at
+        `SELECT id, session_id, type, data, session_thread_id, api_key_id, arrived_at
          FROM pending_events
          WHERE session_id = $1
          ORDER BY seq ASC
@@ -148,7 +152,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
 
   async peek(sessionId: string): Promise<PendingEvent | null> {
     const { rows } = await this.pool.query<PendingRow>(
-      `SELECT id, session_id, type, data, session_thread_id, arrived_at
+      `SELECT id, session_id, type, data, session_thread_id, api_key_id, arrived_at
        FROM pending_events
        WHERE session_id = $1
        ORDER BY seq ASC
@@ -186,7 +190,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
              claim_expires_at = clock_timestamp() + CAST($3 || ' milliseconds' AS interval)
          WHERE id = $1
            AND (claim_owner IS NULL OR claim_expires_at <= clock_timestamp())
-         RETURNING id, session_id, type, data, session_thread_id, arrived_at,
+         RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at,
                    claim_owner, claim_expires_at, claim_generation`,
         [head.rows[0].id, ownerId, leaseMs],
       );

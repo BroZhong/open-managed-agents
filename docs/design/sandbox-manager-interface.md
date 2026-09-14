@@ -1,6 +1,6 @@
 # Sandbox Manager interface
 
-Current contract: [ADR-0007](../adr/0007-oss-mounted-workspaces.md), superseding the hydrate/sync design in ADR-0005.
+Current contract: [ADR-0008](../adr/0008-oss-mounted-workspaces.md), superseding the hydrate/sync design in ADR-0005.
 
 The Host resolves ownership, computes the OSS prefix and supplies the Environment Spec. The Manager creates a Sandbox lazily, verifies the mount before tool operations, refreshes Skills, rebuilds expired resources and disposes execution resources. The Adapter uses a per-Turn injected ToolExecutor and knows no storage SDK.
 

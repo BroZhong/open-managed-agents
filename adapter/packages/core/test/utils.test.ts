@@ -109,7 +109,12 @@ describe("isSpanEvent", () => {
       id: "sevt_abc",
       timestamp: "2026-01-01T00:00:00.000Z",
       type: "span.model_request_end",
-      usage: { inputTokens: 100, outputTokens: 50 },
+      usage: {
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
     };
     expect(isSpanEvent(event)).toBe(true);
   });

@@ -5,10 +5,13 @@ import type { WorkspaceMountTarget } from "./workspace-mount.js";
  * identity-scoped OSS mount; local HOME and Skill projections are disposable.
  */
 
+import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
+
 /** A chunk of output from a running command inside the sandbox. */
 export interface SandboxExecChunk {
   stream: "stdout" | "stderr";
   text: string;
+  bytes?: Uint8Array;
 }
 
 /** Options for a single sandbox `exec` invocation. */
@@ -24,10 +27,14 @@ export interface SandboxExecOptions {
   /** Extra environment variables layered onto the command. */
   env?: Record<string, string>;
   /**
-   * The turn's abort signal (issue #84). Forwarded into the e2b command run so a
-   * hung command is cancelled when the router aborts the turn.
+   * Abort the running process, not just the transport receiving its output.
    */
   signal?: AbortSignal;
+  /**
+   * Called once on an observed process exit, before the iterable completes.
+   * Startup/transport failures without an exit result do not call this hook.
+   */
+  onExit?: (result: { exitCode: number | null; signal?: string }) => void;
 }
 
 /** A file entry returned by {@link SandboxClient.list}. */
@@ -62,6 +69,9 @@ export interface SandboxHandle {
  * Low-level sandbox lifecycle + file/exec port. Production uses the E2B SDK; a fake implements the same surface in-memory for tests.
  */
 export interface SandboxClient {
+  /** Native I/O primitives at absolute sandbox paths, separate from persistence. */
+  fileSystem?(id: string): ToolFileSystem;
+
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
 

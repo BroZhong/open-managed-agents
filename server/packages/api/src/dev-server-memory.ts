@@ -9,6 +9,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
+import { adapterProcessEnvFromHost, sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import type {
   Adapter,
   AdapterInput,
@@ -20,11 +21,9 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { LoopScheduler } from "./lib/loop-scheduler.js";
+import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
 import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
-import {
-  adapterProcessEnvFromHost,
-  sandboxEnvPolicyFromHost,
-} from "./lib/sandbox-env.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
@@ -105,7 +104,15 @@ class DevClaudeCodeAdapter implements Adapter {
             yield {
               id: generateEventId(), timestamp: generateTimestamp(),
               type: "span.model_request_end",
-              usage: { inputTokens: event.message.usage.input_tokens, outputTokens: event.message.usage.output_tokens },
+              usage: {
+                inputTokens:
+                  event.message.usage.input_tokens +
+                  (event.message.usage.cache_read_input_tokens ?? 0) +
+                  (event.message.usage.cache_creation_input_tokens ?? 0),
+                outputTokens: event.message.usage.output_tokens,
+                cacheReadTokens: event.message.usage.cache_read_input_tokens ?? 0,
+                cacheWriteTokens: event.message.usage.cache_creation_input_tokens ?? 0,
+              },
             } as SessionEvent;
           }
         }
@@ -210,11 +217,12 @@ class DevCodexAdapter implements Adapter {
           } as SessionEvent;
         }
 
-        if (event.type === "turn.failed" || event.type === "error") {
-          hasError = true;
+        for (const terminalEvent of translateDevCodexTerminalEvent(event)) {
+          if (terminalEvent.type === "session.error") hasError = true;
           yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "session.error", error: { message: event.error?.message || event.message || "Codex error", code: "codex_error" },
+            id: generateEventId(),
+            timestamp: generateTimestamp(),
+            ...terminalEvent,
           } as SessionEvent;
         }
       }
@@ -295,6 +303,13 @@ async function main() {
     console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
   }
 
+  const loopScheduler = new LoopScheduler({
+    loopStore: stores.loopStore,
+    sessionRouter,
+    pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000),
+  });
+  loopScheduler.start();
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -306,6 +321,7 @@ async function main() {
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     workspaceStore: stores.workspaceStore,
+    loopStore: stores.loopStore,
     userStore: stores.userStore,
     eventStreamHub,
     sessionRouter,
@@ -322,6 +338,7 @@ async function main() {
 
   const shutdown = createGracefulShutdown({
     server: httpServer,
+    stopBackgroundWork: () => loopScheduler.stop(),
     waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {},

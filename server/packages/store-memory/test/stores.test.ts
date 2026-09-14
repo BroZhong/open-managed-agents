@@ -176,15 +176,66 @@ describe("createMemoryStores", () => {
       expect(retry).toEqual(first);
       expect((await stores.eventLogStore.getEvents("s1")).data).toHaveLength(1);
     });
+
+    it("aggregates durable model usage by Session and API key", async () => {
+      await stores.eventLogStore.append("s1", {
+        type: "span.model_request_end",
+        data: { usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 25, cacheWriteTokens: 5 } },
+        sessionThreadId: "th1",
+        apiKeyId: "key_1",
+      });
+      await stores.eventLogStore.append("s1", {
+        type: "span.model_request_end",
+        data: { usage: { inputTokens: 0, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+        sessionThreadId: "th1",
+        apiKeyId: "key_2",
+      });
+
+      await expect(stores.eventLogStore.getUsage({ sessionId: "s1" })).resolves.toEqual({
+        inputTokens: 100,
+        outputTokens: 23,
+        cacheReadTokens: 25,
+        cacheWriteTokens: 5,
+        totalTokens: 123,
+        cacheHitRate: 0.25,
+      });
+      await expect(stores.eventLogStore.getUsage({ apiKeyId: "key_2" })).resolves.toEqual({
+        inputTokens: 0,
+        outputTokens: 3,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 3,
+        cacheHitRate: null,
+      });
+      const byKey = await stores.eventLogStore.getUsageByApiKeyIds(["key_1", "key_2", "missing"]);
+      expect(byKey.get("key_1")?.totalTokens).toBe(120);
+      expect(byKey.get("key_2")?.totalTokens).toBe(3);
+      expect(byKey.get("missing")).toMatchObject({ totalTokens: 0, cacheHitRate: null });
+    });
+  });
+
+  describe("ApiKeyStore", () => {
+    it("soft-revokes credentials but retains their history record", async () => {
+      const { apiKey, rawKey } = await stores.apiKeyStore.create("t1", "key");
+
+      expect(await stores.apiKeyStore.revoke("t1", apiKey.id)).toBe(true);
+      expect(await stores.apiKeyStore.validate(rawKey)).toBeNull();
+      expect(await stores.apiKeyStore.findByKeyHash(apiKey.keyHash)).toBeNull();
+      expect(await stores.apiKeyStore.list("t1")).toEqual([
+        expect.objectContaining({ id: apiKey.id, revokedAt: expect.any(Date) }),
+      ]);
+      expect(await stores.apiKeyStore.revoke("t1", apiKey.id)).toBe(false);
+    });
   });
 
   describe("PendingEventStore", () => {
     it("enqueues and dequeues in FIFO order", async () => {
-      await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "first" }, sessionThreadId: "th1" });
+      await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "first" }, sessionThreadId: "th1", apiKeyId: "key_1" });
       await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "second" }, sessionThreadId: "th1" });
 
       const first = await stores.pendingEventStore.dequeue("s1");
       expect(first?.data).toEqual({ text: "first" });
+      expect(first?.apiKeyId).toBe("key_1");
 
       const second = await stores.pendingEventStore.dequeue("s1");
       expect(second?.data).toEqual({ text: "second" });

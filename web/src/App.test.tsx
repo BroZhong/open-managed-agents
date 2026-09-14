@@ -7,12 +7,36 @@ import { MemoryRouter } from "react-router";
 import { AuthProvider } from "@/lib/auth";
 import App from "@/App";
 import type { Agent } from "@/lib/hooks/use-agents";
+import type { McpCatalogEntry } from "@/lib/hooks/use-mcp-catalog";
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.unstubAllGlobals();
 });
+
+const mcpCatalog: McpCatalogEntry[] = [
+  {
+    id: "rds-mcp",
+    defaultName: "rds-mcp",
+    defaultDescription: "Managed RDS gateway",
+    transport: "streamable-http",
+    configurable: ["name", "description"],
+    requiredEnv: ["RDS_MCP_APIKEY"],
+  },
+  {
+    id: "aliyun-rds-supabase",
+    defaultName: "aliyun-rds-supabase",
+    defaultDescription: "Inspect Supabase on Alibaba Cloud RDS",
+    transport: "stdio",
+    configurable: ["name", "description"],
+    requiredEnv: [
+      "ALIYUN_ACCESS_KEY_ID",
+      "ALIYUN_ACCESS_KEY_SECRET",
+      "ALIYUN_REGION",
+    ],
+  },
+];
 
 function renderApp(path: string, agents?: Agent[]) {
   localStorage.setItem("oma_api_key", "test-token");
@@ -22,6 +46,7 @@ function renderApp(path: string, agents?: Agent[]) {
     defaultOptions: { queries: { retry: false } },
   });
   if (agents) queryClient.setQueryData(["agents"], agents);
+  queryClient.setQueryData(["mcp-catalog"], mcpCatalog);
 
   render(
     <QueryClientProvider client={queryClient}>
@@ -62,13 +87,7 @@ it("shows the integratable MCP catalog without listing Agents", () => {
       system: "Create storyboards",
       runtime: "pi-agent",
       mcpServers: [
-        {
-          name: "rds-mcp",
-          url: "https://campaign.welltop.tech/agent/mcp/rds",
-          transport: "streamable-http",
-          headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
-        },
-        { name: "search", url: "https://example.com/mcp" },
+        { catalogId: "rds-mcp", name: "rds-mcp" },
       ],
       createdAt: "2026-07-12T00:00:00.000Z",
       updatedAt: "2026-07-12T00:00:00.000Z",
@@ -90,7 +109,9 @@ it("shows the integratable MCP catalog without listing Agents", () => {
   expect(screen.getByRole("heading", { name: "MCP" })).toBeTruthy();
   expect(screen.getByText("rds-mcp")).toBeTruthy();
   expect(screen.getByText("streamable-http")).toBeTruthy();
-  expect(screen.getByText("https://campaign.welltop.tech/agent/mcp/rds")).toBeTruthy();
+  expect(screen.getByText("aliyun-rds-supabase")).toBeTruthy();
+  expect(screen.getByText("stdio")).toBeTruthy();
+  expect(screen.getByText("Inspect Supabase on Alibaba Cloud RDS")).toBeTruthy();
   expect(screen.getByText(/connect it from an Agent's detail page/i)).toBeTruthy();
   expect(screen.queryByText("Storyboard Agent")).toBeNull();
   expect(screen.queryByText("Empty Agent")).toBeNull();

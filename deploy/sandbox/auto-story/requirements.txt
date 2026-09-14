@@ -1,0 +1,2 @@
+# No local-tokenizer extra: the image does not bundle model inference runtimes.
+google-genai==2.22.0

@@ -5,8 +5,10 @@
  */
 
 export interface SdkUsage {
-  inputTokens?: number;
-  outputTokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 export interface SdkContentBlockText {
@@ -35,6 +37,7 @@ export interface SdkMessageStartMessage {
   message: {
     id: string;
     model: string;
+    usage?: SdkUsage;
   };
 }
 

@@ -1,17 +1,26 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import type { UserStore } from "@oma-server/store";
 import { isAuthConfigured, signSessionToken } from "../auth/tokens.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
+
+type Env = {
+  Variables: Record<string, never>;
+};
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{3,32}$/;
 const BCRYPT_ROUNDS = 10;
 
-export function authRoutes(userStore: UserStore) {
-  const router = new Hono();
+export function authRoutes(userStore: UserStore): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /auth/register — create an account and auto-login.
-  router.post("/auth/register", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("registerUser"), async (c) => {
     // (1) auth secret present
     if (!isAuthConfigured()) {
       return c.json({ error: "auth unavailable", code: "auth_unavailable" }, 503);
@@ -72,7 +81,7 @@ export function authRoutes(userStore: UserStore) {
   });
 
   // POST /auth/login — verify credentials and issue a session token.
-  router.post("/auth/login", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("loginUser"), async (c) => {
     if (!isAuthConfigured()) {
       return c.json({ error: "auth unavailable", code: "auth_unavailable" }, 503);
     }

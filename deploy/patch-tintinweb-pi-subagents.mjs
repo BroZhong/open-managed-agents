@@ -8,6 +8,19 @@ import { fileURLToPath } from "node:url";
 const EXPECTED_VERSION = "0.13.0";
 const EXPECTED_RUNNER_SHA256 =
   "d97ab096a2d7f1a41db4963183bdc4ac96ecbc4653d2390989da1a9d4ec23f99";
+const EXPECTED_INVOCATION_CONFIG_SHA256 =
+  "930d472cc5d3d0b63f8acc2f1370d5e684b15f664962fc7391aed6fadee34402";
+
+export function assertPinnedForegroundPrecedence(source) {
+  const precedence =
+    "runInBackground: agentConfig?.runInBackground ?? params.run_in_background ?? false,";
+  if (source.split(precedence).length !== 2) {
+    throw new Error(
+      "Pinned pi-subagents invocation config no longer gives agent frontmatter " +
+        "precedence over the Agent tool's run_in_background parameter",
+    );
+  }
+}
 
 function replaceExactlyOnce(source, needle, replacement, label) {
   const first = source.indexOf(needle);
@@ -32,7 +45,7 @@ export function patchAgentRunnerSource(input) {
   source = replaceExactlyOnce(
     source,
     'import type { ExtensionContext, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";',
-    'import type { ExtensionContext, LoadExtensionsResult, ToolDefinition } from "@earendil-works/pi-coding-agent";',
+    'import type { ExtensionContext, LoadExtensionsResult, ModelRuntime, ToolDefinition } from "@earendil-works/pi-coding-agent";\nimport { getSupportedThinkingLevels } from "@earendil-works/pi-ai";',
     "ToolDefinition import",
   );
   source = replaceExactlyOnce(
@@ -41,13 +54,40 @@ export function patchAgentRunnerSource(input) {
     `const EXCLUDED_TOOL_NAMES: string[] = Object.values(SUBAGENT_TOOL_NAMES);
 
 const MANAGED_SUBAGENT_TOOLS_REQUEST = "oma:sandbox-tools:v1:get";
+const MANAGED_SUBAGENT_USAGE_EVENT = "oma:subagent-usage:v1";
 let managedToolRequestSequence = 0;
 
-async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinition[]> {
+function publishManagedSubagentUsage(
+  pi: ExtensionAPI,
+  subagentId: string | undefined,
+  usage: unknown,
+): void {
+  if (!usage || typeof usage !== "object") return;
+  const u = usage as {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
+  pi.events.emit(MANAGED_SUBAGENT_USAGE_EVENT, {
+    subagentId,
+    input: u.input ?? 0,
+    output: u.output ?? 0,
+    cacheRead: u.cacheRead ?? 0,
+    cacheWrite: u.cacheWrite ?? 0,
+  });
+}
+
+interface ManagedParentResources {
+  tools: ToolDefinition[];
+  modelRuntime: ModelRuntime;
+}
+
+async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ManagedParentResources> {
   const requestId = \`\${process.pid}-\${++managedToolRequestSequence}\`;
   const replyChannel = \`\${MANAGED_SUBAGENT_TOOLS_REQUEST}:reply:\${requestId}\`;
 
-  return new Promise<ToolDefinition[]>((resolve, reject) => {
+  return new Promise<ManagedParentResources>((resolve, reject) => {
     let unsubscribe = () => {};
     const timeout = setTimeout(() => {
       unsubscribe();
@@ -67,7 +107,12 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
         reject(new Error("Managed Sandbox tool bridge returned no tools"));
         return;
       }
-      resolve(tools as ToolDefinition[]);
+      const modelRuntime = (raw as { modelRuntime?: ModelRuntime }).modelRuntime;
+      if (!modelRuntime || typeof modelRuntime.getModel !== "function") {
+        reject(new Error("Managed parent model runtime is unavailable"));
+        return;
+      }
+      resolve({ tools: tools as ToolDefinition[], modelRuntime });
     });
 
     pi.events.emit(MANAGED_SUBAGENT_TOOLS_REQUEST, { requestId });
@@ -79,7 +124,7 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
     source,
     `  const builtinToolNameSet = new Set(toolNames);
   const allowedTools = [...toolNames, ...extensionToolNames].filter((t) => {`,
-    `  const managedCustomTools = await lookupManagedCustomTools(options.pi);
+    `  const { tools: managedCustomTools, modelRuntime } = await lookupManagedCustomTools(options.pi);
   const managedToolNameSet = new Set(managedCustomTools.map((tool) => tool.name));
   const missingManagedToolNames = BUILTIN_TOOL_NAMES.filter(
     (name) => !managedToolNameSet.has(name),
@@ -95,6 +140,18 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
   );
   source = replaceExactlyOnce(
     source,
+    "    modelRegistry: ctx.modelRegistry,",
+    "    modelRuntime,",
+    "Pi 0.80.10 child model runtime",
+  );
+  source = replaceExactlyOnce(
+    source,
+    "  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking;",
+    "  const thinkingLevel = options.thinkingLevel ?? agentConfig?.thinking ?? (model ? getSupportedThinkingLevels(model).at(-1) : undefined);",
+    "highest supported child thinking default",
+  );
+  source = replaceExactlyOnce(
+    source,
     `    model,
     tools: allowedTools,
     resourceLoader: loader,`,
@@ -104,6 +161,27 @@ async function lookupManagedCustomTools(pi: ExtensionAPI): Promise<ToolDefinitio
     customTools: managedCustomTools,
     resourceLoader: loader,`,
     "child createAgentSession options",
+  );
+  source = replaceExactlyOnce(
+    source,
+    `  const { session } = await createAgentSession(sessionOpts);
+
+  const baseSessionName = agentConfig?.name ?? type;`,
+    `  const { session } = await createAgentSession(sessionOpts);
+
+  // This subscription intentionally lives with the child session rather than
+  // the initial run's temporary listeners: the same session is later passed to
+  // resumeAgent(), so one publisher covers the initial run and every resume
+  // without installing another accounting listener.
+  session.subscribe((event: AgentSessionEvent) => {
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      const u = (event.message as any).usage;
+      if (u) publishManagedSubagentUsage(options.pi, options.agentId, u);
+    }
+  });
+
+  const baseSessionName = agentConfig?.name ?? type;`,
+    "persistent managed child usage subscription",
   );
   return source;
 }
@@ -124,13 +202,24 @@ function main() {
   }
 
   const runnerPath = resolve(packageRoot, "src/agent-runner.ts");
+  const invocationConfigPath = resolve(packageRoot, "src/invocation-config.ts");
   const original = readFileSync(runnerPath, "utf8");
+  const invocationConfig = readFileSync(invocationConfigPath, "utf8");
   const actualHash = createHash("sha256").update(original).digest("hex");
   if (actualHash !== EXPECTED_RUNNER_SHA256) {
     throw new Error(
       `Expected pristine agent-runner SHA-256 ${EXPECTED_RUNNER_SHA256}, got ${actualHash}`,
     );
   }
+  const invocationConfigHash = createHash("sha256")
+    .update(invocationConfig)
+    .digest("hex");
+  if (invocationConfigHash !== EXPECTED_INVOCATION_CONFIG_SHA256) {
+    throw new Error(
+      `Expected pristine invocation-config SHA-256 ${EXPECTED_INVOCATION_CONFIG_SHA256}, got ${invocationConfigHash}`,
+    );
+  }
+  assertPinnedForegroundPrecedence(invocationConfig);
   const patched = patchAgentRunnerSource(original);
   writeFileSync(runnerPath, patched, "utf8");
 }

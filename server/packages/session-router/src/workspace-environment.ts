@@ -3,6 +3,7 @@ export const WORKSPACE_ENV = {
   HOME: "/home/user",
   WORKSPACE_DIR: "/home/user/workspace",
   STORY_SEED_WORKSPACE: "/home/user/workspace",
+  MEDIAKIT_OUTPUT_PATH: "/home/user/workspace/media",
   XDG_CACHE_HOME: "/home/user/.cache",
   NPM_CONFIG_CACHE: "/home/user/.cache/npm",
   NPM_CONFIG_PREFIX: "/home/user/.local/npm",

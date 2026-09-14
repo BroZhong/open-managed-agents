@@ -147,7 +147,7 @@ export type SkillFileSource = FileSource & {
   capabilities: { hierarchy: "nested"; idleGated: false };
 };
 
-export function createSkillFileSource(skillId: string): SkillFileSource {
+export function createSkillFileSource(skillId: string, onChanged?: () => void): SkillFileSource {
   const base = `/v1/skills/${skillId}/files`;
   return {
     capabilities: { hierarchy: "nested", idleGated: false },
@@ -176,6 +176,7 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
         method: "PUT",
         body: JSON.stringify({ path, content }),
       });
+      onChanged?.();
     },
 
     async rename(from: string, to: string): Promise<void> {
@@ -183,12 +184,14 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
         method: "POST",
         body: JSON.stringify({ from, to }),
       });
+      onChanged?.();
     },
 
     async delete(path: string): Promise<void> {
       await apiFetch(`${base}/content?path=${encodeURIComponent(path)}`, {
         method: "DELETE",
       });
+      onChanged?.();
     },
 
     async upload(files: File[], destDir?: string): Promise<void> {
@@ -208,6 +211,7 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
           method: "PUT",
           body: JSON.stringify({ path, content }),
         });
+        onChanged?.();
       }
     },
     // No previewUrl: Skills are text.
@@ -260,9 +264,10 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
       if (isText && size <= WS_MAX_TEXT_PREVIEW) {
         return { path, text: await res.text(), contentType, size, isBinary: false };
       }
-      // Drain to release the connection; binary is rendered via previewUrl.
-      await res.arrayBuffer().catch(() => undefined);
-      return { path, text: null, contentType, size, isBinary: true };
+      // Binary is rendered via previewUrl. Use the body we already drain for
+      // its size, since proxies can omit Content-Length or report compressed bytes.
+      const body = await res.arrayBuffer().catch(() => undefined);
+      return { path, text: null, contentType, size: body?.byteLength ?? size, isBinary: true };
     },
 
     async write(path: string, content: string): Promise<void> {
@@ -303,7 +308,16 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
         headers: authHeaders(),
       });
       if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
-      return URL.createObjectURL(await res.blob());
+      const blob = await res.blob();
+      // Older sandbox artifacts may have a generic MIME. Give the audio
+      // element a useful type without changing the stored bytes.
+      const ext = extOf(path);
+      const audioType = Object.hasOwn(AUDIO_MIME_TYPES, ext) ? AUDIO_MIME_TYPES[ext] : undefined;
+      return URL.createObjectURL(
+        audioType && !blob.type.startsWith("audio/")
+          ? blob.slice(0, blob.size, audioType)
+          : blob,
+      );
     },
   };
 }
@@ -388,10 +402,24 @@ interface AgentFileResponse {
  * Media classification: **extension-first, MIME as a weak fallback** (issue
  * #93). S3 stores whatever MIME was set at write time, which is unreliable for
  * shell-created files, so the extension wins when it is known. MIME is trusted
- * only when the extension is absent. Mirrors the prototype's `classify`.
+ * when the extension is absent; audio MIME also identifies unknown extensions.
  */
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "svg"]);
 const VIDEO_EXT = new Set(["mp4", "webm", "mov", "m4v", "mkv", "ogv"]);
+const AUDIO_MIME_TYPES: Readonly<Record<string, string>> = {
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  m4a: "audio/mp4",
+  m4b: "audio/mp4",
+  weba: "audio/webm",
+  aac: "audio/aac",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/ogg",
+  flac: "audio/flac",
+  aif: "audio/aiff",
+  aiff: "audio/aiff",
+};
 const TEXT_EXT = new Set([
   "txt", "md", "markdown", "json", "yaml", "yml", "xml", "csv", "tsv", "log",
   "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt",
@@ -399,7 +427,7 @@ const TEXT_EXT = new Set([
   "cfg", "conf", "env", "html", "css", "scss", "svg", "gitignore", "dockerfile",
 ]);
 
-export type MediaKind = "image" | "video" | "text" | "binary";
+export type MediaKind = "image" | "video" | "audio" | "text" | "binary";
 
 function extOf(path: string): string {
   const name = path.split("/").pop() ?? path;
@@ -414,7 +442,7 @@ function isTextByExtension(path: string): boolean {
 }
 
 /**
- * Classify a file as image / video / text / other-binary. Extension takes
+ * Classify a file as image / video / audio / text / other-binary. Extension takes
  * priority (a `.png` is an image even if S3 reports octet-stream); MIME is the
  * fallback only when the extension is unknown.
  */
@@ -422,11 +450,14 @@ export function classifyMedia(path: string, contentType: string): MediaKind {
   const ext = extOf(path);
   if (IMAGE_EXT.has(ext)) return "image";
   if (VIDEO_EXT.has(ext)) return "video";
+  if (Object.hasOwn(AUDIO_MIME_TYPES, ext)) return "audio";
+  if (TEXT_EXT.has(ext)) return "text";
   if (!ext) {
     if (contentType.startsWith("image/")) return "image";
     if (contentType.startsWith("video/")) return "video";
   }
-  if (/^text\//.test(contentType) || TEXT_EXT.has(ext)) return "text";
+  if (contentType.startsWith("audio/")) return "audio";
+  if (/^text\//.test(contentType)) return "text";
   return "binary";
 }
 
@@ -508,13 +539,13 @@ export function resolveFileActions(
 }
 
 /** The concrete pane selected after considering both file kind and loaded body. */
-export type FilePresentation = "text" | "image" | "video" | "download";
+export type FilePresentation = "text" | "image" | "video" | "audio" | "download";
 
 /**
  * Decide how a file can actually be rendered, not merely what its extension
  * suggests. Text over the inline-preview cap has `text: null` and
  * `isBinary: true`; it must fall back to download instead of flowing into a
- * media component. Only known image/video kinds may reach media elements.
+ * media component. Only known image/video/audio kinds may reach media elements.
  */
 export function resolveFilePresentation(
   content: FileContent,
@@ -525,7 +556,7 @@ export function resolveFilePresentation(
     return !content.isBinary && content.text !== null ? "text" : "download";
   }
   if (mediaMode !== "preview") return "download";
-  if (kind === "image" || kind === "video") return kind;
+  if (kind === "image" || kind === "video" || kind === "audio") return kind;
   return "download";
 }
 

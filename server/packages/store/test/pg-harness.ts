@@ -58,11 +58,11 @@ async function createRealPgHarness(url: string): Promise<PgTestHarness> {
   };
 }
 
-function createMemHarness(): PgTestHarness {
+function createMemHarness(noAstCoverageCheck = false): PgTestHarness {
   let pool: Pool;
 
   const reset = async () => {
-    const db = newDb();
+    const db = newDb({ noAstCoverageCheck });
     db.public.registerFunction({
       name: "clock_timestamp",
       returns: DataType.timestamptz,
@@ -87,11 +87,17 @@ function createMemHarness(): PgTestHarness {
   };
 }
 
-export async function createPgTestHarness(): Promise<PgTestHarness> {
+export async function createPgTestHarness(options?: {
+  /**
+   * Let pg-mem ignore unsupported planner-only clauses such as SKIP LOCKED.
+   * The same test must still be run against real PostgreSQL for concurrency.
+   */
+  allowUnsupportedLockSyntax?: boolean;
+}): Promise<PgTestHarness> {
   if (REAL_PG_URL) {
     return createRealPgHarness(REAL_PG_URL);
   }
-  const harness = createMemHarness();
+  const harness = createMemHarness(options?.allowUnsupportedLockSyntax);
   await harness.reset();
   return harness;
 }

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
+import {
+  buildManagedMcpPromptSection,
+  PiAgentAdapter,
+} from "../src/pi-agent-adapter.js";
 import type {
   PiSessionLike,
   SessionFactoryArgs,
@@ -12,6 +15,8 @@ import type {
   AgentThinkingEvent,
   AgentToolUseEvent,
   AgentToolResultEvent,
+  AgentMcpToolUseEvent,
+  AgentMcpToolResultEvent,
   AgentToolUseInputStreamStartEvent,
   AgentToolUseInputChunkEvent,
   AgentToolUseInputStreamEndEvent,
@@ -94,7 +99,12 @@ const assistantStart: AgentSessionEvent = {
   message: { role: "assistant", model: "claude-sonnet-4-5" } as never,
 } as AgentSessionEvent;
 
-function assistantEnd(input: number, output: number): AgentSessionEvent {
+function assistantEnd(
+  input: number,
+  output: number,
+  cacheRead = 0,
+  cacheWrite = 0,
+): AgentSessionEvent {
   return {
     type: "message_end",
     message: {
@@ -102,9 +112,9 @@ function assistantEnd(input: number, output: number): AgentSessionEvent {
       usage: {
         input,
         output,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: input + output,
+        cacheRead,
+        cacheWrite,
+        totalTokens: input + output + cacheRead + cacheWrite,
         cost: { total: 0 },
       },
     },
@@ -167,6 +177,29 @@ describe("PiAgentAdapter (SDK)", () => {
       expect(end.usage.outputTokens).toBe(5);
     });
 
+    it("normalizes cache reads and writes into total input usage", async () => {
+      const cachedScript: AgentSessionEvent[] = [
+        assistantStart,
+        ame({ type: "text_start", contentIndex: 0 }),
+        ame({ type: "text_end", contentIndex: 0, content: "Cached." }),
+        assistantEnd(60, 5, 30, 10),
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(cachedScript),
+      });
+      const events = await collectEvents(adapter.run(makeInput("cached")));
+      const end = events.find(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent;
+
+      expect(end.usage).toEqual({
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 10,
+      });
+    });
+
     it("emits streaming events in correct order", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const events = await collectEvents(adapter.run(makeInput("2+2")));
@@ -179,6 +212,157 @@ describe("PiAgentAdapter (SDK)", () => {
       expect(chunk).toBeGreaterThan(streamStart);
       expect(streamEnd).toBeGreaterThan(chunk);
       expect(message).toBeGreaterThan(streamEnd);
+    });
+  });
+
+  describe("managed subagent usage", () => {
+    it("emits one independent canonical span per child alongside the parent span", async () => {
+      const parentScript: AgentSessionEvent[] = [
+        assistantStart,
+        assistantEnd(20, 3, 4, 1),
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (args): Promise<PiSessionLike> => {
+          let listener: ((event: AgentSessionEvent) => void) | undefined;
+          return {
+            subscribe(next) {
+              listener = next;
+              return () => {
+                listener = undefined;
+              };
+            },
+            async prompt() {
+              args.onSubagentUsage({
+                subagentId: "child-1",
+                input: 60,
+                output: 5,
+                cacheRead: 30,
+                cacheWrite: 10,
+              });
+              args.onSubagentUsage({
+                subagentId: "child-2",
+                input: 7,
+                output: 2,
+                cacheRead: 1,
+                cacheWrite: 2,
+              });
+              for (const event of parentScript) listener?.(event);
+            },
+            abort() {},
+            dispose() {},
+          };
+        },
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("delegate")));
+      const spans = events.filter(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent[];
+
+      expect(spans).toHaveLength(3);
+      expect(spans.map((span) => span.usage)).toEqual([
+        {
+          inputTokens: 100,
+          outputTokens: 5,
+          cacheReadTokens: 30,
+          cacheWriteTokens: 10,
+        },
+        {
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheReadTokens: 1,
+          cacheWriteTokens: 2,
+        },
+        {
+          inputTokens: 25,
+          outputTokens: 3,
+          cacheReadTokens: 4,
+          cacheWriteTokens: 1,
+        },
+      ]);
+      expect(new Set(spans.map((span) => span.id)).size).toBe(3);
+    });
+
+    it("retains provider-reported child usage when the parent prompt fails", async () => {
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (args): Promise<PiSessionLike> => ({
+          subscribe: () => () => {},
+          async prompt() {
+            args.onSubagentUsage({
+              subagentId: "child-before-failure",
+              input: 11,
+              output: 2,
+              cacheRead: 3,
+              cacheWrite: 4,
+            });
+            throw new Error("parent prompt failed");
+          },
+          abort() {},
+          dispose() {},
+        }),
+      });
+
+      const events = await collectEvents(adapter.run(makeInput("fail later")));
+      expect(events.map((event) => event.type)).toEqual([
+        "span.model_request_end",
+        "session.error",
+      ]);
+      expect((events[0] as SpanModelRequestEndEvent).usage).toEqual({
+        inputTokens: 18,
+        outputTokens: 2,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 4,
+      });
+      expect(
+        (events[1] as SessionEvent & { error: { message: string } }).error.message,
+      ).toBe("parent prompt failed");
+    });
+
+    it("retains provider-reported child usage when the parent is aborted", async () => {
+      let settlePrompt: (() => void) | undefined;
+      let markPromptStarted!: () => void;
+      const promptStarted = new Promise<void>((resolve) => { markPromptStarted = resolve; });
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: async (args): Promise<PiSessionLike> => ({
+          subscribe: () => () => {},
+          prompt() {
+            args.onSubagentUsage({
+              subagentId: "child-before-abort",
+              input: 12,
+              output: 3,
+              cacheRead: 4,
+              cacheWrite: 5,
+            });
+            return new Promise<void>((resolve) => {
+              settlePrompt = resolve;
+              markPromptStarted();
+            });
+          },
+          abort() {
+            settlePrompt?.();
+          },
+          dispose() {},
+        }),
+      });
+      const controller = new AbortController();
+      const input = makeInput("abort later");
+      input.signal = controller.signal;
+
+      const eventsPromise = collectEvents(adapter.run(input));
+      await promptStarted;
+      controller.abort();
+      const events = await eventsPromise;
+      const spans = events.filter(
+        (event) => event.type === "span.model_request_end",
+      ) as SpanModelRequestEndEvent[];
+
+      expect(spans).toHaveLength(1);
+      expect(spans[0]?.usage).toEqual({
+        inputTokens: 21,
+        outputTokens: 3,
+        cacheReadTokens: 4,
+        cacheWriteTokens: 5,
+      });
     });
   });
 
@@ -309,6 +493,178 @@ describe("PiAgentAdapter (SDK)", () => {
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
       expect(result.isError).toBe(true);
+    });
+  });
+
+  describe("MCP proxy tool turn", () => {
+    const script: AgentSessionEvent[] = [
+      assistantStart,
+      ame({
+        type: "toolcall_end",
+        contentIndex: 0,
+        toolCall: {
+          type: "toolCall",
+          id: "mcp_tc_1",
+          name: "mcp",
+          arguments: {
+            tool: "session_data_query_recent_sessions",
+            args: '{"days":7,"limit":25}',
+          },
+        },
+      }),
+      {
+        type: "tool_execution_end",
+        toolCallId: "mcp_tc_1",
+        toolName: "mcp",
+        result: {
+          content: [{ type: "text", text: '{"sessions":[]}' }],
+        },
+        isError: false,
+      } as AgentSessionEvent,
+      assistantEnd(200, 20),
+    ];
+
+    function makeMcpInput(): AdapterInput {
+      const input = makeInput("Review recent sessions");
+      input.agent.mcpServers = [
+        { name: "session-data", command: "node", args: ["server.js"] },
+      ];
+      return input;
+    }
+
+    it("emits canonical MCP use/result events for a proxy tool call", async () => {
+      const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
+      const events = await collectEvents(adapter.run(makeMcpInput()));
+
+      const toolUse = events.find(
+        (event) => event.type === "agent.mcp_tool_use",
+      ) as AgentMcpToolUseEvent;
+      expect(toolUse).toMatchObject({
+        toolUseId: "mcp_tc_1",
+        serverName: "session-data",
+        name: "query_recent_sessions",
+        input: { days: 7, limit: 25 },
+      });
+      expect(events.some((event) => event.type === "agent.tool_use")).toBe(false);
+
+      const result = events.find(
+        (event) => event.type === "agent.mcp_tool_result",
+      ) as AgentMcpToolResultEvent;
+      expect(result).toMatchObject({
+        toolUseId: "mcp_tc_1",
+        serverName: "session-data",
+        isError: false,
+      });
+      expect(result.content).toEqual([
+        { type: "text", text: '{"sessions":[]}' },
+      ]);
+      expect(events.some((event) => event.type === "agent.tool_result")).toBe(false);
+    });
+
+    it("keeps MCP discovery operations as ordinary proxy-tool events", async () => {
+      const discoveryScript: AgentSessionEvent[] = [
+        assistantStart,
+        ame({
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: {
+            type: "toolCall",
+            id: "mcp_search_1",
+            name: "mcp",
+            arguments: { search: "sessions" },
+          },
+        }),
+        {
+          type: "tool_execution_end",
+          toolCallId: "mcp_search_1",
+          toolName: "mcp",
+          result: "query_recent_sessions",
+          isError: false,
+        } as AgentSessionEvent,
+        assistantEnd(50, 5),
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(discoveryScript),
+      });
+      const events = await collectEvents(adapter.run(makeMcpInput()));
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.tool_use",
+          toolUseId: "mcp_search_1",
+          name: "mcp",
+          input: { search: "sessions" },
+        }),
+      );
+      expect(events.some((event) => event.type === "agent.mcp_tool_use")).toBe(
+        false,
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.tool_result",
+          toolUseId: "mcp_search_1",
+        }),
+      );
+      expect(
+        events.some((event) => event.type === "agent.mcp_tool_result"),
+      ).toBe(false);
+    });
+
+    it("keeps a recognized gateway action local when tool is also present", async () => {
+      const actionScript: AgentSessionEvent[] = [
+        assistantStart,
+        ame({
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: {
+            type: "toolCall",
+            id: "mcp_action_1",
+            name: "mcp",
+            arguments: {
+              action: "ui-messages",
+              tool: "session_data_query_recent_sessions",
+              args: '{"days":7}',
+            },
+          },
+        }),
+        {
+          type: "tool_execution_end",
+          toolCallId: "mcp_action_1",
+          toolName: "mcp",
+          result: "No completed MCP UI sessions",
+          isError: false,
+        } as AgentSessionEvent,
+        assistantEnd(20, 2),
+      ];
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(actionScript),
+      });
+      const events = await collectEvents(adapter.run(makeMcpInput()));
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.tool_use",
+          toolUseId: "mcp_action_1",
+          name: "mcp",
+          input: {
+            action: "ui-messages",
+            tool: "session_data_query_recent_sessions",
+            args: '{"days":7}',
+          },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.tool_result",
+          toolUseId: "mcp_action_1",
+        }),
+      );
+      expect(
+        events.some((event) => event.type === "agent.mcp_tool_use"),
+      ).toBe(false);
+      expect(
+        events.some((event) => event.type === "agent.mcp_tool_result"),
+      ).toBe(false);
     });
   });
 
@@ -638,7 +994,15 @@ describe("PiAgentAdapter (SDK)", () => {
     });
 
     it("emits one session.error when Pi exhausts retries with a provider error", async () => {
-      const providerFailure = (message: string): AgentSessionEvent =>
+      const providerFailure = (
+        message: string,
+        usage: {
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheWrite: number;
+        },
+      ): AgentSessionEvent =>
         ({
           type: "message_end",
           message: {
@@ -646,25 +1010,36 @@ describe("PiAgentAdapter (SDK)", () => {
             stopReason: "error",
             errorMessage: message,
             usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
+              ...usage,
+              totalTokens:
+                usage.input +
+                usage.output +
+                usage.cacheRead +
+                usage.cacheWrite,
               cost: { total: 0 },
             },
           },
         }) as never as AgentSessionEvent;
       const script: AgentSessionEvent[] = [
         assistantStart,
-        providerFailure("temporary provider failure"),
+        providerFailure("temporary provider failure", {
+          input: 11,
+          output: 1,
+          cacheRead: 2,
+          cacheWrite: 3,
+        }),
         {
           type: "agent_end",
           messages: [],
           willRetry: true,
         } as AgentSessionEvent,
         assistantStart,
-        providerFailure("provider blocked the final attempt"),
+        providerFailure("provider blocked the final attempt", {
+          input: 23,
+          output: 4,
+          cacheRead: 5,
+          cacheWrite: 6,
+        }),
         {
           type: "agent_end",
           messages: [],
@@ -685,6 +1060,21 @@ describe("PiAgentAdapter (SDK)", () => {
         message: "provider blocked the final attempt",
         code: "pi_agent_error",
       });
+      const eventTypes = events.map((event) => event.type);
+      const finalSpanEndIndex = eventTypes.lastIndexOf(
+        "span.model_request_end",
+      );
+      const finalErrorIndex = eventTypes.lastIndexOf("session.error");
+      const finalSpanEnd = events[
+        finalSpanEndIndex
+      ] as SpanModelRequestEndEvent;
+      expect(finalSpanEnd.usage).toEqual({
+        inputTokens: 34,
+        outputTokens: 4,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 6,
+      });
+      expect(finalSpanEndIndex).toBeLessThan(finalErrorIndex);
     });
 
     it("emits session.error when the session factory throws", async () => {
@@ -741,6 +1131,10 @@ describe("PiAgentAdapter (SDK)", () => {
       // the session's native abort(), which settles prompt() → closes the queue →
       // the for-await ends → run() completes. Without the fix run() would hang.
       let abortCalled = false;
+      let markPromptStarted!: () => void;
+      const promptStarted = new Promise<void>((resolve) => {
+        markPromptStarted = resolve;
+      });
       const adapter = new PiAgentAdapter({
         _sessionFactory: async (): Promise<PiSessionLike> => {
           let settlePrompt: (() => void) | undefined;
@@ -756,6 +1150,7 @@ describe("PiAgentAdapter (SDK)", () => {
             prompt() {
               return new Promise<void>((resolve) => {
                 settlePrompt = resolve;
+                markPromptStarted();
               });
             },
             abort() {
@@ -784,7 +1179,7 @@ describe("PiAgentAdapter (SDK)", () => {
       })();
 
       // Let the turn wedge, then interrupt.
-      await new Promise((r) => setTimeout(r, 10));
+      await promptStarted;
       controller.abort();
 
       await runPromise; // must resolve — proves the hang was broken.
@@ -927,6 +1322,39 @@ describe("PiAgentAdapter (SDK)", () => {
       expect(opts?.appendSystemPrompt).toEqual(["You are helpful."]);
       expect(opts?.additionalSkillPaths).toEqual([]);
       expect(opts?.noContextFiles).toBe(true);
+    });
+
+    it("tells the model to discover exact managed MCP proxy identifiers", async () => {
+      let opts: SessionFactoryArgs["resourceLoaderOptions"] | undefined;
+      const adapter = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            opts = args.resourceLoaderOptions;
+          },
+        ),
+      });
+      const input = makeInput("review recent sessions");
+      input.agent.mcpServers = [
+        { name: "session-data", command: "node", args: ["server.js"] },
+      ];
+
+      await collectEvents(adapter.run(input));
+
+      expect(opts?.appendSystemPrompt).toEqual([
+        "You are helpful.",
+        expect.stringMatching(/<managed_mcp>[\s\S]*"session-data"/),
+      ]);
+      const section = opts?.appendSystemPrompt[1] ?? "";
+      expect(section).toContain("`connect`");
+      expect(section).toContain('"session-data" -> "session_data_"');
+      expect(section).toContain("exact `tool` identifier");
+      expect(section).toContain("Do not guess or strip the server prefix");
+      expect(section).not.toContain("server.js");
+    });
+
+    it("does not inject an MCP prompt section without configured servers", () => {
+      expect(buildManagedMcpPromptSection(undefined)).toBe("");
     });
 
     it("assembles appendSystemPrompt (system first) + skillPaths per run()", async () => {
@@ -1091,6 +1519,105 @@ describe("PiAgentAdapter (SDK)", () => {
       // Tool id survived the event-log round-trip byte-for-byte.
       expect(toolCall?.id).toBe("tc_1");
       expect(toolResult.toolCallId).toBe("tc_1");
+    });
+
+    it("round-trips a canonical MCP turn back through Pi's generic gateway", async () => {
+      const turn1Script: AgentSessionEvent[] = [
+        assistantStart,
+        ame({
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: {
+            type: "toolCall",
+            id: "mcp_tc_1",
+            name: "mcp",
+            arguments: {
+              tool: "session_data_query_recent_sessions",
+              args: '{"days":7}',
+            },
+          },
+        }),
+        {
+          type: "tool_execution_end",
+          toolCallId: "mcp_tc_1",
+          toolName: "mcp",
+          result: '{"sessions":[]}',
+          isError: true,
+        } as AgentSessionEvent,
+        ame({ type: "text_start", contentIndex: 1 }),
+        ame({
+          type: "text_end",
+          contentIndex: 1,
+          content: "The query failed.",
+        }),
+        assistantEnd(10, 5),
+      ];
+      const adapter1 = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(turn1Script),
+      });
+      const input1 = makeInput("review recent sessions");
+      input1.agent.mcpServers = [
+        { name: "session-data", command: "node", args: ["server.js"] },
+      ];
+      const turn1Events = await collectEvents(adapter1.run(input1));
+
+      const canonical = new Set([
+        "agent.message",
+        "agent.mcp_tool_use",
+        "agent.mcp_tool_result",
+      ]);
+      const history: SessionEvent[] = [
+        {
+          id: "sevt_u1",
+          timestamp: "t",
+          type: "user.message",
+          data: {
+            content: [{ type: "text", text: "review recent sessions" }],
+          },
+        } as unknown as SessionEvent,
+        ...turn1Events.filter((event) => canonical.has(event.type)),
+      ];
+
+      let seenHistory: SessionFactoryArgs["historyMessages"] = [];
+      const adapter2 = new PiAgentAdapter({
+        _sessionFactory: fakeFactory(
+          [assistantStart, assistantEnd(1, 1)],
+          (args) => {
+            seenHistory = args.historyMessages;
+          },
+        ),
+      });
+      const input2 = makeInput("try again");
+      input2.agent.mcpServers = input1.agent.mcpServers;
+      input2.history = history;
+      await collectEvents(adapter2.run(input2));
+
+      expect(seenHistory.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "toolResult",
+        "assistant",
+      ]);
+      const assistantWithTool = seenHistory[1] as unknown as {
+        content: Array<Record<string, unknown>>;
+      };
+      expect(assistantWithTool.content).toContainEqual({
+        type: "toolCall",
+        id: "mcp_tc_1",
+        name: "mcp",
+        arguments: {
+          tool: "session_data_query_recent_sessions",
+          args: '{"days":7}',
+          server: "session-data",
+        },
+      });
+      expect(seenHistory[2]).toMatchObject({
+        role: "toolResult",
+        toolCallId: "mcp_tc_1",
+        toolName: "mcp",
+        content: [{ type: "text", text: '{"sessions":[]}' }],
+        isError: true,
+      });
     });
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileManager } from "./file-manager";
 import type { FileSource } from "@/lib/file-source";
@@ -71,6 +71,267 @@ describe("FileManager capability UI", () => {
   });
 });
 
+describe("FileManager uploads to a directory", () => {
+  function uploadSource(): FileSource {
+    return {
+      capabilities: { hierarchy: "nested", idleGated: true },
+      list: vi.fn(async () => [
+        { path: "assets/audio/existing.txt", isDir: false },
+        { path: "notes/readme.txt", isDir: false },
+      ]),
+      read: async (path) => ({ path, text: "hello", contentType: "text/plain", size: 5, isBinary: false }),
+      upload: vi.fn(async () => undefined),
+    };
+  }
+
+  function dragFiles() {
+    return {
+      files: [new File(["new file"], "new.txt", { type: "text/plain" })],
+      types: ["Files"],
+      dropEffect: "none",
+    };
+  }
+
+  function folderTransfer(file: File, readFile = (success: FileCallback) => success(file)) {
+    const placeholder = new File([], "recordings");
+    const leaf = { name: file.name, isFile: true, isDirectory: false, file: readFile };
+    const directory = (name: string, child: unknown) => ({
+      name, isFile: false, isDirectory: true,
+      createReader: () => {
+        let read = false;
+        return { readEntries: (success: (entries: unknown[]) => void) => {
+          success(read ? [] : [child]);
+          read = true;
+        } };
+      },
+    });
+    return {
+      files: [placeholder],
+      items: [{ kind: "file", getAsFile: () => placeholder, webkitGetAsEntry: () => directory("recordings", directory("tracks", leaf)) }],
+      types: ["Files"],
+      dropEffect: "none",
+    };
+  }
+
+  it("uploads a dropped folder's real files with their relative paths into the target directory", async () => {
+    const source = uploadSource();
+    render(<FileManager source={source} turnStatus="idle" />);
+    fireEvent.click(await screen.findByText("assets"));
+    const file = new File(["RIFF test audio"], "voice.wav", { type: "audio/wav" });
+
+    fireEvent.drop(screen.getByRole("button", { name: "audio" }), { dataTransfer: folderTransfer(file) });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(
+      [expect.objectContaining({ name: "recordings/tracks/voice.wav", type: "audio/wav", size: file.size })],
+      "assets/audio",
+    ));
+  });
+
+  it("locks uploads during a directory scan and keeps the drop destination when selection changes", async () => {
+    const source = uploadSource();
+    render(<FileManager source={source} turnStatus="idle" />);
+    await screen.findByText("assets");
+    const file = new File(["audio"], "voice.wav");
+    let complete!: FileCallback;
+    const transfer = folderTransfer(file, (success) => { complete = success; });
+
+    fireEvent.drop(screen.getByRole("button", { name: "Root directory /" }), { dataTransfer: transfer });
+    await waitFor(() => expect(complete).toBeDefined());
+    expect(source.upload).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Choose folder" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.drop(screen.getByText("Uploading…"), { dataTransfer: dragFiles() });
+    fireEvent.click(screen.getByText("notes"));
+    await act(async () => complete(file));
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(
+      [expect.objectContaining({ name: "recordings/tracks/voice.wav" })], undefined,
+    ));
+    expect(screen.getByTitle("Upload to /notes")).toBeTruthy();
+  });
+
+  it("does not upload a scanned folder if a Turn starts while reading it", async () => {
+    const source = uploadSource();
+    const view = render(<FileManager source={source} turnStatus="idle" />);
+    await screen.findByText("assets");
+    const file = new File(["audio"], "voice.wav");
+    let complete!: FileCallback;
+    fireEvent.drop(screen.getByRole("button", { name: "Root directory /" }), {
+      dataTransfer: folderTransfer(file, (success) => { complete = success; }),
+    });
+    await waitFor(() => expect(complete).toBeDefined());
+    view.rerender(<FileManager source={source} turnStatus="running" />);
+    await act(async () => complete(file));
+
+    expect(await screen.findByText("Agent 运行中，稍后重试")).toBeTruthy();
+    expect(source.upload).not.toHaveBeenCalled();
+  });
+
+  it("explains empty folders without sending a directory placeholder", async () => {
+    const source = uploadSource();
+    render(<FileManager source={source} turnStatus="idle" />);
+    await screen.findByText("assets");
+    fireEvent.drop(screen.getByRole("button", { name: "Root directory /" }), {
+      dataTransfer: {
+        types: ["Files"], files: [new File([], "empty")],
+        items: [{ kind: "file", getAsFile: () => new File([], "empty"), webkitGetAsEntry: () => ({
+          name: "empty", isFile: false, isDirectory: true,
+          createReader: () => ({ readEntries: (success: FileSystemEntriesCallback) => success([]) }),
+        }) }],
+      },
+    });
+
+    expect(await screen.findByText(/Empty folders cannot be uploaded/)).toBeTruthy();
+    expect(source.upload).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Choose folder" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("preserves the selected folder's hierarchy when using the folder picker", async () => {
+    const source = uploadSource();
+    const { container } = render(<FileManager source={source} turnStatus="idle" />);
+    fireEvent.click(await screen.findByText("assets"));
+    const file = new File(["audio"], "voice.wav", { type: "audio/wav" });
+    Object.defineProperty(file, "webkitRelativePath", { value: "recordings/tracks/voice.wav" });
+    fireEvent.change(container.querySelector('input[webkitdirectory]')!, { target: { files: [file] } });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(
+      [expect.objectContaining({ name: "recordings/tracks/voice.wav", size: file.size, type: file.type })],
+      "assets",
+    ));
+  });
+
+  it("highlights a collapsed nested folder and drops into its full path exactly once", async () => {
+    const source = uploadSource();
+    const view = render(<FileManager source={source} turnStatus="idle" />);
+    fireEvent.click(await screen.findByText("assets"));
+    const folder = screen.getByRole("button", { name: "audio" });
+    const dataTransfer = dragFiles();
+    const dragOver = createEvent.dragOver(folder, { dataTransfer });
+
+    fireEvent(folder, dragOver);
+
+    expect(dragOver.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe("copy");
+    expect(folder.className).toContain("ring-2");
+    const leave = createEvent.dragLeave(folder);
+    Object.defineProperty(leave, "relatedTarget", { value: folder.querySelector("span") });
+    fireEvent(folder, leave);
+    expect(folder.className).toContain("ring-2");
+    fireEvent.drop(folder, { dataTransfer });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(dataTransfer.files, "assets/audio"));
+    expect(await screen.findByText("existing.txt")).toBeTruthy();
+    expect(screen.getByTitle("Upload to /assets/audio")).toBeTruthy();
+    expect(folder.className).not.toContain("ring-2");
+    view.unmount();
+  });
+
+  it("uses the clicked folder for picker uploads even when another file is previewed", async () => {
+    const source = uploadSource();
+    const { container } = render(<FileManager source={source} turnStatus="idle" />);
+    fireEvent.click(await screen.findByText("notes"));
+    fireEvent.click(screen.getByText("readme.txt"));
+    await screen.findByText("hello");
+    fireEvent.click(screen.getByText("assets"));
+    expect(screen.getByTitle("Upload to /assets")).toBeTruthy();
+
+    const files = dragFiles().files;
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files } });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(files, "assets"));
+    await waitFor(() => expect(screen.queryByText("Uploading…")).toBeNull());
+    expect(screen.getByTitle("Upload to /assets")).toBeTruthy();
+  });
+
+  it("keeps the chosen upload folder when the selected file refreshes", async () => {
+    const source = uploadSource();
+    const view = render(<FileManager source={source} turnStatus="idle" refreshKey={0} />);
+    fireEvent.click(await screen.findByText("notes"));
+    fireEvent.click(screen.getByText("readme.txt"));
+    await screen.findByText("hello");
+    fireEvent.click(screen.getByText("assets"));
+
+    view.rerender(<FileManager source={source} turnStatus="idle" refreshKey={1} />);
+
+    await screen.findByText("hello");
+    expect(screen.getByTitle("Upload to /assets")).toBeTruthy();
+  });
+
+  it("drops to the root instead of the previously selected directory", async () => {
+    const source = uploadSource();
+    render(<FileManager source={source} turnStatus="idle" />);
+    fireEvent.click(await screen.findByText("notes"));
+    const dataTransfer = dragFiles();
+
+    fireEvent.drop(screen.getByRole("button", { name: "Root directory /" }), { dataTransfer });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(dataTransfer.files, undefined));
+    expect(screen.getByTitle("Upload to /")).toBeTruthy();
+  });
+
+  it("uses the root dropzone after clicking the root directory", async () => {
+    const source = uploadSource();
+    render(<FileManager source={source} turnStatus="idle" />);
+    fireEvent.click(await screen.findByText("notes"));
+    fireEvent.click(screen.getByRole("button", { name: "Root directory /" }));
+    const dataTransfer = dragFiles();
+
+    fireEvent.drop(screen.getByText("Drag files here or click to select"), { dataTransfer });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledExactlyOnceWith(dataTransfer.files, undefined));
+  });
+
+  it("ignores text drags", async () => {
+    const source = uploadSource();
+    render(<FileManager source={source} turnStatus="idle" />);
+    const folder = (await screen.findByText("assets")).closest("button")!;
+    const event = createEvent.dragOver(folder, { dataTransfer: { types: ["text/plain"], files: [] } });
+
+    fireEvent(folder, event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(folder.className).not.toContain("ring-2");
+    expect(source.upload).not.toHaveBeenCalled();
+  });
+
+  it("blocks file drops while a Turn is running without opening the file in the browser", async () => {
+    const source = uploadSource();
+    const view = render(<FileManager source={source} turnStatus="idle" />);
+    const folder = (await screen.findByText("assets")).closest("button")!;
+    const dataTransfer = dragFiles();
+    fireEvent.dragOver(folder, { dataTransfer });
+    view.rerender(<FileManager source={source} turnStatus="running" />);
+    expect(folder.className).not.toContain("ring-2");
+
+    for (const target of [folder, screen.getByRole("button", { name: "Root directory /" }), screen.getByText("Drag files here or click to select")]) {
+      const event = createEvent.drop(target, { dataTransfer });
+      fireEvent(target, event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+
+    expect(source.upload).not.toHaveBeenCalled();
+  });
+
+  it("blocks duplicate uploads until the in-flight upload finishes", async () => {
+    const source = uploadSource();
+    let finish!: () => void;
+    source.upload = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { container } = render(<FileManager source={source} turnStatus="idle" />);
+    const folder = (await screen.findByText("assets")).closest("button")!;
+    const dataTransfer = dragFiles();
+
+    fireEvent.drop(folder, { dataTransfer });
+    fireEvent.drop(folder, { dataTransfer });
+    fireEvent.drop(screen.getByText("Uploading…"), { dataTransfer });
+
+    await waitFor(() => expect(source.upload).toHaveBeenCalledTimes(1));
+    expect(container.querySelector<HTMLInputElement>('input[type="file"]')!.disabled).toBe(true);
+    fireEvent.click(screen.getByText("notes"));
+    await act(async () => finish());
+    await waitFor(() => expect(container.querySelector<HTMLInputElement>('input[type="file"]')!.disabled).toBe(false));
+    expect(screen.getByTitle("Upload to /notes")).toBeTruthy();
+  });
+});
+
 describe("FileManager Blob URL lifecycle", () => {
   const revokeObjectURL = vi.fn();
 
@@ -80,6 +341,23 @@ describe("FileManager Blob URL lifecycle", () => {
       configurable: true,
       value: revokeObjectURL,
     });
+  });
+
+  it("opens audio with native playback controls even when storage reports a generic MIME", async () => {
+    const source = sourceFor(
+      "recording.mp3",
+      { path: "recording.mp3", text: null, contentType: "application/octet-stream", size: 10, isBinary: true },
+      async () => "blob:audio-preview",
+    );
+    const view = render(<FileManager source={source} turnStatus="idle" />);
+    await openListedFile("recording.mp3");
+
+    const player = await screen.findByLabelText("recording.mp3");
+    expect(player.tagName).toBe("AUDIO");
+    expect(player.getAttribute("src")).toBe("blob:audio-preview");
+    expect(player.hasAttribute("controls")).toBe(true);
+    view.unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:audio-preview");
   });
 
   it("revokes a loaded preview Blob URL when the pane unmounts", async () => {

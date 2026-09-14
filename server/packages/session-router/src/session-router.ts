@@ -12,6 +12,7 @@ import type {
   SkillArtifactStore,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
+import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -55,6 +56,11 @@ const COMPLETE_TYPES_BY_STREAM_START: Readonly<Record<string, ReadonlySet<string
   "agent.tool_use_input_stream_start": new Set(["agent.tool_use", "agent.mcp_tool_use"]),
 };
 
+const SESSION_INTERRUPTED_MESSAGE = "Session interrupted";
+const SESSION_TERMINATED_MESSAGE = "Session terminated";
+const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
+const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS = 128;
+
 interface PendingStreamBlock {
   blockIndex: number;
   completeTypes: ReadonlySet<string>;
@@ -64,6 +70,11 @@ interface PendingStreamBlock {
 interface EquippedSkill {
   id: string;
   descriptor: SkillDescriptor;
+}
+
+interface ActiveSessionRun {
+  controller: AbortController;
+  terminating: boolean;
 }
 
 class PendingLeaseLostError extends Error {
@@ -160,6 +171,16 @@ export interface SessionRouterDeps {
   /** Bounded retry window when another Host currently owns the FIFO head. */
   pendingClaimRetryMinMs?: number;
   pendingClaimRetryMaxMs?: number;
+  /**
+   * Grace window for an Adapter to report final model usage after a user
+   * interrupt. Content and all other post-interrupt events are discarded.
+   */
+  interruptedAdapterDrainTimeoutMs?: number;
+  /**
+   * Second bound on post-interrupt draining, preventing a synchronously noisy
+   * Adapter from starving the timeout timer with an endless event sequence.
+   */
+  interruptedAdapterDrainMaxEvents?: number;
   /** Observe background retry failures without creating unhandled rejections. */
   onDrainError?: (failure: PendingRecoveryFailure) => void;
 }
@@ -200,8 +221,10 @@ export class SessionRouter {
   private readonly pendingClaimRenewIntervalMs: number;
   private readonly pendingClaimRetryMinMs: number;
   private readonly pendingClaimRetryMaxMs: number;
+  private readonly interruptedAdapterDrainTimeoutMs: number;
+  private readonly interruptedAdapterDrainMaxEvents: number;
   private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
-  private readonly activeSessions = new Map<string, AbortController>();
+  private readonly activeSessions = new Map<string, ActiveSessionRun>();
   private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly claimRetryAttempts = new Map<string, number>();
   private readonly claimHeartbeatStops = new Map<string, () => void>();
@@ -245,12 +268,28 @@ export class SessionRouter {
     this.pendingClaimRenewIntervalMs = deps.pendingClaimRenewIntervalMs ?? 10_000;
     this.pendingClaimRetryMinMs = deps.pendingClaimRetryMinMs ?? 100;
     this.pendingClaimRetryMaxMs = deps.pendingClaimRetryMaxMs ?? 5_000;
+    this.interruptedAdapterDrainTimeoutMs =
+      deps.interruptedAdapterDrainTimeoutMs ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS;
+    this.interruptedAdapterDrainMaxEvents =
+      deps.interruptedAdapterDrainMaxEvents ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS;
     this.onDrainError = deps.onDrainError;
     if (
       this.pendingClaimRenewIntervalMs <= 0 ||
       this.pendingClaimRenewIntervalMs >= this.pendingClaimLeaseMs
     ) {
       throw new RangeError("pending claim renew interval must be positive and shorter than its lease");
+    }
+    if (
+      !Number.isFinite(this.interruptedAdapterDrainTimeoutMs) ||
+      this.interruptedAdapterDrainTimeoutMs <= 0
+    ) {
+      throw new RangeError("interrupted Adapter drain timeout must be a positive finite number");
+    }
+    if (
+      !Number.isInteger(this.interruptedAdapterDrainMaxEvents) ||
+      this.interruptedAdapterDrainMaxEvents <= 0
+    ) {
+      throw new RangeError("interrupted Adapter drain max events must be a positive integer");
     }
   }
 
@@ -477,13 +516,18 @@ export class SessionRouter {
     // A direct request/recovery trigger supersedes a slower scheduled retry.
     this.clearClaimRetry(sessionId);
 
-    const abortController = new AbortController();
-    this.activeSessions.set(sessionId, abortController);
+    const activeRun: ActiveSessionRun = {
+      controller: new AbortController(),
+      terminating: false,
+    };
+    this.activeSessions.set(sessionId, activeRun);
 
     try {
-      await this.drainLoop(sessionId, agentConfig, abortController.signal);
+      await this.drainLoop(sessionId, agentConfig, activeRun.controller.signal);
     } finally {
-      this.activeSessions.delete(sessionId);
+      if (this.activeSessions.get(sessionId) === activeRun) {
+        this.activeSessions.delete(sessionId);
+      }
       this.wakeRequested.delete(sessionId);
 
       // Always inspect the durable queue at handoff. This covers the original
@@ -546,24 +590,15 @@ export class SessionRouter {
     return summary;
   }
 
-  /**
-   * Stop this Session's active Turn, if this process is running one.
-   *
-   * Returns whether a Turn was actually aborted, so a caller can be honest about
-   * having stopped nothing. The active-Turn controllers are per-process, so an
-   * interrupt aimed at a Turn running on another replica returns false rather
-   * than silently claiming success (issue #113). Queued input is deliberately
-   * left alone: an Interrupt ends the current Turn only.
-   */
   interrupt(sessionId: string): boolean {
-    const controller = this.activeSessions.get(sessionId);
-    if (!controller) {
+    const activeRun = this.activeSessions.get(sessionId);
+    if (!activeRun) {
       this.notifyIdleIfSettled();
       return false;
     }
     this.clearClaimRetry(sessionId);
     this.claimHeartbeatStops.get(sessionId)?.();
-    controller.abort(new DOMException("Session interrupted", "AbortError"));
+    activeRun.controller.abort(new DOMException(SESSION_INTERRUPTED_MESSAGE, "AbortError"));
     this.notifyIdleIfSettled();
     return true;
   }
@@ -574,7 +609,16 @@ export class SessionRouter {
    * closed files already belong to the Workspace and are retained.
    */
   async terminateSession(sessionId: string): Promise<void> {
-    this.interrupt(sessionId);
+    const activeRun = this.activeSessions.get(sessionId);
+    if (activeRun) {
+      // This mutable flag also covers interrupt→terminate races: AbortSignal's
+      // reason is immutable once aborted, so the later termination must still
+      // revoke the earlier interrupt's accounting-only drain permission.
+      activeRun.terminating = true;
+      this.clearClaimRetry(sessionId);
+      this.claimHeartbeatStops.get(sessionId)?.();
+      activeRun.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
+    }
     // Termination, unlike an idle user interrupt, intentionally cancels any
     // local recovery timer; the terminated queue is discarded by recovery.
     this.clearClaimRetry(sessionId);
@@ -913,6 +957,7 @@ export class SessionRouter {
         type: pendingEvent.type,
         data: pendingEvent.data,
         sessionThreadId: pendingEvent.sessionThreadId,
+        ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
         idempotencyKey: `pending:${pendingEvent.id}`,
         pendingFence,
       });
@@ -1042,10 +1087,14 @@ export class SessionRouter {
         data: runningEvent.data,
       });
 
-      // A Session stores an Agent snapshot for historical identity, but mutable
-      // Agent configuration is resolved per turn so system/tools/runtime and
-      // equipped-Skill membership edits apply to existing conversations.
-      const currentAgent = await this.resolveCurrentAgent(agentConfig);
+      // Ordinary conversations resolve mutable Agent configuration per Turn.
+      // A Loop occurrence is different: ADR-0007 makes the Agent snapshot
+      // captured in the same dispatch transaction part of that occurrence.
+      // Recovery must therefore use the durable Session snapshot even if the
+      // Agent changes after commit but before the pending input is claimed.
+      const currentAgent = claimedSession.loopId
+        ? claimedSession.agent
+        : await this.resolveCurrentAgent(agentConfig);
       if (leaseLost) return;
 
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
@@ -1162,22 +1211,66 @@ export class SessionRouter {
       const skillPaths = equippedSkills.map(({ descriptor }) => `/skills/${descriptor.name}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
 
-      const adapterInput = this.buildAdapterInput(
-        sessionId,
-        turnId,
-        promotedEvent,
-        currentAgent,
-        priorEvents,
-        sandbox,
-        appendSystemPrompt,
-        skillPaths,
-        skillDescriptors,
-        currentAgent.model,
-        // Thread the per-turn abort signal so the adapter can wire it to its
-        // runtime's native cancel (issue #84) — a user interrupt then unwedges a
-        // hung turn instead of locking the session forever.
-        turnController.signal,
-      );
+      let adapterInput: AdapterInput;
+      try {
+        adapterInput = this.buildAdapterInput(
+          sessionId,
+          turnId,
+          promotedEvent,
+          currentAgent,
+          priorEvents,
+          sandbox,
+          appendSystemPrompt,
+          skillPaths,
+          skillDescriptors,
+          currentAgent.model,
+          // Thread the per-turn abort signal so the adapter can wire it to its
+          // runtime's native cancel (issue #84) — a user interrupt then unwedges a
+          // hung turn instead of locking the session forever.
+          turnController.signal,
+        );
+      } catch (error) {
+        if (!(error instanceof ManagedMcpResolutionError)) throw error;
+        // Catalog/tenant refusals are durable policy decisions, not transient
+        // Adapter failures. Record one terminal Turn and acknowledge its input;
+        // retaining it would make every recovery scan retry forever.
+        const managedMcpError = {
+          message: "A managed MCP connection is unavailable for this Tenant",
+          code: "managed_mcp_unavailable",
+        };
+        const stored = await this.eventLogStore.append(sessionId, {
+          type: "session.error",
+          data: { error: managedMcpError },
+          sessionThreadId: "sthr_primary",
+          idempotencyKey: this.turnKey(
+            pendingEvent.id,
+            "managed_mcp_unavailable",
+          ),
+          pendingFence,
+        });
+        this.eventStreamHub.publish(sessionId, {
+          type: stored.type,
+          seq: stored.seq,
+          data: stored.data,
+        });
+        if (this.turnStreamStore) {
+          await this.turnStreamStore.reclaim(turnId);
+          if (!await this.setActiveTurnFenced(sessionId, {
+            turnId,
+            status: "idle",
+          })) {
+            leaseLost = true;
+            return;
+          }
+        }
+        if (!await this.completeTurn(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          pendingFence,
+        )) return;
+        continue;
+      }
 
       // The Adapter is a pure translator: it runs directly and routes any tool
       // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
@@ -1185,6 +1278,7 @@ export class SessionRouter {
       // session and is invisible to the router and the adapter alike.
       const adapter = this.resolveAdapter(currentAgent.runtime);
       const events = adapter.run(adapterInput);
+      const eventIterator = events[Symbol.asyncIterator]();
 
       // blockIndex increments on each stream_start, aligning a turn's deltas to
       // the full Event they roll up into (shared turnId + blockIndex).
@@ -1196,94 +1290,252 @@ export class SessionRouter {
       // repair) reads this instead of re-querying the log.
       const attemptStoredEvents: StoredEvent[] = [];
 
+      const persistCompleteEvent = async (event: SessionEvent): Promise<void> => {
+        const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
+          if (!block.completeTypes.has(event.type)) return false;
+          if (block.toolUseId === undefined) return true;
+          if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") {
+            return false;
+          }
+          return event.toolUseId === block.toolUseId;
+        };
+        // Prefer the latest matching start. A runtime may emit an empty stream
+        // lifecycle with no Complete Event; an older unmatched start must never
+        // steal the next real block's completion.
+        let pendingBlockIndex = -1;
+        for (let i = pendingStreamBlocks.length - 1; i >= 0; i--) {
+          if (matchesCompleteEvent(pendingStreamBlocks[i])) {
+            pendingBlockIndex = i;
+            break;
+          }
+        }
+        const pendingBlock = pendingBlockIndex === -1
+          ? undefined
+          : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
+        const completeEvent = pendingBlock
+          ? { ...event, turnId, blockIndex: pendingBlock.blockIndex }
+          : { ...event, turnId };
+        const stored = await this.eventLogStore.append(sessionId, {
+          type: completeEvent.type,
+          data: completeEvent,
+          sessionThreadId: "sthr_primary",
+          ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
+          idempotencyKey: this.turnKey(
+            pendingEvent.id,
+            `event:${durableEventIndex++}`,
+          ),
+          pendingFence,
+        });
+        attemptStoredEvents.push(stored);
+        this.eventStreamHub.publish(sessionId, {
+          type: stored.type,
+          seq: stored.seq,
+          data: stored.data,
+        });
+      };
+
       try {
-        for await (const event of events) {
-          // No abort check here on purpose: the abort signal's job is to end the
-          // *Adapter*, and this loop's job is only to forward what the Adapter
-          // yields. An Adapter that settles its Interrupt by emitting the
-          // half-written output (issue #110) must have that output persisted, and
-          // an Adapter that is truly wedged emits nothing for this loop to see.
-          if (isStreamEvent(event)) {
-            if (STREAM_START_TYPES.has(event.type)) {
-              blockIndex++;
-              pendingStreamBlocks.push({
-                blockIndex,
-                completeTypes: COMPLETE_TYPES_BY_STREAM_START[event.type],
-                toolUseId:
-                  event.type === "agent.tool_use_input_stream_start"
-                    ? event.toolUseId
-                    : undefined,
-              });
-            }
-            const currentBlock = blockIndex < 0 ? 0 : blockIndex;
+        type IteratorOutcome =
+          | { kind: "next"; result: IteratorResult<SessionEvent> }
+          | { kind: "error"; error: unknown };
+        type IteratorWaitOutcome =
+          | IteratorOutcome
+          | { kind: "aborted" }
+          | { kind: "timeout" };
+        const activeRunOwnsSignal = () => {
+          const activeRun = this.activeSessions.get(sessionId);
+          return activeRun?.controller.signal === signal && !activeRun.terminating;
+        };
+        const isUserInterruptDrain = () =>
+          !leaseLost &&
+          signal.aborted &&
+          activeRunOwnsSignal() &&
+          signal.reason instanceof DOMException &&
+          signal.reason.name === "AbortError" &&
+          signal.reason.message === SESSION_INTERRUPTED_MESSAGE;
 
-            // Transient: token-level deltas go to the per-turn Redis stream for
-            // reconnect backfill (never to PostgreSQL), tagged with turnId +
-            // blockIndex. The returned Redis entry id lets a reconnecting client
-            // dedup live vs. backfilled deltas exactly.
-            let deltaId: string | undefined;
-            if (this.turnStreamStore) {
-              deltaId = await this.turnStreamStore.appendDelta({
-                turnId,
-                blockIndex: currentBlock,
-                type: event.type,
-                data: event,
-              });
-            }
-
-            // Live: publish to in-process subscribers, carrying the same
-            // turnId + blockIndex (and the Redis entry id) so live and
-            // backfilled frames are identical and can be de-overlapped on
-            // reconnect.
-            this.eventStreamHub.publishChunk(sessionId, {
-              type: event.type,
-              data: event,
-              turnId,
-              blockIndex: currentBlock,
-              deltaId,
-            });
-          } else {
-            const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
-              if (!block.completeTypes.has(event.type)) return false;
-              if (block.toolUseId === undefined) return true;
-              if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") {
-                return false;
-              }
-              return event.toolUseId === block.toolUseId;
+        let abortObservedAt = turnController.signal.aborted ? Date.now() : undefined;
+        const nextOutcome = (): Promise<IteratorOutcome> => {
+          try {
+            return Promise.resolve(eventIterator.next()).then(
+              (result): IteratorOutcome => ({ kind: "next", result }),
+              (error): IteratorOutcome => ({ kind: "error", error }),
+            );
+          } catch (error) {
+            return Promise.resolve({ kind: "error", error });
+          }
+        };
+        const waitForNextOrAbort = (next: Promise<IteratorOutcome>): Promise<IteratorWaitOutcome> => {
+          if (turnController.signal.aborted) {
+            abortObservedAt ??= Date.now();
+            return Promise.resolve({ kind: "aborted" });
+          }
+          return new Promise<IteratorWaitOutcome>((resolve) => {
+            let settled = false;
+            const finish = (outcome: IteratorWaitOutcome) => {
+              if (settled) return;
+              settled = true;
+              turnController.signal.removeEventListener("abort", onAbort);
+              resolve(outcome);
             };
-            // Prefer the latest matching start. A runtime may emit an empty
-            // stream lifecycle with no Complete Event; an older unmatched start
-            // must never steal the next real block's completion.
-            let pendingBlockIndex = -1;
-            for (let i = pendingStreamBlocks.length - 1; i >= 0; i--) {
-              if (matchesCompleteEvent(pendingStreamBlocks[i])) {
-                pendingBlockIndex = i;
+            const onAbort = () => {
+              abortObservedAt ??= Date.now();
+              finish({ kind: "aborted" });
+            };
+            turnController.signal.addEventListener("abort", onAbort, { once: true });
+            void next.then(finish);
+          });
+        };
+        const waitForNextDuringDrain = (
+          next: Promise<IteratorOutcome>,
+        ): Promise<IteratorWaitOutcome> => {
+          const remainingMs = this.interruptedAdapterDrainTimeoutMs -
+            (Date.now() - (abortObservedAt ?? Date.now()));
+          if (remainingMs <= 0) return Promise.resolve({ kind: "timeout" });
+          return new Promise<IteratorWaitOutcome>((resolve) => {
+            let settled = false;
+            const finish = (outcome: IteratorWaitOutcome) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeout);
+              resolve(outcome);
+            };
+            const timeout = setTimeout(() => finish({ kind: "timeout" }), remainingMs);
+            void next.then(finish);
+          });
+        };
+
+        let pendingNext: Promise<IteratorOutcome> | undefined;
+        let postAbortEventsSeen = 0;
+        let abandonIterator = false;
+        try {
+          while (true) {
+            pendingNext ??= nextOutcome();
+
+            let outcome: IteratorWaitOutcome;
+            if (!turnController.signal.aborted) {
+              outcome = await waitForNextOrAbort(pendingNext);
+              if (outcome.kind === "aborted") {
+                // Keep the already-issued next() in flight. A user interrupt may
+                // let it resolve with final provider accounting; termination and
+                // lease loss are not allowed to persist anything from this run.
+                if (!isUserInterruptDrain()) {
+                  abandonIterator = true;
+                  break;
+                }
+                continue;
+              }
+            } else {
+              if (!isUserInterruptDrain()) {
+                abandonIterator = true;
+                break;
+              }
+              if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
+                abandonIterator = true;
+                break;
+              }
+              outcome = await waitForNextDuringDrain(pendingNext);
+              if (outcome.kind === "timeout") {
+                abandonIterator = true;
                 break;
               }
             }
-            const pendingBlock =
-              pendingBlockIndex === -1
-                ? undefined
-                : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
-            const completeEvent = pendingBlock
-              ? { ...event, turnId, blockIndex: pendingBlock.blockIndex }
-              : { ...event, turnId };
-            const stored = await this.eventLogStore.append(sessionId, {
-              type: completeEvent.type,
-              data: completeEvent,
-              sessionThreadId: "sthr_primary",
-              idempotencyKey: this.turnKey(
-                pendingEvent.id,
-                `event:${durableEventIndex++}`,
-              ),
-              pendingFence,
-            });
-            attemptStoredEvents.push(stored);
-            this.eventStreamHub.publish(sessionId, {
-              type: stored.type,
-              seq: stored.seq,
-              data: stored.data,
-            });
+
+            pendingNext = undefined;
+            if (outcome.kind === "error") throw outcome.error;
+            if (outcome.kind !== "next" || outcome.result.done) break;
+            const event = outcome.result.value;
+
+            if (turnController.signal.aborted) {
+              if (!isUserInterruptDrain()) {
+                abandonIterator = true;
+                break;
+              }
+              postAbortEventsSeen++;
+              if (event.type === "span.model_request_end" ||
+                  (event.type === "agent.message" && event.stopReason === "aborted")) {
+                // interrupt() stops the regular heartbeat. Revalidate and extend
+                // this exact generation immediately before the accounting write;
+                // pendingFence then enforces the same ownership atomically in PG.
+                const accountingLease = await this.renewPendingClaim(sessionId, claim);
+                if (!accountingLease) {
+                  leaseLost = true;
+                  turnController.abort(new PendingLeaseLostError());
+                  abandonIterator = true;
+                  break;
+                }
+                // terminateSession may race the renewal after a prior interrupt.
+                // Its mutable active-run flag revokes drain permission even though
+                // an already-aborted signal's original reason cannot be replaced.
+                if (!isUserInterruptDrain()) {
+                  abandonIterator = true;
+                  break;
+                }
+                await persistCompleteEvent(event);
+              }
+              if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
+                abandonIterator = true;
+                break;
+              }
+              continue;
+            }
+
+            if (isStreamEvent(event)) {
+              if (STREAM_START_TYPES.has(event.type)) {
+                blockIndex++;
+                pendingStreamBlocks.push({
+                  blockIndex,
+                  completeTypes: COMPLETE_TYPES_BY_STREAM_START[event.type],
+                  toolUseId:
+                    event.type === "agent.tool_use_input_stream_start"
+                      ? event.toolUseId
+                      : undefined,
+                });
+              }
+              const currentBlock = blockIndex < 0 ? 0 : blockIndex;
+
+              // Transient: token-level deltas go to the per-turn Redis stream for
+              // reconnect backfill (never to PostgreSQL), tagged with turnId +
+              // blockIndex. The returned Redis entry id lets a reconnecting client
+              // dedup live vs. backfilled deltas exactly.
+              let deltaId: string | undefined;
+              if (this.turnStreamStore) {
+                deltaId = await this.turnStreamStore.appendDelta({
+                  turnId,
+                  blockIndex: currentBlock,
+                  type: event.type,
+                  data: event,
+                });
+              }
+
+              // Live: publish to in-process subscribers, carrying the same
+              // turnId + blockIndex (and the Redis entry id) so live and
+              // backfilled frames are identical and can be de-overlapped on
+              // reconnect.
+              this.eventStreamHub.publishChunk(sessionId, {
+                type: event.type,
+                data: event,
+                turnId,
+                blockIndex: currentBlock,
+                deltaId,
+              });
+            } else {
+              await persistCompleteEvent(event);
+            }
+          }
+        } finally {
+          if (abandonIterator) {
+            // AsyncIterator.return() is advisory: a non-compliant Adapter may
+            // leave it queued behind the same hung next(). Never await it, and
+            // absorb either a synchronous throw or eventual rejection.
+            try {
+              const closeIterator = eventIterator.return;
+              if (closeIterator) {
+                void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
+              }
+            } catch {
+              // Best-effort closure only; Router completion remains bounded.
+            }
           }
         }
       } catch (err) {
@@ -1480,7 +1732,9 @@ export class SessionRouter {
         model,
         system: agentConfig.system,
         tools: agentConfig.tools,
-        mcpServers: agentConfig.mcpServers,
+        mcpServers: resolveManagedMcpServers(agentConfig.mcpServers, {
+          tenantId: agentConfig.tenantId,
+        }),
         skills: agentConfig.skills,
         // Per-call Host injections (ADR-0002): assembled Agent Files and the
         // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<skill-name>`

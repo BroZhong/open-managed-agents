@@ -15,6 +15,7 @@ import {
   Plus,
   FolderClosed,
   MessagesSquare,
+  Repeat2,
   MoreHorizontal,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -27,6 +28,7 @@ import {
   useSession,
   useAgentSessions,
   useCreateSession,
+  useLoopSessions,
   type Session,
 } from "@/lib/hooks/use-sessions"
 import {
@@ -36,6 +38,13 @@ import {
   type Workspace,
 } from "@/lib/hooks/use-workspaces"
 import { StatusBadge } from "@/components/status-badge"
+import {
+  useAgentLoops,
+  useRunLoop,
+  useUpdateLoop,
+  type Loop,
+} from "@/lib/hooks/use-loops"
+import { CreateLoopDialog } from "@/components/create-loop-dialog"
 
 const STORAGE_KEY = "oma_sidebar_collapsed"
 
@@ -272,10 +281,13 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
   const { data: agent } = useAgent(agentId)
   const { data: sessions } = useAgentSessions(agentId)
   const { data: workspaces } = useWorkspaces()
+  const { data: loops } = useAgentLoops(agentId)
   const createSession = useCreateSession()
   const createWorkspace = useCreateWorkspace()
 
   const [workspacesOpen, setWorkspacesOpen] = useState(true)
+  const [loopsOpen, setLoopsOpen] = useState(true)
+  const [createLoopOpen, setCreateLoopOpen] = useState(false)
   const [openWorkspaces, setOpenWorkspaces] = useState<Record<string, boolean>>({})
   // Inline "new named Workspace" input, toggled by the WORKSPACES header `+`.
   const [newWorkspaceName, setNewWorkspaceName] = useState<string | null>(null)
@@ -302,6 +314,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
   }
   const sessionsByWorkspace = new Map<string, Session[]>()
   for (const s of sessions ?? []) {
+    if (s.loopId) continue
     const list = sessionsByWorkspace.get(s.workspaceId) ?? []
     list.push(s)
     sessionsByWorkspace.set(s.workspaceId, list)
@@ -310,7 +323,9 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
     sessionsByWorkspace.has(w.id),
   )
   // Loose chats = sessions whose workspace is not a named one (anonymous).
-  const looseChats = (sessions ?? []).filter((s) => !namedById.has(s.workspaceId))
+  const looseChats = (sessions ?? []).filter(
+    (s) => !s.loopId && !namedById.has(s.workspaceId),
+  )
 
   function newChat() {
     createSession.mutate(agentId, {
@@ -370,6 +385,46 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
         </span>
         <span className="truncate">{agent?.name ?? "Agent"}</span>
       </Link>
+
+      {/* Loops are recurring instructions owned by this Agent. Each Loop
+          expands to the Sessions it created, separate from loose Sessions. */}
+      <div className="pt-2">
+        <div className="flex items-center pr-1">
+          <button
+            type="button"
+            onClick={() => setLoopsOpen((open) => !open)}
+            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400 hover:text-[var(--color-fg-muted)]"
+          >
+            {loopsOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            <Repeat2 className="h-3.5 w-3.5" />
+            <span>loops</span>
+          </button>
+          <Tooltip content="New Loop">
+            <button
+              type="button"
+              aria-label="New Loop"
+              onClick={() => setCreateLoopOpen(true)}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)]"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+        {loopsOpen && (
+          <div className="space-y-0.5 pl-2">
+            {(loops ?? []).length === 0 && (
+              <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
+            )}
+            {(loops ?? []).map((loop) => (
+              <LoopRow key={loop.id} loop={loop} />
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* workspaces — named Workspaces this Agent uses (collapsible).
           Note: the Agent config link is the header above; there is no separate
@@ -477,6 +532,140 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           ))}
         </div>
       </div>
+      <CreateLoopDialog
+        agentId={agentId}
+        open={createLoopOpen}
+        onOpenChange={setCreateLoopOpen}
+      />
+    </div>
+  )
+}
+
+function LoopRow({ loop }: { loop: Loop }) {
+  const [open, setOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const updateLoop = useUpdateLoop()
+  const runLoop = useRunLoop()
+  const {
+    data: sessions,
+    isLoading,
+    isError,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useLoopSessions(loop.id, open)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function onDown(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [menuOpen])
+
+  function toggleEnabled() {
+    updateLoop.mutate(
+      { id: loop.id, enabled: !loop.enabled },
+      {
+        onSuccess: (updated) => {
+          setMenuOpen(false)
+          toast.success(updated.enabled ? "Loop resumed" : "Loop paused")
+        },
+        onError: (error) => toast.error(error.message || "Failed to update Loop"),
+      },
+    )
+  }
+
+  function runNow() {
+    runLoop.mutate(loop.id, {
+      onSuccess: () => {
+        setMenuOpen(false)
+        setOpen(true)
+        toast.success("Loop started")
+      },
+      onError: (error) =>
+        toast.error(error.message || "Failed to start Loop Session"),
+    })
+  }
+
+  return (
+    <div>
+      <div className="group flex items-center rounded-lg text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left"
+        >
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="min-w-0 flex-1 truncate">{loop.name}</span>
+          {!loop.enabled && <span className="text-[10px] text-neutral-400">paused</span>}
+        </button>
+        <div ref={menuRef} className="relative">
+          <button
+            type="button"
+            aria-label={`Loop actions for ${loop.name}`}
+            onClick={() => setMenuOpen((value) => !value)}
+            className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 opacity-0 transition-opacity hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] group-hover:opacity-100 data-[open=true]:opacity-100"
+            data-open={menuOpen}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-6 z-30 w-32 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] py-1 shadow-md">
+              <button
+                type="button"
+                onClick={toggleEnabled}
+                disabled={updateLoop.isPending}
+                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+              >
+                {loop.enabled ? "Pause Loop" : "Resume Loop"}
+              </button>
+              <button
+                type="button"
+                onClick={runNow}
+                disabled={runLoop.isPending}
+                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+              >
+                Start now
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {open && (
+        <div className="space-y-0.5 pl-3">
+          {isLoading && (
+            <p className="px-2.5 py-1 text-xs text-neutral-400">Loading Sessions…</p>
+          )}
+          {isError && (
+            <p className="px-2.5 py-1 text-xs text-red-500">Could not load Sessions</p>
+          )}
+          {!isLoading && !isError && (sessions ?? []).length === 0 && (
+            <p className="px-2.5 py-1 text-xs text-neutral-400">No Sessions yet</p>
+          )}
+          {(sessions ?? []).map((session) => (
+            <SessionLink key={session.id} session={session} />
+          ))}
+          {hasNextPage && (
+            <button
+              type="button"
+              onClick={() => void fetchNextPage()}
+              disabled={isFetchingNextPage}
+              className="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-[var(--color-accent)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+            >
+              {isFetchingNextPage ? "Loading…" : "Load older Sessions"}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -46,6 +46,7 @@ export class ClaudeCodeAdapter implements Adapter {
     // Lifecycle events (session.status_running / session.status_idle) are owned
     // solely by the Host router, which persists exactly one of each per turn
     // (issue #83). The adapter yields only real content/errors.
+    let translator: SdkEventTranslator | undefined;
     try {
       // Convert input.history -> session file
       await eventsToSessionFile(input.history, input.sessionId, this.workDir);
@@ -85,7 +86,7 @@ export class ClaudeCodeAdapter implements Adapter {
         // 4. Call query function and pipe through translator
         const queryFn = this.getQueryFn();
         const stream = queryFn(queryOptions);
-        const translator = new SdkEventTranslator(input.turnId);
+        translator = new SdkEventTranslator(input.turnId);
 
         for await (const message of stream) {
           const events = translator.processMessage(message as SdkMessage);
@@ -108,6 +109,11 @@ export class ClaudeCodeAdapter implements Adapter {
         }
       }
     } catch (error: unknown) {
+      if (translator) {
+        for (const event of translator.finalize()) {
+          yield event;
+        }
+      }
       // 6. On error: yield session.error
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -233,6 +239,15 @@ export class ClaudeCodeAdapter implements Adapter {
       message: {
         id: message.id ?? generateEventId(),
         model: message.model ?? "claude",
+        usage: message.usage
+          ? {
+              input_tokens: message.usage.input_tokens ?? 0,
+              cache_read_input_tokens:
+                message.usage.cache_read_input_tokens ?? 0,
+              cache_creation_input_tokens:
+                message.usage.cache_creation_input_tokens ?? 0,
+            }
+          : undefined,
       },
     };
 

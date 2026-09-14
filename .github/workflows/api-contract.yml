@@ -1,0 +1,48 @@
+name: OpenAPI contract
+
+on:
+  pull_request:
+    paths:
+      - "server/packages/api/**"
+      - "server/pnpm-lock.yaml"
+      - "docs/openapi.json"
+      - "docs/apifox-auto-import.json"
+      - ".github/scripts/apifox-*.mjs"
+      - ".github/workflows/api-contract.yml"
+      - ".github/workflows/apifox-sync.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server/packages/api/**"
+      - "server/pnpm-lock.yaml"
+      - "docs/openapi.json"
+      - "docs/apifox-auto-import.json"
+      - ".github/scripts/apifox-*.mjs"
+      - ".github/workflows/api-contract.yml"
+      - ".github/workflows/apifox-sync.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+      - name: Install server dependencies
+        run: pnpm --dir server install --frozen-lockfile
+      - name: Verify generated OpenAPI artifact
+        run: pnpm openapi:check
+      - name: Test API behavior and OpenAPI route alignment
+        run: pnpm --dir server --filter @oma-server/api test
+      - name: Test the safe Apifox endpoint reconciler
+        run: node --test .github/scripts/apifox-*.test.mjs

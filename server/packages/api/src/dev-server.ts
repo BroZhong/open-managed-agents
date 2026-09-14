@@ -18,6 +18,7 @@ import {
 } from "@oma-server/sandbox";
 import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { createApp } from "./app.js";
+import { adapterProcessEnvFromHost, sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import type {
   Adapter,
   AdapterInput,
@@ -31,14 +32,12 @@ import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
-import {
-  adapterProcessEnvFromHost,
-  sandboxEnvPolicyFromHost,
-} from "./lib/sandbox-env.js";
+import { LoopScheduler } from "./lib/loop-scheduler.js";
+import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
 
 // Route ALL of Node's global fetch (including the Pi SDK's LLM calls) through an
-// egress proxy when configured. Alibaba Cloud HK egress is geo-blocked (403) by
-// OpenAI/Anthropic; the in-cluster sing-box proxy tunnels past it. Node's fetch
+// egress proxy when configured. The in-cluster sing-box proxy provides the
+// configured outbound route for external LLM providers. Node's fetch
 // (undici) ignores HTTP(S)_PROXY env, so we must install a global dispatcher.
 const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
 if (proxyUrl) {
@@ -127,7 +126,15 @@ class DevClaudeCodeAdapter implements Adapter {
             yield {
               id: generateEventId(), timestamp: generateTimestamp(),
               type: "span.model_request_end",
-              usage: { inputTokens: event.message.usage.input_tokens, outputTokens: event.message.usage.output_tokens },
+              usage: {
+                inputTokens:
+                  event.message.usage.input_tokens +
+                  (event.message.usage.cache_read_input_tokens ?? 0) +
+                  (event.message.usage.cache_creation_input_tokens ?? 0),
+                outputTokens: event.message.usage.output_tokens,
+                cacheReadTokens: event.message.usage.cache_read_input_tokens ?? 0,
+                cacheWriteTokens: event.message.usage.cache_creation_input_tokens ?? 0,
+              },
             } as SessionEvent;
           }
         }
@@ -219,18 +226,12 @@ class DevCodexAdapter implements Adapter {
           } as SessionEvent;
         }
 
-        if (event.type === "turn.completed" && event.usage) {
+        for (const terminalEvent of translateDevCodexTerminalEvent(event)) {
+          if (terminalEvent.type === "session.error") hasError = true;
           yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "span.model_request_end", usage: { inputTokens: event.usage.input_tokens || 0, outputTokens: event.usage.output_tokens || 0 },
-          } as SessionEvent;
-        }
-
-        if (event.type === "turn.failed" || event.type === "error") {
-          hasError = true;
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "session.error", error: { message: event.error?.message || event.message || "Codex error", code: "codex_error" },
+            id: generateEventId(),
+            timestamp: generateTimestamp(),
+            ...terminalEvent,
           } as SessionEvent;
         }
       }
@@ -355,10 +356,7 @@ async function main() {
   });
   console.log("OSS Workspace enabled; Sandbox mount checks required; Skills projected from Supabase");
 
-  // Deployment-owned CLI environment. Ordinary defaults remain overridable by
-  // an Agent; WW values are scoped to an explicit Agent-id allowlist and win
-  // over that Agent's persisted configuration. They remain visible to code in
-  // the allowed Bash sandbox, as required by the environment-variable contract.
+  // Host-owned values are scoped to allowed Agents and stay out of Agent records.
   const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
@@ -391,6 +389,13 @@ async function main() {
     console.error(`Pending recovery failed for ${failure.sessionId}:`, failure.error);
   }
 
+  const loopScheduler = new LoopScheduler({
+    loopStore: stores.loopStore,
+    sessionRouter,
+    pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000),
+  });
+  loopScheduler.start();
+
   const app = createApp({
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
@@ -402,6 +407,7 @@ async function main() {
     eventLogStore: stores.eventLogStore,
     pendingEventStore,
     workspaceStore: stores.workspaceStore,
+    loopStore: stores.loopStore,
     userStore: stores.userStore,
     artifactStore,
     eventStreamHub,
@@ -419,6 +425,7 @@ async function main() {
 
   const shutdown = createGracefulShutdown({
     server: httpServer,
+    stopBackgroundWork: () => loopScheduler.stop(),
     waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {

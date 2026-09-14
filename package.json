@@ -6,6 +6,8 @@
     "dev:server": "pnpm --dir server dev:memory",
     "dev:web": "pnpm --dir web dev",
     "dev:full": "pnpm --dir server dev:full",
+    "openapi:generate": "pnpm --dir server openapi:generate",
+    "openapi:check": "pnpm --dir server openapi:check",
     "test": "pnpm --dir adapter test",
     "typecheck": "pnpm --dir adapter typecheck",
     "e2e": "pnpm --dir adapter e2e",

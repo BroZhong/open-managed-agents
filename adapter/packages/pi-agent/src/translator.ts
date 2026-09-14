@@ -1,9 +1,10 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { SessionEvent } from "@open-managed-agents/adapter-core";
+import type { ContentBlock, SessionEvent } from "@open-managed-agents/adapter-core";
 import {
   generateEventId,
   generateTimestamp,
 } from "@open-managed-agents/adapter-core";
+import { identifyMcpInvocation } from "./mcp-gateway.js";
 
 /**
  * Translate Pi SDK `AgentSessionEvent`s (from `session.subscribe()`) into the
@@ -31,6 +32,15 @@ export class PiEventTranslator {
    * can compensate with exactly one message and never duplicate a finished one.
    */
   private emittedTextBlocks = 0;
+  private readonly mcpServerNames: string[];
+  private readonly mcpToolCalls = new Map<
+    string,
+    { serverName: string; name: string }
+  >();
+
+  constructor(mcpServerNames: readonly string[] = []) {
+    this.mcpServerNames = [...new Set(mcpServerNames.filter(Boolean))];
+  }
 
   processEvent(event: AgentSessionEvent): SessionEvent[] {
     const events: SessionEvent[] = [];
@@ -182,18 +192,36 @@ export class PiEventTranslator {
             } as SessionEvent);
             const toolCall = ame.toolCall;
             if (toolCall) {
-              events.push({
-                id: generateEventId(),
-                timestamp: generateTimestamp(),
-                type: "agent.tool_use",
-                toolUseId: toolCall.id,
-                name: toolCall.name,
-                input:
-                  typeof toolCall.arguments === "object" &&
-                  toolCall.arguments !== null
-                    ? (toolCall.arguments as Record<string, unknown>)
-                    : {},
-              } as SessionEvent);
+              const input = asRecord(toolCall.arguments);
+              const mcpInvocation = identifyMcpInvocation(
+                toolCall.name,
+                input,
+                this.mcpServerNames,
+              );
+              if (mcpInvocation) {
+                this.mcpToolCalls.set(toolCall.id, {
+                  serverName: mcpInvocation.serverName,
+                  name: mcpInvocation.name,
+                });
+                events.push({
+                  id: generateEventId(),
+                  timestamp: generateTimestamp(),
+                  type: "agent.mcp_tool_use",
+                  toolUseId: toolCall.id,
+                  serverName: mcpInvocation.serverName,
+                  name: mcpInvocation.name,
+                  input: mcpInvocation.input,
+                } as SessionEvent);
+              } else {
+                events.push({
+                  id: generateEventId(),
+                  timestamp: generateTimestamp(),
+                  type: "agent.tool_use",
+                  toolUseId: toolCall.id,
+                  name: toolCall.name,
+                  input,
+                } as SessionEvent);
+              }
             }
             break;
           }
@@ -206,26 +234,39 @@ export class PiEventTranslator {
         // matching `agent.tool_use` carries in its `toolUseId`. This makes the
         // event log self-describing — `toolCall.id` ↔ `toolResult.toolCallId`
         // survives a history rebuild — and lets consumers link result→use by id.
-        events.push({
+        const mcpInvocation = this.mcpToolCalls.get(event.toolCallId);
+        this.mcpToolCalls.delete(event.toolCallId);
+        const result = {
           id: generateEventId(),
           timestamp: generateTimestamp(),
-          type: "agent.tool_result",
           toolUseId: event.toolCallId,
-          content: [
-            {
-              type: "text",
-              text: normalizeResult(event.result),
-            },
-          ],
+          content: normalizeResult(event.result),
           isError: event.isError ?? false,
-        } as SessionEvent);
+        };
+        if (mcpInvocation) {
+          events.push({
+            ...result,
+            type: "agent.mcp_tool_result",
+            serverName: mcpInvocation.serverName,
+          } as SessionEvent);
+        } else {
+          events.push({
+            ...result,
+            type: "agent.tool_result",
+          } as SessionEvent);
+        }
         break;
       }
 
       case "message_end": {
         if (event.message.role === "assistant") {
           const message = event.message as {
-            usage?: { input: number; output: number };
+            usage?: {
+              input: number;
+              output: number;
+              cacheRead?: number;
+              cacheWrite?: number;
+            };
             stopReason?: string;
             errorMessage?: string;
             content?: unknown;
@@ -238,8 +279,11 @@ export class PiEventTranslator {
               timestamp: generateTimestamp(),
               type: "span.model_request_end",
               usage: {
-                inputTokens: usage.input,
+                inputTokens:
+                  usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0),
                 outputTokens: usage.output,
+                cacheReadTokens: usage.cacheRead ?? 0,
+                cacheWriteTokens: usage.cacheWrite ?? 0,
               },
             } as SessionEvent);
           }
@@ -352,6 +396,13 @@ export class PiEventTranslator {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
 /**
  * Extract the in-progress tool call at `contentIndex` from a streamed `partial`
  * AssistantMessage. During a `toolcall_*` stream the SDK fills
@@ -378,29 +429,29 @@ function toolCallAt(
 /**
  * The SDK's `tool_execution_end.result` is typed `any`. It may be a plain
  * string, an `AgentToolResult` (with a `content` array of text/image blocks),
- * or arbitrary JSON. Flatten it to a single text string for the canonical
- * `agent.tool_result` event.
+ * or arbitrary JSON. Preserve image bytes in canonical blocks so a subsequent
+ * turn can replay a sandbox image read through the durable event log.
  */
-function normalizeResult(result: unknown): string {
-  if (typeof result === "string") return result;
+function normalizeResult(result: unknown): ContentBlock[] {
+  if (typeof result === "string") return [{ type: "text", text: result }];
   if (result && typeof result === "object") {
     const content = (result as { content?: unknown }).content;
     if (Array.isArray(content)) {
-      const text = content
-        .map((block) => {
-          if (block && typeof block === "object" && "text" in block) {
-            return String((block as { text: unknown }).text ?? "");
-          }
-          return "";
-        })
-        .filter(Boolean)
-        .join("");
-      if (text) return text;
+      const blocks: ContentBlock[] = [];
+      for (const block of content) {
+        if (!block || typeof block !== "object") continue;
+        if (block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+          blocks.push({ type: "image", source: { type: "base64", mediaType: block.mimeType, data: block.data } });
+        } else if ("text" in block) {
+          blocks.push({ type: "text", text: String(block.text ?? "") });
+        }
+      }
+      if (blocks.length) return blocks;
     }
   }
   try {
-    return JSON.stringify(result);
+    return [{ type: "text", text: JSON.stringify(result) ?? String(result) }];
   } catch {
-    return String(result);
+    return [{ type: "text", text: String(result) }];
   }
 }

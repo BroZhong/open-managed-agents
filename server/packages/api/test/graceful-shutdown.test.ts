@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ServerType } from "@hono/node-server";
+import type { SessionRouter } from "@oma-server/session-router";
+import type { LoopStore } from "@oma-server/store";
 import { createGracefulShutdown } from "../src/lib/graceful-shutdown.js";
+import { LoopScheduler } from "../src/lib/loop-scheduler.js";
 
 function fakeServer(calls: string[]): ServerType {
   let closeCallback: (() => void) | undefined;
@@ -37,6 +40,9 @@ describe("createGracefulShutdown", () => {
     };
     const shutdown = createGracefulShutdown({
       server: fakeServer(calls),
+      stopBackgroundWork: async () => {
+        calls.push("loops.stop");
+      },
       waitForIdle,
       closeResources,
       logger,
@@ -45,14 +51,21 @@ describe("createGracefulShutdown", () => {
     const sigterm = shutdown("SIGTERM");
     const sigint = shutdown("SIGINT");
     expect(sigint).toBe(sigterm);
-    expect(calls).toEqual(["http.close", "router.waitForIdle:20000"]);
+    await vi.waitFor(() => {
+      expect(calls).toEqual(expect.arrayContaining([
+        "http.close",
+        "loops.stop",
+        expect.stringMatching(/^router\.waitForIdle:\d+$/),
+      ]));
+    });
 
     finishDrain(true);
     await sigterm;
 
     expect(calls).toEqual([
       "http.close",
-      "router.waitForIdle:20000",
+      "loops.stop",
+      expect.stringMatching(/^router\.waitForIdle:\d+$/),
       "http.closeAllConnections",
       "resources.close",
     ]);
@@ -88,6 +101,54 @@ describe("createGracefulShutdown", () => {
       );
       expect(calls).toEqual([
         "http.close",
+        "http.closeAllConnections",
+        "resources.close",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds a scheduler poll that never settles and still closes resources", async () => {
+    vi.useFakeTimers();
+    const calls: string[] = [];
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const scheduler = new LoopScheduler({
+      loopStore: {
+        dispatchDue: async () => new Promise(() => {}),
+      } as unknown as LoopStore,
+      sessionRouter: {} as SessionRouter,
+    });
+    void scheduler.runDue();
+    const shutdown = createGracefulShutdown({
+      server: fakeServer(calls),
+      stopBackgroundWork: () => scheduler.stop(),
+      waitForIdle: async (timeoutMs) => {
+        calls.push(`router.waitForIdle:${timeoutMs}`);
+        return true;
+      },
+      closeResources: async () => {
+        calls.push("resources.close");
+      },
+      timeoutMs: 25,
+      logger,
+    });
+
+    try {
+      const result = shutdown("SIGTERM");
+      await vi.advanceTimersByTimeAsync(25);
+      await result;
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Graceful shutdown timed out stopping background work after 25ms",
+      );
+      expect(calls).toEqual([
+        "http.close",
+        "router.waitForIdle:0",
         "http.closeAllConnections",
         "resources.close",
       ]);

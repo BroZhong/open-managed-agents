@@ -11,6 +11,25 @@ import {
 
 export type S3SkillArtifactStoreOptions = SupabaseStorageOptions;
 
+const SKILL_IO_CONCURRENCY = 8;
+
+async function mapInBatches<T, R>(
+  items: T[],
+  operation: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < items.length; offset += SKILL_IO_CONCURRENCY) {
+    const batch = await Promise.allSettled(
+      items.slice(offset, offset + SKILL_IO_CONCURRENCY).map(operation),
+    );
+    for (const result of batch) {
+      if (result.status === "rejected") throw result.reason;
+      results.push(result.value);
+    }
+  }
+  return results;
+}
+
 /**
  * S3 store for Skill file bodies, backed by Supabase Storage.
  *
@@ -54,12 +73,11 @@ export class S3SkillArtifactStore implements SkillArtifactStore {
 
   async getAll(tenantId: string, skillId: string): Promise<SkillFile[]> {
     const paths = await this.list(tenantId, skillId);
-    const files: SkillFile[] = [];
-    for (const path of paths) {
+    const files = await mapInBatches(paths, async (path) => {
       const body = await this.get(tenantId, skillId, path);
-      if (body) files.push({ path, body });
-    }
-    return files;
+      return body ? { path, body } : null;
+    });
+    return files.filter((file): file is SkillFile => file !== null);
   }
 
   async delete(tenantId: string, skillId: string, path: string): Promise<void> {
@@ -74,14 +92,14 @@ export class S3SkillArtifactStore implements SkillArtifactStore {
   }
 
   async deleteTree(tenantId: string, skillId: string): Promise<void> {
-    for (const path of await this.list(tenantId, skillId)) {
+    await mapInBatches(await this.list(tenantId, skillId), async (path) => {
       await this.client.deleteObject(this.key(tenantId, skillId, path));
-    }
+    });
   }
 
   async copyTree(tenantId: string, fromSkillId: string, toSkillId: string): Promise<void> {
-    for (const file of await this.getAll(tenantId, fromSkillId)) {
+    await mapInBatches(await this.getAll(tenantId, fromSkillId), async (file) => {
       await this.put(tenantId, toSkillId, file.path, file.body);
-    }
+    });
   }
 }

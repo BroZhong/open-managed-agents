@@ -31,6 +31,23 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
 );
 CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 
+CREATE TABLE IF NOT EXISTS ${s}.loops (
+  id                TEXT PRIMARY KEY,
+  tenant_id         TEXT NOT NULL,
+  agent_id          TEXT NOT NULL,
+  name              TEXT NOT NULL,
+  description       TEXT,
+  prompt            TEXT NOT NULL,
+  interval_minutes  INTEGER NOT NULL CHECK (interval_minutes >= 5),
+  enabled           BOOLEAN NOT NULL,
+  next_run_at       TIMESTAMPTZ NOT NULL,
+  last_run_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ NOT NULL,
+  updated_at        TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS loops_tenant_agent_idx ON ${s}.loops (tenant_id, agent_id, created_at);
+CREATE INDEX IF NOT EXISTS loops_due_idx ON ${s}.loops (next_run_at) WHERE enabled = true;
+
 -- Agent Files are small editable markdown documents (IDENTITY, SOUL, USER,
 -- MEMORY) that shape an Agent's persona/instructions, isolated per
 -- (tenant_id, agent_id). They are part of the Agent, never a Session's
@@ -64,6 +81,7 @@ CREATE TABLE IF NOT EXISTS ${s}.skills (
   owner_type      TEXT NOT NULL DEFAULT 'library',
   owner_id        TEXT NOT NULL DEFAULT '',
   source_skill_id TEXT,
+  created_at      TIMESTAMPTZ,
   updated_at      TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (tenant_id, skill_id)
 );
@@ -77,6 +95,9 @@ ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_type      TEXT NOT NULL D
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_id        TEXT NOT NULL DEFAULT '';
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS source_skill_id TEXT;
 UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND owner_id = '';
+
+-- Preserve unknown upload times for legacy Skills; updated_at is not creation time.
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
 
 -- Workspaces are tenant-owned; the OSS-backed home of a Session's
 -- artifacts. A user-supplied id is used as-is, else auto-generated. The
@@ -98,13 +119,16 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   title          TEXT,
   agent          JSONB NOT NULL,
   workspace_id   TEXT NOT NULL,
+  loop_id        TEXT,
   created_at     TIMESTAMPTZ NOT NULL,
   updated_at     TIMESTAMPTZ NOT NULL,
   terminated_at  TIMESTAMPTZ
 );
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);
+CREATE INDEX IF NOT EXISTS sessions_loop_id_idx ON ${s}.sessions (tenant_id, loop_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS ${s}.event_counters (
   session_id  TEXT PRIMARY KEY,
@@ -118,13 +142,21 @@ CREATE TABLE IF NOT EXISTS ${s}.events (
   data               JSONB,
   ts                 TIMESTAMPTZ NOT NULL,
   session_thread_id  TEXT NOT NULL,
+  api_key_id         TEXT,
   idempotency_key    TEXT,
   PRIMARY KEY (session_id, seq)
 );
 ALTER TABLE ${s}.events ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+ALTER TABLE ${s}.events ADD COLUMN IF NOT EXISTS api_key_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS events_session_idempotency_key_uidx
   ON ${s}.events (session_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS events_session_usage_idx
+  ON ${s}.events (session_id, seq)
+  WHERE type = 'span.model_request_end';
+CREATE INDEX IF NOT EXISTS events_api_key_usage_idx
+  ON ${s}.events (api_key_id, session_id, seq)
+  WHERE type = 'span.model_request_end' AND api_key_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   id                 TEXT PRIMARY KEY,
@@ -132,12 +164,14 @@ CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   type               TEXT NOT NULL,
   data               JSONB,
   session_thread_id  TEXT NOT NULL,
+  api_key_id         TEXT,
   arrived_at         TIMESTAMPTZ NOT NULL,
   seq                BIGSERIAL,
   claim_owner        TEXT,
   claim_expires_at   TIMESTAMPTZ,
   claim_generation   BIGINT NOT NULL DEFAULT 0
 );
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS api_key_id TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_owner TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
@@ -149,8 +183,10 @@ CREATE TABLE IF NOT EXISTS ${s}.api_keys (
   name        TEXT NOT NULL,
   key_hash    TEXT NOT NULL UNIQUE,
   prefix      TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL
+  created_at  TIMESTAMPTZ NOT NULL,
+  revoked_at  TIMESTAMPTZ
 );
+ALTER TABLE ${s}.api_keys ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS api_keys_tenant_id_idx ON ${s}.api_keys (tenant_id);
 
 CREATE TABLE IF NOT EXISTS ${s}.users (

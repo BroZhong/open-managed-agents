@@ -12,8 +12,8 @@ import {
 } from "@/lib/hooks/use-agents";
 import {
   LOCKED_RUNTIME,
-  LOCKED_MODEL,
-  LOCKED_MODEL_LABEL,
+  DEFAULT_MODEL,
+  PI_MODELS,
 } from "@/lib/agent-runtime";
 
 interface AgentFormDialogProps {
@@ -33,15 +33,9 @@ export function AgentFormDialog({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [system, setSystem] = useState("");
-
-  // Runtime and model are locked for the current deployment (issue #69):
-  // only the pi-agent runtime and a single model are supported, so they are
-  // fixed constants rather than form state — for both new and existing Agents.
-  // An Agent created with a different runtime/model is displayed and re-saved
-  // as the locked values, so the form never renders an option that no longer
-  // exists (which would break the disabled select).
+  const [model, setModel] = useState<string>(DEFAULT_MODEL);
+  const [sandboxImage, setSandboxImage] = useState("");
   const runtime = LOCKED_RUNTIME;
-  const model = LOCKED_MODEL;
 
   const createMutation = useCreateAgent();
   const updateMutation = useUpdateAgent();
@@ -52,10 +46,14 @@ export function AgentFormDialog({
         setName(agent.name);
         setDescription(agent.description ?? "");
         setSystem(agent.system);
+        setModel(agent.model);
+        setSandboxImage(agent.sandbox?.image ?? "");
       } else {
         setName("");
         setDescription("");
         setSystem("");
+        setModel(DEFAULT_MODEL);
+        setSandboxImage("");
       }
     }
   }, [open, agent]);
@@ -78,16 +76,13 @@ export function AgentFormDialog({
       system: system.trim() || defaultSystem,
       runtime,
       // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
-      // There is no opt-out in the UI; always send enabled: true. We do NOT
-      // send an `image`: for the E2B backend `image` is the sandbox template
-      // ID, and omitting it lets the Host default to SANDBOX_TEMPLATE
-      // (`code-interpreter`, the SandboxSet from #52). Sending a container-image
-      // string here would be used as a non-existent template → create 400s.
+      // `image` is an E2B template id; an empty choice uses SANDBOX_TEMPLATE.
       sandbox: {
         // Editing must preserve deployment-specific image/env settings (for
         // example sandbox VFS settings) that this form does not expose.
         ...agent?.sandbox,
         enabled: true,
+        image: sandboxImage || undefined,
       },
     };
 
@@ -159,11 +154,6 @@ export function AgentFormDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          {/*
-            Runtime and model are locked to the only combination the current
-            deployment supports (issue #69). They render as disabled selects so
-            the form shows what will be saved without offering other choices.
-          */}
           <Select
             id="agent-runtime"
             label="Runtime"
@@ -177,10 +167,29 @@ export function AgentFormDialog({
             id="agent-model"
             label="Model"
             value={model}
-            onChange={() => {}}
-            disabled
+            onChange={(e) => setModel(e.target.value)}
           >
-            <option value={LOCKED_MODEL}>{LOCKED_MODEL_LABEL}</option>
+            {PI_MODELS.map((choice) => (
+              <option key={choice.value} value={choice.value}>{choice.label}</option>
+            ))}
+            {agent && !PI_MODELS.some((choice) => choice.value === agent.model) && (
+              <option value={agent.model}>{`${agent.model} (current)`}</option>
+            )}
+          </Select>
+          <p className="text-xs text-neutral-500">
+            Thinking uses the highest level supported by the selected model.
+          </p>
+          <Select
+            id="agent-sandbox"
+            label="Sandbox"
+            value={sandboxImage}
+            onChange={(e) => setSandboxImage(e.target.value)}
+          >
+            <option value="">Server default</option>
+            <option value="auto-story">auto-story</option>
+            {agent?.sandbox?.image && agent.sandbox.image !== "auto-story" && (
+              <option value={agent.sandbox.image}>{`${agent.sandbox.image} (current)`}</option>
+            )}
           </Select>
           <Textarea
             id="agent-system"

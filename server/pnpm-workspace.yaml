@@ -1,2 +1,6 @@
 packages:
   - "packages/*"
+
+patchedDependencies:
+  '@earendil-works/pi-coding-agent@0.80.10': ../adapter/patches/@earendil-works__pi-coding-agent@0.80.10.patch
+  'e2b@2.24.0': patches/e2b@2.24.0.patch

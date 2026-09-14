@@ -16,6 +16,7 @@ import { PgPendingEventStore } from "./pending-event-store.js";
 import { PgSessionStore } from "./session-store.js";
 import { PgWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 import { PgUserStore } from "./user-store.js";
+import { PgLoopStore } from "./loop-store.js";
 
 export { createPgPool, pgConfigFromEnv, DEFAULT_SCHEMA } from "./connection.js";
 export type { Pool, PoolClient, PgConnectionConfig } from "./connection.js";
@@ -29,6 +30,7 @@ export { PgPendingEventStore } from "./pending-event-store.js";
 export { PgApiKeyStore } from "./api-key-store.js";
 export { PgUserStore } from "./user-store.js";
 export { PgWorkspaceMetadataStore } from "./workspace-metadata-store.js";
+export { PgLoopStore } from "./loop-store.js";
 
 export interface PgStores {
   agentStore: AgentStore;
@@ -45,6 +47,7 @@ export interface PgStores {
   apiKeyStore: PgApiKeyStore;
   userStore: UserStore;
   workspaceStore: WorkspaceMetadataStore;
+  loopStore: PgLoopStore;
 }
 
 export interface CreatePgStoresOpts {
@@ -69,5 +72,6 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     apiKeyStore: new PgApiKeyStore(pool),
     userStore: new PgUserStore(pool),
     workspaceStore: new PgWorkspaceMetadataStore(pool),
+    loopStore: new PgLoopStore(pool),
   };
 }

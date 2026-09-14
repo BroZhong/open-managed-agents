@@ -77,6 +77,7 @@ describe("PgPendingEventStore", () => {
       type: "user.message",
       data: { content: "hello" },
       sessionThreadId: "sthr_primary",
+      apiKeyId: "apikey_1",
     });
 
     const event = await store.dequeue("sess_1");
@@ -85,11 +86,25 @@ describe("PgPendingEventStore", () => {
     expect(event!.type).toBe("user.message");
     expect(event!.data).toEqual({ content: "hello" });
     expect(event!.sessionThreadId).toBe("sthr_primary");
+    expect(event!.apiKeyId).toBe("apikey_1");
     expect(event!.arrivedAt).toBeInstanceOf(Date);
     expect(event!.id).toBeDefined();
 
     const next = await store.dequeue("sess_1");
     expect(next).toBeNull();
+  });
+
+  it("preserves API key attribution through batch enqueue and claim", async () => {
+    await seedSession("sess_1");
+    await store.enqueueBatchIfSessionActive("sess_1", [{
+      type: "user.message",
+      data: { content: "hello" },
+      sessionThreadId: "sthr_primary",
+      apiKeyId: "apikey_batch",
+    }]);
+
+    const claim = await store.claim("sess_1", "host_1", 60_000);
+    expect(claim?.event.apiKeyId).toBe("apikey_batch");
   });
 
   it("dequeue returns events in FIFO order", async () => {

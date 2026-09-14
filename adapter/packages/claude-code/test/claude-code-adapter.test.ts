@@ -299,6 +299,90 @@ describe("ClaudeCodeAdapter", () => {
   });
 
   describe("SDK error", () => {
+    it("closes an in-flight model span when the SDK stream ends without message_delta", async () => {
+      const workDir = await createTmpDir();
+      const adapter = new ClaudeCodeAdapter({
+        apiKey: "test-key",
+        workDir,
+        _queryFn: fakeQueryFn([
+          {
+            type: "message_start",
+            message: {
+              id: "msg_truncated",
+              model: "claude-sonnet-4-20250514",
+              usage: {
+                input_tokens: 7,
+                cache_read_input_tokens: 2,
+                cache_creation_input_tokens: 1,
+              },
+            },
+          },
+        ]),
+      });
+
+      const events = await collectEvents(adapter.run(makeInput()));
+      const ends = events.filter(
+        (event) => event.type === "span.model_request_end",
+      );
+
+      expect(ends).toHaveLength(1);
+      expect(ends[0]).toEqual(
+        expect.objectContaining({
+          usage: {
+            inputTokens: 10,
+            outputTokens: 0,
+            cacheReadTokens: 2,
+            cacheWriteTokens: 1,
+          },
+        }),
+      );
+      expect(events.some((event) => event.type === "session.error")).toBe(false);
+    });
+
+    it("closes an in-flight model span with known input usage before session.error", async () => {
+      const workDir = await createTmpDir();
+      const adapter = new ClaudeCodeAdapter({
+        apiKey: "test-key",
+        workDir,
+        _queryFn: async function* () {
+          yield {
+            type: "message_start",
+            message: {
+              id: "msg_failed",
+              model: "claude-sonnet-4-20250514",
+              usage: {
+                input_tokens: 12,
+                cache_read_input_tokens: 3,
+                cache_creation_input_tokens: 4,
+              },
+            },
+          } satisfies SdkMessage;
+          throw new Error("stream disconnected");
+        },
+      });
+
+      const events = await collectEvents(adapter.run(makeInput()));
+      const ends = events.filter(
+        (event) => event.type === "span.model_request_end",
+      );
+
+      expect(ends).toHaveLength(1);
+      expect(ends[0]).toEqual(
+        expect.objectContaining({
+          usage: {
+            inputTokens: 19,
+            outputTokens: 0,
+            cacheReadTokens: 3,
+            cacheWriteTokens: 4,
+          },
+        }),
+      );
+      expect(events.slice(-2).map((event) => event.type)).toEqual([
+        "span.model_request_end",
+        "session.error",
+      ]);
+    });
+
     it("last event is session.error and no lifecycle events are emitted (issue #83)", async () => {
       const workDir = await createTmpDir();
       const adapter = new ClaudeCodeAdapter({

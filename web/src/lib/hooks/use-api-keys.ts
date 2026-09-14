@@ -1,11 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { apiFetch } from "@/lib/api"
+import {
+  tokenUsageFromResponse,
+  type TokenUsageResponse,
+  type TokenUsageSummary,
+} from "@/lib/token-usage"
 
 export interface ApiKeyListItem {
   id: string
   name: string
   prefix: string
   createdAt: string
+  revokedAt: string | null
+  usage: TokenUsageSummary
 }
 
 export interface ApiKeyCreateResponse {
@@ -16,8 +23,12 @@ export interface ApiKeyCreateResponse {
   createdAt: string
 }
 
+interface ApiKeyListResponseItem extends Omit<ApiKeyListItem, "usage"> {
+  usage?: TokenUsageResponse
+}
+
 interface ApiKeysResponse {
-  data: ApiKeyListItem[]
+  data: ApiKeyListResponseItem[]
   has_more: boolean
 }
 
@@ -25,7 +36,12 @@ export function useApiKeys() {
   return useQuery({
     queryKey: ["api-keys"],
     queryFn: () =>
-      apiFetch<ApiKeysResponse>("/v1/api-keys").then((r) => r.data),
+      apiFetch<ApiKeysResponse>("/v1/api-keys").then((r) =>
+        r.data.map((key) => ({
+          ...key,
+          usage: tokenUsageFromResponse(key.usage),
+        })),
+      ),
   })
 }
 
@@ -43,7 +59,7 @@ export function useCreateApiKey() {
   })
 }
 
-export function useDeleteApiKey() {
+export function useRevokeApiKey() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) =>

@@ -4,8 +4,10 @@ import {
   DefaultResourceLoader,
   formatSkillsForPrompt,
   getAgentDir,
+  ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +22,7 @@ import type {
   SessionEvent,
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
   generateTimestamp,
@@ -28,9 +30,14 @@ import {
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
-import { resolveModel } from "./model-resolver.js";
+import { mcpGatewayToolName } from "./mcp-gateway.js";
+import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
-import { createManagedSubagentToolsExtension } from "./subagent-tool-bridge.js";
+import {
+  createManagedSubagentToolsExtension,
+  createManagedSubagentUsageExtension,
+  type ManagedSubagentUsage,
+} from "./subagent-tool-bridge.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 
 /**
@@ -63,7 +70,8 @@ export interface PiResourceLoaderOptions {
   /**
    * Instruction text appended to Pi's system prompt, in order: the Agent's
    * `system` first (previously discarded — now wired through), then any
-   * Host-assembled `appendSystemPrompt` entries (e.g. Agent Files).
+   * Host-assembled `appendSystemPrompt` entries (e.g. Agent Files), followed
+   * by the managed-MCP discovery contract when servers are configured.
    */
   appendSystemPrompt: string[];
   /** Equipped-Skill root directories the Host provides (`additionalSkillPaths`). */
@@ -93,6 +101,10 @@ export interface SessionFactoryArgs {
   historyMessages: Message[];
   /** Resolved from `input.agent.model`; opaque Pi Model. */
   model: unknown;
+  /** The selected model's highest supported Pi thinking level. */
+  thinkingLevel: ModelThinkingLevel;
+  /** One per Turn; shared by model selection and execution, including auth. */
+  modelRuntime: ModelRuntime;
   /** True when a per-run() ToolExecutor was injected. */
   hasToolExecutor: boolean;
   /**
@@ -101,19 +113,27 @@ export interface SessionFactoryArgs {
    * the factory args so the adapter-seam test can assert them directly.
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
+  /** Receives each provider-reported child model request exactly once. */
+  onSubagentUsage(usage: ManagedSubagentUsage): void;
 }
 
 /**
  * Assemble the per-run() Pi resource-loader options from an Agent's config.
  * The Agent's `system` (historically discarded) leads the appended prompt,
- * followed by any Host-assembled `appendSystemPrompt` entries; equipped Skill
- * directories become `additionalSkillPaths`. Empty/whitespace-only entries are
- * dropped so a blank system prompt does not inject an empty block.
+ * followed by any Host-assembled `appendSystemPrompt` entries and the managed
+ * MCP discovery contract; equipped Skill directories become
+ * `additionalSkillPaths`. Empty/whitespace-only entries are dropped so a blank
+ * system prompt does not inject an empty block.
  */
 export function buildResourceLoaderOptions(
   agent: AdapterInput["agent"],
 ): PiResourceLoaderOptions {
-  const appendSystemPrompt = [agent.system, ...(agent.appendSystemPrompt ?? [])]
+  const mcpSection = buildManagedMcpPromptSection(agent.mcpServers);
+  const appendSystemPrompt = [
+    agent.system,
+    ...(agent.appendSystemPrompt ?? []),
+    mcpSection,
+  ]
     .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
   return {
     appendSystemPrompt,
@@ -121,6 +141,35 @@ export function buildResourceLoaderOptions(
     skillDescriptors: agent.skillDescriptors ?? [],
     noContextFiles: true,
   };
+}
+
+/**
+ * Tell the model how to discover exact proxy-tool identifiers for this Turn's
+ * Host-managed MCP servers. The extension registers its generic `mcp` gateway
+ * before per-Turn config is available, so its static description cannot safely
+ * enumerate these server names. Without this Host-owned hint, models tend to
+ * guess an unprefixed remote name that the gateway correctly rejects.
+ *
+ * Only already-resolved server names cross into the prompt. Connection
+ * definitions, environment placeholders, and secrets remain confined to the
+ * mode-0600 config file below.
+ */
+export function buildManagedMcpPromptSection(
+  servers: AdapterInput["agent"]["mcpServers"],
+): string {
+  const names = [
+    ...new Set((servers ?? []).map(({ name }) => name).filter(Boolean)),
+  ];
+  if (names.length === 0) return "";
+
+  return [
+    "<managed_mcp>",
+    `Configured MCP servers: ${names.map((name) => JSON.stringify(name)).join(", ")}.`,
+    `Default tool-id prefixes: ${names.map((name) => `${JSON.stringify(name)} -> ${JSON.stringify(mcpGatewayToolName(name, ""))}`).join(", ")}.`,
+    "Use the `mcp` gateway for these servers. Before the first remote call to a server, call `mcp` with `connect` set to its exact configured name; the result lists the callable prefixed tool identifiers and their schemas.",
+    "Call a remote tool only with the exact `tool` identifier returned by that result, pass its arguments as a JSON string in `args`, and set `server` to the exact configured name. Do not guess or strip the server prefix.",
+    "</managed_mcp>",
+  ].join("\n");
 }
 
 /**
@@ -167,6 +216,35 @@ interface MaterializedMcpConfig {
 }
 
 /**
+ * Derive a provider-affinity key that is stable, Pi-safe, and no longer than
+ * OpenAI's 64-character prompt_cache_key limit. OMA's Nano ID alphabet allows
+ * trailing `-` / `_`, which Pi rejects for explicit session ids, so the raw
+ * Host Session id cannot be passed through directly.
+ */
+function derivePiSessionId(omaSessionId: string): string {
+  const digest = createHash("sha256").update(omaSessionId).digest("hex");
+  return `oma-${digest.slice(0, 60)}`;
+}
+
+type PiRunQueueItem =
+  | { source: "parent"; event: AgentSessionEvent }
+  | { source: "subagent"; usage: ManagedSubagentUsage };
+
+function subagentUsageEvent(usage: ManagedSubagentUsage): SessionEvent {
+  return {
+    id: generateEventId(),
+    timestamp: generateTimestamp(),
+    type: "span.model_request_end",
+    usage: {
+      inputTokens: usage.input + usage.cacheRead + usage.cacheWrite,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
+    },
+  };
+}
+
+/**
  * Render the Agent-owned MCP list into the standard config shape consumed by
  * `pi-mcp-adapter`. The file is deliberately per Turn: two Agents may use the
  * same server name with different endpoints, so a shared `~/.pi/agent/mcp.json`
@@ -176,13 +254,11 @@ interface MaterializedMcpConfig {
  */
 function materializeMcpConfig(
   servers: AdapterInput["agent"]["mcpServers"],
-): MaterializedMcpConfig | undefined {
-  if (!servers || servers.length === 0) return undefined;
-
+): MaterializedMcpConfig {
   const dir = mkdtempSync(join(tmpdir(), "oma-pi-mcp-"));
   const path = join(dir, "mcp.json");
   const mcpServers = Object.fromEntries(
-    servers.map(({ name, ...definition }) => [name, definition]),
+    (servers ?? []).map(({ name, ...definition }) => [name, definition]),
   );
   writeFileSync(path, `${JSON.stringify({ mcpServers }, null, 2)}\n`, {
     encoding: "utf8",
@@ -229,29 +305,46 @@ export class PiAgentAdapter implements Adapter {
       // than being flattened into the prompt string. Empty on the first turn.
       const historyMessages = eventLogToAgentMessages(input.history);
 
-      const model = resolveModel(this.model ?? input.agent.model);
+      // Resolve custom models and auth through the same Pi runtime used by
+      // this Turn. Catalog refresh belongs to deployment; avoid network
+      // discovery on every managed Turn.
+      const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+      const model = resolveModel(this.model ?? input.agent.model, modelRuntime);
+      const thinkingLevel = highestThinkingLevel(model);
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
+
+      // The child extension reports usage while prompt() is running, outside
+      // the parent AgentSession subscription. Merge both push sources into one
+      // ordered queue so already-reported child usage drains before a later
+      // parent failure or abort closes the turn.
+      const queue = new EventQueue<PiRunQueueItem>();
 
       session = await this.createSession({
         input,
         prompt,
         historyMessages,
         model,
+        thinkingLevel,
+        modelRuntime,
         hasToolExecutor,
         resourceLoaderOptions,
+        onSubagentUsage(usage) {
+          queue.push({ source: "subagent", usage });
+        },
       });
 
-      const translator = new PiEventTranslator();
+      const translator = new PiEventTranslator(
+        input.agent.mcpServers?.map(({ name }) => name) ?? [],
+      );
 
       // Bridge the push-based subscribe() into a pull queue. The listener
       // enqueues each SDK event; the async generator below drains it. Only the
       // settlement of session.prompt() ends the queue: agent_end is an inner
       // agent-loop boundary, and Pi may compact + continue even after an
       // agent_end whose willRetry flag is false.
-      const queue = new EventQueue<AgentSessionEvent>();
       const unsubscribe = session.subscribe((event) => {
-        queue.push(event);
+        queue.push({ source: "parent", event });
       });
 
       // Wire the router's per-turn abort signal to Pi's native cancel (issue
@@ -295,8 +388,12 @@ export class PiAgentAdapter implements Adapter {
           },
         );
 
-        for await (const event of queue) {
-          for (const e of translator.processEvent(event)) yield e;
+        for await (const item of queue) {
+          if (item.source === "subagent") {
+            yield subagentUsageEvent(item.usage);
+            continue;
+          }
+          for (const e of translator.processEvent(item.event)) yield e;
         }
         // A provider failure is final only now, after prompt() has settled and
         // every retry/compaction continuation event has drained. A later
@@ -386,13 +483,15 @@ export class PiAgentAdapter implements Adapter {
         // shared capability registry.
         eventBus: createEventBus(),
         appendSystemPrompt,
-        // @tintinweb/pi-subagents creates a second SDK session. Give its
-        // pinned bridge access to this parent's exact Sandbox-backed tool
-        // definitions over this Turn's private EventBus for concurrency.
+        // The pinned @tintinweb/pi-subagents child path requires this parent's
+        // exact managed tools and fails closed when they are absent. Install
+        // both its capability responder and its independent usage listener only
+        // on that managed path; a native Pi run gets neither EventBus surface.
         ...(customTools
           ? {
               extensionFactories: [
-                createManagedSubagentToolsExtension(customTools),
+                createManagedSubagentUsageExtension(args.onSubagentUsage),
+                createManagedSubagentToolsExtension(customTools, args.modelRuntime),
                 createManagedSkillCommandExtension(skillDescriptors),
               ],
             }
@@ -410,19 +509,22 @@ export class PiAgentAdapter implements Adapter {
       // session_start. Set the per-Turn value on this loader's isolated runtime
       // instead of mutating process.argv/process.env (both are shared across
       // concurrent Agents).
-      if (mcpConfig) {
-        resourceLoader
-          .getExtensions()
-          .runtime.flagValues.set("mcp-config", mcpConfig.path);
-      }
+      resourceLoader
+        .getExtensions()
+        .runtime.flagValues.set("mcp-config", mcpConfig.path);
 
       // Seed the rebuilt structured history into an in-memory SessionManager
       // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
       // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
       // at construction, loading this history into the LLM context before the
       // first `prompt()`. `persist = false`, so nothing is written to disk — the
-      // event log stays the sole authoritative store.
-      const sessionManager = SessionManager.inMemory(cwd);
+      // event log stays the sole authoritative store. Derive a stable id from
+      // the Host Session so provider-level prompt caching keeps routing
+      // affinity across Turns even though each Turn still gets a fresh
+      // in-memory manager.
+      const sessionManager = SessionManager.inMemory(cwd, {
+        id: derivePiSessionId(args.input.sessionId),
+      });
       for (const message of args.historyMessages) {
         sessionManager.appendMessage(message);
       }
@@ -430,6 +532,8 @@ export class PiAgentAdapter implements Adapter {
       const { session } = await createAgentSession({
         cwd,
         model: args.model as never,
+        thinkingLevel: args.thinkingLevel,
+        modelRuntime: args.modelRuntime,
         sessionManager,
         resourceLoader,
         ...(customTools
@@ -466,7 +570,7 @@ export class PiAgentAdapter implements Adapter {
             try {
               await active.dispose();
             } finally {
-              mcpConfig?.cleanup();
+              mcpConfig.cleanup();
             }
           }
         },
@@ -478,7 +582,7 @@ export class PiAgentAdapter implements Adapter {
         // Startup failure is the primary error; best-effort disposal must not
         // replace it with a secondary cleanup failure.
       } finally {
-        mcpConfig?.cleanup();
+        mcpConfig.cleanup();
       }
       throw error;
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { ApiKeyStore } from "../src/types.js";
 import { InMemorySkillStore, InMemorySkillArtifactStore } from "@oma-server/store-memory";
@@ -32,6 +32,69 @@ Say hi.`;
 describe("Skill Library routes", () => {
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns a stable upload time and current metadata after online SKILL.md edits", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const uploadedAt = "2026-09-08T01:00:00.000Z";
+    vi.setSystemTime(new Date(uploadedAt));
+    const { app } = setup();
+    const uploaded = await (await app.request("/v1/skills", {
+      method: "POST",
+      body: uploadForm([{ path: "SKILL.md", content: SKILL_MD }]),
+    })).json();
+    const skill = uploaded.data[0];
+    expect(skill.createdAt).toBe(uploadedAt);
+    expect(skill.updatedAt).toBe(uploadedAt);
+
+    const editedAt = "2026-09-08T02:00:00.000Z";
+    vi.setSystemTime(new Date(editedAt));
+    const content = "---\nname: updated-greeter\ndescription: Updated greeting instructions\n---\nSay hello.";
+    const saved = await app.request(`/v1/skills/${skill.id}/files/content`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "SKILL.md", content }),
+    });
+    expect(saved.status).toBe(200);
+
+    const expected = {
+      id: skill.id,
+      name: "updated-greeter",
+      description: "Updated greeting instructions",
+      createdAt: uploadedAt,
+      updatedAt: editedAt,
+    };
+    const listed = await (await app.request("/v1/skills")).json();
+    expect(listed.data[0]).toMatchObject(expected);
+    const detail = await (await app.request(`/v1/skills/${skill.id}`)).json();
+    expect(detail).toMatchObject(expected);
+  });
+
+  it("keeps the current name when SKILL.md has no name and ignores other files' metadata", async () => {
+    const { app, skillStore } = setup();
+    const skill = await skillStore.create({ tenantId: "dev", name: "greeter", description: "Old description" });
+    const write = (path: string, content: string) => app.request(`/v1/skills/${skill.id}/files/content`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, content }),
+    });
+
+    expect((await write("SKILL.md", "# Greeting\nNew body description.")).status).toBe(200);
+    expect(await skillStore.getById(skill.id)).toMatchObject({
+      name: "greeter", description: "New body description.",
+    });
+
+    expect((await write("references/SKILL.md", "---\nname: nested\ndescription: Nested instructions\n---")).status).toBe(200);
+    expect(await skillStore.getById(skill.id)).toMatchObject({
+      name: "greeter", description: "New body description.",
+    });
+
+    expect((await write("SKILL.md", "# Heading only")).status).toBe(200);
+    expect(await skillStore.getById(skill.id)).toMatchObject({ name: "greeter", description: "" });
   });
 
   it("single folder with root SKILL.md → 1 Skill", async () => {

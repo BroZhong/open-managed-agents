@@ -4,6 +4,8 @@ export interface PendingEvent {
   type: string;
   data: unknown;
   sessionThreadId: string;
+  /** API key that accepted this input; absent for browser session tokens. */
+  apiKeyId?: string;
   arrivedAt: Date;
 }
 
@@ -11,6 +13,7 @@ export interface PendingEventEnqueueInput {
   type: string;
   data: unknown;
   sessionThreadId: string;
+  apiKeyId?: string;
 }
 
 /**

@@ -10,7 +10,7 @@ the user's additional requirement to use Skill names in projection paths.
 ## Standards
 
 One P1: `E2BSandboxClient.list` ran `find <root> -type f` without following the
-initial directory symlink. ADR-0007 and live CSI evidence establish that
+initial directory symlink. ADR-0008 and live CSI evidence establish that
 `/home/user/workspace` is a symlink into the mount. A temporary-filesystem
 reproduction returned no files with the original command and the saved file
 with `find -H`. This broke Pi `ls` and `find` operations despite successful

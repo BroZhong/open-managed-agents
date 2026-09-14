@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Plus, Trash2, Copy, Key } from "lucide-react"
+import { Plus, Ban, Copy, Key } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -9,13 +9,14 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import {
   useApiKeys,
   useCreateApiKey,
-  useDeleteApiKey,
+  useRevokeApiKey,
   type ApiKeyCreateResponse,
 } from "@/lib/hooks/use-api-keys"
+import { formatCacheHitRate, formatTokenCount } from "@/lib/token-usage"
 
 export default function ApiKeysPage() {
   const [createOpen, setCreateOpen] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<{
+  const [revokeTarget, setRevokeTarget] = useState<{
     id: string
     name: string
   } | null>(null)
@@ -29,14 +30,14 @@ export default function ApiKeysPage() {
         </Button>
       </PageHeader>
 
-      <ApiKeysList onDelete={(id, name) => setDeleteTarget({ id, name })} />
+      <ApiKeysList onRevoke={(id, name) => setRevokeTarget({ id, name })} />
 
       <CreateKeyDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      <DeleteKeyDialog
-        target={deleteTarget}
+      <RevokeKeyDialog
+        target={revokeTarget}
         onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
+          if (!open) setRevokeTarget(null)
         }}
       />
     </div>
@@ -44,9 +45,9 @@ export default function ApiKeysPage() {
 }
 
 function ApiKeysList({
-  onDelete,
+  onRevoke,
 }: {
-  onDelete: (id: string, name: string) => void
+  onRevoke: (id: string, name: string) => void
 }) {
   const { data: keys, isLoading } = useApiKeys()
 
@@ -77,13 +78,19 @@ function ApiKeysList({
   }
 
   return (
-    <div className="px-6 py-4">
-      <table className="w-full">
+    <div className="overflow-x-auto px-6 py-4">
+      <table className="w-full min-w-[70rem]">
         <thead>
           <tr className="border-b border-neutral-200 text-left text-xs font-medium uppercase tracking-wider text-neutral-500">
             <th className="pb-3 pr-4">Name</th>
             <th className="pb-3 pr-4">Key</th>
             <th className="pb-3 pr-4">Created</th>
+            <th className="pb-3 pr-4 text-right">Input</th>
+            <th className="pb-3 pr-4 text-right">Output</th>
+            <th className="pb-3 pr-4 text-right">Cache read</th>
+            <th className="pb-3 pr-4 text-right">Cache write</th>
+            <th className="pb-3 pr-4 text-right">Cache hit</th>
+            <th className="pb-3 pr-4">Status</th>
             <th className="pb-3 w-10" />
           </tr>
         </thead>
@@ -104,15 +111,43 @@ function ApiKeysList({
               <td className="py-3 pr-4 text-sm text-neutral-500">
                 {formatDate(apiKey.createdAt)}
               </td>
-              <td className="py-3">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onDelete(apiKey.id, apiKey.name)}
-                  aria-label={`Delete ${apiKey.name}`}
+              <td className="py-3 pr-4 text-right font-mono text-xs text-neutral-600">
+                {formatTokenCount(apiKey.usage.inputTokens)}
+              </td>
+              <td className="py-3 pr-4 text-right font-mono text-xs text-neutral-600">
+                {formatTokenCount(apiKey.usage.outputTokens)}
+              </td>
+              <td className="py-3 pr-4 text-right font-mono text-xs text-neutral-600">
+                {formatTokenCount(apiKey.usage.cacheReadTokens)}
+              </td>
+              <td className="py-3 pr-4 text-right font-mono text-xs text-neutral-600">
+                {formatTokenCount(apiKey.usage.cacheWriteTokens)}
+              </td>
+              <td className="py-3 pr-4 text-right font-mono text-xs text-neutral-600">
+                {formatCacheHitRate(apiKey.usage.cacheHitRate)}
+              </td>
+              <td className="py-3 pr-4">
+                <span
+                  className={
+                    apiKey.revokedAt
+                      ? "rounded-full bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-500"
+                      : "rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700"
+                  }
                 >
-                  <Trash2 className="h-4 w-4 text-red-500" />
-                </Button>
+                  {apiKey.revokedAt ? "Revoked" : "Active"}
+                </span>
+              </td>
+              <td className="py-3">
+                {!apiKey.revokedAt && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onRevoke(apiKey.id, apiKey.name)}
+                    aria-label={`Revoke ${apiKey.name}`}
+                  >
+                    <Ban className="h-4 w-4 text-red-500" />
+                  </Button>
+                )}
               </td>
             </tr>
           ))}
@@ -241,20 +276,20 @@ function CreateKeyDialog({
   )
 }
 
-function DeleteKeyDialog({
+function RevokeKeyDialog({
   target,
   onOpenChange,
 }: {
   target: { id: string; name: string } | null
   onOpenChange: (open: boolean) => void
 }) {
-  const deleteMutation = useDeleteApiKey()
+  const revokeMutation = useRevokeApiKey()
 
   const handleConfirm = () => {
     if (!target) return
-    deleteMutation.mutate(target.id, {
+    revokeMutation.mutate(target.id, {
       onSuccess: () => {
-        toast.success(`API key "${target.name}" deleted`)
+        toast.success(`API key "${target.name}" revoked`)
       },
       onError: (error) => {
         toast.error(error.message)
@@ -266,10 +301,10 @@ function DeleteKeyDialog({
     <ConfirmDialog
       open={target !== null}
       onOpenChange={onOpenChange}
-      title="Delete API Key"
-      description="Are you sure? This action cannot be undone. If this is the key you're currently using, you'll be logged out."
+      title="Revoke API Key"
+      description="This key will stop authenticating immediately. Its historical token usage will remain visible for auditing. This action cannot be undone."
       onConfirm={handleConfirm}
-      confirmLabel="Delete"
+      confirmLabel="Revoke"
     />
   )
 }

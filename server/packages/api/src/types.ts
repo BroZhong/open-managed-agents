@@ -1,5 +1,7 @@
 export interface TenantContext {
   tenantId: string;
+  /** Present only for x-api-key authentication, never browser Bearer tokens. */
+  apiKeyId?: string;
 }
 
 export interface ApiKeyStore {

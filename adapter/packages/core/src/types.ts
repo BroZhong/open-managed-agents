@@ -26,12 +26,22 @@ export interface ToolConfig {
   inputSchema: Record<string, unknown>;
 }
 
-export interface McpServerConfig {
+export interface HttpMcpServerConfig {
   name: string;
   url: string;
   transport?: "sse" | "streamable-http";
   headers?: Record<string, string>;
 }
+
+export interface StdioMcpServerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+export type McpServerConfig = HttpMcpServerConfig | StdioMcpServerConfig;
 
 // ─── User message ────────────────────────────────────────────────────────────
 
@@ -155,12 +165,23 @@ export interface SpanModelFirstTokenEvent extends BaseEvent {
   type: "span.model_first_token";
 }
 
+/**
+ * Provider-neutral token accounting for one model request.
+ *
+ * `inputTokens` is the complete prompt input, including cache reads/writes.
+ * The cache fields are subsets of that input total, which keeps
+ * `cacheReadTokens / inputTokens` meaningful across providers.
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 export interface SpanModelRequestEndEvent extends BaseEvent {
   type: "span.model_request_end";
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-  };
+  usage: TokenUsage;
 }
 
 export type SpanEvent =

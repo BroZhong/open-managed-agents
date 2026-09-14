@@ -11,6 +11,7 @@ interface ApiKeyRow {
   key_hash: string;
   prefix: string;
   created_at: Date;
+  revoked_at: Date | null;
 }
 
 function rowToApiKey(row: ApiKeyRow): ApiKey {
@@ -21,6 +22,7 @@ function rowToApiKey(row: ApiKeyRow): ApiKey {
     keyHash: row.key_hash,
     prefix: row.prefix,
     createdAt: new Date(row.created_at),
+    ...(row.revoked_at ? { revokedAt: new Date(row.revoked_at) } : {}),
   };
 }
 
@@ -48,7 +50,7 @@ export class PgApiKeyStore implements ApiKeyStore {
 
   async validate(rawKey: string): Promise<ApiKey | null> {
     const { rows } = await this.pool.query<ApiKeyRow>(
-      `SELECT * FROM api_keys WHERE key_hash = $1`,
+      `SELECT * FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
       [hashKey(rawKey)],
     );
     return rows[0] ? rowToApiKey(rows[0]) : null;
@@ -59,12 +61,12 @@ export class PgApiKeyStore implements ApiKeyStore {
    * middleware (which hashes the presented raw key itself). Beyond the
    * ApiKeyStore interface but mirrors InMemoryApiKeyStore.
    */
-  async findByKeyHash(keyHash: string): Promise<{ tenantId: string } | null> {
-    const { rows } = await this.pool.query<{ tenant_id: string }>(
-      `SELECT tenant_id FROM api_keys WHERE key_hash = $1`,
+  async findByKeyHash(keyHash: string): Promise<{ tenantId: string; apiKeyId: string } | null> {
+    const { rows } = await this.pool.query<{ id: string; tenant_id: string }>(
+      `SELECT id, tenant_id FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
       [keyHash],
     );
-    return rows[0] ? { tenantId: rows[0].tenant_id } : null;
+    return rows[0] ? { tenantId: rows[0].tenant_id, apiKeyId: rows[0].id } : null;
   }
 
   async list(tenantId: string): Promise<ApiKey[]> {
@@ -75,8 +77,13 @@ export class PgApiKeyStore implements ApiKeyStore {
     return rows.map(rowToApiKey);
   }
 
-  async delete(id: string): Promise<boolean> {
-    const result = await this.pool.query(`DELETE FROM api_keys WHERE id = $1`, [id]);
+  async revoke(tenantId: string, id: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE api_keys
+       SET revoked_at = $3
+       WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL`,
+      [tenantId, id, new Date()],
+    );
     return (result.rowCount ?? 0) === 1;
   }
 }

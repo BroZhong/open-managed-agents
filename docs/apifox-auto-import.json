@@ -1,0 +1,16 @@
+{
+  "name": "Open Managed Agents OpenAPI",
+  "sourceType": "openapi",
+  "interval": 180,
+  "enable": true,
+  "originType": "URL",
+  "sourceUrl": "http://localhost:3000/openapi.json",
+  "apiOverwriteMode": "BOTH",
+  "schemaOverwriteMode": "BOTH",
+  "docOverwriteMode": "BOTH",
+  "importBasePath": true,
+  "syncApiFolder": true,
+  "deleteUnmatchedResources": true,
+  "runOn": "TSHGR",
+  "runnerId": 0
+}

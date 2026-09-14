@@ -1,7 +1,7 @@
 # OSS Workspace deployment and recovery
 
 This is the operational handoff for issues #124–#127 and
-[ADR-0007](./adr/0007-oss-mounted-workspaces.md). The application remains on its
+[ADR-0008](./adr/0008-oss-mounted-workspaces.md). The application remains on its
 existing infrastructure: PostgreSQL, Redis, Supabase Skills storage, proxy and
 application namespace are unchanged. Workspace files use Shanghai OSS and
 execution uses the separate Shanghai Sandbox cluster. Preparing these files

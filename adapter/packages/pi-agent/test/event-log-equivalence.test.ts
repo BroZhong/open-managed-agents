@@ -84,6 +84,40 @@ function toolResult(
   } as unknown as SessionEvent;
 }
 
+function mcpToolUse(
+  toolUseId: string,
+  serverName: string,
+  name: string,
+  input: Record<string, unknown>,
+): SessionEvent {
+  return {
+    id: "sevt_mcp_tu",
+    timestamp: "2026-01-01T00:00:02.000Z",
+    type: "agent.mcp_tool_use",
+    toolUseId,
+    serverName,
+    name,
+    input,
+  } as unknown as SessionEvent;
+}
+
+function mcpToolResult(
+  toolUseId: string,
+  serverName: string,
+  text: string,
+  isError = false,
+): SessionEvent {
+  return {
+    id: "sevt_mcp_tr",
+    timestamp: "2026-01-01T00:00:03.000Z",
+    type: "agent.mcp_tool_result",
+    toolUseId,
+    serverName,
+    content: [{ type: "text", text }],
+    isError,
+  } as unknown as SessionEvent;
+}
+
 // ─── Path B: run our messages through the SDK's own resolver ──────────────────
 
 /**
@@ -108,6 +142,7 @@ interface NormalizedMessage {
   role: string;
   content: unknown;
   toolCallId?: string;
+  toolName?: string;
   isError?: boolean;
   provider?: string;
   api?: string;
@@ -124,6 +159,7 @@ function normalize(messages: Message[]): NormalizedMessage[] {
     };
     // Tool-result pairing key + error flag are semantic; keep when present.
     if ("toolCallId" in anyM) out.toolCallId = anyM.toolCallId as string;
+    if ("toolName" in anyM) out.toolName = anyM.toolName as string;
     if ("isError" in anyM) out.isError = anyM.isError as boolean;
     // Assistant origin — must survive both paths (drives isSameModel).
     if ("provider" in anyM) out.provider = anyM.provider as string;
@@ -166,6 +202,46 @@ describe("eventLogToAgentMessages ≡ Pi SDK session resolver (ADR-0003)", () =>
     const assistant = rebuilt[1] as unknown as { content: { type: string; id?: string }[] };
     expect(assistant.content.map((b) => b.type)).toEqual(["text", "toolCall"]);
     expect(assistant.content.find((b) => b.type === "toolCall")?.id).toBe("tc_1");
+  });
+
+  it("a canonical MCP turn resolves as Pi's generic gateway call", () => {
+    const rebuilt = assertEquivalent([
+      userMessage("review recent sessions"),
+      agentMessage("Querying."),
+      mcpToolUse(
+        "mcp_tc_1",
+        "session-data",
+        "query_recent_sessions",
+        { days: 7 },
+      ),
+      mcpToolResult(
+        "mcp_tc_1",
+        "session-data",
+        '{"sessions":[]}',
+        true,
+      ),
+    ]);
+
+    const assistant = rebuilt[1] as unknown as {
+      content: Array<Record<string, unknown>>;
+    };
+    expect(assistant.content).toContainEqual({
+      type: "toolCall",
+      id: "mcp_tc_1",
+      name: "mcp",
+      arguments: {
+        tool: "session_data_query_recent_sessions",
+        args: '{"days":7}',
+        server: "session-data",
+      },
+    });
+    expect(rebuilt[2]).toMatchObject({
+      role: "toolResult",
+      toolCallId: "mcp_tc_1",
+      toolName: "mcp",
+      content: [{ type: "text", text: '{"sessions":[]}' }],
+      isError: true,
+    });
   });
 
   it("multi-turn conversation with several tool calls is equivalent", () => {

@@ -1,5 +1,8 @@
 packages:
-  - "packages/*"
+  - packages/*
 
 onlyBuiltDependencies:
   - esbuild
+
+patchedDependencies:
+  '@earendil-works/pi-coding-agent@0.80.10': patches/@earendil-works__pi-coding-agent@0.80.10.patch

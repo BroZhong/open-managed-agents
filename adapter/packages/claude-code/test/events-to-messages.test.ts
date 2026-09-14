@@ -326,7 +326,17 @@ describe("eventsToMessages — message reconstruction from events", () => {
         { id: "e5", timestamp: "t5", type: "agent.message_chunk", text: "Hi" },
         { id: "e6", timestamp: "t6", type: "agent.message_stream_end" },
         { id: "e7", timestamp: "t7", type: "agent.message", content: [{ type: "text", text: "Hi" }] },
-        { id: "e8", timestamp: "t8", type: "span.model_request_end", usage: { inputTokens: 10, outputTokens: 5 } },
+        {
+          id: "e8",
+          timestamp: "t8",
+          type: "span.model_request_end",
+          usage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        },
         { id: "e9", timestamp: "t9", type: "session.status_idle" },
       ];
 

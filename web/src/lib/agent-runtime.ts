@@ -1,19 +1,11 @@
-// Agent runtime/model lock (issue #69).
-//
-// The current deployment only supports the `pi-agent` runtime and a single
-// model. The agent create/edit form must not offer anything else, so the
-// runtime and model are fixed here rather than chosen in the UI. This is a
-// frontend-only constraint: the backend contract is unchanged, the form just
-// always sends these values.
-
-/** The only runtime the current deployment supports. */
+/** Pi remains the managed runtime; its configured models are selectable. */
 export const LOCKED_RUNTIME = "pi-agent";
 
-/**
- * The only model the current deployment supports. Verified present in the
- * pi-ai model catalog (openai-codex provider, gpt-5.5).
- */
-export const LOCKED_MODEL = "openai-codex/gpt-5.5";
+/** Provider/model ids mirror deploy/pi-models.json and the local Pi config. */
+export const PI_MODELS = [
+  { value: "kimi-coding-plan/k3", label: "K3" },
+  { value: "openai-codex/gpt-6-astra", label: "GPT-6 Astra" },
+  { value: "openai-codex/gpt-5.6-sol", label: "GPT-5.6 Sol" },
+] as const;
 
-/** Human-readable label for {@link LOCKED_MODEL}, shown in the locked select. */
-export const LOCKED_MODEL_LABEL = "GPT 5.5 (Codex)";
+export const DEFAULT_MODEL = "openai-codex/gpt-5.6-sol";

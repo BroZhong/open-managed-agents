@@ -1,4 +1,4 @@
-# ADR-0007: Direct OSS-mounted Workspaces
+# ADR-0008: Direct OSS-mounted Workspaces
 
 ## Status
 

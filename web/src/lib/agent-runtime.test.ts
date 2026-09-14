@@ -1,16 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { LOCKED_RUNTIME, LOCKED_MODEL, LOCKED_MODEL_LABEL } from "./agent-runtime";
+import { LOCKED_RUNTIME, DEFAULT_MODEL, PI_MODELS } from "./agent-runtime";
 
-describe("agent-runtime lock (issue #69)", () => {
-  it("locks the runtime to pi-agent", () => {
+describe("Pi Agent models", () => {
+  it("uses Pi with the local default model", () => {
     expect(LOCKED_RUNTIME).toBe("pi-agent");
+    expect(DEFAULT_MODEL).toBe("openai-codex/gpt-5.6-sol");
   });
 
-  it("locks the model to openai-codex/gpt-5.5", () => {
-    expect(LOCKED_MODEL).toBe("openai-codex/gpt-5.5");
-  });
-
-  it("has a human-readable label for the locked model", () => {
-    expect(LOCKED_MODEL_LABEL).toBeTruthy();
+  it("offers the three configured provider/model selections", () => {
+    expect(PI_MODELS).toEqual([
+      { value: "kimi-coding-plan/k3", label: "K3" },
+      { value: "openai-codex/gpt-6-astra", label: "GPT-6 Astra" },
+      { value: "openai-codex/gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    ]);
   });
 });

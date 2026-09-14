@@ -1,23 +1,43 @@
-# Existing application Server + Web in oma-infra. This change does not migrate
-# the application cluster, PostgreSQL, Redis, Supabase Skills storage or proxy.
-# Workspace files use Shanghai OSS; remote Sandboxes use the Shanghai E2B
-# endpoint declared below. Apply only during the coordinated maintenance switch
-# in docs/oss-workspace-deployment.md, using the explicit APPLICATION kubeconfig.
-# The separate Shanghai Sandbox manifests require their own explicit kubeconfig.
+# Managed WW remains off by default. To enable it, provision its Secret first
+# (kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra create secret generic ...),
+# then configure all three variables together and restart the Host:
+# DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL, DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS,
+# DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN (from oma-secrets OPENGROVE_WW_ACCESS_TOKEN).
+# The auto-story per-Agent Secret is a separate existing configuration.
+# Open Managed Agents Server + Web on the `agent-platform` ACS cluster in
+# cn-shanghai. Application resources live in `oma-infra`; the ACK-managed
+# sandbox control plane and warm pools live in `sandbox-system`.
 #
-# Before the approved switch, provision these keys through the existing secret
-# management process in oma-infra/oma-secrets (never commit or print values):
-#   PG_PASSWORD, REDIS_PASSWORD, SUPABASE_SERVICE_KEY,
-#   WORKSPACE_OSS_ACCESS_KEY_ID, WORKSPACE_OSS_ACCESS_KEY_SECRET,
-#   E2B_API_KEY (the Shanghai gateway key), DEFAULT_SANDBOX_VFS_TOKEN.
-# WORKSPACE_OSS_STS_TOKEN is optional for temporary Host credentials. It is not
-# the Sandbox's Agent Identity token and is not automatically refreshed by this
-# environment-based Host configuration. Existing unused Secret keys need not be
-# deleted during this storage switch.
+# This file owns the OMA ConfigMap, Deployments, Services, and public Ingress.
+# Redis, sing-box, the ALB controller, and the ACK sandbox-manager installation
+# already exist in the cluster and are not created here. Secrets are injected
+# at runtime and are never baked into an image.
 #
-# The OpenGrove WW integration is OFF in this manifest by default; enabling it
-# is a separate all-or-nothing step (see "OpenGrove WW" below). Do not add
-# OPENGROVE_WW_ACCESS_TOKEN to the command above in isolation.
+# OMA_SERVER_IMAGE and OMA_WEB_IMAGE are release-time placeholders. Replace
+# both with immutable images from
+# registry-vpc.cn-shanghai.aliyuncs.com/welltop before applying this manifest.
+#
+# Create the secret first (values NOT committed):
+# Omit ALIYUN_SUPABASE_INSTANCE when instance discovery is unambiguous.
+#   kubectl -n oma-infra create secret generic oma-secrets \
+#     --from-literal=PG_PASSWORD=... \
+#     --from-literal=REDIS_PASSWORD=... \
+#     --from-literal=SUPABASE_SERVICE_KEY=... \
+#     --from-literal=ALIYUN_ACCESS_KEY_ID=... \
+#     --from-literal=ALIYUN_ACCESS_KEY_SECRET=... \
+#     --from-literal=ALIYUN_SUPABASE_INSTANCE=... \
+#     --from-literal=WORKSPACE_OSS_ACCESS_KEY_ID=... \
+#     --from-literal=WORKSPACE_OSS_ACCESS_KEY_SECRET=... \
+#     --from-literal=E2B_DOMAIN=... \
+#     --from-literal=E2B_API_KEY=... \
+#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=... \
+#     --from-literal=AUTH_JWT_SECRET=... \
+#     --from-literal=INVITE_CODE=...
+#
+# The following objects must also exist before rollout:
+#   - oma-infra/oma-pi-auth   (Pi auth.json)
+#   - oma-infra/ali-shanghai (ACR image-pull credentials)
+#   - oma-infra/agentry-tls  (TLS certificate for agentry.welltop.tech)
 #
 # The sandbox is mandatory (issue #54): SANDBOX_ENABLED=true below + the E2B_*
 # secrets are what make Agent runs execute inside a sandbox. A sandboxed Agent
@@ -31,9 +51,16 @@ metadata:
   namespace: oma-infra
 data:
   PORT: "3000"
+  API_BASE_PATH: "/api"
+  # OpenAPI paths are relative to this externally reachable API base.
+  PUBLIC_API_URL: "https://agentry.welltop.tech/api"
   AUTH_DISABLED: "false"
-  # PostgreSQL (internal RDS; oma schema; sslmode=disable)
-  PG_HOST: "pgm-j6cwo1dku533bqbs.pg.cnhk.rds.aliyuncs.com"
+  ALIYUN_REGION: "cn-shanghai"
+  # Managed Supabase MCP remains fail-closed until production tenants are
+  # explicitly reviewed for this cluster.
+  OMA_SUPABASE_ALLOWED_TENANTS: ""
+  # PostgreSQL (cn-shanghai internal RDS; oma schema; sslmode=disable)
+  PG_HOST: "pgm-uf6fh394661t62gb.pg.rds.aliyuncs.com"
   PG_PORT: "5432"
   PG_DATABASE: "supabase_db"
   PG_USER: "oma_app"
@@ -42,18 +69,14 @@ data:
   # The oma schema is pre-provisioned by migration and oma_app lacks CREATE on
   # the database, so skip the app's startup DDL.
   PG_ENSURE_SCHEMA: "false"
-  # Redis — use ClusterIP, NOT the Service name: even same-ns Service DNS is
-  # unreliable on this ECI/virtual-kubelet cluster (name "redis" → NXDOMAIN).
-  # Re-check with `kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra get svc redis` if it drifts.
-  REDIS_HOST: "10.0.56.147"
+  # These ClusterIPs mirror the current agent-platform deployment. Re-check the
+  # corresponding Services before applying if cluster infrastructure changes.
+  REDIS_HOST: "10.0.64.18"
   REDIS_PORT: "6379"
-  # Existing Supabase Storage is retained for Skills only. Its historical
-  # bucket name stays "workspace"; it no longer selects Workspace file storage.
-  S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"
+  # Supabase Storage (S3 artifacts) — cn-shanghai VPC endpoint.
+  S3_ENDPOINT: "http://172.17.255.52:80/storage/v1"
   S3_BUCKET: "workspace"
-  # Host Workspace API storage. The existing application network uses the public
-  # Shanghai endpoint; choose the internal endpoint only after network testing.
-  # Browser GET signatures must always use the public regional HTTPS endpoint.
+  STORAGE_PUBLIC_BASE: "http://172.17.255.52:80/storage/v1"
   WORKSPACE_OSS_REGION: "oss-cn-shanghai"
   WORKSPACE_OSS_BUCKET: "agentry"
   WORKSPACE_OSS_ENDPOINT: "https://oss-cn-shanghai.aliyuncs.com"
@@ -63,62 +86,14 @@ data:
   WORKSPACE_OSS_AGENT_NAME: "agentry-workspace"
   WORKSPACE_OSS_PV_NAME: "agentry-workspace-oss"
   WORKSPACE_OSS_CREDENTIAL_PROVIDER: "agentry-oss-rw"
-  # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
-  # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
-  OMA_PROXY_URL: "http://10.0.200.134:7890"
+  # In-cluster sing-box mixed inbound used for external LLM calls.
+  OMA_PROXY_URL: "http://10.0.165.246:7890"
   # Sandbox is mandatory (issue #54). This turns on the sandbox-backed
-  # ToolExecutor. The endpoint is Shanghai; its key comes from oma-secrets.
+  # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
   SANDBOX_ENABLED: "true"
-  # E2B templateID = the SandboxSet name in the sandbox-system namespace
-  # (see deploy/sandbox/README.md). Verify every per-Agent template override;
-  # a changed default does not replace an existing Sandbox.
-  SANDBOX_TEMPLATE: "code-interpreter-vfscli"
-  E2B_DOMAIN: "sandbox.agentry.welltop.tech"
-  # ALB timeout is 180 seconds; allow its response to reach the SDK. Sandbox
-  # lifetime is a separate setting (Manager default: 3600 seconds).
+  # E2B templateID = SandboxSet metadata.name in sandbox-system.
+  SANDBOX_TEMPLATE: "auto-story"
   E2B_REQUEST_TIMEOUT_MS: "185000"
-  # ==========================================================================
-  # OpenGrove WW — DISABLED BY DEFAULT (issue #116). ALL-OR-NOTHING.
-  # --------------------------------------------------------------------------
-  # sandboxEnvPolicyFromHost (server/packages/api/src/lib/sandbox-env.ts) fails
-  # loud at startup when only SOME of the three WW variables are set, because a
-  # half-configured managed credential is a misconfiguration, not a feature
-  # toggle. This manifest previously shipped two of the three (BASE_URL +
-  # AGENT_IDS) while the third came from an oma-secrets key that a manual,
-  # never-executed `kubectl create secret` line was supposed to create — so a
-  # full `kubectl apply` put oma-server into CrashLoopBackOff. The default path
-  # must therefore contain ZERO of the three, matching the live cluster
-  # ConfigMap (the two keys were removed there on 2026-07-29).
-  #
-  # Cost of leaving it off: agent `agent_DAHfGLi_tD9TctXw9cEqo`'s sandbox gets
-  # no WW credentials, so `story-seed` has no OPENGROVE_WW_BASE_URL /
-  # OPENGROVE_WW_ACCESS_TOKEN and its WW-backed steps fail. Everything else,
-  # including every other Agent, is unaffected.
-  #
-  # TO TURN WW ON — do all three steps together, in this order, or none:
-  #
-  #   1. Create the secret key FIRST (it must exist before the Deployment
-  #      references it, otherwise the pod stays in CreateContainerConfigError):
-  #        kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra patch secret oma-secrets --type=merge \
-  #          -p "{\"stringData\":{\"OPENGROVE_WW_ACCESS_TOKEN\":\"<bearer>\"}}"
-  #        Confirm the key exists using the secret-management system; do not
-  #        print any portion of the bearer when checking presence.
-  #
-  #   2. Uncomment BOTH ConfigMap keys here:
-  #        DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://opengrove.creativefitting.cn"
-  #        DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_DAHfGLi_tD9TctXw9cEqo"
-  #      (BASE_URL is the non-secret endpoint paired with the Host-managed
-  #      bearer; AGENT_IDS is a comma-separated allowlist — the credential is
-  #      injected only into those Agents' sandboxes, never deployment-wide.)
-  #
-  #   3. Uncomment the matching DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN env
-  #      entry in the oma-server container below, then apply + roll:
-  #        kubectl --kubeconfig "$OMA_APP_KUBECONFIG" apply -f deploy/k8s.yaml
-  #        kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra rollout status deploy/oma-server
-  #
-  # Reverting is the same three edits in reverse; leaving any single one behind
-  # reproduces the startup crash. Keep repo and cluster in sync either way.
-  # ==========================================================================
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -132,10 +107,12 @@ spec:
     matchLabels: { app: oma-server }
   template:
     metadata:
-      labels: { app: oma-server }
+      labels:
+        app: oma-server
+        alibabacloud.com/acs: "true"
     spec:
       imagePullSecrets:
-        - name: oma-acr
+        - name: ali-shanghai
       volumes:
         # Pi provider credentials (openai-codex OAuth). Copied to a writable
         # emptyDir by initContainer so Pi's AuthStorage can refresh the token.
@@ -157,6 +134,9 @@ spec:
             - containerPort: 3000
           envFrom:
             - configMapRef: { name: oma-server-config }
+            # Optional, all-or-nothing Host-owned auto-story environment.
+            # Contains AUTO_STORY_AGENT_IDS + AUTO_STORY_SANDBOX_ENV_JSON.
+            - secretRef: { name: oma-auto-story-env, optional: true }
           env:
             - name: PG_PASSWORD
               valueFrom: { secretKeyRef: { name: oma-secrets, key: PG_PASSWORD } }
@@ -172,9 +152,28 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_SECRET } }
             - name: WORKSPACE_OSS_STS_TOKEN
               valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_STS_TOKEN, optional: true } }
-            # Must be the Shanghai gateway key matching ConfigMap E2B_DOMAIN.
+            # Deployment-scoped credentials for the managed Aliyun RDS
+            # Supabase Sessions MCP. Tenant and query shape are injected and
+            # fixed by the Host; the Agent cannot supply SQL or an endpoint.
+            # Other launch environments may use the documented
+            # ALIBABA_CLOUD_* aliases; this deployment keeps ALIYUN_*.
+            - name: ALIYUN_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_ACCESS_KEY_ID } }
+            - name: ALIYUN_ACCESS_KEY_SECRET
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_ACCESS_KEY_SECRET } }
+            # Optional: set only when more than one running Supabase instance
+            # is discoverable. Omitting the Secret key keeps discovery enabled.
+            - name: ALIYUN_SUPABASE_INSTANCE
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_SUPABASE_INSTANCE, optional: true } }
+            # E2B sandbox endpoint + key (issue #54) — never baked into the image.
+            - name: E2B_DOMAIN
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
             - name: E2B_API_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_API_KEY } }
+            - name: AUTH_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: AUTH_JWT_SECRET } }
+            - name: INVITE_CODE
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: INVITE_CODE } }
             # The same VFS access token is exposed under two purpose-specific
             # names: vfs-cli receives VFS_TOKEN inside each sandbox through the
             # Host's DEFAULT_SANDBOX_VFS_TOKEN mapping; pi-mcp-adapter resolves
@@ -183,21 +182,13 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
             - name: RDS_MCP_APIKEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
-            # OpenGrove WW — DISABLED BY DEFAULT (issue #116). Uncomment only as
-            # step 3 of the all-or-nothing procedure in the ConfigMap comment
-            # above, and only after the oma-secrets key actually exists.
-            # story-seed receives the WW credential only when a sandbox is
-            # created. The value stays out of the image, ConfigMap, Agent row,
-            # and repository; SessionRouter treats it as Host-managed so an
-            # Agent cannot pair it with a different endpoint.
-            # - name: DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN
-            #   valueFrom: { secretKeyRef: { name: oma-secrets, key: OPENGROVE_WW_ACCESS_TOKEN } }
           volumeMounts:
             - { name: pi-agent-dir, mountPath: /root/.pi/agent }
           readinessProbe:
-            httpGet: { path: /health, port: 3000 }
-            initialDelaySeconds: 10
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 15
             periodSeconds: 10
+            failureThreshold: 6
           resources:
             requests: { cpu: "250m", memory: "512Mi" }
             limits: { cpu: "1", memory: "1Gi" }
@@ -225,18 +216,24 @@ spec:
     matchLabels: { app: oma-web }
   template:
     metadata:
-      labels: { app: oma-web }
+      labels:
+        app: oma-web
+        alibabacloud.com/acs: "true"
     spec:
       imagePullSecrets:
-        - name: oma-acr
+        - name: ali-shanghai
       containers:
         - name: web
           image: OMA_WEB_IMAGE  # replaced at deploy time
           ports:
             - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
-            limits: { cpu: "500m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
 ---
 apiVersion: v1
 kind: Service
@@ -248,3 +245,36 @@ spec:
   ports:
     - port: 80
       targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oma-console
+  namespace: oma-infra
+  annotations:
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80},{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: alb
+  tls:
+    - hosts:
+        - agentry.welltop.tech
+      secretName: agentry-tls
+  rules:
+    - host: agentry.welltop.tech
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: oma-server
+                port:
+                  number: 3000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oma-web
+                port:
+                  number: 80

@@ -9,6 +9,24 @@ export class CodexEventTranslator {
   private spanStarted = false;
   private toolUseIds = new Map<string, string>();
 
+  finalize(): SessionEvent[] {
+    if (!this.spanStarted) return [];
+    this.spanStarted = false;
+    return [
+      {
+        id: generateEventId(),
+        timestamp: generateTimestamp(),
+        type: "span.model_request_end",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      },
+    ];
+  }
+
   processEvent(event: CodexCliEvent): SessionEvent[] {
     const events: SessionEvent[] = [];
 
@@ -124,6 +142,8 @@ export class CodexEventTranslator {
             usage: {
               inputTokens: event.usage?.input_tokens ?? 0,
               outputTokens: event.usage?.output_tokens ?? 0,
+              cacheReadTokens: event.usage?.cached_input_tokens ?? 0,
+              cacheWriteTokens: 0,
             },
           });
         }
@@ -137,7 +157,12 @@ export class CodexEventTranslator {
             id: generateEventId(),
             timestamp: generateTimestamp(),
             type: "span.model_request_end",
-            usage: { inputTokens: 0, outputTokens: 0 },
+            usage: {
+              inputTokens: event.usage?.input_tokens ?? 0,
+              outputTokens: event.usage?.output_tokens ?? 0,
+              cacheReadTokens: event.usage?.cached_input_tokens ?? 0,
+              cacheWriteTokens: 0,
+            },
           });
         }
         break;
@@ -150,7 +175,12 @@ export class CodexEventTranslator {
             id: generateEventId(),
             timestamp: generateTimestamp(),
             type: "span.model_request_end",
-            usage: { inputTokens: 0, outputTokens: 0 },
+            usage: {
+              inputTokens: event.usage?.input_tokens ?? 0,
+              outputTokens: event.usage?.output_tokens ?? 0,
+              cacheReadTokens: event.usage?.cached_input_tokens ?? 0,
+              cacheWriteTokens: 0,
+            },
           });
         }
         break;

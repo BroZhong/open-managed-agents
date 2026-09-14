@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import AgentDetailPage from "@/pages/agent-detail";
 import type { Agent } from "@/lib/hooks/use-agents";
+import type { McpCatalogEntry } from "@/lib/hooks/use-mcp-catalog";
 
 afterEach(() => {
   cleanup();
@@ -22,10 +23,9 @@ it("shows the Agent-owned MCP editor on the Agent detail page", () => {
     runtime: "pi-agent",
     mcpServers: [
       {
-        name: "rds-mcp",
-        url: "https://campaign.welltop.tech/agent/mcp/rds",
-        transport: "streamable-http",
-        headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
+        catalogId: "aliyun-rds-supabase",
+        name: "session-data",
+        description: "Read recent Session data",
       },
     ],
     createdAt: "2026-07-12T00:00:00.000Z",
@@ -36,6 +36,21 @@ it("shows the Agent-owned MCP editor on the Agent detail page", () => {
   });
   queryClient.setQueryData(["agents", agent.id], agent);
   queryClient.setQueryData(["sessions", "byAgent", agent.id], []);
+  const catalog: McpCatalogEntry[] = [
+    {
+      id: "aliyun-rds-supabase",
+      defaultName: "aliyun-rds-supabase",
+      defaultDescription: "Inspect Supabase on Alibaba Cloud RDS",
+      transport: "stdio",
+      configurable: ["name", "description"],
+      requiredEnv: [
+        "ALIYUN_ACCESS_KEY_ID",
+        "ALIYUN_ACCESS_KEY_SECRET",
+        "ALIYUN_REGION",
+      ],
+    },
+  ];
+  queryClient.setQueryData(["mcp-catalog"], catalog);
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
 
   render(
@@ -49,8 +64,14 @@ it("shows the Agent-owned MCP editor on the Agent detail page", () => {
   );
 
   expect(screen.getByRole("heading", { name: "Managed MCP" })).toBeTruthy();
+  expect(screen.getByText("aliyun-rds-supabase")).toBeTruthy();
+  expect(screen.getByText("Managed stdio")).toBeTruthy();
+  expect(screen.getByLabelText("aliyun-rds-supabase MCP name")).toHaveProperty(
+    "value",
+    "session-data",
+  );
   expect(
-    screen.getByText("https://campaign.welltop.tech/agent/mcp/rds"),
-  ).toBeTruthy();
-  expect(screen.queryByRole("textbox")).toBeNull();
+    screen.getByLabelText("aliyun-rds-supabase MCP description"),
+  ).toHaveProperty("value", "Read recent Session data");
+  expect(screen.queryByText("supabase-mcp")).toBeNull();
 });

@@ -17,6 +17,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+REPO_ROOT="$(cd ../../.. && pwd)"
 
 REGISTRY="${REGISTRY:-registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox}"
 VERSION="${VERSION:-0.5.0}"
@@ -24,11 +25,18 @@ TAG="${TAG:-code-interpreter-vfscli-${VERSION}}"
 BASE_IMAGE="${BASE_IMAGE:-registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
 PLATFORM="linux/amd64"
 IMAGE="${REGISTRY}:${TAG}"
-CACHE_DIR="${CACHE_DIR:-.buildx-cache}"
+CACHE_DIR="${REPO_ROOT}/.buildx-cache/sandbox"
+CACHE_NEXT="${CACHE_DIR}.next"
+
+if [[ -L "${REPO_ROOT}/.buildx-cache" ]]; then
+  echo "Refusing to use a symlink as the managed build cache: ${REPO_ROOT}/.buildx-cache" >&2
+  exit 1
+fi
 
 # ── Stage the vfs-cli binary into the build context ──────────────────────────
 # The Dockerfile COPYs bin/vfs-cli. If VFS_CLI_SRC is given, stage it; otherwise
 # require that bin/vfs-cli already exists (e.g. placed by a prior run or scp).
+python3 ../prepare-search-binaries.py bin
 mkdir -p bin
 if [[ -n "${VFS_CLI_SRC:-}" ]]; then
   echo "==> staging vfs-cli from ${VFS_CLI_SRC}"
@@ -56,14 +64,18 @@ if [[ "${PUSH:-0}" == "1" ]]; then
 fi
 
 echo "==> building ${IMAGE} (${PLATFORM}) from ${BASE_IMAGE}"
+mkdir -p "${CACHE_DIR}"
+rm -rf "${CACHE_NEXT}"
 docker buildx build \
   --platform "${PLATFORM}" \
   --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
   --cache-from "type=local,src=${CACHE_DIR}" \
-  --cache-to "type=local,dest=${CACHE_DIR},mode=max" \
+  --cache-to "type=local,dest=${CACHE_NEXT},mode=max" \
   -t "${IMAGE}" \
   "${BUILD_OUTPUT[@]}" \
   .
+rm -rf "${CACHE_DIR}"
+mv "${CACHE_NEXT}" "${CACHE_DIR}"
 
 echo "==> done: ${IMAGE}"
 if [[ "${PUSH:-0}" != "1" ]]; then

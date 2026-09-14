@@ -63,7 +63,12 @@ function buildDefaultEvents(): SessionEvent[] {
       id: generateEventId(),
       timestamp: generateTimestamp(),
       type: "span.model_request_end",
-      usage: { inputTokens: 10, outputTokens: 5 },
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
     },
   ];
 }

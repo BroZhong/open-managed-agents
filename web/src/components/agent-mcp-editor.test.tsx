@@ -23,10 +23,36 @@ const agent: Agent = {
   updatedAt: "2026-07-12T00:00:00.000Z",
 };
 
-function renderEditor(value: Agent = agent) {
+const catalog = [
+  {
+    id: "rds-mcp",
+    defaultName: "rds-mcp",
+    defaultDescription: "Managed RDS gateway",
+    transport: "streamable-http",
+    configurable: ["name", "description"],
+    requiredEnv: ["RDS_MCP_APIKEY"],
+  },
+  {
+    id: "aliyun-rds-supabase",
+    defaultName: "aliyun-rds-supabase",
+    defaultDescription: "Inspect Supabase on Alibaba Cloud RDS",
+    transport: "stdio",
+    configurable: ["name", "description"],
+    requiredEnv: ["ALIYUN_ACCESS_KEY_ID", "ALIYUN_ACCESS_KEY_SECRET", "ALIYUN_REGION"],
+  },
+] as const;
+
+function renderEditor(
+  value: Agent = agent,
+  availableCatalog: readonly (typeof catalog)[number][] = catalog,
+) {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, staleTime: Infinity },
+      mutations: { retry: false },
+    },
   });
+  queryClient.setQueryData(["mcp-catalog"], availableCatalog);
   render(
     <QueryClientProvider client={queryClient}>
       <AgentMcpEditor agent={value} />
@@ -34,15 +60,41 @@ function renderEditor(value: Agent = agent) {
   );
 }
 
-const managedRdsServer = {
-  name: "rds-mcp",
-  url: "https://campaign.welltop.tech/agent/mcp/rds",
-  transport: "streamable-http" as const,
-  headers: { Authorization: "Bearer ${RDS_MCP_APIKEY}" },
-};
-
 describe("Agent MCP configuration", () => {
-  it("enables and saves only the fixed managed RDS resource", async () => {
+  it("configures the managed Supabase MCP name and description", async () => {
+    const fetchMock = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(agent),
+      }) as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderEditor();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enable aliyun-rds-supabase" }),
+    );
+    fireEvent.change(screen.getByLabelText("aliyun-rds-supabase MCP name"), {
+      target: { value: "session-data" },
+    });
+    fireEvent.change(screen.getByLabelText("aliyun-rds-supabase MCP description"), {
+      target: { value: "Read recent Session data" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save MCP" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      mcpServers: [{
+        catalogId: "aliyun-rds-supabase",
+        name: "session-data",
+        description: "Read recent Session data",
+      }],
+    });
+  });
+
+  it("enables a catalog entry and persists only its configurable reference", async () => {
     localStorage.setItem("oma_api_key", "console-token");
     const fetchMock = vi.fn(async () =>
       ({
@@ -55,16 +107,14 @@ describe("Agent MCP configuration", () => {
     renderEditor();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Enable managed RDS MCP" }),
+      screen.getByRole("button", { name: "Enable rds-mcp" }),
     );
 
     expect(screen.getByText("rds-mcp")).toBeTruthy();
-    expect(screen.getByText(managedRdsServer.url)).toBeTruthy();
-    expect(screen.getByText("Streamable HTTP")).toBeTruthy();
-    expect(screen.getByText("Bearer ${RDS_MCP_APIKEY}")).toBeTruthy();
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add MCP server" })).toBeNull();
-
+    expect(screen.getByText("Managed streamable-http")).toBeTruthy();
+    expect(screen.getByText(/RDS_MCP_APIKEY/)).toBeTruthy();
+    expect(screen.getByLabelText("rds-mcp MCP name")).toBeTruthy();
+    expect(screen.getByLabelText("rds-mcp MCP description")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Save MCP" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
@@ -72,14 +122,18 @@ describe("Agent MCP configuration", () => {
     expect(url).toBe("http://localhost:3000/v1/agents/agent_storyboard");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
-      mcpServers: [managedRdsServer],
+      mcpServers: [{
+        catalogId: "rds-mcp",
+        name: "rds-mcp",
+        description: "Managed RDS gateway",
+      }],
     });
   });
 
-  it("removes the managed RDS resource and persists the empty configuration", async () => {
+  it("removes an existing managed RDS connection", async () => {
     const configuredAgent: Agent = {
       ...agent,
-      mcpServers: [managedRdsServer],
+      mcpServers: [{ catalogId: "rds-mcp", name: "rds-mcp" }],
     };
     const fetchMock = vi.fn(async () =>
       ({
@@ -92,9 +146,9 @@ describe("Agent MCP configuration", () => {
     renderEditor(configuredAgent);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Remove managed RDS MCP" }),
+      screen.getByRole("button", { name: "Remove rds-mcp" }),
     );
-    expect(screen.getByText("Managed RDS MCP is not enabled for this Agent.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Enable rds-mcp" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Save MCP" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
@@ -102,37 +156,26 @@ describe("Agent MCP configuration", () => {
     expect(JSON.parse(String(init.body))).toEqual({ mcpServers: [] });
   });
 
-  it("does not expose or preserve unmanaged MCP configuration", async () => {
-    const unmanagedAgent: Agent = {
+  it("disables saving when an existing managed reference is missing from the catalog", () => {
+    const configuredAgent: Agent = {
       ...agent,
-      mcpServers: [
-        {
-          name: "untrusted-server",
-          url: "https://untrusted.example.com/mcp",
-          transport: "streamable-http",
-          headers: { Authorization: "Bearer ${UNTRUSTED_TOKEN}" },
-        },
-      ],
+      mcpServers: [{
+        catalogId: "aliyun-rds-supabase",
+        name: "session-data",
+        description: "Read recent Sessions",
+      }],
     };
-    const fetchMock = vi.fn(async () =>
-      ({
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({ ...unmanagedAgent, mcpServers: [] }),
-      }) as Response,
-    );
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    renderEditor(unmanagedAgent);
 
-    expect(screen.queryByText("untrusted-server")).toBeNull();
-    expect(screen.queryByText("https://untrusted.example.com/mcp")).toBeNull();
+    renderEditor(configuredAgent, [catalog[0]]);
+
     expect(
-      screen.getByRole("button", { name: "Enable managed RDS MCP" }),
-    ).toBeTruthy();
+      (screen.getByRole("button", { name: "Save MCP" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByText(/Managed MCP Connection is unavailable/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Save MCP" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(String(init.body))).toEqual({ mcpServers: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

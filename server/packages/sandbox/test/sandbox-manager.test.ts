@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import {
   DefaultSandboxManager,
   SandboxSessionClosed,
@@ -33,6 +34,36 @@ function makeManager() {
 }
 
 describe("mounted Workspace Sandbox Manager", () => {
+  it("checks the mount before native filesystem operations and keeps the capability stable after rebuild", async () => {
+    const { client, manager } = makeManager();
+    const unavailable = () => { throw new Error("Unexpected filesystem operation"); };
+    const nativeRead = vi.fn(async (id: string, path: string) => client.readFileBytes(id, path));
+    const nativeWrite = vi.fn(async (id: string, path: string, bytes: Uint8Array) => client.writeFileBytes(id, path, bytes));
+    const fileSystem = (id: string): ToolFileSystem => ({
+      readFile: (path) => nativeRead(id, path),
+      writeFile: (path, bytes) => nativeWrite(id, path, bytes),
+      appendFile: unavailable, access: unavailable, stat: unavailable,
+      lstat: unavailable, realpath: unavailable, readdir: unavailable,
+      mkdir: unavailable, createTempFile: unavailable,
+    });
+    Object.assign(client, { fileSystem });
+    const session = manager.open(specFor());
+    const capability = session.fileSystem;
+    await capability.writeFile("native.bin", new Uint8Array([0, 255]));
+    expect(await capability.readFile("native.bin")).toEqual(new Uint8Array([0, 255]));
+    expect(nativeRead.mock.calls[0][1]).toBe("/home/user/workspace/native.bin");
+    const first = client.created[0];
+    client.setMountFailure(first, "credential unavailable");
+    await expect(capability.writeFile("blocked.bin", new Uint8Array())).rejects.toThrow(/Workspace storage/);
+    expect(nativeWrite).toHaveBeenCalledTimes(1);
+    client.reclaim(first);
+    expect(await capability.readFile("native.bin")).toEqual(new Uint8Array([0, 255]));
+    expect(session.fileSystem).toBe(capability);
+    expect(client.created).toHaveLength(2);
+    expect(nativeRead.mock.calls.at(-1)?.[0]).toBe(client.created[1]);
+    await session.dispose();
+  });
+
   it("writes are shared immediately and survive disposal and rebuilding", async () => {
     const { client, manager } = makeManager();
     const a = manager.open(specFor());

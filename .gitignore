@@ -8,4 +8,5 @@ dist/
 !**/.env.example
 .apifox/
 .playwright-mcp/
+.buildx-cache/
 .claude/worktrees/

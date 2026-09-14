@@ -6,6 +6,8 @@ export type {
   // Config
   ToolConfig,
   McpServerConfig,
+  HttpMcpServerConfig,
+  StdioMcpServerConfig,
   // Message
   UserMessage,
   SkillDescriptor,
@@ -19,6 +21,7 @@ export type {
   // Span events
   SpanModelRequestStartEvent,
   SpanModelFirstTokenEvent,
+  TokenUsage,
   SpanModelRequestEndEvent,
   SpanEvent,
   // Canonical events
@@ -48,12 +51,16 @@ export type { Adapter } from "./interface.js";
 
 export type {
   ToolExecutor,
+  ToolFileSystem,
+  ToolFileSystemOptions,
+  ToolFileStat,
   ExecOutputChunk,
+  ExecExitResult,
   ExecOptions,
   FileListEntry,
 } from "./tool-executor.js";
 
-export { SANDBOX_WORKSPACE_ROOT } from "./tool-executor.js";
+export { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "./tool-executor.js";
 
 export {
   generateEventId,

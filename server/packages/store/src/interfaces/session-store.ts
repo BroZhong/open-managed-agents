@@ -6,6 +6,9 @@ export interface SessionStoreListOpts {
   cursor?: string;
   agentId?: string;
   status?: SessionStatus;
+  loopId?: string;
+  /** Exclude Loop-created Sessions so loose Agent navigation is not crowded out. */
+  withoutLoop?: boolean;
 }
 
 export interface SessionStoreCreateInput {
@@ -18,6 +21,7 @@ export interface SessionStoreCreateInput {
    * the Workspace before binding.
    */
   workspaceId: string;
+  loopId?: string;
 }
 
 export interface SessionStore {

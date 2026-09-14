@@ -42,14 +42,16 @@ export interface CodexItemCompleted {
   };
 }
 
+export interface CodexUsage {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+}
+
 export interface CodexTurnCompleted {
   type: "turn.completed";
-  usage?: {
-    input_tokens: number;
-    cached_input_tokens?: number;
-    output_tokens: number;
-    reasoning_output_tokens?: number;
-  };
+  usage?: CodexUsage;
 }
 
 export interface CodexTurnFailed {
@@ -57,11 +59,13 @@ export interface CodexTurnFailed {
   error: {
     message: string;
   };
+  usage?: CodexUsage;
 }
 
 export interface CodexError {
   type: "error";
   message: string;
+  usage?: CodexUsage;
 }
 
 export type CodexCliEvent =

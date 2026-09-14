@@ -1,0 +1,30 @@
+{
+  "imageVersion": "0.2.1",
+  "verifiedAt": "2026-09-09",
+  "platform": "linux/amd64",
+  "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
+  "vfs-cli": {
+    "version": "v0.3.15",
+    "url": "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.15/vfs-cli_v0.3.15_linux_amd64.tar.gz",
+    "sha256": "4a8e640d33d83c73d2cf8832c5d678ae3d4f972cfd462e3aa99855e2cfa1ae07",
+    "binarySha256": "fb9b291e8940a4cfaf7812fc897ee85d0e679b08c6c12b4f44adb63aa4b9ec63"
+  },
+  "ffmpeg": {
+    "version": "9.0.1",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
+    "sha256": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
+    "signature": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz.asc",
+    "signingKey": "https://ffmpeg.org/ffmpeg-devel.asc",
+    "signingFingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8"
+  },
+  "google-genai": {
+    "version": "2.22.0",
+    "url": "https://pypi.org/project/google-genai/2.22.0/"
+  },
+  "mediakit-cli": {
+    "version": "0.2.1",
+    "url": "https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz",
+    "sha256": "8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987",
+    "binarySha256": "2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca"
+  }
+}

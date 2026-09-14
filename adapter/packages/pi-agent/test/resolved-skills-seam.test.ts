@@ -1,5 +1,6 @@
+import { MemoryFileSystem } from "./memory-file-system.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import type {
   AdapterInput,
   SessionEvent,
@@ -11,10 +12,17 @@ const sdkSeam = vi.hoisted(() => ({
   resourceLoaderOptions: [] as Array<Record<string, unknown>>,
   sessionOptions: [] as Array<{
     cwd?: string;
-    sessionManager?: { getCwd(): string };
+    sessionManager?: {
+      getCwd(): string;
+      getSessionId(): string;
+      isPersisted(): boolean;
+    };
+    thinkingLevel?: string;
+    modelRuntime?: { getModel(provider: string, id: string): unknown };
   }>,
   mcpConfigPath: undefined as string | undefined,
   mcpConfig: undefined as unknown,
+  mcpConfigMode: undefined as number | undefined,
   lifecycle: [] as string[],
   failBindExtensions: false,
 }));
@@ -46,7 +54,11 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
     createAgentSession: async (options: {
       cwd?: string;
       resourceLoader?: FakeResourceLoader;
-      sessionManager?: { getCwd(): string };
+      sessionManager?: {
+        getCwd(): string;
+        getSessionId(): string;
+        isPersisted(): boolean;
+      };
     }) => {
       sdkSeam.sessionOptions.push(options);
       const configPath = options.resourceLoader
@@ -55,6 +67,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
       if (typeof configPath === "string") {
         sdkSeam.mcpConfigPath = configPath;
         sdkSeam.mcpConfig = JSON.parse(readFileSync(configPath, "utf8"));
+        sdkSeam.mcpConfigMode = statSync(configPath).mode & 0o777;
       }
       let listener: ((event: Record<string, unknown>) => void) | undefined;
       return {
@@ -94,6 +107,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 
 const noopExecutor: ToolExecutor = {
+  fileSystem: new MemoryFileSystem(),
   async *exec() {},
   async readFile() {
     return "";
@@ -141,6 +155,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     sdkSeam.sessionOptions.length = 0;
     sdkSeam.mcpConfigPath = undefined;
     sdkSeam.mcpConfig = undefined;
+    sdkSeam.mcpConfigMode = undefined;
     sdkSeam.lifecycle.length = 0;
     sdkSeam.failBindExtensions = false;
   });
@@ -154,7 +169,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     const options = sdkSeam.resourceLoaderOptions[0];
     expect(options.noSkills).toBe(true);
     expect(options.additionalSkillPaths).toBeUndefined();
-    expect(options.extensionFactories).toHaveLength(2);
+    expect(options.extensionFactories).toHaveLength(3);
     expect(options.appendSystemPrompt).toEqual([
       "BASE",
       expect.stringContaining("<available_skills>"),
@@ -165,9 +180,12 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(options.cwd).toBe("/home/user/workspace");
     expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user/workspace");
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user/workspace");
+    expect(sdkSeam.sessionOptions[0].thinkingLevel).toBe("high");
+    expect(sdkSeam.sessionOptions[0].modelRuntime?.getModel("anthropic", "claude-sonnet-4-5"))
+      .toMatchObject({ id: "claude-sonnet-4-5", provider: "anthropic" });
   });
 
-  it("preserves native skillPaths when no ToolExecutor is injected", async () => {
+  it("preserves native skillPaths and installs no managed child bridge without a ToolExecutor", async () => {
     const nativeInput = input(false);
     nativeInput.agent.skillDescriptors = [];
     const events = await collect(new PiAgentAdapter().run(nativeInput));
@@ -179,9 +197,50 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       additionalSkillPaths: ["/skills/skill_abc"],
       noContextFiles: true,
     });
+    expect(sdkSeam.resourceLoaderOptions[0].extensionFactories).toBeUndefined();
     expect(sdkSeam.sessionOptions[0].cwd).toBe(process.cwd());
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe(process.cwd());
   });
+
+  it("keeps the Pi session id stable across Turns in the same OMA Session", async () => {
+    const firstTurn = input(true);
+    firstTurn.sessionId = "sess_cache-affinity";
+    firstTurn.turnId = "turn-1";
+    const secondTurn = input(true);
+    secondTurn.sessionId = firstTurn.sessionId;
+    secondTurn.turnId = "turn-2";
+
+    await collect(new PiAgentAdapter().run(firstTurn));
+    await collect(new PiAgentAdapter().run(secondTurn));
+
+    const managers = sdkSeam.sessionOptions.map(
+      (options) => options.sessionManager,
+    );
+    const piSessionIds = managers.map((manager) => manager?.getSessionId());
+
+    expect(piSessionIds[0]).toBe(piSessionIds[1]);
+    expect(piSessionIds[0]).toMatch(/^oma-[a-f0-9]{60}$/);
+    expect(managers[0]).not.toBe(managers[1]);
+    expect(managers.map((manager) => manager?.isPersisted())).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it.each(["sess_cache-affinity-", "sess_cache-affinity_"])(
+    "normalizes the valid OMA Session id %s for Pi",
+    async (sessionId) => {
+      const turn = input(true);
+      turn.sessionId = sessionId;
+
+      const events = await collect(new PiAgentAdapter().run(turn));
+
+      expect(events.some((event) => event.type === "session.error")).toBe(false);
+      expect(sdkSeam.sessionOptions[0].sessionManager?.getSessionId()).toMatch(
+        /^oma-[a-f0-9]{60}$/,
+      );
+    },
+  );
 
   it("fails loud instead of asking Host-native tools to open sandbox Skill paths", async () => {
     const events = await collect(new PiAgentAdapter().run(input(false)));
@@ -220,6 +279,51 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
           transport: "streamable-http",
           headers: {
             Authorization: "Bearer ${RDS_MCP_APIKEY}",
+          },
+        },
+      },
+    });
+    expect(sdkSeam.mcpConfigPath).toBeDefined();
+    expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
+  });
+
+  it("blocks ambient MCP discovery with an empty isolated config when the Agent has no MCP servers", async () => {
+    const events = await collect(new PiAgentAdapter().run(input(true)));
+
+    expect(events.some((event) => event.type === "session.error")).toBe(false);
+    expect(sdkSeam.mcpConfig).toEqual({ mcpServers: {} });
+    expect(sdkSeam.mcpConfigMode).toBe(0o600);
+    expect(sdkSeam.mcpConfigPath).toBeDefined();
+    expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
+  });
+
+  it("projects a managed stdio MCP command and environment into the isolated Pi config", async () => {
+    const configured = input(true);
+    configured.agent.mcpServers = [
+      {
+        name: "session-data",
+        command: "supabase-mcp",
+        cwd: "/opt/oma-managed-mcp",
+        env: {
+          ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
+          ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",
+          ALIYUN_REGION: "${ALIYUN_REGION}",
+        },
+      },
+    ];
+
+    const events = await collect(new PiAgentAdapter().run(configured));
+
+    expect(events.some((event) => event.type === "session.error")).toBe(false);
+    expect(sdkSeam.mcpConfig).toEqual({
+      mcpServers: {
+        "session-data": {
+          command: "supabase-mcp",
+          cwd: "/opt/oma-managed-mcp",
+          env: {
+            ALIYUN_ACCESS_KEY_ID: "${ALIYUN_ACCESS_KEY_ID}",
+            ALIYUN_ACCESS_KEY_SECRET: "${ALIYUN_ACCESS_KEY_SECRET}",
+            ALIYUN_REGION: "${ALIYUN_REGION}",
           },
         },
       },

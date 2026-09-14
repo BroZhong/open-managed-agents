@@ -1,6 +1,15 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AgentStore, Runtime } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
+import {
+  normalizeManagedMcpRefs,
+} from "@oma-server/mcp-catalog";
+import { publicAgent } from "../lib/public-projection.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -9,107 +18,34 @@ type Env = {
 };
 
 const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
-const ALLOWED_MCP_SERVER = {
-  name: "rds-mcp",
-  url: "https://campaign.welltop.tech/agent/mcp/rds",
-  transport: "streamable-http",
-  authorization: "Bearer ${RDS_MCP_APIKEY}",
-} as const;
 
-function validateMcpServers(value: unknown): string | undefined {
-  if (!Array.isArray(value)) return "mcpServers must be an array";
-  if (value.length > 1) {
-    return "mcpServers may only contain the allowlisted rds-mcp server";
-  }
-
-  const names = new Set<string>();
-  for (let index = 0; index < value.length; index++) {
-    const candidate = value[index];
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-      return `mcpServers[${index}] must be an object`;
-    }
-
-    const server = candidate as Record<string, unknown>;
-    const name = server.name;
-    if (typeof name !== "string" || name.trim().length === 0) {
-      return `mcpServers[${index}].name must be a non-empty string`;
-    }
-    const uniqueName = name.trim();
-    if (names.has(uniqueName)) {
-      return `mcpServers contains duplicate name: ${uniqueName}`;
-    }
-    names.add(uniqueName);
-
-    const url = server.url;
-    if (typeof url !== "string") {
-      return `mcpServers[${index}].url must be a valid http/https URL`;
-    }
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        return `mcpServers[${index}].url must be a valid http/https URL`;
-      }
-    } catch {
-      return `mcpServers[${index}].url must be a valid http/https URL`;
-    }
-
-    const transport = server.transport;
-    if (
-      transport !== undefined &&
-      transport !== "sse" &&
-      transport !== "streamable-http"
-    ) {
-      return `mcpServers[${index}].transport must be sse or streamable-http`;
-    }
-
-    const headers = server.headers;
-    if (headers !== undefined) {
-      if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
-        return `mcpServers[${index}].headers must be an object of string values`;
-      }
-      for (const [headerName, headerValue] of Object.entries(headers)) {
-        if (typeof headerValue !== "string") {
-          return `mcpServers[${index}].headers must be an object of string values`;
-        }
-        if (/\r|\n/.test(headerName) || /\r|\n/.test(headerValue)) {
-          return `mcpServers[${index}].headers must not contain CR or LF`;
-        }
-      }
-    }
-
-    if (
-      name !== ALLOWED_MCP_SERVER.name ||
-      url !== ALLOWED_MCP_SERVER.url ||
-      transport !== ALLOWED_MCP_SERVER.transport
-    ) {
-      return `mcpServers[${index}] is not an allowlisted MCP server`;
-    }
-
-    const headerEntries =
-      headers && typeof headers === "object" && !Array.isArray(headers)
-        ? Object.entries(headers)
-        : [];
-    if (
-      headerEntries.length !== 1 ||
-      headerEntries[0]?.[0] !== "Authorization" ||
-      headerEntries[0]?.[1] !== ALLOWED_MCP_SERVER.authorization
-    ) {
-      return `mcpServers[${index}].headers must contain only the allowlisted Authorization value`;
+function validateSandbox(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "sandbox must be an object";
+  const sandbox = value as Record<string, unknown>;
+  if (sandbox.enabled !== undefined && typeof sandbox.enabled !== "boolean") return "sandbox.enabled must be a boolean";
+  if (sandbox.image !== undefined && (typeof sandbox.image !== "string" || !sandbox.image.trim())) return "sandbox.image must be a non-empty string";
+  if (sandbox.env !== undefined) {
+    if (!sandbox.env || typeof sandbox.env !== "object" || Array.isArray(sandbox.env)) return "sandbox.env must be an object";
+    if (Object.entries(sandbox.env).some(([name, value]) =>
+      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || typeof value !== "string" || value.includes("\0"))) {
+      return "sandbox.env must contain valid environment names and string values";
     }
   }
 }
 
-export function agentRoutes(agentStore: AgentStore) {
-  const router = new Hono<Env>();
+export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/agents — Create agent
-  router.post("/v1/agents", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("createAgent"), async (c) => {
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
     const { name, description, model, system, runtime, tools, mcpServers, skills, sandbox } = body;
+    const tenant = c.get("tenant");
+    let normalizedMcpServers = mcpServers;
 
     if (!name || typeof name !== "string") {
       return c.json({ error: "name is required" }, 400);
@@ -136,14 +72,20 @@ export function agentRoutes(agentStore: AgentStore) {
       return c.json({ error: "tools must be an array" }, 400);
     }
     if (mcpServers !== undefined) {
-      const error = validateMcpServers(mcpServers);
-      if (error) return c.json({ error }, 400);
+      const result = normalizeManagedMcpRefs(mcpServers, {
+        tenantId: tenant.tenantId,
+      });
+      if ("error" in result) return c.json({ error: result.error }, 400);
+      normalizedMcpServers = result.refs;
     }
     if (skills !== undefined && !Array.isArray(skills)) {
       return c.json({ error: "skills must be an array" }, 400);
     }
+    if (sandbox !== undefined) {
+      const error = validateSandbox(sandbox);
+      if (error) return c.json({ error }, 400);
+    }
 
-    const tenant = c.get("tenant");
     const agent = await agentStore.create({
       tenantId: tenant.tenantId,
       name,
@@ -152,16 +94,16 @@ export function agentRoutes(agentStore: AgentStore) {
       system,
       runtime: runtime as Runtime,
       tools,
-      mcpServers,
+      mcpServers: normalizedMcpServers,
       skills,
       sandbox,
     });
 
-    return c.json(agent, 201);
+    return c.json(publicAgent(agent), 201);
   });
 
   // GET /v1/agents — List agents
-  router.get("/v1/agents", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listAgents"), async (c) => {
     const tenant = c.get("tenant");
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor");
@@ -180,7 +122,7 @@ export function agentRoutes(agentStore: AgentStore) {
     });
 
     const response: Record<string, unknown> = {
-      data: result.data,
+      data: result.data.map(publicAgent),
       has_more: result.hasMore,
     };
 
@@ -192,8 +134,8 @@ export function agentRoutes(agentStore: AgentStore) {
   });
 
   // GET /v1/agents/:id — Get agent
-  router.get("/v1/agents/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("getAgent"), async (c) => {
+    const id = c.req.param("id")!;
     const agent = await agentStore.getById(id);
 
     if (!agent) {
@@ -206,12 +148,12 @@ export function agentRoutes(agentStore: AgentStore) {
       return c.json({ error: "Not found" }, 404);
     }
 
-    return c.json(agent);
+    return c.json(publicAgent(agent));
   });
 
   // POST /v1/agents/:id — Update agent
-  router.post("/v1/agents/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("updateAgent"), async (c) => {
+    const id = c.req.param("id")!;
     const body = await c.req.json().catch(() => null);
     if (!body) {
       return c.json({ error: "Invalid JSON body" }, 400);
@@ -243,11 +185,18 @@ export function agentRoutes(agentStore: AgentStore) {
     }
 
     if (body.mcpServers !== undefined) {
-      const error = validateMcpServers(body.mcpServers);
-      if (error) return c.json({ error }, 400);
+      const result = normalizeManagedMcpRefs(body.mcpServers, {
+        tenantId: tenant.tenantId,
+      });
+      if ("error" in result) return c.json({ error: result.error }, 400);
+      body.mcpServers = result.refs;
     }
 
     const updateInput: Record<string, unknown> = {};
+    if (body.sandbox !== undefined) {
+      const error = validateSandbox(body.sandbox);
+      if (error) return c.json({ error }, 400);
+    }
     if (body.name !== undefined) updateInput.name = body.name;
     if (body.description !== undefined) updateInput.description = body.description;
     if (body.model !== undefined) updateInput.model = body.model;
@@ -263,12 +212,12 @@ export function agentRoutes(agentStore: AgentStore) {
       return c.json({ error: "Not found" }, 404);
     }
 
-    return c.json(updated);
+    return c.json(publicAgent(updated));
   });
 
   // DELETE /v1/agents/:id — Delete agent
-  router.delete("/v1/agents/:id", async (c) => {
-    const id = c.req.param("id");
+  registerContractRoute(router, getOpenApiRoute("deleteAgent"), async (c) => {
+    const id = c.req.param("id")!;
 
     // Verify agent exists and belongs to tenant
     const existing = await agentStore.getById(id);

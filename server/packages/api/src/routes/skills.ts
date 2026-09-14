@@ -1,8 +1,13 @@
-import { Hono } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { SkillStore, SkillArtifactStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
-import { detectSkills, type DroppedFile } from "../skills/detect-skills.js";
+import { detectSkills, parseSkillMetadata, type DroppedFile } from "../skills/detect-skills.js";
+import { getOpenApiRoute } from "../openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "../openapi/router.js";
 
 type Env = {
   Variables: {
@@ -24,14 +29,24 @@ type Env = {
  * The dropped folder's tree is flattened client-side into (path, file) pairs;
  * the server re-runs the single/multi-Skill detection (server-authoritative).
  */
-export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifactStore) {
-  const router = new Hono<Env>();
+export function skillRoutes(
+  skillStore: SkillStore,
+  skillArtifacts: SkillArtifactStore,
+): OpenAPIHono<Env> {
+  const router = createContractRouter<Env>();
 
   // POST /v1/skills — upload a dropped folder → create N Skills
-  router.post("/v1/skills", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("uploadSkills"), async (c) => {
     const tenant = c.get("tenant");
 
-    const form = await c.req.formData().catch(() => null);
+    let form: FormData | null = null;
+    try {
+      // OpenAPI validation may already have populated Hono's body cache with a
+      // concrete FormData object; `await` supports both that and a Promise.
+      form = await c.req.formData();
+    } catch {
+      form = null;
+    }
     if (!form) return c.json({ error: "Expected multipart/form-data" }, 400);
 
     const pathsRaw = form.get("paths");
@@ -77,7 +92,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
   });
 
   // GET /v1/skills — list the tenant's Library
-  router.get("/v1/skills", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listSkills"), async (c) => {
     const tenant = c.get("tenant");
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor");
@@ -93,6 +108,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
         id: s.id,
         name: s.name,
         description: s.description,
+        createdAt: s.createdAt,
         updatedAt: s.updatedAt,
       })),
       has_more: result.hasMore,
@@ -104,7 +120,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
   });
 
   // GET /v1/skills/:id — metadata + file list
-  router.get("/v1/skills/:id", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("getSkill"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const files = await skillArtifacts.list(skill.tenantId, skill.id);
@@ -112,7 +128,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
   });
 
   // POST /v1/skills/:id — update metadata
-  router.post("/v1/skills/:id", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("updateSkill"), async (c) => {
     const existing = await requireOwned(c, skillStore);
     if (!existing) return c.json({ error: "Not found" }, 404);
 
@@ -133,7 +149,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
   });
 
   // DELETE /v1/skills/:id — remove from Library + S3
-  router.delete("/v1/skills/:id", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("deleteSkill"), async (c) => {
     const existing = await requireOwned(c, skillStore);
     if (!existing) return c.json({ error: "Not found" }, 404);
     await skillArtifacts.deleteTree(existing.tenantId, existing.id);
@@ -148,7 +164,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
   // (on the Agent page) never touches the Library Skill and vice versa.
 
   // GET /v1/skills/:id/files — file tree (paths only)
-  router.get("/v1/skills/:id/files", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("listSkillFiles"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const files = await skillArtifacts.list(skill.tenantId, skill.id);
@@ -156,7 +172,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
   });
 
   // GET /v1/skills/:id/files/content?path=… — read one file's text
-  router.get("/v1/skills/:id/files/content", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("getSkillFileContent"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const path = safePath(c.req.query("path"));
@@ -168,7 +184,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
 
   // PUT /v1/skills/:id/files/content — write (create or overwrite) one file
   //   body: { path: string, content: string }
-  router.put("/v1/skills/:id/files/content", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("putSkillFileContent"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const body = await c.req.json().catch(() => null);
@@ -178,12 +194,18 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
       return c.json({ error: "content is required" }, 400);
     }
     await skillArtifacts.put(skill.tenantId, skill.id, path, body.content);
-    await skillStore.update(skill.id, {}); // bump updatedAt
+    // Keep summaries in sync with the edited entry point. A missing name keeps
+    // the Skill's current name, matching upload parsing without renaming it to
+    // a generic fallback. Other files only advance updatedAt.
+    const metadata = path === "SKILL.md"
+      ? parseSkillMetadata(body.content, skill.name)
+      : {};
+    await skillStore.update(skill.id, metadata);
     return c.json({ path, content: body.content });
   });
 
   // DELETE /v1/skills/:id/files/content?path=… — delete one file
-  router.delete("/v1/skills/:id/files/content", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("deleteSkillFileContent"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const path = safePath(c.req.query("path"));
@@ -195,7 +217,7 @@ export function skillRoutes(skillStore: SkillStore, skillArtifacts: SkillArtifac
 
   // POST /v1/skills/:id/files/rename — rename/move one file within the Skill
   //   body: { from: string, to: string }
-  router.post("/v1/skills/:id/files/rename", async (c) => {
+  registerContractRoute(router, getOpenApiRoute("renameSkillFile"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const body = await c.req.json().catch(() => null);

@@ -1,0 +1,5 @@
+ARG UPSTREAM_IMAGE=registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
+FROM ${UPSTREAM_IMAGE}
+
+LABEL org.opencontainers.image.title="OMA sandbox base" \
+      org.opencontainers.image.description="Pinned ACS code-interpreter base mirrored into the welltop Shanghai ACR"

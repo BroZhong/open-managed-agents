@@ -89,7 +89,7 @@ Required OSS/E2B settings fail clearly when absent, and a read-only OSS list
 checks startup reachability. Skills keep their Supabase configuration and
 client. Host OSS credentials are excluded from Adapter CLI environments.
 Unused Supabase Workspace storage and the old synchronization implementation
-are removed. Domain documentation and ADR-0007 record the replacement contract.
+are removed. Domain documentation and ADR-0008 record the replacement contract.
 
 All package regressions were exercised on 2026-09-14:
 

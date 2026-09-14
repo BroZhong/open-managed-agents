@@ -97,6 +97,7 @@ function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
 
 function createTestApp() {
   process.env.AUTH_DISABLED = "true";
+  process.env.OMA_SUPABASE_ALLOWED_TENANTS = "dev";
   const agentStore = new InMemoryAgentStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
@@ -108,6 +109,29 @@ function createTestApp() {
 describe("POST /v1/agents", () => {
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
+  });
+
+  it("preserves auto-story sandbox environment and rejects invalid values on create and update", async () => {
+    const { app } = createTestApp();
+    const definition = {
+      name: "auto-story", runtime: "pi-agent", model: "openai-codex/gpt-5.6-sol", system: "Use equipped skills",
+      sandbox: { enabled: true, image: "auto-story", env: { CUSTOM: "a=b\nsecond line", MEDIAKIT_RUNTIME: "pi-agent" } },
+    };
+    const request = (path: string, body: unknown) => app.request(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const created = await request("/v1/agents", definition);
+    expect(created.status).toBe(201);
+    const agent = await created.json();
+    expect(agent.sandbox).toEqual(definition.sandbox);
+    for (const sandbox of [null, [], { env: [] }, { env: { KEY: 42 } }, { env: { "BAD-NAME": "private-sentinel" } }]) {
+      const response = await request("/v1/agents", { ...definition, sandbox });
+      expect(response.status).toBe(400);
+      expect(await response.text()).not.toContain("private-sentinel");
+      expect((await request(`/v1/agents/${agent.id}`, { sandbox })).status).toBe(400);
+    }
+    const unchanged = await (await app.request(`/v1/agents/${agent.id}`)).json();
+    expect(unchanged.sandbox).toEqual(definition.sandbox);
   });
 
   it("creates an agent with valid input", async () => {
@@ -344,7 +368,7 @@ describe("POST /v1/agents", () => {
     expect(res.status).toBe(400);
   });
 
-  it("accepts the RDS streamable HTTP MCP configuration", async () => {
+  it("rejects a new raw RDS streamable HTTP MCP configuration", async () => {
     const { app } = createTestApp();
     const mcpServers = [
       {
@@ -368,8 +392,61 @@ describe("POST /v1/agents", () => {
       }),
     });
 
+    expect(res.status).toBe(400);
+  });
+
+  it("attaches the managed Supabase MCP with configurable name and description", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Session Analyst",
+        model: "openai-codex/gpt-5.5",
+        system: "Find opportunities to improve this Agent.",
+        runtime: "pi-agent",
+        mcpServers: [
+          {
+            catalogId: "aliyun-rds-supabase",
+            name: "session-data",
+            description: "Read recent Session data from Supabase",
+          },
+        ],
+      }),
+    });
+
     expect(res.status).toBe(201);
-    expect((await res.json()).mcpServers).toEqual(mcpServers);
+    expect((await res.json()).mcpServers).toEqual([
+      {
+        catalogId: "aliyun-rds-supabase",
+        name: "session-data",
+        description: "Read recent Session data from Supabase",
+      },
+    ]);
+  });
+
+  it("rejects managed Supabase when the tenant is outside the deployment allowlist", async () => {
+    const { app } = createTestApp();
+    process.env.OMA_SUPABASE_ALLOWED_TENANTS = "another-tenant";
+    const res = await app.request("/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Session Analyst",
+        model: "openai-codex/gpt-5.5",
+        system: "Find opportunities to improve this Agent.",
+        runtime: "pi-agent",
+        mcpServers: [{
+          catalogId: "aliyun-rds-supabase",
+          name: "session-data",
+        }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "mcpServers[0].catalogId is not available for this tenant",
+    });
   });
 
   it.each([
@@ -614,6 +691,27 @@ describe("GET /v1/agents", () => {
     // Just verifying the request succeeds - the limit is capped internally
   });
 
+  it("preserves tolerant parsing for legacy limit values", async () => {
+    const { app, agentStore } = createTestApp();
+    for (let i = 0; i < 2; i++) {
+      await agentStore.create({
+        tenantId: "dev",
+        name: `Agent ${i}`,
+        model: "claude-3",
+        system: "sys",
+        runtime: "claude-code",
+      });
+    }
+
+    const invalid = await app.request("/v1/agents?limit=abc");
+    expect(invalid.status).toBe(200);
+    expect((await invalid.json()).data).toHaveLength(2);
+
+    const decimal = await app.request("/v1/agents?limit=1.5");
+    expect(decimal.status).toBe(200);
+    expect((await decimal.json()).data).toHaveLength(1);
+  });
+
   it("supports cursor pagination", async () => {
     const { app, agentStore } = createTestApp();
     for (let i = 0; i < 5; i++) {
@@ -736,7 +834,33 @@ describe("POST /v1/agents/:id (update)", () => {
     expect(body.runtime).toBe("claude-code");
   });
 
-  it("preserves MCP servers when a partial update omits them", async () => {
+  it("enforces the documented update types before persisting changes", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "You are helpful",
+      runtime: "claude-code",
+    });
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tools: "not-an-array",
+        sandbox: "not-an-object",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await agentStore.getById(created.id)).toMatchObject({
+      tools: undefined,
+      sandbox: undefined,
+    });
+  });
+
+  it("returns a safe managed reference for a persisted legacy RDS connection", async () => {
     const { app, agentStore } = createTestApp();
     const mcpServers = [
       {
@@ -762,10 +886,16 @@ describe("POST /v1/agents/:id (update)", () => {
     });
 
     expect(res.status).toBe(200);
-    expect((await res.json()).mcpServers).toEqual(mcpServers);
+    const body = await res.json();
+    expect(body.mcpServers).toEqual([{
+      catalogId: "rds-mcp",
+      name: "rds-mcp",
+    }]);
+    expect(JSON.stringify(body)).not.toContain("campaign.welltop.tech");
+    expect(JSON.stringify(body)).not.toContain("RDS_MCP_APIKEY");
   });
 
-  it("updates an agent with a valid RDS MCP server", async () => {
+  it("rejects replacing an Agent MCP list with a raw RDS connection", async () => {
     const { app, agentStore } = createTestApp();
     const created = await agentStore.create({
       tenantId: "dev",
@@ -789,8 +919,35 @@ describe("POST /v1/agents/:id (update)", () => {
       body: JSON.stringify({ mcpServers }),
     });
 
-    expect(res.status).toBe(200);
-    expect((await res.json()).mcpServers).toEqual(mcpServers);
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a Supabase MCP update outside the tenant allowlist", async () => {
+    const { app, agentStore } = createTestApp();
+    const created = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "openai-codex/gpt-5.5",
+      system: "You are helpful",
+      runtime: "pi-agent",
+    });
+    process.env.OMA_SUPABASE_ALLOWED_TENANTS = "another-tenant";
+
+    const res = await app.request(`/v1/agents/${created.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mcpServers: [{
+          catalogId: "aliyun-rds-supabase",
+          name: "session-data",
+        }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "mcpServers[0].catalogId is not available for this tenant",
+    });
   });
 
   it.each([

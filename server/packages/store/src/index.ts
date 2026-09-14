@@ -2,16 +2,26 @@ export type {
   Agent,
   AgentToolConfig,
   AgentMcpServerConfig,
+  ManagedMcpServerRef,
+  LegacyHttpMcpServerConfig,
   AgentSandboxConfig,
   Session,
   SessionStatus,
   StoredEvent,
+  TokenUsageSummary,
   ApiKey,
   User,
   PaginatedResult,
   Runtime,
   Workspace,
+  Loop,
+  LoopDispatch,
 } from "./types.js";
+
+export {
+  summarizeTokenUsage,
+  type TokenUsageCounts,
+} from "./token-usage.js";
 
 export type {
   AgentStore,
@@ -48,10 +58,17 @@ export type {
 } from "./interfaces/session-store.js";
 
 export type {
+  LoopStore,
+  LoopStoreCreateInput,
+  LoopStoreUpdateInput,
+} from "./interfaces/loop-store.js";
+
+export type {
   EventLogStore,
   EventLogIngressStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
+  EventLogUsageScope,
 } from "./interfaces/event-log-store.js";
 
 export type {
@@ -114,6 +131,7 @@ export {
   PgApiKeyStore,
   PgUserStore,
   PgWorkspaceMetadataStore,
+  PgLoopStore,
 } from "./postgres/index.js";
 
 export type {

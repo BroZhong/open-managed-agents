@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
 import { ArrowLeft, FolderOpen, PanelRight, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { ConversationView } from "@/components/conversation-view";
 import { TimelineView } from "@/components/timeline-view";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
+import { TokenUsageMetrics } from "@/components/token-usage-metrics";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
@@ -24,6 +25,7 @@ function messageText(data: unknown): string {
   const first = content[0] as { text?: unknown } | undefined;
   return typeof first?.text === "string" ? first.text : "";
 }
+import { summarizeTokenUsage } from "@/lib/token-usage";
 
 type Tab = "conversation" | "timeline" | "workspace";
 
@@ -66,7 +68,9 @@ function SessionDetail({ id }: { id: string }) {
   }, [interrupt, isInterrupting]);
 
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
-  const effectiveStatus = status === "running" ? "running" : (session?.status ?? "idle");
+  const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
+  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" ? "running" : (session?.status ?? "idle");
+  const tokenUsage = useMemo(() => summarizeTokenUsage(events), [events]);
 
   if (sessionLoading) {
     return (
@@ -115,22 +119,24 @@ function SessionDetail({ id }: { id: string }) {
             </span>
           )}
         </div>
-        {activeTab === "conversation" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto"
-            onClick={() => setWorkspaceOpen((v) => !v)}
-            title={workspaceOpen ? "Hide workspace" : "Show workspace"}
-            aria-pressed={workspaceOpen}
-          >
-            {workspaceOpen ? (
-              <PanelRightClose className="h-4 w-4" />
-            ) : (
-              <PanelRight className="h-4 w-4" />
-            )}
-          </Button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <TokenUsageMetrics usage={tokenUsage} />
+          {activeTab === "conversation" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setWorkspaceOpen((v) => !v)}
+              title={workspaceOpen ? "Hide workspace" : "Show workspace"}
+              aria-pressed={workspaceOpen}
+            >
+              {workspaceOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRight className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -164,7 +170,7 @@ function SessionDetail({ id }: { id: string }) {
               <ConversationView
                 events={events}
                 activeDeltas={activeDeltas}
-                sessionStatus={status}
+                sessionStatus={effectiveTurnStatus}
               />
             </div>
             <MessageInput
@@ -198,7 +204,7 @@ function SessionDetail({ id }: { id: string }) {
                   <WorkspacePanel
                     sessionId={id}
                     refreshKey={fileChange.nonce}
-                    turnStatus={status === "running" ? "running" : "idle"}
+                    turnStatus={effectiveTurnStatus}
                   />
                 </div>
               </div>
@@ -214,7 +220,7 @@ function SessionDetail({ id }: { id: string }) {
           <WorkspacePanel
             sessionId={id}
             refreshKey={fileChange.nonce}
-            turnStatus={status === "running" ? "running" : "idle"}
+            turnStatus={effectiveTurnStatus}
           />
         </div>
       )}

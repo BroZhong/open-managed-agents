@@ -1,7 +1,8 @@
 import type { Pool, PoolClient } from "./connection.js";
-import type { EventLogIngressStore, EventLogStoreAppendInput, EventLogStoreGetEventsOpts } from "../interfaces/event-log-store.js";
-import type { PaginatedResult, StoredEvent } from "../types.js";
+import type { EventLogIngressStore, EventLogStoreAppendInput, EventLogStoreGetEventsOpts, EventLogUsageScope } from "../interfaces/event-log-store.js";
+import type { PaginatedResult, StoredEvent, TokenUsageSummary } from "../types.js";
 import { PendingEventClaimLostError } from "../errors.js";
+import { summarizeTokenUsage } from "../token-usage.js";
 
 interface EventRow {
   session_id: string;
@@ -11,6 +12,31 @@ interface EventRow {
   ts: Date;
   session_thread_id: string;
   idempotency_key: string | null;
+  api_key_id: string | null;
+}
+
+interface UsageAggregateRow {
+  api_key_id?: string | null;
+  input_tokens: string | number | null;
+  output_tokens: string | number | null;
+  cache_read_tokens: string | number | null;
+  cache_write_tokens: string | number | null;
+}
+
+const USAGE_SUMS = `
+  COALESCE(SUM((data->'usage'->>'inputTokens')::BIGINT), 0) AS input_tokens,
+  COALESCE(SUM((data->'usage'->>'outputTokens')::BIGINT), 0) AS output_tokens,
+  COALESCE(SUM((data->'usage'->>'cacheReadTokens')::BIGINT), 0) AS cache_read_tokens,
+  COALESCE(SUM((data->'usage'->>'cacheWriteTokens')::BIGINT), 0) AS cache_write_tokens
+`;
+
+function summarizeUsage(row?: UsageAggregateRow): TokenUsageSummary {
+  return summarizeTokenUsage({
+    inputTokens: Number(row?.input_tokens ?? 0),
+    outputTokens: Number(row?.output_tokens ?? 0),
+    cacheReadTokens: Number(row?.cache_read_tokens ?? 0),
+    cacheWriteTokens: Number(row?.cache_write_tokens ?? 0),
+  });
 }
 
 function rowToEvent(row: EventRow): StoredEvent {
@@ -128,8 +154,8 @@ export class PgEventLogStore implements EventLogIngressStore {
       const ts = new Date();
 
       const { rows } = await client.query<EventRow>(
-        `INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [
           sessionId,
@@ -138,6 +164,7 @@ export class PgEventLogStore implements EventLogIngressStore {
           JSON.stringify(event.data ?? null),
           ts,
           event.sessionThreadId,
+          event.apiKeyId ?? null,
           event.idempotencyKey ?? null,
         ],
       );
@@ -214,8 +241,8 @@ export class PgEventLogStore implements EventLogIngressStore {
       );
       const seq = Number(counter.rows[0].seq);
       const { rows } = await client.query<EventRow>(
-        `INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, NULL)
+        `INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL)
          RETURNING *`,
         [sessionId, seq, event.type, serializedData, new Date(), event.sessionThreadId],
       );
@@ -246,5 +273,37 @@ export class PgEventLogStore implements EventLogIngressStore {
     const hasMore = rows.length > limit;
     const data = (hasMore ? rows.slice(0, limit) : rows).map(rowToEvent);
     return { data, hasMore };
+  }
+
+  async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {
+    const bySession = "sessionId" in scope;
+    const { rows } = await this.pool.query<UsageAggregateRow>(
+      `SELECT ${USAGE_SUMS} FROM events
+       WHERE type = 'span.model_request_end'
+         AND ${bySession ? "session_id" : "api_key_id"} = $1`,
+      [bySession ? scope.sessionId : scope.apiKeyId],
+    );
+    return summarizeUsage(rows[0]);
+  }
+
+  async getUsageByApiKeyIds(apiKeyIds: string[]): Promise<Map<string, TokenUsageSummary>> {
+    const uniqueIds = [...new Set(apiKeyIds)];
+    const result = new Map(uniqueIds.map((id) => [id, summarizeUsage()]));
+    if (uniqueIds.length === 0) return result;
+    const placeholders = uniqueIds.map((_, index) => `$${index + 1}`).join(", ");
+    const { rows } = await this.pool.query<UsageAggregateRow>(
+      `SELECT api_key_id, ${USAGE_SUMS}
+       FROM events
+       WHERE type = 'span.model_request_end'
+         AND api_key_id IN (${placeholders})
+       GROUP BY api_key_id`,
+      uniqueIds,
+    );
+    for (const row of rows) {
+      if (row.api_key_id !== null && row.api_key_id !== undefined) {
+        result.set(row.api_key_id, summarizeUsage(row));
+      }
+    }
+    return result;
   }
 }

@@ -1,6 +1,7 @@
 node_modules
 **/node_modules
 .git
+.buildx-cache
 dist
 **/dist
 *.tsbuildinfo
@@ -8,3 +9,6 @@ dist
 web
 docs
 sandbox
+.env
+.env.*
+!.env.example

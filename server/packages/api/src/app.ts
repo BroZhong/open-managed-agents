@@ -1,6 +1,5 @@
-import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -17,6 +16,14 @@ import { eventRoutes } from "./routes/events.js";
 import { messageRoutes } from "./routes/messages.js";
 import { workspaceRoutes } from "./routes/workspace.js";
 import { workspaceEntityRoutes } from "./routes/workspaces.js";
+import { mcpCatalogRoutes } from "./routes/mcp-catalog.js";
+import { loopRoutes } from "./routes/loops.js";
+import { createOpenApiDocument } from "./openapi/document.js";
+import { getOpenApiRoute } from "./openapi/routes.js";
+import {
+  createContractRouter,
+  registerContractRoute,
+} from "./openapi/router.js";
 
 type Env = {
   Variables: {
@@ -35,6 +42,7 @@ export interface AppDeps {
   eventLogStore?: EventLogIngressStore;
   pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
+  loopStore?: LoopStore;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
@@ -42,71 +50,108 @@ export interface AppDeps {
   /** Override the SSE keepalive cadence in focused tests. */
   sseHeartbeatIntervalMs?: number;
   sessionRouter?: SessionRouter;
+  /** Deterministic clock seam for Loop API tests. */
+  now?: () => Date;
+}
+
+/**
+ * Optional prefix that every route is served under, e.g. `/api`, so the console
+ * can be reached at `/api/v1/*` instead of `/v1/*`. Read from `API_BASE_PATH`.
+ *
+ * Empty (the default) preserves the original `/v1/*` and `/health` layout, so
+ * existing deployments and the whole test suite are unaffected. Set it only
+ * where the ingress in front of the server expects a prefix.
+ */
+function normalizeBasePath(raw: string | undefined): string {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "" || trimmed === "/") return "";
+  const withLeading = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withLeading.replace(/\/+$/, "");
 }
 
 export function createApp(deps: AppDeps) {
-  const app = new Hono<Env>();
+  const basePath = normalizeBasePath(process.env.API_BASE_PATH);
+  const app = createContractRouter<Env>().basePath(basePath);
 
   // CORS middleware — allow all origins in dev
   app.use("*", cors());
 
+  // Public machine-readable contract for documentation tools such as Apifox.
+  registerContractRoute(app, getOpenApiRoute("getOpenApiDocument"), (c) => {
+    c.header("Cache-Control", "public, max-age=300");
+    return c.json(createOpenApiDocument());
+  });
+
   // Health check — no auth required
-  app.get("/health", (c) => {
+  registerContractRoute(app, getOpenApiRoute("healthCheck"), (c) => {
     return c.json({ status: "ok" });
   });
 
   // Auth routes (register/login) — mounted at /auth/*, OUTSIDE the /v1/* auth
   // middleware so they are reachable unauthenticated.
   if (deps.userStore) {
-    app.route("", authRoutes(deps.userStore));
+    app.route("/", authRoutes(deps.userStore));
   }
 
   // Auth middleware on all /v1/* routes
   app.use("/v1/*", authMiddleware(deps.apiKeyStore));
 
+  // Host-owned MCP catalog exposes metadata only; runtime definitions stay private.
+  app.route("/", mcpCatalogRoutes());
+
   // Mount agent routes
   if (deps.agentStore) {
-    app.route("", agentRoutes(deps.agentStore));
+    app.route("/", agentRoutes(deps.agentStore));
+  }
+
+  if (deps.agentStore && deps.loopStore) {
+    app.route("/", loopRoutes({
+      agentStore: deps.agentStore,
+      loopStore: deps.loopStore,
+      sessionRouter: deps.sessionRouter,
+      now: deps.now,
+    }));
   }
 
   // Mount Agent Files routes (per-Agent editable persona/instruction docs)
   if (deps.agentFileStore && deps.agentStore) {
-    app.route("", agentFileRoutes(deps.agentFileStore, deps.agentStore));
+    app.route("/", agentFileRoutes(deps.agentFileStore, deps.agentStore));
   }
 
   // Mount Skill Library routes (tenant-scoped reusable Skills)
   if (deps.skillStore && deps.skillArtifactStore) {
-    app.route("", skillRoutes(deps.skillStore, deps.skillArtifactStore));
+    app.route("/", skillRoutes(deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount per-Agent Skill routes (equip = fork; unequip = delete fork; ADR-0004)
   if (deps.agentStore && deps.skillStore && deps.skillArtifactStore) {
-    app.route("", agentSkillRoutes(deps.agentStore, deps.skillStore, deps.skillArtifactStore));
+    app.route("/", agentSkillRoutes(deps.agentStore, deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount API key CRUD routes
   if (deps.fullApiKeyStore) {
-    app.route("", apiKeyRoutes(deps.fullApiKeyStore));
+    app.route("/", apiKeyRoutes(deps.fullApiKeyStore, deps.eventLogStore));
   }
 
   // Mount Workspace entity routes (create-named + list + get)
   if (deps.workspaceStore) {
-    app.route("", workspaceEntityRoutes(deps.workspaceStore));
+    app.route("/", workspaceEntityRoutes(deps.workspaceStore));
   }
 
   // Mount session routes
   if (deps.sessionStore && deps.agentStore && deps.workspaceStore) {
-    app.route("", sessionRoutes({
+    app.route("/", sessionRoutes({
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,
       workspaceStore: deps.workspaceStore,
+      eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
     }));
   }
 
   // Mount event routes
   if (deps.eventLogStore && deps.pendingEventStore && deps.sessionStore) {
-    app.route("", eventRoutes({
+    app.route("/", eventRoutes({
       eventLogStore: deps.eventLogStore,
       pendingEventStore: deps.pendingEventStore,
       sessionStore: deps.sessionStore,
@@ -119,7 +164,7 @@ export function createApp(deps: AppDeps) {
 
   // Mount Workspace file proxy routes (list + preview/download through the Host)
   if (deps.sessionStore && deps.artifactStore) {
-    app.route("", workspaceRoutes({
+    app.route("/", workspaceRoutes({
       sessionStore: deps.sessionStore,
       artifactStore: deps.artifactStore,
       turnStreamStore: deps.turnStreamStore,
@@ -128,7 +173,7 @@ export function createApp(deps: AppDeps) {
 
   // Mount message routes
   if (deps.eventLogStore && deps.pendingEventStore && deps.sessionStore && deps.eventStreamHub && deps.sessionRouter) {
-    app.route("", messageRoutes({
+    app.route("/", messageRoutes({
       eventLogStore: deps.eventLogStore,
       pendingEventStore: deps.pendingEventStore,
       sessionStore: deps.sessionStore,
