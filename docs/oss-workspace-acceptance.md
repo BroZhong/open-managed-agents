@@ -3,6 +3,11 @@
 Implementation branch: `codex/oss-workspace`, starting at `5609760`.
 Issues: #124 → #125 → #126 → #127. Production is not switched by these commits.
 
+The subsequent production release is complete. See the
+[production release record](./oss-workspace-production-release.md) for deployed
+digests, the `auto-story-v2` configuration and real production acceptance.
+The checks below retain their original implementation-stage context.
+
 ## #124 — Host file API
 
 `workspaceObjectPrefix(tenantId, workspaceId)` is the only object-prefix rule:

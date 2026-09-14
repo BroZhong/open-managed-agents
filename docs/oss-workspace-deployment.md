@@ -1,19 +1,24 @@
 # OSS Workspace deployment and recovery
 
+Production was released on 2026-09-14 with `auto-story-v2` as its only template.
+See the [release record](./oss-workspace-production-release.md) for current
+image digests and post-deployment acceptance.
+
 This is the operational handoff for issues #124–#127 and
 [ADR-0008](./adr/0008-oss-mounted-workspaces.md). The application remains on its
 existing infrastructure: PostgreSQL, Redis, Supabase Skills storage, proxy and
 application namespace are unchanged. Workspace files use Shanghai OSS and
-execution uses the separate Shanghai Sandbox cluster. Preparing these files
-and passing isolated checks does not authorize a production switch.
+execution uses the Shanghai Sandbox namespace. Application and Sandbox
+resources are in the same `agent-platform` Shanghai cluster.
 
 The application manifest is [`deploy/k8s.yaml`](../deploy/k8s.yaml). The Shanghai
 cluster inventory, Agent Identity declarations and live evidence are in
 [`deploy/sandbox/oss-workspace/`](../deploy/sandbox/oss-workspace/README.md).
-The supported template is `code-interpreter-vfscli`, with its
-[image instructions](../deploy/sandbox/code-interpreter-vfscli/README.md).
-Use an explicit application kubeconfig for application changes and a separate
-explicit Shanghai kubeconfig for Sandbox changes. Do not change the default
+Production uses `auto-story-v2` for the default and existing Agent overrides.
+The mounted Workspace overlay preserves its verified runtime base digest;
+see [the overlay](../deploy/sandbox/oss-workspace/Dockerfile).
+Use an explicit Shanghai kubeconfig and namespace for both application and
+Sandbox changes. Do not change the default
 kubectl context or restore any removed cloud profile. The inventory's local
 verification commands use the authorized `welltop` profile; another environment
 must use its own authorized credentials.
@@ -32,23 +37,29 @@ Supabase fallback, local filesystem fallback or dual-write mode.
 | `WORKSPACE_OSS_ACCESS_KEY_ID` | Required Host credential from the application's managed Secret. |
 | `WORKSPACE_OSS_ACCESS_KEY_SECRET` | Required Host credential from the same secret source. Never pass it to an Agent or Sandbox. |
 | `WORKSPACE_OSS_STS_TOKEN` | Optional token when the Host uses temporary credentials. |
-| `WORKSPACE_OSS_ENDPOINT` | Host API endpoint. This manifest uses `https://oss-cn-shanghai.aliyuncs.com` because the existing application network cannot assume access to Shanghai's internal endpoint. |
+| `WORKSPACE_OSS_ENDPOINT` | Host API endpoint. This manifest uses `https://oss-cn-shanghai.aliyuncs.com` to share the verified regional Host SDK configuration. CSI uses the internal endpoint. |
 | `WORKSPACE_OSS_PUBLIC_ENDPOINT` | Browser signing endpoint: `https://oss-cn-shanghai.aliyuncs.com`. It must be the public regional HTTPS endpoint; internal endpoints and custom domains are rejected. |
 | `WORKSPACE_OSS_AGENT_NAME` | `agentry-workspace`; optional in code, explicit in the deployment. |
 | `WORKSPACE_OSS_PV_NAME` | `agentry-workspace-oss`; optional in code, explicit in the deployment. |
 | `WORKSPACE_OSS_CREDENTIAL_PROVIDER` | `agentry-oss-rw`; optional in code, explicit in the deployment. |
 | `SANDBOX_ENABLED` | Required literal `true`. Disabling it is a startup error for this storage assembly. |
-| `SANDBOX_TEMPLATE` | `code-interpreter-vfscli`. Check every Agent's stored template override too. |
-| `E2B_DOMAIN` | Required: `sandbox.agentry.welltop.tech`, declared in the ConfigMap. |
+| `SANDBOX_TEMPLATE` | `auto-story-v2`. Check every Agent's stored template override too. |
+| `E2B_DOMAIN` | Required: `sandbox.agentry.welltop.tech`; production keeps the existing Secret reference. |
 | `E2B_API_KEY` | Required Shanghai gateway key from `oma-infra/oma-secrets`; an old gateway key is not interchangeable. |
 | `E2B_REQUEST_TIMEOUT_MS` | Default and manifest value `185000`; accepted range `180000`–`300000`. |
 
 Host credentials need Workspace object list/read/write/delete capabilities and
 signed GET access for the configured bucket. They also need to list the
 startup-check prefix described below and read runtime verification objects.
+Production uses RAM user `agentry-workspace-host` with policy
+`AgentryHostWorkspaceAccess`, limited to bucket `agentry`; its
+[policy document](../deploy/sandbox/oss-workspace/ram-host-permissions-policy.json)
+contains no credential. The application reads its access key from
+`oma-infra/oma-secrets`; rotate the key through that managed Secret and restart
+the Host. This principal is separate from the operator's `welltop` CLI profile.
 Use the existing secret-management process to provision the required
 `WORKSPACE_OSS_ACCESS_KEY_ID`, `WORKSPACE_OSS_ACCESS_KEY_SECRET` and Shanghai
-`E2B_API_KEY` keys before the approved rollout. The manifest references optional
+`E2B_API_KEY` keys before rollout. The manifest references optional
 `WORKSPACE_OSS_STS_TOKEN` only when that key exists. No secret values are present
 in the repository's manifests or examples.
 
@@ -151,9 +162,8 @@ simulation is not a substitute. Unfinished checks remain release blockers.
 2. Publish the reviewed Sandbox image to an authorized registry and pin the
    resulting registry digest in the Shanghai SandboxSet. The
    [local build](../deploy/sandbox/code-interpreter-vfscli/local-build-verification.json)
-   passed, but its local image ID is not a published registry digest. Also build
-   and pin the reviewed Host/web artifacts. This document does not authorize
-   pushing images or updating production.
+   alone is insufficient; use the published registry digest. Also build and pin
+   the reviewed Host/web artifacts.
 3. Inventory active Sessions, running Turns, accepted Queued Input and app-owned
    Sandbox resources. Review every Agent's stored template override: the live
    inventory previously observed a different default, and an Agent override can
@@ -171,7 +181,7 @@ simulation is not a substitute. Unfinished checks remain release blockers.
    Preserve Session history and all Workspace objects. Apply the reviewed
    Shanghai template with its explicit kubeconfig and wait for warm readiness;
    apply the coordinated Host OSS configuration/secrets and Host/web artifacts
-   to the existing application cluster using its separate kubeconfig. Keep
+   to `oma-infra` in the same cluster using the explicit kubeconfig. Keep
    traffic closed until both sides use the same OSS prefix contract. Do not
    let a Host serving OSS files continue an old local/Supabase-backed Sandbox.
 6. Verify startup and run isolated authenticated acceptance: upload, list,

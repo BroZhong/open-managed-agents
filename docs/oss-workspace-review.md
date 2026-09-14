@@ -29,7 +29,8 @@ descriptors and discovery consistently use names; internal source/ownership IDs
 and Supabase Skill storage remain intact. At the initial review, the honestly
 pending >1h probe and unperformed production cutover were release status, not
 false passing claims. The >1h probe subsequently passed; production remains
-unchanged.
+unchanged at that review stage. The subsequent production deployment is recorded
+in [the release report](./oss-workspace-production-release.md).
 
 Summary: Standards 1 finding (P1); Spec 1 finding (P1), both identifying the same
 root listing defect. The findings are recorded separately to preserve each axis.
@@ -54,3 +55,19 @@ confirm the original failure path; their detailed evidence and cleanup are in
 Final status: Standards 0 unresolved; Spec 0 unresolved. Native download-event
 and prompt limitations of the built-in browser are recorded separately from
 the passing Host API checks and are not represented as successful UI checks.
+
+## Production baseline merge and build-cache review
+
+Before publication, current production `df7f1eb` was merged into the implementation
+branch as `f98d729`. Both independent reviewers found the same two Supabase
+Skills regressions: raw object URL segments could change the requested path,
+and HTTP 400 responses could be mistaken for missing files. `24872a9` encodes
+each object path segment and treats only HTTP 404 as absence. Real HTTP fixture
+tests cover reserved/encoded path characters and strict error propagation.
+Both reviewers confirmed the fixes with no remaining findings.
+
+Both reviewers also checked `2f21683`, which adds dependency download caches and
+isolates build stages. Neither found a new blocker. The actual published image
+passed source-import and Pi seed checks, and repeated Host/Web builds completed
+in 6.16/6.09 seconds with every RUN step cached. Current production acceptance,
+including a real browser-triggered Pi Turn and instance replacement, passed.

@@ -92,7 +92,7 @@ data:
   # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
   SANDBOX_ENABLED: "true"
   # E2B templateID = SandboxSet metadata.name in sandbox-system.
-  SANDBOX_TEMPLATE: "auto-story"
+  SANDBOX_TEMPLATE: "auto-story-v2"
   E2B_REQUEST_TIMEOUT_MS: "185000"
 ---
 apiVersion: apps/v1

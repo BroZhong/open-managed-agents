@@ -1,5 +1,10 @@
 # OSS Workspace deployment inventory
 
+Production was subsequently deployed with `auto-story-v2` as its only template.
+Use the [production release record](../../../docs/oss-workspace-production-release.md)
+and `production-verification.json` for current image digests and live acceptance.
+The inventory and isolated checks below retain their pre-release context.
+
 This directory records the Shanghai configuration verified on 2026-09-14 for
 issues #124–#127. It does not perform a production storage switch. Existing
 RAM roles and compatible managed add-ons must be reused. There is no Workspace
