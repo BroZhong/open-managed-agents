@@ -124,9 +124,19 @@ production Supabase access, or interactive browser rendering. Web rendering and
 Supabase behavior are covered by the package regressions above.
 
 Detailed live application results and >1h credential-refresh evidence are in
-`deploy/sandbox/oss-workspace/verification.json`. The credential check is still
-running; a running check is not a passed check. Final refresh and cleanup results
-will be appended after completion.
+`deploy/sandbox/oss-workspace/verification.json`. The same mounted Sandbox
+completed its initial write at **2026-09-14 09:44:46.011 UTC** and its final write
+at **10:49:47.561 UTC**: an actual interval of **3901.550 seconds (65 minutes
+1.55 seconds)**. Post-expiry mounted write/read, Unicode rename/delete and
+independent Host readback passed. This is a real elapsed-time test, not a
+short-duration simulation or a replacement Sandbox.
+
+Independent cleanup checks confirmed all **11** recorded test Sandboxes absent
+and all **9** exact test prefixes empty. Local test servers were stopped, the
+temporary kubeconfig was deleted, and the default kubectl context was unchanged.
+The cloud evidence directory was checked against the current cloud/E2B
+credentials and signed-URL patterns: zero matches. No production resources or
+business files were removed.
 
 The required independent Standards and Spec reviews each found the same P1:
 root file listing did not follow CSI's Workspace symlink. Follow-up `a584914`

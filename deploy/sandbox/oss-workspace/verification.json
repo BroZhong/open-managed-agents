@@ -1,5 +1,5 @@
 {
-  "verifiedAt": "2026-09-14T09:50:00Z",
+  "verifiedAt": "2026-09-14T10:49:48.460Z",
   "cluster": "c4d4dbd36064d4341835496ed01023600",
   "profile": "welltop",
   "productionMutations": false,
@@ -52,11 +52,71 @@
     "initialHostRead": true,
     "unicodeBinaryEmptyWrites": true,
     "nextCheckAt": "2026-09-14T10:49:46.450Z",
-    "status": "running",
-    "cleanup": "pending"
+    "status": "passed",
+    "cleanup": "verified: own Sandbox absent, exact OSS prefix empty",
+    "finalWriteAt": "2026-09-14T10:49:47.561Z",
+    "mountedWriteIntervalSeconds": 3901.55,
+    "finalHostRead": true,
+    "sameSandboxThroughout": true,
+    "report": {
+      "testId": "2f77a2bc90ac4ccb933599d455c1ade5",
+      "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5",
+      "domain": "sandbox.agentry.welltop.tech",
+      "startedAt": "2026-09-14T09:44:44.591Z",
+      "events": [
+        {
+          "at": "2026-09-14T09:44:45.388Z",
+          "event": "created",
+          "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+          "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5"
+        },
+        {
+          "at": "2026-09-14T09:44:46.011Z",
+          "event": "initial-mounted-write",
+          "exitCode": 0,
+          "stdout": "{\"candidateMounts\": [\"370 1038 0:115 / /run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0 rw,nosuid,nodev,relatime master:162 - fuse.ossfs ossfs rw,user_id=0,group_id=0,allow_other\"], \"exists\": true, \"realpath\": \"/run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0\"}\n{\"uid\": 1000, \"gid\": 1000, \"mountinfo\": [\"370 1038 0:115 / /run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0 rw,nosuid,nodev,relatime master:162 - fuse.ossfs ossfs rw,user_id=0,group_id=0,allow_other\"]}\ninitial-close-read-ok\n",
+          "stderr": ""
+        },
+        {
+          "at": "2026-09-14T09:44:46.450Z",
+          "event": "initial-host-read-verified"
+        },
+        {
+          "at": "2026-09-14T09:44:46.450Z",
+          "event": "soak-wait-started",
+          "nextCheckAt": "2026-09-14T10:49:46.450Z"
+        },
+        {
+          "at": "2026-09-14T10:49:47.561Z",
+          "event": "after-expiry-mounted-write",
+          "exitCode": 0,
+          "stdout": "after-expiry-close-read-rename-delete-ok\n",
+          "stderr": ""
+        },
+        {
+          "at": "2026-09-14T10:49:47.913Z",
+          "event": "credential-refresh-soak-passed",
+          "elapsedSeconds": 3903
+        },
+        {
+          "at": "2026-09-14T10:49:48.112Z",
+          "event": "sandbox-cleaned",
+          "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx"
+        },
+        {
+          "at": "2026-09-14T10:49:48.459Z",
+          "event": "prefix-cleaned",
+          "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5"
+        }
+      ],
+      "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+      "nextCheckAt": "2026-09-14T10:49:46.450Z",
+      "passed": true,
+      "finishedAt": "2026-09-14T10:49:48.460Z"
+    }
   },
   "releaseBlockers": [
-    "Real >1h credential refresh probe remains running until final write/read and cleanup evidence.",
+    "New Sandbox image was built and smoked locally only; it is not published or pinned by a registry digest in the live SandboxSet.",
     "Production maintenance switch not performed; inventory found an active claimed Sandbox and SANDBOX_TEMPLATE=auto-story."
   ],
   "mountedFilesProbe": {
@@ -356,7 +416,7 @@
   },
   "limitations": [
     "Application HTTP/Adapter and actual local browser rendering acceptance passed with the documented native dialog/download observation limits; live LLM/provider and production Supabase Skill reads are not claimed.",
-    "The captured live SandboxSet image predates the implementation; a rebuilt image and coordinated maintenance switch are still required for production."
+    "The captured live SandboxSet image predates the implementation. The rebuilt image passed local build/smoke only; registry publication, digest pinning and a coordinated maintenance switch remain required for production."
   ],
   "workspaceListRegression": {
     "at": "2026-09-14T10:24:30.920Z",
@@ -458,5 +518,36 @@
       "scope": "real application HTTP handlers, SessionRouter, SandboxManager, E2B SDK and OSS SDK; in-memory control metadata/auth and Skill artifact source; deterministic Adapter, no LLM/provider or browser rendering claim",
       "finishedAt": "2026-09-14T10:28:10.362Z"
     }
+  },
+  "cleanupVerification": {
+    "verifiedAt": "2026-09-14T10:50:37.480420+00:00",
+    "sandboxesAbsent": [
+      "sandbox-system--code-interpreter-vfscli-5zldw",
+      "sandbox-system--code-interpreter-vfscli-684g5",
+      "sandbox-system--code-interpreter-vfscli-99chn",
+      "sandbox-system--code-interpreter-vfscli-bpcjw",
+      "sandbox-system--code-interpreter-vfscli-d8r8b",
+      "sandbox-system--code-interpreter-vfscli-drmnx",
+      "sandbox-system--code-interpreter-vfscli-hrq6x",
+      "sandbox-system--code-interpreter-vfscli-kgxk9",
+      "sandbox-system--code-interpreter-vfscli-nsxxj",
+      "sandbox-system--code-interpreter-vfscli-ppc8b",
+      "sandbox-system--code-interpreter-vfscli-zlcfg"
+    ],
+    "exactPrefixesEmpty": [
+      "3e2454ff-403b-4ae9-9714-8ef9febbaa9f/probe_app_be96a78ceff74f0583d35b7b18f7851e/",
+      "859e6ba7-b7cd-4ede-b446-cb6e027f74c2/probe_app_4378e7ef8f8e47a491ba827316392cf2/",
+      "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf/",
+      "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf_other/",
+      "probe_1e0e5a3a2fdf4de89ba266bcabc984bf/ws_1e0e5a3a2fdf4de89ba266bcabc984bf/",
+      "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5/",
+      "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_other_2f77a2bc90ac4ccb933599d455c1ade5/",
+      "probe_client_d3244599d1a945afadd087c101c7944c/ws_d3244599d1a945afadd087c101c7944c/",
+      "probe_ff8e90b060ad4f9092de8f96debeac8a/ws_ff8e90b060ad4f9092de8f96debeac8a/"
+    ],
+    "method": "Independent read-only kubectl --ignore-not-found and OSS ListObjectsV2 KeyCount=0 for this task's exact generated identities only",
+    "localUiPort3000Closed": true,
+    "temporaryKubeconfigDeleted": true,
+    "defaultKubeContextUnchanged": true
   }
 }

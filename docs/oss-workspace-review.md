@@ -26,8 +26,10 @@ test and initial deterministic Adapter harness did not cover the real symlink
 layout. The reviewer found no additional concrete isolation, old-sync,
 completion-state, assembly or scope-expansion defect. Named Skill projections,
 descriptors and discovery consistently use names; internal source/ownership IDs
-and Supabase Skill storage remain intact. The honestly pending >1h probe and
-unperformed production cutover are release status, not false passing claims.
+and Supabase Skill storage remain intact. At the initial review, the honestly
+pending >1h probe and unperformed production cutover were release status, not
+false passing claims. The >1h probe subsequently passed; production remains
+unchanged.
 
 Summary: Standards 1 finding (P1); Spec 1 finding (P1), both identifying the same
 root listing defect. The findings are recorded separately to preserve each axis.
