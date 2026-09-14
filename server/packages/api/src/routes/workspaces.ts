@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { WorkspaceMetadataStore } from "@oma-server/store";
+import { workspaceObjectPrefix } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 
 type Env = {
@@ -34,6 +35,13 @@ export function workspaceEntityRoutes(workspaceStore: WorkspaceMetadataStore) {
     }
 
     const tenant = c.get("tenant");
+    if (id !== undefined) {
+      try {
+        workspaceObjectPrefix(tenant.tenantId, id);
+      } catch {
+        return c.json({ error: "Workspace id must contain 1–128 letters, numbers, underscores or hyphens" }, 400);
+      }
+    }
     const workspace = await workspaceStore.create({
       tenantId: tenant.tenantId,
       id,

@@ -26,12 +26,13 @@ export interface ArtifactPutInput {
 }
 
 /**
- * S3-authoritative artifact storage, keyed by tenant + workspace + path.
+ * Workspace artifact storage, keyed by tenant + workspace + path.
  *
- * Implementations MUST prefix every key as `<tenantId>/<workspaceId>/<path>`
+ * Implementations MUST prefix every key using the trusted
+ * `workspaceObjectPrefix(tenantId, workspaceId)` contract plus a validated path
  * so that cross-tenant and cross-workspace access is isolated: a caller can
  * only ever see or mutate objects under its own tenant+workspace prefix.
- * See ADR-0002 §4/§5.
+ * Callers must first verify that the Workspace belongs to the authenticated Tenant.
  */
 export interface ArtifactStore {
   /** List artifacts under a Workspace prefix (ListObjects). */
