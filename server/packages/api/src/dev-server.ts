@@ -19,6 +19,7 @@ import {
 import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { createApp } from "./app.js";
 import { adapterProcessEnvFromHost, sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
+import { sandboxBaseEnvFromKubernetes } from "./lib/sandbox-base-secret.js";
 import type {
   Adapter,
   AdapterInput,
@@ -286,6 +287,13 @@ function resolveAdapter(runtime: string): Adapter {
 }
 
 async function main() {
+  // Load before opening application resources. A configured but unreadable
+  // shared Secret must fail startup instead of creating credential-less sandboxes.
+  const baseSandboxEnv = await sandboxBaseEnvFromKubernetes(process.env);
+  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env, baseSandboxEnv);
+  if (Object.keys(baseSandboxEnv).length > 0) {
+    console.log(`Shared sandbox Secret loaded: ${Object.keys(baseSandboxEnv).length} environment variables for all Agents`);
+  }
   // Validate one coherent API + Sandbox storage configuration before opening resources.
   const workspaceConfig = workspaceConfigFromEnv(process.env);
   // ─── PostgreSQL (authoritative store) ─────────────────────────────────────
@@ -355,9 +363,6 @@ async function main() {
     provisionSources: { s3: new S3ProvisionSource(skillArtifactStore) },
   });
   console.log("OSS Workspace enabled; Sandbox mount checks required; Skills projected from Supabase");
-
-  // Host-owned values are scoped to allowed Agents and stay out of Agent records.
-  const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
     eventLogStore: stores.eventLogStore,

@@ -158,6 +158,46 @@ depends on a new migration.
 
 ## Cluster access and verification
 
+### Shared native sandbox credentials
+
+The Host reads `sandbox-system/base-secret` at startup and supplies its valid
+environment-variable keys to E2B `Sandbox.create({ envs })` for every Agent,
+including newly created Agents. A SandboxSet's Kubernetes `env` alone does not
+populate the E2B command environment. No shell profile or `ACS_SYNC_ENVS` bridge
+is used by this integration.
+
+The existing Secret is the source; no cross-namespace copy is maintained.
+`source.env` and other file-like keys are excluded. Values remain in Host memory
+and E2B's runtime environment, never in Agent records or Host `process.env`.
+The dedicated Host ServiceAccount can only `get` this one Secret:
+
+```bash
+kubectl --kubeconfig ~/.kube/agent-platform-config apply -f deploy/sandbox-base-secret-rbac.yaml
+```
+
+The application manifest sets `serviceAccountName: oma-server` and the complete
+`SANDBOX_BASE_SECRET_NAMESPACE` / `SANDBOX_BASE_SECRET_NAME` pair. A configured
+but unavailable Secret prevents startup; omission of both settings disables the
+integration for local development. HTTPS requests use the ServiceAccount CA and
+bypass the outbound LLM proxy.
+
+For an existing deployment, patch these two ConfigMap keys and the Deployment's
+ServiceAccount together with the updated Server image; routine image-only
+releases do not update those fields. Do not apply the full application manifest
+just to enable credentials, because unrelated live configuration may differ.
+
+Precedence remains explicit: legacy deployment defaults < base Secret < Agent
+`sandbox.env` < explicitly scoped WW values < fixed Workspace environment. The
+existing `oma-auto-story-env` only supplements keys absent from the base Secret,
+so old preset copies cannot override a rotated shared credential. Without a
+base Secret, the legacy preset retains its original behavior. Values explicitly
+configured on an Agent still override shared defaults.
+
+After Secret rotation, roll the Host. Its next Turn creates a new sandbox for an
+existing Session using the fresh values; Workspace files stay in OSS. Updating
+the Secret does not mutate environments of already running processes. Verify
+with E2B `commands.run()` and only emit presence/equality booleans, never values.
+
 Use the dedicated kubeconfig instead of whichever context happens to be the
 local default:
 
