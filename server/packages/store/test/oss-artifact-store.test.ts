@@ -102,7 +102,7 @@ describe("OSS Workspace artifact storage", () => {
     expect((await store.get("t1", "w1", "图.png"))?.contentType).toBe("image/png");
   });
 
-  it("signs only short-lived public HTTPS GET URLs with encoded names and preview MIME", async () => {
+  it("signs only short-lived public HTTPS GET URLs with encoded names and supported OSS parameters", async () => {
     const { client } = fakeOSS();
     const store = new OSSArtifactStore({ ...options, endpoint: "https://oss-cn-shanghai-internal.aliyuncs.com", client });
     await store.put({ tenantId: "t1", workspaceId: "w1", path: "素材/片 段%2f.mp4", body: "media" });
@@ -113,7 +113,7 @@ describe("OSS Workspace artifact storage", () => {
     expect(decodeURIComponent(url.pathname)).toBe("/t1/w1/素材/片 段%2f.mp4");
     expect(url.searchParams.get("x-oss-expires")).toBe("300");
     expect(url.searchParams.get("x-oss-signature-version")).toBe("OSS4-HMAC-SHA256");
-    expect(url.searchParams.get("response-content-type")).toBe("video/mp4");
+    expect(url.searchParams.has("response-content-type")).toBe(false);
     expect(url.searchParams.get("x-oss-signature")).toMatch(/^[a-f0-9]{64}$/);
     expect(signed).not.toContain(options.accessKeySecret);
     expect(new URL(await store.createSignedReadUrl("t1", "w1", "a.png", 900)).searchParams.get("x-oss-expires")).toBe("900");
@@ -128,12 +128,13 @@ describe("OSS Workspace artifact storage", () => {
     }
   });
 
-  it("retains uploaded MIME in signed previews even when the name has no extension", async () => {
+  it("signs extensionless uploads without overriding or changing stored MIME", async () => {
     const { client } = fakeOSS();
     const store = new OSSArtifactStore({ ...options, client });
     await store.put({ tenantId: "t1", workspaceId: "w1", path: "upload", body: "media", contentType: "video/mp4" });
     const url = new URL(await store.createSignedReadUrl("t1", "w1", "upload", 60));
-    expect(url.searchParams.get("response-content-type")).toBe("video/mp4");
+    expect(url.searchParams.has("response-content-type")).toBe(false);
+    expect((await store.get("t1", "w1", "upload"))?.contentType).toBe("video/mp4");
   });
 
   it("verifies a closed Sandbox probe only in the exact trusted prefix without exposing storage errors", async () => {

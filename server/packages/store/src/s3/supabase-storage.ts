@@ -1,8 +1,6 @@
 /**
- * Shared Supabase Storage REST primitives, used by both the Workspace artifact
- * store and the Skill artifact store (which differ only in their key prefix).
- * Keeping the request/list/normalize logic in one place avoids duplicating the
- * Supabase wire details across the two stores.
+ * Supabase Storage REST primitives retained for Skill bodies and projections.
+ * Workspace file operations use the independent OSS client.
  */
 
 export interface SupabaseStorageOptions {
@@ -108,19 +106,6 @@ export class SupabaseStorageClient {
     };
   }
 
-  /** Check object existence without transferring its body. */
-  async objectExists(key: string): Promise<boolean> {
-    const res = await this.fetchImpl(this.objectUrl(key), {
-      method: "HEAD",
-      headers: this.authHeaders(),
-    });
-    if (res.status === 404 || res.status === 400) return false;
-    if (!res.ok) {
-      throw new Error(`Supabase objectExists failed: ${res.status} ${await safeText(res)}`);
-    }
-    return true;
-  }
-
   /** Delete an object. Returns true if it existed. */
   async deleteObject(key: string): Promise<boolean> {
     const res = await this.fetchImpl(this.objectUrl(key), {
@@ -132,22 +117,6 @@ export class SupabaseStorageClient {
       throw new Error(`Supabase deleteObject failed: ${res.status} ${await safeText(res)}`);
     }
     return true;
-  }
-
-  /**
-   * Sign a short-lived download URL for an already-prefixed key. Returns the
-   * relative signedURL (caller prefixes the public base). Signs on the internal
-   * endpoint; the bucket stays private. Read-only — never signs writes.
-   */
-  async createSignedUrl(key: string, expiresInSec: number): Promise<string> {
-    const res = await this.fetchImpl(`${this.endpoint}/object/sign/${this.bucket}/${key}`, {
-      method: "POST",
-      headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-      body: JSON.stringify({ expiresIn: expiresInSec }),
-    });
-    if (!res.ok) throw new Error(`Supabase sign failed: ${res.status} ${await safeText(res)}`);
-    const { signedURL } = (await res.json()) as { signedURL: string };
-    return signedURL;
   }
 
   /**
@@ -179,32 +148,4 @@ export class SupabaseStorageClient {
     }
   }
 
-  /** As {@link listRecursive}, but also surfaces each file's size + mtime. */
-  async listRecursiveDetailed(
-    listPrefix: string,
-    onFile: (fullKey: string, size: number, updatedAt?: string | null) => void,
-  ): Promise<void> {
-    let offset = 0;
-    for (;;) {
-      const res = await this.fetchImpl(`${this.endpoint}/object/list/${this.bucket}`, {
-        method: "POST",
-        headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
-      });
-      if (!res.ok) {
-        throw new Error(`Supabase list failed: ${res.status} ${await safeText(res)}`);
-      }
-      const entries = (await res.json()) as SupabaseListEntry[];
-      for (const entry of entries) {
-        const isFolder = entry.id == null && entry.metadata == null;
-        if (isFolder) {
-          await this.listRecursiveDetailed(`${listPrefix}${entry.name}/`, onFile);
-        } else {
-          onFile(`${listPrefix}${entry.name}`, entry.metadata?.size ?? 0, entry.updated_at);
-        }
-      }
-      if (entries.length < LIST_PAGE_SIZE) break;
-      offset += entries.length;
-    }
-  }
 }

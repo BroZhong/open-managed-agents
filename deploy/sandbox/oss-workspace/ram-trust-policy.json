@@ -1,0 +1,21 @@
+{
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "oidc:aud": "sts.aliyuncs.com",
+          "oidc:iss": "https://oidc-ack-cn-shanghai.oss-cn-shanghai.aliyuncs.com/c4d4dbd36064d4341835496ed01023600",
+          "oidc:sub": "system:serviceaccount:ack-agent-identity:credential-provider"
+        }
+      },
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": [
+          "acs:ram::1952781479225026:oidc-provider/ack-rrsa-c4d4dbd36064d4341835496ed01023600"
+        ]
+      }
+    }
+  ],
+  "Version": "1"
+}

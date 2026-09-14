@@ -111,10 +111,10 @@ describe("session-router: Agent Files → appendSystemPrompt", () => {
   });
 });
 
-describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<id>)", () => {
-  it("passes each valid equipped Skill as an in-sandbox /skills/<id> path", async () => {
+describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<skill-name>)", () => {
+  it("passes each valid equipped Skill by name while resolving content by ID", async () => {
     // Skills are no longer materialized to a Host temp dir — they are projected
-    // into the sandbox at /skills/<id> (ADR-0005 §4), and `skillPaths` carries
+    // into the sandbox at /skills/<skill-name> (ADR-0007), and `skillPaths` carries
     // those in-sandbox roots so Pi's sandbox-mapped read tool can load them.
     const skillStore = new InMemorySkillStore();
     const skillArtifactStore = new InMemorySkillArtifactStore();
@@ -130,12 +130,12 @@ describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<id
     const agent: Agent = { ...AGENT, skills: [skill.id] };
     const input = await runOneTurn({ skillStore, skillArtifactStore, agent });
 
-    expect(input?.agent.skillPaths).toEqual([`/skills/${skill.id}`]);
+    expect(input?.agent.skillPaths).toEqual(["/skills/greeter"]);
     expect(input?.agent.skillDescriptors).toEqual([
       {
         name: "greeter",
         description: "greets",
-        path: `/skills/${skill.id}/SKILL.md`,
+        path: "/skills/greeter/SKILL.md",
       },
     ]);
   });

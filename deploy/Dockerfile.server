@@ -85,6 +85,6 @@ RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
 ENV PORT=3000
 EXPOSE 3000
 
-# Entrypoint: the full PG + Redis + S3 + sandbox wiring (config-driven from env).
+# Entrypoint: the full PG + Redis + OSS Workspace + Supabase Skills + sandbox wiring (config-driven from env).
 WORKDIR /app/server/packages/api
 CMD ["pnpm", "exec", "tsx", "src/dev-server.ts"]

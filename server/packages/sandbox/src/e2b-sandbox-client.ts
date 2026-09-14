@@ -80,7 +80,7 @@ export type CreateSandboxFn = (
 const DEFAULT_TEMPLATE = "code-interpreter";
 
 export interface E2BSandboxClientOptions {
-  /** E2B domain (e.g. "sandbox.brozhong.com"); SDK resolves api.<domain>. */
+  /** E2B domain (e.g. "sandbox.agentry.welltop.tech"); SDK resolves api.<domain>. */
   domain: string;
   /** Gateway API key. */
   apiKey: string;

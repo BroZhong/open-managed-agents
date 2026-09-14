@@ -62,6 +62,8 @@ describe("adapterProcessEnvFromHost", () => {
     const hostEnv = {
       PATH: "/usr/local/bin:/usr/bin",
       OPENAI_API_KEY: "adapter-key-sentinel",
+      WORKSPACE_OSS_ACCESS_KEY_SECRET: "host-only-oss-secret",
+      WORKSPACE_OSS_STS_TOKEN: "host-only-oss-token",
       DEFAULT_SANDBOX_VFS_TOKEN: "vfs-token-sentinel",
       DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://ww.example.test",
       DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN: "ww-token-sentinel",

@@ -48,7 +48,7 @@ export interface Agent {
 }
 
 /**
- * A Workspace is the S3-authoritative home of a Session's artifacts.
+ * A Workspace is the OSS-backed home of a Session's artifacts.
  *
  * There is only one kind of Workspace: a user-supplied ID is used as-is, and
  * an unspecified one is auto-created (same entity, just an auto-generated ID).

@@ -189,7 +189,7 @@ export class PgSessionStore implements SessionStore {
         [id, now],
       );
       // Deleting retained input is the remote-Host fence: its next heartbeat,
-      // durable append, checkpoint gate, or ack fails immediately.
+      // durable append, storage-check fence, or ack fails immediately.
       await client.query(`DELETE FROM pending_events WHERE session_id = $1`, [id]);
       await client.query("COMMIT");
       return rowToSession(rows[0]);

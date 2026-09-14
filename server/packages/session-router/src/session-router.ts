@@ -116,7 +116,7 @@ export interface SessionRouterDeps {
    * router selects the Agent's *equipped* Skills that are valid (exist, in this
    * tenant, owned by this Agent when `ownerType==='agent'`, and non-empty) and
    * declares each as a **Read-only Projection** into the sandbox at
-   * `/skills/<skill-name>` (ADR-0005 §4). The Skill *content* flows S3→sandbox inside
+   * `/skills/<skill-name>` (ADR-0007). The Skill *content* flows S3→sandbox inside
    * the SandboxManager (via `S3ProvisionSource`) — never through the Host — so
    * the router consults `skillArtifactStore` only to confirm a Skill is
    * non-empty (mirroring the old `materializeSkills`' zero-files skip), not to

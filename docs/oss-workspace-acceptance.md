@@ -81,3 +81,53 @@ The signed GET compatibility check was added after a real OSS request returned
 object's stored headers; the authenticated Host preview/download path supplies
 MIME fallback for ossfs files with generic metadata. Signing does not modify
 object metadata. Full application/cloud results are recorded with #127.
+
+## #127 — final assembly and regression
+
+The default and production Host now use the same OSS-only Workspace assembly.
+Required OSS/E2B settings fail clearly when absent, and a read-only OSS list
+checks startup reachability. Skills keep their Supabase configuration and
+client. Host OSS credentials are excluded from Adapter CLI environments.
+Unused Supabase Workspace storage and the old synchronization implementation
+are removed. Domain documentation and ADR-0007 record the replacement contract.
+
+All package regressions were exercised on 2026-09-14:
+
+| Scope | Result |
+| --- | --- |
+| Server Event Log / Store / Redis / Memory Store / Sandbox / Router / API | 8 / 91 / 37 / 36 / 53 / 69 / 295 tests passed (589 total) |
+| Adapter workspace | 243 passed |
+| Web console | 139 passed |
+| Server all-package and Adapter typechecks; Web TypeScript build check | Passed |
+| Managed parent/child Agent deployment tests | 3 passed |
+| story-seed launcher shell checks | Passed |
+
+`pnpm --dir server -r test` initially found one remaining old Skill-ID path
+expectation in `agent-injection.test.ts`. It was updated to assert the requested
+literal `/skills/greeter` path; all six tests in that file then passed. The
+recursion had stopped before the API package, so the complete API suite was run
+separately and all 295 tests passed. Already-passing packages were not rerun.
+Adapter and Web suites ran with `pnpm --dir adapter test` and `pnpm --dir web test`.
+
+The checked-in deployment guide covers required configuration, consistent
+maintenance cutover, active and queued work, per-Agent template overrides,
+rollback file visibility, and certificate maintenance. Shanghai declarations
+passed a server-side dry run without applying changes. Actual ossfs PNG and MP4
+signed GETs returned 200 with correct MIME and exact bytes after the signing fix.
+The isolated application run passed at 10:13:25 UTC across nine deterministic
+Adapter Turns using real E2B execution and OSS. It covered upload/edit/create,
+signed PNG GET, isolation, concurrency, rebuild, named Skills, failure/retry,
+and Interrupt of a running Python command. All three application Sandboxes and
+both unique prefixes were cleaned and checked empty. Control metadata/auth and
+Skill input bytes were in memory; these results do not claim a live model call,
+production Supabase access, or interactive browser rendering. Web rendering and
+Supabase behavior are covered by the package regressions above.
+
+Detailed live application results and >1h credential-refresh evidence are in
+`deploy/sandbox/oss-workspace/verification.json`. The credential check is still
+running; a running check is not a passed check. Final refresh and cleanup results
+will be appended after completion.
+
+Production has not been changed. Publishing/pinning the reviewed images and an
+authorized maintenance switch remain release steps. The certificate expires
+2026-12-13 07:53:21 UTC and has no automatic renewal configured.

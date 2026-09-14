@@ -17,8 +17,8 @@ export type S3SkillArtifactStoreOptions = SupabaseStorageOptions;
  * Keys are `<tenantId>/skills/<skillId>/<path>` — a distinct namespace from
  * Workspace artifacts (`<tenantId>/<workspaceId>/…`), so a Skill's files can
  * never collide with or leak into a Session's Workspace. Cross-tenant /
- * cross-skill isolation is enforced entirely by this key prefix. Shares the
- * Supabase wire logic with {@link S3ArtifactStore} via {@link SupabaseStorageClient}.
+ * cross-skill isolation is enforced by this key prefix. Workspace files use
+ * the separate OSS Bucket; Skills retain {@link SupabaseStorageClient}.
  */
 export class S3SkillArtifactStore implements SkillArtifactStore {
   private readonly client: SupabaseStorageClient;

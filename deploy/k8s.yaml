@@ -1,16 +1,19 @@
-# Nautilus Server + Web on the brozhong ACS HK cluster.
-# Deployed into ns oma-infra (same ns as Redis → avoids the cross-ns Service DNS
-# NXDOMAIN trap on this ECI/virtual-kubelet cluster). Secrets injected via
-# the oma-secrets Secret, never baked into the image.
+# Existing application Server + Web in oma-infra. This change does not migrate
+# the application cluster, PostgreSQL, Redis, Supabase Skills storage or proxy.
+# Workspace files use Shanghai OSS; remote Sandboxes use the Shanghai E2B
+# endpoint declared below. Apply only during the coordinated maintenance switch
+# in docs/oss-workspace-deployment.md, using the explicit APPLICATION kubeconfig.
+# The separate Shanghai Sandbox manifests require their own explicit kubeconfig.
 #
-# Create the secret first (values NOT committed):
-#   kubectl -n oma-infra create secret generic oma-secrets \
-#     --from-literal=PG_PASSWORD=... \
-#     --from-literal=REDIS_PASSWORD=... \
-#     --from-literal=SUPABASE_SERVICE_KEY=... \
-#     --from-literal=E2B_DOMAIN=... \
-#     --from-literal=E2B_API_KEY=... \
-#     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=...
+# Before the approved switch, provision these keys through the existing secret
+# management process in oma-infra/oma-secrets (never commit or print values):
+#   PG_PASSWORD, REDIS_PASSWORD, SUPABASE_SERVICE_KEY,
+#   WORKSPACE_OSS_ACCESS_KEY_ID, WORKSPACE_OSS_ACCESS_KEY_SECRET,
+#   E2B_API_KEY (the Shanghai gateway key), DEFAULT_SANDBOX_VFS_TOKEN.
+# WORKSPACE_OSS_STS_TOKEN is optional for temporary Host credentials. It is not
+# the Sandbox's Agent Identity token and is not automatically refreshed by this
+# environment-based Host configuration. Existing unused Secret keys need not be
+# deleted during this storage switch.
 #
 # The OpenGrove WW integration is OFF in this manifest by default; enabling it
 # is a separate all-or-nothing step (see "OpenGrove WW" below). Do not add
@@ -41,21 +44,39 @@ data:
   PG_ENSURE_SCHEMA: "false"
   # Redis — use ClusterIP, NOT the Service name: even same-ns Service DNS is
   # unreliable on this ECI/virtual-kubelet cluster (name "redis" → NXDOMAIN).
-  # Re-check with `kubectl -n oma-infra get svc redis` if it drifts.
+  # Re-check with `kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra get svc redis` if it drifts.
   REDIS_HOST: "10.0.56.147"
   REDIS_PORT: "6379"
-  # Supabase Storage (S3 artifacts) — VPC endpoint, bucket workspace
+  # Existing Supabase Storage is retained for Skills only. Its historical
+  # bucket name stays "workspace"; it no longer selects Workspace file storage.
   S3_ENDPOINT: "http://172.17.108.247:80/storage/v1"
   S3_BUCKET: "workspace"
+  # Host Workspace API storage. The existing application network uses the public
+  # Shanghai endpoint; choose the internal endpoint only after network testing.
+  # Browser GET signatures must always use the public regional HTTPS endpoint.
+  WORKSPACE_OSS_REGION: "oss-cn-shanghai"
+  WORKSPACE_OSS_BUCKET: "agentry"
+  WORKSPACE_OSS_ENDPOINT: "https://oss-cn-shanghai.aliyuncs.com"
+  WORKSPACE_OSS_PUBLIC_ENDPOINT: "https://oss-cn-shanghai.aliyuncs.com"
+  # Shanghai CSI identity resources. Host object-storage credentials stay on
+  # the Host; Sandbox credentials are issued separately by Agent Identity/RRSA.
+  WORKSPACE_OSS_AGENT_NAME: "agentry-workspace"
+  WORKSPACE_OSS_PV_NAME: "agentry-workspace-oss"
+  WORKSPACE_OSS_CREDENTIAL_PROVIDER: "agentry-oss-rw"
   # Egress proxy for LLM calls (OpenAI/Anthropic geo-block Alibaba HK egress).
   # In-cluster sing-box (mixed inbound). ClusterIP — re-check if it drifts.
   OMA_PROXY_URL: "http://10.0.200.134:7890"
   # Sandbox is mandatory (issue #54). This turns on the sandbox-backed
-  # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
+  # ToolExecutor. The endpoint is Shanghai; its key comes from oma-secrets.
   SANDBOX_ENABLED: "true"
   # E2B templateID = the SandboxSet name in the sandbox-system namespace
-  # (see deploy/sandbox/README.md). The code-interpreter warm pool.
+  # (see deploy/sandbox/README.md). Verify every per-Agent template override;
+  # a changed default does not replace an existing Sandbox.
   SANDBOX_TEMPLATE: "code-interpreter-vfscli"
+  E2B_DOMAIN: "sandbox.agentry.welltop.tech"
+  # ALB timeout is 180 seconds; allow its response to reach the SDK. Sandbox
+  # lifetime is a separate setting (Manager default: 3600 seconds).
+  E2B_REQUEST_TIMEOUT_MS: "185000"
   # ==========================================================================
   # OpenGrove WW — DISABLED BY DEFAULT (issue #116). ALL-OR-NOTHING.
   # --------------------------------------------------------------------------
@@ -78,10 +99,10 @@ data:
   #
   #   1. Create the secret key FIRST (it must exist before the Deployment
   #      references it, otherwise the pod stays in CreateContainerConfigError):
-  #        kubectl -n oma-infra patch secret oma-secrets --type=merge \
+  #        kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra patch secret oma-secrets --type=merge \
   #          -p "{\"stringData\":{\"OPENGROVE_WW_ACCESS_TOKEN\":\"<bearer>\"}}"
-  #        kubectl -n oma-infra get secret oma-secrets \
-  #          -o jsonpath='{.data.OPENGROVE_WW_ACCESS_TOKEN}' | head -c 1   # non-empty
+  #        Confirm the key exists using the secret-management system; do not
+  #        print any portion of the bearer when checking presence.
   #
   #   2. Uncomment BOTH ConfigMap keys here:
   #        DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://opengrove.creativefitting.cn"
@@ -92,8 +113,8 @@ data:
   #
   #   3. Uncomment the matching DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN env
   #      entry in the oma-server container below, then apply + roll:
-  #        kubectl apply -f deploy/k8s.yaml
-  #        kubectl -n oma-infra rollout status deploy/oma-server
+  #        kubectl --kubeconfig "$OMA_APP_KUBECONFIG" apply -f deploy/k8s.yaml
+  #        kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra rollout status deploy/oma-server
   #
   # Reverting is the same three edits in reverse; leaving any single one behind
   # reproduces the startup crash. Keep repo and cluster in sync either way.
@@ -143,9 +164,15 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: REDIS_PASSWORD } }
             - name: SUPABASE_SERVICE_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: SUPABASE_SERVICE_KEY } }
-            # E2B sandbox endpoint + key (issue #54) — never baked into the image.
-            - name: E2B_DOMAIN
-              valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
+            # Required Host OSS credentials, independent of the Sandbox's RRSA
+            # identity and the Supabase service key used only for Skills.
+            - name: WORKSPACE_OSS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_ID } }
+            - name: WORKSPACE_OSS_ACCESS_KEY_SECRET
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_SECRET } }
+            - name: WORKSPACE_OSS_STS_TOKEN
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_STS_TOKEN, optional: true } }
+            # Must be the Shanghai gateway key matching ConfigMap E2B_DOMAIN.
             - name: E2B_API_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_API_KEY } }
             # The same VFS access token is exposed under two purpose-specific

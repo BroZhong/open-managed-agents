@@ -1,8 +1,8 @@
 import { serve } from "@hono/node-server";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createPgPool, pgConfigFromEnv, createPgStores, S3ArtifactStore, S3SkillArtifactStore } from "@oma-server/store";
-import type { ArtifactStore, SkillArtifactStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, S3SkillArtifactStore } from "@oma-server/store";
+import type { SkillArtifactStore } from "@oma-server/store";
 import {
   createRedisClient,
   redisConfigFromEnv,
@@ -14,10 +14,9 @@ import { SessionRouter } from "@oma-server/session-router";
 import {
   E2BSandboxClient,
   DefaultSandboxManager,
-  S3WorkspacePersistence,
   S3ProvisionSource,
 } from "@oma-server/sandbox";
-import type { SandboxManager } from "@oma-server/sandbox";
+import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { createApp } from "./app.js";
 import type {
   Adapter,
@@ -286,6 +285,8 @@ function resolveAdapter(runtime: string): Adapter {
 }
 
 async function main() {
+  // Validate one coherent API + Sandbox storage configuration before opening resources.
+  const workspaceConfig = workspaceConfigFromEnv(process.env);
   // ─── PostgreSQL (authoritative store) ─────────────────────────────────────
   const pgConfig = pgConfigFromEnv();
   const pool = createPgPool(pgConfig);
@@ -319,69 +320,40 @@ async function main() {
 
   const eventStreamHub = new InProcessEventStreamHub();
 
-  // ─── S3 artifact store (Workspace file proxy) ─────────────────────────────
-  // Enabled when the Supabase Storage endpoint + service key are configured.
-  let artifactStore: ArtifactStore | undefined;
-  const s3Endpoint = process.env.S3_ENDPOINT || process.env.SUPABASE_STORAGE_URL;
-  const s3ServiceKey = process.env.S3_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  if (s3Endpoint && s3ServiceKey) {
-    artifactStore = new S3ArtifactStore({
-      endpoint: s3Endpoint,
-      serviceKey: s3ServiceKey,
-      bucket: process.env.S3_BUCKET || "workspace",
-      fetch: directFetch,
-      // Public, browser-reachable Storage base for presigned media GETs
-      // (ADR-0006 §1). The client still signs on the internal `endpoint`; this is
-      // only the download base. Absent → preview-url route returns 501.
-      publicBase: process.env.STORAGE_PUBLIC_BASE,
-    });
-    console.log(`Workspace artifact store enabled (S3 at ${s3Endpoint})`);
-  } else {
-    console.log("Workspace artifact store disabled — set S3_ENDPOINT + S3_SERVICE_KEY to enable");
+  const artifactStore = new OSSArtifactStore(workspaceConfig.oss);
+  try {
+    // Read-only credential/endpoint check. No objects are created or migrated.
+    await artifactStore.list("oma_startup", "storage_check");
+  } catch {
+    throw new Error("OSS Workspace startup check failed; verify the bucket, endpoint and Host permissions");
   }
 
-  // Skill file bodies share the S3 backend but live under a distinct
-  // `<tenantId>/skills/<skillId>/…` namespace (isolated from Workspaces).
-  let skillArtifactStore: SkillArtifactStore | undefined;
-  if (s3Endpoint && s3ServiceKey) {
-    skillArtifactStore = new S3SkillArtifactStore({
-      endpoint: s3Endpoint,
-      serviceKey: s3ServiceKey,
-      bucket: process.env.S3_BUCKET || "workspace",
-      fetch: directFetch,
-    });
+  // Skills retain the existing Supabase client, bucket and startup configuration.
+  const s3Endpoint = process.env.S3_ENDPOINT || process.env.SUPABASE_STORAGE_URL;
+  const s3ServiceKey = process.env.S3_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!s3Endpoint || !s3ServiceKey) {
+    throw new Error("Skills require S3_ENDPOINT (or SUPABASE_STORAGE_URL) and S3_SERVICE_KEY (or SUPABASE_SERVICE_KEY)");
   }
+  const skillArtifactStore: SkillArtifactStore = new S3SkillArtifactStore({
+    endpoint: s3Endpoint, serviceKey: s3ServiceKey,
+    bucket: process.env.S3_BUCKET || "workspace", fetch: directFetch,
+  });
 
   // Create a dev seed key for local testing (persisted in PG).
   await stores.apiKeyStore.create("dev", "dev-console");
 
-  // Sandbox lifecycle owner (ADR-0005 §1/§2, design doc §5): a
-  // DefaultSandboxManager wired with the three seams — an e2b-SDK
-  // SandboxClient, S3WorkspacePersistence for the two-way Workspace (hydrate
-  // from / sync back to S3), and S3ProvisionSource registered under kind "s3"
-  // for read-only Skill projections (content flows S3→sandbox, never through
-  // the Host; ADR-0005 §3/§4). Requires the artifact store (nothing to hydrate
-  // from without it), the Skill artifact store (nothing to project without it),
-  // plus E2B_DOMAIN + E2B_API_KEY. Enable with SANDBOX_ENABLED=true. A sandboxed
-  // Agent with no manager fails loud (#54).
-  let sandboxManager: SandboxManager | undefined;
-  if (artifactStore && skillArtifactStore && process.env.SANDBOX_ENABLED === "true") {
-    const sandboxClient = new E2BSandboxClient({
-      domain: process.env.E2B_DOMAIN ?? "",
-      apiKey: process.env.E2B_API_KEY ?? "",
-      defaultTemplate: process.env.SANDBOX_TEMPLATE,
-    });
-    sandboxManager = new DefaultSandboxManager({
-      sandboxClient,
-      persistence: new S3WorkspacePersistence(artifactStore),
-      provisionSources: { s3: new S3ProvisionSource(skillArtifactStore) },
-    });
-    console.log("SandboxManager enabled (e2b SDK, hydrate from S3, Skills projected from S3)");
-  } else {
-    console.log(
-      "SandboxManager disabled — set SANDBOX_ENABLED=true (+ S3) to enable",
-    );
-  }
+  const sandboxClient = new E2BSandboxClient({
+    ...workspaceConfig.sandbox,
+    verifyWorkspaceProbe: async (target, probeName, expectedContent) => {
+      if (target.bucket !== workspaceConfig.oss.bucket) throw new Error("Workspace bucket mismatch");
+      await artifactStore.verifyWorkspaceProbe(target.prefix, probeName, expectedContent);
+    },
+  });
+  const sandboxManager = new DefaultSandboxManager({
+    sandboxClient,
+    provisionSources: { s3: new S3ProvisionSource(skillArtifactStore) },
+  });
+  console.log("OSS Workspace enabled; Sandbox mount checks required; Skills projected from Supabase");
 
   // Deployment-owned CLI environment. Ordinary defaults remain overridable by
   // an Agent; WW values are scoped to an explicit Agent-id allowlist and win
@@ -397,6 +369,7 @@ async function main() {
     turnStreamStore,
     resolveAdapter,
     sandboxManager,
+    workspaceMount: workspaceConfig.mount,
     ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,

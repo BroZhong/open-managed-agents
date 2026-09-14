@@ -1,82 +1,52 @@
-# Sandbox warm pool
+# Shanghai Sandbox templates
 
-The brozhong ACS HK cluster runs Alibaba ACK 托管 Agent Sandbox (OpenKruise
-Agents, `agents.kruise.io`), which is E2B-protocol compatible. Sandboxes are
-served from **warm pools** declared as `SandboxSet` resources in the
-`sandbox-system` namespace.
+The supported application template is `code-interpreter-vfscli` in the
+`sandbox-system` namespace of Shanghai `agent-platform`
+(`c4d4dbd36064d4341835496ed01023600`). It serves the E2B gateway
+`sandbox.agentry.welltop.tech`. A `SandboxSet` name is its E2B template ID;
+`Sandbox.create("code-interpreter-vfscli")` requests that template's warm pool.
 
-## The name is the templateID
+Use these records together:
 
-A `SandboxSet`'s `metadata.name` IS the E2B **templateID**. When a client calls
+- [`sandboxset-code-interpreter-vfscli.yaml`](./sandboxset-code-interpreter-vfscli.yaml)
+  records the verified Shanghai template, image digest, DNS/runtime settings,
+  resource requests and `ali-shanghai` pull Secret reference.
+- [`code-interpreter-vfscli/README.md`](./code-interpreter-vfscli/README.md)
+  describes the image build, launcher, named Skill projections and supported
+  local dependency installation paths.
+- [`oss-workspace/README.md`](./oss-workspace/README.md) records the Agent
+  Identity, scoped OSS mount, explicit-cluster commands, operational limits,
+  isolated verification evidence and coordinated release gate.
 
-```ts
-Sandbox.create("code-interpreter")
-```
+The Host computes a trusted `<tenantId>/<workspaceId>/` prefix after checking
+Workspace ownership. It passes the CSI volume metadata to E2B; Agent Identity
+issues storage credentials restricted to that bucket and prefix. Each Session
+has its own disposable Sandbox, while Sessions bound to the same Workspace
+share OSS files. `/home/user/workspace` is the mount-backed persistent root;
+HOME remains local at `/home/user`, and Skills are projected under
+`/skills/<skill-name>/`.
 
-the E2B endpoint hands back a pre-warmed pod from the `code-interpreter`
-SandboxSet. If no SandboxSet exists for a template, `POST /sandboxes` fails with
-`400 "Template or Checkpoint not found"` — there is no implicit / on-demand
-template. This manifest is what makes the `code-interpreter` template exist.
+Before execution the application verifies trusted storage identity, the actual
+`fuse.ossfs` mount, ordinary-user write/close/read and Host OSS readback from the
+exact prefix. Failed verification blocks execution and permits a later retry.
+It never creates a writable local Workspace fallback. Completed writes survive
+Sandbox disposal, errors and Interrupt. Local dependencies and caches may be
+lost on rebuild; there is no hydrate/checkpoint/upload synchronization cycle.
 
-## Manifest
+The final Host configuration in [`../k8s.yaml`](../k8s.yaml) requires the OSS
+Workspace settings and the E2B credentials from managed secrets. Do not place
+keys or tokens in these manifests or image layers. Requests from browsers
+cannot supply arbitrary mount paths or prefixes.
 
-[`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) defines
-the `code-interpreter` pool:
+Template changes and Host storage changes must follow the same approved
+maintenance switch. Inspect active Sessions and effective per-Agent templates;
+changing a default does not replace an existing Sandbox. Do not switch the web
+Workspace store while affected execution still uses the prior storage path.
+The inventory provides the explicit Shanghai kubeconfig procedure; all kubectl
+commands should use it without changing the default context.
 
-- **image** — `registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6`
-  (the ACS-provided code-interpreter image; VPC ACR mirror).
-- **runtimes** — `csi` (NAS/OSS mounts) + `agent-runtime` (injects the e2b
-  `envd` daemon that the E2B protocol talks to).
-- **ECI scheduling labels** — the pod template carries
-  `alibabacloud.com/acs: "true"`, `compute-class: agent-sandbox`,
-  `compute-qos: default`. These are required for ECI / serverless scheduling;
-  without them a bare Sandbox pod stays `Pending` with no ECI node assigned.
-- **resources** — 1 vCPU / 1Gi memory, 30Gi ephemeral storage.
-
-## Tunables
-
-Only two things are meant to change:
-
-- `spec.replicas` — the warm-pool size (how many pods sit ready).
-- the container image tag — to roll a new code-interpreter image.
-
-No other resource needs editing to resize the pool.
-
-## Apply / verify
-
-```bash
-kubectl apply -f deploy/sandbox/sandboxset-code-interpreter.yaml
-kubectl get sbs -n sandbox-system code-interpreter
-```
-
-`apply` is idempotent. The SandboxSet is ready once `AVAILABLE >= 1`.
-
-## Mandatory sandbox (issue #54)
-
-The sandbox is not optional. Every Agent run must execute inside a sandbox and
-the server fails loud when it can't provision one.
-
-Server wiring (see `deploy/k8s.yaml`):
-
-- `SANDBOX_ENABLED=true` — in the `oma-server-config` ConfigMap (non-secret).
-  This turns on the sandbox-backed `ToolExecutor`.
-- `SANDBOX_TEMPLATE=code-interpreter` — ConfigMap; the E2B templateID, i.e. the
-  SandboxSet name above.
-- `E2B_DOMAIN` + `E2B_API_KEY` — provided via the `oma-secrets` Secret
-  (`secretKeyRef`), **never baked into the image**. Add them alongside the other
-  secrets:
-
-  ```bash
-  kubectl -n oma-infra create secret generic oma-secrets \
-    --from-literal=E2B_DOMAIN=... \
-    --from-literal=E2B_API_KEY=... \
-    ...   # plus PG_PASSWORD / REDIS_PASSWORD / SUPABASE_SERVICE_KEY
-  ```
-
-Fail-loud behavior: a sandboxed Agent (which, by default, is every Agent —
-`sandbox.enabled` is treated as true unless explicitly `false`) whose turn has no
-provisionable sandbox executor does **not** run the adapter. Instead the session
-emits a `session.error` with `code: "sandbox_unavailable"` and returns to idle.
-This prevents the adapter from falling back to built-in fs/bash tools that would
-write to the server pod filesystem. In practice this triggers when
-`SANDBOX_ENABLED` is unset/false or the `E2B_*` secrets are missing.
+[`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) is an
+inactive stock-image reference with zero warm replicas. It has not been tested
+as an application OSS Workspace template and is not a supported substitute for
+`code-interpreter-vfscli`. Do not select or apply it as part of the release gate
+without separately validating its runtime, tooling and mounted execution.
