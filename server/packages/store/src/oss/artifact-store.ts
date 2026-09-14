@@ -63,6 +63,22 @@ export class OSSArtifactStore implements ArtifactStore {
     return key;
   }
 
+  private async headObject(key: string): ReturnType<OSSObjectClient["head"]> {
+    try {
+      return await this.client.head(key);
+    } catch (error) {
+      if (!isMissingObject(error)) throw error;
+      // OSS HEAD has no XML error body: the SDK maps every 404, including a
+      // missing Bucket, to NoSuchKey. A bounded listing disambiguates without
+      // downloading bytes and propagates Bucket/permission/service failures.
+      const page = await this.client.listV2({ prefix: key, "max-keys": 1 });
+      if (page.objects?.some((object) => object.name === key)) {
+        return this.client.head(key); // The file was created after the first HEAD.
+      }
+      throw error;
+    }
+  }
+
   async put(input: ArtifactPutInput): Promise<Artifact> {
     const body = Buffer.from(input.body);
     await this.client.put(this.key(input.tenantId, input.workspaceId, input.path), body, { mime: resolveArtifactContentType(input.path, input.contentType) });
@@ -108,7 +124,7 @@ export class OSSArtifactStore implements ArtifactStore {
   async exists(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
     const key = this.key(tenantId, workspaceId, path);
     try {
-      await this.client.head(key);
+      await this.headObject(key);
       return true;
     } catch (error) {
       if (isMissingObject(error)) return false;
@@ -128,10 +144,11 @@ export class OSSArtifactStore implements ArtifactStore {
     if (!Number.isInteger(expiresInSec) || expiresInSec < 1 || expiresInSec > 900) {
       throw new Error("OSS read URL expiry must be an integer between 1 and 900 seconds");
     }
-    const metadata = await this.client.head(key);
-    return this.signer.signatureUrlV4("GET", expiresInSec, {
-      queries: { "response-content-type": resolveArtifactContentType(path, contentTypeFromHeaders(metadata.res.headers)) },
-    }, key);
+    await this.headObject(key);
+    // Current OSS rejects response-content-type overrides (EC0017-00000902).
+    // Signed reads preserve stored metadata; Host-proxied reads infer MIME for
+    // ossfs objects whose metadata is absent or generic. Signing never mutates files.
+    return this.signer.signatureUrlV4("GET", expiresInSec, undefined, key);
   }
 
   /** Verify the mount's actual object destination after the probe is closed

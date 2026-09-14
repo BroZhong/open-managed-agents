@@ -2,16 +2,30 @@ import { createServer } from "node:http";
 
 /** A repeatable OSS wire fixture: the production SDK still serializes, signs,
  * sends and parses every request. No cloud credentials or live Bucket needed. */
-export async function createOSSHTTPHarness() {
+export async function createOSSHTTPHarness(options: { missingBucket?: boolean } = {}) {
   const objects = new Map<string, { body: Buffer; contentType: string }>();
   const xml = (value: string) => value.replace(/[<>&'\"]/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[char]!);
   const server = createServer(async (request, response) => {
     const url = new URL(request.url!, "http://localhost");
     const key = decodeURIComponent(url.pathname.slice(1));
     response.setHeader("x-oss-request-id", "repeatable-integration");
-    if (!request.headers.authorization?.startsWith("OSS4-HMAC-SHA256 ")) {
+    // Current OSS rejects this override even on correctly signed GETs (EC0017-00000902).
+    if (request.method === "GET" && url.searchParams.has("response-content-type")) {
+      response.writeHead(400, { "content-type": "application/xml" });
+      response.end("<Error><Code>InvalidRequest</Code><Message>Can not override response header on content-type</Message></Error>");
+      return;
+    }
+    const signedRead = request.method === "GET" &&
+      url.searchParams.get("x-oss-signature-version") === "OSS4-HMAC-SHA256" &&
+      /^[a-f0-9]{64}$/.test(url.searchParams.get("x-oss-signature") ?? "");
+    if (!signedRead && !request.headers.authorization?.startsWith("OSS4-HMAC-SHA256 ")) {
       response.writeHead(403, { "content-type": "application/xml" });
       response.end("<Error><Code>AccessDenied</Code><Message>V4 signature required</Message></Error>");
+      return;
+    }
+    if (options.missingBucket) {
+      response.writeHead(404, { "content-type": "application/xml" });
+      response.end("<Error><Code>NoSuchBucket</Code><Message>Bucket absent</Message></Error>");
       return;
     }
     if (request.method === "GET" && url.searchParams.get("list-type") === "2") {

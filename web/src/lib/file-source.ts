@@ -19,8 +19,7 @@
  * `undefined`, so a miswired call fails to compile. Non-method traits that can't
  * be expressed as "method present?" live in {@link FileSourceCapabilities}.
  *
- * This file is an interface stub (issue #90 is "Plan, don't do"): the shapes are
- * final; the concrete implementations land in a follow-up session.
+ * Concrete implementations below wrap each domain's authenticated Host API.
  */
 
 /** A node in a FileSource's tree. Flat sources only ever emit files at depth 1. */
@@ -69,8 +68,8 @@ export interface FileSourceCapabilities {
   /**
    * True when writes are gated by the Session's turn-idle state (Workspace only;
    * see CONTEXT.md "Write Gate", ADR-0006). When true, the component disables
-   * writes while the injected `turnStatus === "running"`, because an end-of-turn
-   * `checkpoint()` sync could otherwise clobber the write (a lost update). This
+   * writes while the injected `turnStatus === "running"`. This Session UI guard
+   * does not lock a Workspace shared by other Sessions (ADR-0007). This
    * flag describes the *structural* rule; the *runtime* turn status is passed to
    * the component separately (it is not the FileSource's job to subscribe to it).
    */
@@ -108,7 +107,7 @@ export interface FileSource {
   upload?(files: File[], destDir?: string): Promise<void>;
   /**
    * Present ⇒ media-previewable. Return a short-lived signed GET URL for direct
-   * S3 read (images/video), bypassing the Host proxy (ADR-0006 §1, #88). Writes
+   * object-store read (images/video), bypassing the Host proxy (ADR-0006 §1, #88). Writes
    * are NEVER presigned — only this downward read is.
    */
   previewUrl?(path: string): Promise<string>;
@@ -218,7 +217,7 @@ export function createSkillFileSource(skillId: string): SkillFileSource {
 // ── Workspace ───────────────────────────────────────────────────────────────
 
 /**
- * Workspace (a Session's S3-authoritative artifacts). Nested, writable but
+ * Workspace (a Session's OSS-backed artifacts). Nested, writable but
  * **idle-gated** (ADR-0006), media-previewable (signed GET; #88/#99), uploads
  * media. Reads through the Host proxy (#100 write endpoints, #99 preview-url).
  * Same text/binary split + 512 KiB cap as `use-workspace-files.ts`.
@@ -239,7 +238,10 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
 
     async list(): Promise<FileNode[]> {
       const res = await apiFetch<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
-      return (res.data ?? []).map((f) => ({
+      if (!Array.isArray(res?.data)) {
+        throw new Error("File status is unconfirmed: the Workspace list response is incomplete. Retry Refresh.");
+      }
+      return res.data.map((f) => ({
         path: f.path,
         isDir: false,
         size: f.size,

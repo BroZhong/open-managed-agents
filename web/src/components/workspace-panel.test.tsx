@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileSource } from "@/lib/file-source";
 
@@ -35,6 +35,32 @@ describe("WorkspacePanel session isolation", () => {
       configurable: true,
       value: revokeObjectURL,
     });
+  });
+
+  it("retains the last file tree and preview when a Turn-end refresh fails, and retries only the list", async () => {
+    let unavailable = false;
+    const list = vi.fn(async () => {
+      if (unavailable) throw new Error("Storage unavailable");
+      return [{ path: "saved.txt", isDir: false, size: 5 }];
+    });
+    mockedSources.set("session-a", {
+      capabilities: { hierarchy: "nested", idleGated: true },
+      list,
+      read: async () => ({ path: "saved.txt", text: "saved content", contentType: "text/plain", size: 13, isBinary: false }),
+    } satisfies FileSource);
+    const view = render(<WorkspacePanel sessionId="session-a" refreshKey={0} turnStatus="running" />);
+    fireEvent.click(await screen.findByText("saved.txt"));
+    expect(await screen.findByText("saved content")).toBeTruthy();
+    unavailable = true;
+    view.rerender(<WorkspacePanel sessionId="session-a" refreshKey={1} turnStatus="idle" />);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getAllByText("saved.txt").length).toBeGreaterThan(0);
+    expect(screen.getByText("saved content")).toBeTruthy();
+    expect(screen.queryByText(/No files yet/)).toBeNull();
+    unavailable = false;
+    fireEvent.click(screen.getByTitle("Refresh"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(list).toHaveBeenCalledTimes(3);
   });
 
   it("drops Session A content and revokes its Blob when switching to Session B", async () => {

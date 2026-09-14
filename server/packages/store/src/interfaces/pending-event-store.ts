@@ -50,7 +50,7 @@ export interface PendingEventStore {
     claim: PendingEventClaimRef,
     leaseMs: number,
   ): Promise<boolean>;
-  /** Read-only live-fence check, primarily for external checkpoint gates. */
+  /** Read-only live-fence check around external storage availability checks. */
   ownsClaim?(
     sessionId: string,
     eventId: string,

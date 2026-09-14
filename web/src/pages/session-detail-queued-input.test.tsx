@@ -29,6 +29,7 @@ const session: Session = {
 let queued: Record<string, Array<{ id: string; text: string }>> = {};
 let otherSession: Session;
 let holdSends = false;
+let workspaceUnavailable = false;
 let acceptSend: (() => void) | undefined;
 let rejectSend: (() => void) | undefined;
 /** Pushes SSE frames into the page's live stream. */
@@ -74,7 +75,9 @@ beforeEach(() => {
       }
       // useAgentSkills unwraps `.data`, so a bare array would resolve undefined.
       if (url.includes("/skills")) return json({ data: [] });
-      if (url.includes("/workspace")) return json({ data: [] });
+      if (url.includes("/workspace")) return workspaceUnavailable
+        ? json({ error: "Workspace storage is unavailable", code: "workspace_storage_error" }, 503)
+        : json({ data: [] });
       if (url.includes("/events")) {
         if (init?.method === "POST") {
           const body = JSON.parse(init.body as string);
@@ -127,6 +130,7 @@ afterEach(() => {
   cleanup();
   queued = {};
   holdSends = false;
+  workspaceUnavailable = false;
   acceptSend = undefined;
   rejectSend = undefined;
   emit = () => undefined;
@@ -154,6 +158,29 @@ function renderPage() {
     navigate: (sessionId: string) => router.navigate(`/sessions/${sessionId}`),
   };
 }
+
+it("keeps the completed answer and idle state when the Workspace check and list fail", async () => {
+  renderPage();
+  await screen.findByRole("button", { name: "Stop generating" });
+  fireEvent.click(screen.getByTitle("Show workspace"));
+  workspaceUnavailable = true;
+  await act(async () => {
+    emit(sseFrame("agent.message", 2, { content: [{ type: "text", text: "The completed answer stays here." }] }));
+    emit(sseFrame("session.error", 3, { error: { code: "workspace_storage_error", message: "File save status is unconfirmed. The answer is retained." } }));
+    emit(sseFrame("session.status_idle", 4, {}));
+    emit(sseFrame("session.turn_completed", 5, { turnId: "turn_1", pendingEventId: "input_1" }));
+  });
+  expect(await screen.findByText("The completed answer stays here.")).toBeTruthy();
+  expect(await screen.findByText("File save status is unconfirmed. The answer is retained.")).toBeTruthy();
+  await screen.findAllByRole("alert");
+  expect(screen.queryByRole("button", { name: "Stop generating" })).toBeNull();
+  expect(screen.queryByText(/No files yet/)).toBeNull();
+  workspaceUnavailable = false;
+  fireEvent.click(screen.getAllByTitle("Refresh")[0]);
+  await waitFor(() => expect(screen.queryByText(/Could not refresh files/)).toBeNull());
+  expect(screen.getByText("The completed answer stays here.")).toBeTruthy();
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+});
 
 it("keeps the queued strip visible across an interrupted Turn's idle gap (issue #114)", async () => {
   // A Turn is running with one message queued behind it.

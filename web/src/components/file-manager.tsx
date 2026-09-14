@@ -615,6 +615,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   const refresh = useCallback(async (): Promise<FileNode[] | null> => {
     setListLoading(true);
     setListError(null);
+    setSaved(false);
     try {
       const nextNodes = await source.list();
       setNodes(nextNodes);
@@ -891,12 +892,16 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       <div className="flex min-h-0 flex-1">
         <div className="flex w-64 flex-shrink-0 flex-col border-r border-[var(--color-border)]">
           <div className="min-h-0 flex-1 overflow-auto p-2">
-            {listError ? (
-              <div className="px-2 py-4 text-xs text-[var(--color-danger)]">{listError}</div>
-            ) : listLoading && nodes.length === 0 ? (
+            {listError && (
+              <div role="alert" className="px-2 py-4 text-xs text-[var(--color-danger)]">
+                Could not refresh files. {nodes.length > 0 && "The last loaded list is shown below. "}
+                File status is unconfirmed; use Refresh to retry. {listError}
+              </div>
+            )}
+            {listLoading && nodes.length === 0 ? (
               <div className="px-2 py-4 text-xs text-[var(--color-fg-subtle)]">Loading…</div>
             ) : nodes.length === 0 ? (
-              <div className="px-2 py-4 text-xs text-[var(--color-fg-subtle)]">
+              !listError && <div className="px-2 py-4 text-xs text-[var(--color-fg-subtle)]">
                 {emptyHint ?? "No files yet."}
               </div>
             ) : nested && tree ? (
