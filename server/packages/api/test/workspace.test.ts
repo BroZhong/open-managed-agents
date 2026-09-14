@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { InMemoryArtifactStore } from "@oma-server/store-memory";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
@@ -208,6 +208,26 @@ describe("GET /v1/sessions/:id/workspace/files/*", () => {
     expect(res.status).toBe(404);
   });
 
+  it("downloads a Chinese filename and infers the MIME of an ossfs binary", async () => {
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const path = "中文 图片.png";
+    const bytes = new Uint8Array([137, 80, 78, 71, 0, 255]);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path, body: bytes, contentType: "application/octet-stream" });
+    const res = await app.request(`/v1/sessions/${session.id}/workspace/files/${encodeURIComponent(path)}?download=1`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("content-disposition")).toContain(`filename*=UTF-8''${encodeURIComponent(path)}`);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("returns 400 for malformed URL encoding", async () => {
+    const { app, sessionStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    const res = await app.request(`/v1/sessions/${session.id}/workspace/files/bad%zz`);
+    expect(res.status).toBe(400);
+  });
+
   it("does not leak files outside the workspace via a traversal path", async () => {
     const { app, sessionStore, artifactStore } = createTestApp();
     const session = await seedSession(sessionStore, "dev", "ws_1");
@@ -273,6 +293,20 @@ describe("PUT /v1/sessions/:id/workspace/files/content", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it.each(["/absolute.txt", "a\\b.txt", "a//b.txt", "a/./b.txt", "a\u0000.txt"])(
+    "rejects an ambiguous or unsafe write path %j before storage", async (path) => {
+      const { app, sessionStore, artifactStore } = createTestApp();
+      const session = await seedSession(sessionStore);
+      const res = await app.request(`/v1/sessions/${session.id}/workspace/files/content`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path, content: "must not be saved" }),
+      });
+      expect(res.status).toBe(400);
+      expect(await artifactStore.list("dev", "ws_1")).toEqual([]);
+    },
+  );
 
   it("returns 404 for another tenant's session", async () => {
     const { app, sessionStore } = createTestApp();
@@ -381,6 +415,18 @@ describe("DELETE /v1/sessions/:id/workspace/files/content", () => {
 describe("POST /v1/sessions/:id/workspace/files/rename", () => {
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
+  });
+
+  it("retains content when renaming a file to itself", async () => {
+    const { app, sessionStore, artifactStore } = createTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "same.txt", body: "keep" });
+    const res = await app.request(`/v1/sessions/${session.id}/workspace/files/rename`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from: "same.txt", to: "same.txt" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await (await app.request(`/v1/sessions/${session.id}/workspace/files/same.txt`)).text()).toBe("keep");
   });
 
   it("moves the file to the new path and preserves contentType", async () => {
@@ -565,7 +611,7 @@ describe("POST /v1/sessions/:id/workspace/files/upload", () => {
       const encodedPath = fixture.storedPath.split("/").map(encodeURIComponent).join("/");
       const read = await app.request(`/v1/sessions/${session.id}/workspace/files/${encodedPath}`);
       expect(read.status).toBe(200);
-      expect(read.headers.get("content-type")).toBe(fixture.contentType);
+      expect(read.headers.get("content-type")?.split(";")[0]).toBe(fixture.contentType);
       expect(new Uint8Array(await read.arrayBuffer())).toEqual(fixture.bytes);
     }
   });
@@ -642,6 +688,18 @@ function createSigningTestApp() {
 }
 
 describe("GET /v1/sessions/:id/workspace/preview-url", () => {
+  it("reports signing failures as storage errors without leaking SDK diagnostics", async () => {
+    const { app, sessionStore, artifactStore } = createSigningTestApp();
+    const session = await seedSession(sessionStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: "x" });
+    vi.spyOn(artifactStore, "createSignedReadUrl").mockRejectedValue(new Error("secret in SDK request"));
+    const res = await app.request(`/v1/sessions/${session.id}/workspace/preview-url?path=a.png`);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "Workspace storage is unavailable. Retry the file operation.", code: "workspace_storage_error",
+    });
+  });
+
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
   });

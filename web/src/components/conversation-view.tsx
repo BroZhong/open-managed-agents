@@ -221,7 +221,7 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
     case "user":
       return <UserBubble text={message.text} />;
     case "assistant":
-      return <AssistantBubble text={message.text} />;
+      return <AssistantBubble text={message.text} aborted={message.aborted} />;
     case "assistant_streaming":
       return <AssistantBubble text={message.text} isStreaming />;
     case "thinking":
@@ -262,18 +262,48 @@ function UserBubble({ text }: { text: string }) {
 function AssistantBubble({
   text,
   isStreaming = false,
+  aborted = false,
 }: {
   text: string;
   isStreaming?: boolean;
+  aborted?: boolean;
 }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-[var(--color-bg-surface)] px-4 py-3 text-sm text-[var(--color-fg)] shadow-sm ring-1 ring-[var(--color-border-subtle)]">
-        <div className="prose prose-sm prose-neutral max-w-none [&_p]:my-1.5 [&_pre]:rounded-lg [&_pre]:bg-[var(--color-bg-muted)] [&_code]:text-[13px]">
+        {/* `prose*` comes from @tailwindcss/typography, loaded by
+            `@plugin "@tailwindcss/typography"` in index.css. Without that
+            @plugin line these are dead class names and every markdown element
+            falls back to unstyled browser defaults (issue #117), so the guard
+            test in index-css.test.ts pins the plugin in place.
+
+            Why the `[&_x]:` overrides below beat the plugin: its rules are
+            `.prose :where(x):not(:where(...))`, and `:where()` contributes
+            zero specificity, so they score one class (0,1,0). `[&_x]:…`
+            compiles to `.escaped-class x` — one class plus one element,
+            (0,1,1). Cascade order therefore never enters into it. The one
+            genuine tie is the root `color`: `.prose{color:var(--tw-prose-body)}`
+            is also (0,1,0), so text colour needs `!` to be order-independent.
+
+            Tables get GitHub's markdown treatment — `display:block` plus
+            `width:max-content` and `overflow-x-auto` — so a wide table scrolls
+            inside itself instead of bursting the max-w-[85%] bubble and
+            overlapping neighbouring messages. No wrapper component needed.
+            Under border-collapse the cells' own borders also win the CSS table
+            border-conflict resolution against the plugin's thead/tr borders,
+            which is why those need no separate override. */}
+        <div className="prose prose-sm prose-neutral max-w-none text-[var(--color-fg)]! [&_p]:my-1.5 [&_pre]:rounded-lg [&_pre]:bg-[var(--color-bg-muted)] [&_pre]:text-[var(--color-fg)] [&_code]:text-[13px] [&_code]:font-normal [&_code]:before:content-none [&_code]:after:content-none [&_table]:my-2 [&_table]:block [&_table]:w-max [&_table]:max-w-full [&_table]:table-auto [&_table]:overflow-x-auto [&_table]:border-collapse [&_th]:border [&_th]:border-[var(--color-border)] [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold [&_td]:border [&_td]:border-[var(--color-border)] [&_td]:px-2 [&_td]:py-1">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
         </div>
         {isStreaming && (
           <span className="inline-block h-4 w-0.5 animate-pulse bg-[var(--color-fg-subtle)]" />
+        )}
+        {/* An Interrupt is the user's intent, not a fault, so this reads as a
+            note rather than borrowing the error bubble's red. */}
+        {aborted && (
+          <p className="mt-1.5 text-xs text-[var(--color-fg-subtle)]">
+            Stopped by you
+          </p>
         )}
       </div>
     </div>

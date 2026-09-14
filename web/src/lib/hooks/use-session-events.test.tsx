@@ -184,9 +184,9 @@ describe("useSessionEvents history replay", () => {
       "event: user.message\n" +
       "id: 75\n" +
       'data: {"content":[{"type":"text","text":"message 75"}]}\n\n' +
-      "event: workspace.file_change\n" +
+      "event: session.status_idle\n" +
       "id: 76\n" +
-      'data: {"workspaceId":"workspace_1","changed":["image.png"],"deleted":[]}\n\n';
+      'data: {}\n\n';
 
     const historyUrls: string[] = [];
 

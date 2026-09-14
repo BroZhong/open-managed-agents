@@ -53,7 +53,7 @@ export interface PendingEventStore {
     claim: PendingEventClaimRef,
     leaseMs: number,
   ): Promise<boolean>;
-  /** Read-only live-fence check, primarily for external checkpoint gates. */
+  /** Read-only live-fence check around external storage availability checks. */
   ownsClaim?(
     sessionId: string,
     eventId: string,
@@ -75,6 +75,24 @@ export interface PendingEventStore {
   /** Discard every pending event for one Session (missing/terminated cleanup). */
   clear(sessionId: string): Promise<void>;
   count(sessionId: string): Promise<number>;
+  /**
+   * The FIFO entries no live execution attempt holds — input the user is still
+   * *waiting* on, as opposed to the head a Turn is executing right now.
+   *
+   * This is deliberately narrower than {@link count}: a claimed head has already
+   * been promoted into the Session's event log, so it is visible as history and
+   * must not also be reported as queued.
+   *
+   * An expired claim counts as waiting again. That is not merely consistency
+   * with {@link claim}'s re-claim predicate — it is the honest answer. A lapsed
+   * lease means the attempt that held it lost ownership and its Turn is being
+   * torn down, so that input really is waiting to be executed by whoever claims
+   * it next.
+   *
+   * Optional for the same reason as {@link claim}: narrow single-process test
+   * doubles need not implement it, and callers fall back to {@link count}.
+   */
+  listUnclaimed?(sessionId: string, limit: number): Promise<PendingEvent[]>;
 }
 
 /**

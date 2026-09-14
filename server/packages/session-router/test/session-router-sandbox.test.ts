@@ -4,7 +4,6 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryAgentStore } from "@oma-server/store-memory";
 import {
   FakeSandboxClient,
-  FakeWorkspacePersistence,
   FakeProvisionSource,
   DefaultSandboxManager,
 } from "@oma-server/sandbox";
@@ -323,7 +322,7 @@ const chatAdapter: Adapter = {
 
 /**
  * Tool-using adapter: reads a workspace file through the injected executor and
- * echoes it back, proving a tool call runs against the hydrated sandbox.
+ * echoes it back, proving a tool call runs against the mounted Workspace.
  */
 function toolReadingAdapter(path: string): Adapter {
   return {
@@ -338,28 +337,6 @@ function toolReadingAdapter(path: string): Adapter {
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: body }],
-      };
-    },
-  };
-}
-
-/**
- * Tool-using adapter that WRITES a file through the injected executor, so the
- * subsequent Host checkpoint produces a real change. The adapter itself emits
- * only a plain tool-result message — never a workspace/artifact event.
- */
-function toolWritingAdapter(path: string, content: string): Adapter {
-  return {
-    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-      const executor = input.toolExecutor;
-      if (executor) {
-        await executor.writeFile(path, content);
-      }
-      yield {
-        id: "evt_tool_write",
-        timestamp: "2024-01-01T00:00:00.000Z",
-        type: "agent.message",
-        content: [{ type: "text", text: "wrote it" }],
       };
     },
   };
@@ -405,15 +382,13 @@ const legacyAgent: Agent = {
 };
 
 /**
- * Wire the REAL {@link DefaultSandboxManager} with the three fakes
- * (FakeSandboxClient + FakeWorkspacePersistence + FakeProvisionSource under
- * kind "s3"), so the router↔manager↔session↔persistence↔projection seams are
- * genuinely exercised end to end (issue #78 — the integration slice).
+ * Wire the real Sandbox Manager with a shared mounted Workspace and the
+ * external Skill projection fixture. The Router still owns the complete
+ * Session lifecycle and emits the durable completion/error events.
  */
 function createDeps(opts: {
   adapter: Adapter;
   sandboxClient?: FakeSandboxClient;
-  persistence?: FakeWorkspacePersistence;
   provisionSource?: FakeProvisionSource;
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
@@ -429,7 +404,6 @@ function createDeps(opts: {
   const sessionStore = new InMemorySessionStore();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
-  const persistence = opts.persistence ?? new FakeWorkspacePersistence();
   const provisionSource = opts.provisionSource ?? new FakeProvisionSource();
 
   const sandboxManager =
@@ -437,7 +411,6 @@ function createDeps(opts: {
       ? undefined
       : new DefaultSandboxManager({
           sandboxClient,
-          persistence,
           // Register the fake under kind "s3" so the router's { kind: "s3" }
           // projection coordinates dispatch to it (proving kind-based dispatch).
           provisionSources: { s3: provisionSource },
@@ -450,6 +423,12 @@ function createDeps(opts: {
     eventStreamHub,
     resolveAdapter: () => opts.adapter,
     sandboxManager,
+    workspaceMount: {
+      bucket: "agentry",
+      agentName: "agentry-workspace",
+      pvName: "agentry-workspace-oss",
+      credentialProviderName: "agentry-oss-rw",
+    },
     skillStore: opts.skillStore,
     skillArtifactStore: opts.skillArtifactStore,
     agentStore: opts.agentStore,
@@ -463,7 +442,6 @@ function createDeps(opts: {
     sessionStore,
     eventStreamHub,
     sandboxClient,
-    persistence,
     provisionSource,
     router,
   };
@@ -503,11 +481,11 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it("the first file/code tool call creates a sandbox lazily", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -523,11 +501,11 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it("injects the Agent's sandbox.env into the created sandbox", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
     });
     const envAgent: Agent = {
       ...sandboxedAgent,
@@ -552,11 +530,11 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it("merges defaultSandboxEnv into the sandbox; the Agent's own env wins per key", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
       // Deployment-wide defaults: a shared VFS_TOKEN plus an extra shared key.
       defaultSandboxEnv: { VFS_TOKEN: "default-tok", SHARED: "yes" },
     });
@@ -585,11 +563,11 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it("injects defaultSandboxEnv even when the Agent sets no sandbox.env", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
       defaultSandboxEnv: { VFS_TOKEN: "default-tok" },
     });
     // sandboxedAgent has no sandbox.env of its own.
@@ -610,11 +588,11 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it("keeps deployment-managed sandbox env authoritative over Agent overrides", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
       defaultSandboxEnv: { VFS_TOKEN: "default-vfs" },
       managedSandboxEnvByAgentId: {
         [sandboxedAgent.id]: {
@@ -653,11 +631,11 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it("does not inject one Agent's managed sandbox env into another Agent", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("hello.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
       defaultSandboxEnv: { VFS_TOKEN: "default-vfs" },
       managedSandboxEnvByAgentId: {
         agent_allowed: {
@@ -677,18 +655,19 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     await router.handleNewEvent(session.id, sandboxedAgent);
 
     const id = sandboxClient.created[0];
-    expect(sandboxClient.createOptsOf(id).env).toEqual({
+    expect(sandboxClient.createOptsOf(id).env).toMatchObject({
       VFS_TOKEN: "default-vfs",
     });
+    expect(sandboxClient.createOptsOf(id).env).not.toHaveProperty("OPENGROVE_WW_ACCESS_TOKEN");
   });
 
-  it("hydrates the sandbox from the Workspace and a tool call reads a hydrated file", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "notes.md", "hydrated-content");
+  it("reads an existing Workspace file through its verified mount", async () => {
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "notes.md", "mounted-content");
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
       createDeps({
         adapter: toolReadingAdapter("notes.md"),
-        persistence,
+        sandboxClient: workspaceClient,
       });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -700,27 +679,26 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
 
     await router.handleNewEvent(session.id, sandboxedAgent);
 
-    // The hydrated file landed in the sandbox under the default workspace dir
-    // (E2B's user home /home/user — issue #85).
+    // The file is visible at the fixed Workspace mount while HOME stays local.
     const id = sandboxClient.created[0];
-    expect(await sandboxClient.readFile(id, "/home/user/notes.md")).toBe(
-      "hydrated-content",
+    expect(await sandboxClient.readFile(id, "/home/user/workspace/notes.md")).toBe(
+      "mounted-content",
     );
 
     // The adapter's tool call read it back and emitted it as a message.
     const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
     const message = data.find((e) => e.type === "agent.message");
     expect((message?.data as { content: Array<{ text: string }> }).content[0].text).toBe(
-      "hydrated-content",
+      "mounted-content",
     );
   });
 
   it("destroys the sandbox at session end (terminateSession)", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "f.txt", "x");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "f.txt", "x");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("f.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -738,14 +716,23 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
 
     expect(sandboxClient.destroyed).toEqual([id]);
     expect(sandboxClient.liveCount).toBe(0);
+    expect(workspaceClient.workspaceContents("tenant_1/ws_1/").get("f.txt")?.content).toBe("x");
+
+    const replacement = await sessionStore.create({
+      tenantId: "tenant_1", agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, replacement.id, "read retained Workspace");
+    await router.handleNewEvent(replacement.id, sandboxedAgent);
+    expect(sandboxClient.created).toHaveLength(2);
+    expect(await sandboxClient.readFile(sandboxClient.created[1], "/home/user/workspace/f.txt")).toBe("x");
   });
 
   it("reuses one sandbox across turns and destroys it once at session end", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "f.txt", "x");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "f.txt", "x");
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: toolReadingAdapter("f.txt"),
-      persistence,
+      sandboxClient: workspaceClient,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -763,6 +750,28 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
 
     await router.terminateSession(session.id);
     expect(sandboxClient.destroyed).toHaveLength(1);
+  });
+
+  it("retries Session disposal after a transient destroy failure and retains Workspace files", async () => {
+    class FailsFirstDestroyClient extends FakeSandboxClient {
+      private attempts = 0;
+      override async destroy(id: string): Promise<void> {
+        if (++this.attempts === 1) throw new Error("temporary gateway failure");
+        return super.destroy(id);
+      }
+    }
+    const sandboxClient = new FailsFirstDestroyClient();
+    sandboxClient.seedWorkspace("tenant_1/ws_1/", "saved.txt", "retained");
+    const { router, sessionStore, pendingEventStore } = createDeps({ adapter: toolReadingAdapter("saved.txt"), sandboxClient });
+    const session = await sessionStore.create({ tenantId: "tenant_1", agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: "ws_1" });
+    await enqueue(pendingEventStore, session.id, "read");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    await expect(router.terminateSession(session.id)).rejects.toThrow("temporary gateway failure");
+    expect(sandboxClient.liveCount).toBe(1);
+    await router.terminateSession(session.id);
+    expect(sandboxClient.liveCount).toBe(0);
+    expect(sandboxClient.destroyed).toEqual(sandboxClient.created);
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("retained");
   });
 
   it("does not inject an executor for a non-sandboxed agent when a manager IS present", async () => {
@@ -885,12 +894,12 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   });
 
   it("runs normally with an injected session when sandboxed AND a manager is present", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "hello.txt", "world");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
       createDeps({
         adapter: toolReadingAdapter("hello.txt"),
-        persistence,
+        sandboxClient: workspaceClient,
       });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -920,13 +929,13 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   });
 
   it("isolates concurrent sessions in distinct sandboxes (no cross-session bleed)", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_a", "who.txt", "session-A");
-    persistence.seed("tenant_1", "ws_b", "who.txt", "session-B");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_a/", "who.txt", "session-A");
+    workspaceClient.seedWorkspace("tenant_1/ws_b/", "who.txt", "session-B");
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
       createDeps({
         adapter: toolReadingAdapter("who.txt"),
-        persistence,
+        sandboxClient: workspaceClient,
       });
 
     const a = await sessionStore.create({
@@ -949,7 +958,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
       router.handleNewEvent(b.id, sandboxedAgent),
     ]);
 
-    // Two distinct sandboxes, each hydrated from its own Workspace.
+    // Two distinct sandboxes, each mounted to its own Workspace.
     expect(sandboxClient.created).toHaveLength(2);
 
     const textOf = async (sessionId: string) => {
@@ -962,7 +971,7 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   });
 });
 
-// ─── Host-emitted workspace.file_change on checkpoint (#43/#78) ──────────────
+// ─── Turn completion and mounted Workspace integration ─────────────────────
 
 /** Collect all SSE frame event types seen on a session's live stream. */
 async function collectEventTypes(sub: {
@@ -979,117 +988,92 @@ async function collectEventTypes(sub: {
   return types;
 }
 
-describe("SessionRouter — Host emits workspace.file_change on checkpoint (#43)", () => {
-  it("emits workspace.file_change on checkpoint; the Adapter emits none", async () => {
-    const { router, sessionStore, pendingEventStore, eventLogStore, eventStreamHub } =
-      createDeps({ adapter: toolWritingAdapter("created.txt", "hi") });
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: "agent_sbx",
-      agent: sandboxedAgent,
-      workspaceId: "ws_1",
-    });
-
-    // Subscribe (with chunks) to capture the live SSE emit.
-    const sub = eventStreamHub.subscribe(session.id, { includeChunks: true });
-
-    await enqueue(pendingEventStore, session.id, "make a file");
-    await router.handleNewEvent(session.id, sandboxedAgent);
-    sub.unsubscribe();
-
-    // Persisted: exactly one workspace.file_change, listing the new file.
-    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
-    const fileChanges = data.filter((e) => e.type === "workspace.file_change");
-    expect(fileChanges).toHaveLength(1);
-    expect(fileChanges[0].data).toMatchObject({
-      workspaceId: "ws_1",
-      changed: ["created.txt"],
-      deleted: [],
-    });
-
-    // The Host owns the event: its seq shows it went through the event log.
-    expect(fileChanges[0].seq).toBeGreaterThan(0);
-
-    // The adapter emitted only its plain message — no workspace/artifact event.
-    const agentMessages = data.filter((e) => e.type === "agent.message");
-    expect(agentMessages).toHaveLength(1);
-
-    // Live SSE stream carried the file-change frame too.
-    const liveTypes = await collectEventTypes(sub);
-    expect(liveTypes).toContain("workspace.file_change");
-  });
-
-  it("a pure-chat turn emits NO workspace.file_change (checkpoint no-op)", async () => {
-    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
-      adapter: chatAdapter,
-    });
-    const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: "agent_sbx",
-      agent: sandboxedAgent,
-      workspaceId: "ws_1",
-    });
-    await enqueue(pendingEventStore, session.id, "just chat");
-    await router.handleNewEvent(session.id, sandboxedAgent);
-
-    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
-    expect(data.filter((e) => e.type === "workspace.file_change")).toHaveLength(0);
-  });
-
-  it("propagates a delete: a hydrated file removed via bash emits it in deleted[]", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "doomed.txt", "x");
-
-    // Fake sandbox whose exec understands `rm <abs-path>` by mutating its map,
-    // so the file is removed by shell (not a tool) before the Host's checkpoint.
-    const sandboxClient = new FakeSandboxClient({
-      execHandler: (command, files) => {
-        if (command[0] === "rm" && command[1]) {
-          files.delete(command[1]);
-          return [];
-        }
-        return undefined;
-      },
-    });
-
-    // Adapter runs `rm /home/user/doomed.txt` through the injected executor
-    // (default workspace dir is E2B's user home — issue #85).
-    const removingAdapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-        const executor = input.toolExecutor;
-        if (executor) {
-          for await (const _ of executor.exec(["rm", "/home/user/doomed.txt"])) {
-            // discard output
-          }
-        }
+describe("SessionRouter — Workspace availability after completed writes", () => {
+  it("retains a completed answer when the storage check fails, blocks the next Turn, then recovers without replay", async () => {
+    const sandboxClient = new FakeSandboxClient();
+    let adapterRuns = 0;
+    const adapter: Adapter = {
+      async *run(input): AsyncIterable<SessionEvent> {
+        adapterRuns++;
+        await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`);
+        if (adapterRuns === 1) sandboxClient.setMountFailure(sandboxClient.created[0], "storage offline");
         yield {
-          id: "e",
-          timestamp: "2024-01-01T00:00:00.000Z",
-          type: "agent.message",
-          content: [{ type: "text", text: "removed" }],
+          id: `answer-${adapterRuns}`, timestamp: "2026-09-14T00:00:00.000Z", type: "agent.message",
+          content: [{ type: "text", text: `answer-${adapterRuns}` }],
         };
       },
     };
-
-    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
-      adapter: removingAdapter,
-      persistence,
-      sandboxClient,
-    });
+    const { router, sessionStore, pendingEventStore, eventLogStore, eventStreamHub } = createDeps({ adapter, sandboxClient });
     const session = await sessionStore.create({
-      tenantId: "tenant_1",
-      agentId: "agent_sbx",
-      agent: sandboxedAgent,
-      workspaceId: "ws_1",
+      tenantId: "tenant_1", agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: "ws_1",
     });
-
-    await enqueue(pendingEventStore, session.id, "remove it");
+    const sub = eventStreamHub.subscribe(session.id, { includeChunks: true });
+    await enqueue(pendingEventStore, session.id, "write and answer");
     await router.handleNewEvent(session.id, sandboxedAgent);
+    sub.unsubscribe();
 
-    const { data } = await eventLogStore.getEvents(session.id, { limit: 100 });
-    const fileChanges = data.filter((e) => e.type === "workspace.file_change");
-    expect(fileChanges).toHaveLength(1);
-    expect(fileChanges[0].data).toMatchObject({ deleted: ["doomed.txt"] });
+    const firstTurn = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
+    expect(firstTurn.filter((event) => event.type === "agent.message")).toHaveLength(1);
+    expect(firstTurn.find((event) => event.type === "agent.message")?.data).toMatchObject({ content: [{ type: "text", text: "answer-1" }] });
+    expect(firstTurn.find((event) => event.type === "session.error")?.data).toMatchObject({ error: { code: "workspace_storage_error", message: expect.stringContaining("answer is retained") } });
+    expect(firstTurn.filter((event) => event.type === "session.turn_completed")).toHaveLength(1);
+    expect(firstTurn.filter((event) => event.type === "workspace.file_change")).toHaveLength(0);
+    expect((await collectEventTypes(sub))).toContain("session.status_idle");
+    expect((await sessionStore.getById(session.id))?.status).toBe("idle");
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-1");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    expect(adapterRuns).toBe(1);
+
+    await enqueue(pendingEventStore, session.id, "cannot execute while unavailable");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    expect(adapterRuns).toBe(1);
+    expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data).toContainEqual(expect.objectContaining({
+      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "sandbox_prepare_failed" }) }),
+    }));
+    sandboxClient.setMountFailure(sandboxClient.created[0]);
+    await enqueue(pendingEventStore, session.id, "retry after recovery");
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    expect(adapterRuns).toBe(2);
+    expect(sandboxClient.created).toHaveLength(1);
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-2");
+    expect((await sessionStore.getById(session.id))?.status).toBe("idle");
+  });
+
+  it.each(["failure", "Interrupt"] as const)("retains closed files after an adapter %s and Session termination", async (outcome) => {
+    let wrote!: () => void;
+    const written = new Promise<void>((resolve) => { wrote = resolve; });
+    const adapter: Adapter = {
+      async *run(input): AsyncIterable<SessionEvent> {
+        await input.toolExecutor!.writeFile("saved.txt", "closed before the Turn ended");
+        wrote();
+        if (outcome === "failure") throw new Error("adapter failed after saving");
+        await new Promise<void>((resolve) => {
+          if (input.signal?.aborted) return resolve();
+          input.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+    };
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } = createDeps({ adapter });
+    const session = await sessionStore.create({
+      tenantId: "tenant_1", agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: "ws_1",
+    });
+    await enqueue(pendingEventStore, session.id, "save a file");
+    const running = router.handleNewEvent(session.id, sandboxedAgent);
+    await written;
+    if (outcome === "Interrupt") expect(router.interrupt(session.id)).toBe(true);
+    await running;
+    const events = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
+    if (outcome === "Interrupt") expect(events.map((event) => event.type)).toContain("session.turn_aborted");
+    else expect(events).toContainEqual(expect.objectContaining({
+      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "adapter_error" }) }),
+    }));
+    expect(events.map((event) => event.type)).toContain("session.turn_completed");
+    expect((await sessionStore.getById(session.id))?.status).toBe("idle");
+    expect(await pendingEventStore.count(session.id)).toBe(0);
+    await router.terminateSession(session.id);
+    expect(sandboxClient.liveCount).toBe(0);
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("closed before the Turn ended");
   });
 });
 
@@ -1097,10 +1081,8 @@ describe("SessionRouter — Host emits workspace.file_change on checkpoint (#43)
 
 describe("SessionRouter — end-to-end integration (#78)", () => {
   it("state persists across turns: a file written in turn 1 is present in turn 2", async () => {
-    // Turn 1 writes a file through the session; the turn-end checkpoint persists
-    // it to the fake persistence. Turn 2 reuses the same long-lived session and
-    // reads it back — proving cross-turn persistence via checkpoint.
-    const persistence = new FakeWorkspacePersistence();
+    // Closing the write persists its bytes; a later Turn reads the shared mount.
+    const workspaceClient = new FakeSandboxClient();
     const readOrWrite: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
         const ex = input.toolExecutor!;
@@ -1123,7 +1105,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
-      createDeps({ adapter: readOrWrite, persistence });
+      createDeps({ adapter: readOrWrite, sandboxClient: workspaceClient });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_sbx",
@@ -1134,8 +1116,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     await enqueue(pendingEventStore, session.id, "write");
     await router.handleNewEvent(session.id, sandboxedAgent);
 
-    // The checkpoint persisted it to the medium.
-    expect(persistence.contentOf("tenant_1", "ws_1", "carry.txt")).toBe(
+    // The completed write is already visible through the storage boundary.
+    expect(workspaceClient.workspaceContents("tenant_1/ws_1/").get("carry.txt")?.content).toBe(
       "persisted-across-turns",
     );
 
@@ -1153,9 +1135,9 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
   });
 
   it("turn 2 sees idle-time Workspace edits from authoritative storage", async () => {
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed("tenant_1", "ws_1", "edit.txt", "before");
-    persistence.seed("tenant_1", "ws_1", "deleted.txt", "remove me");
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "edit.txt", "before");
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "deleted.txt", "remove me");
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
         const executor = input.toolExecutor!;
@@ -1182,7 +1164,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
-      createDeps({ adapter, persistence });
+      createDeps({ adapter, sandboxClient: workspaceClient });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: sandboxedAgent.id,
@@ -1192,9 +1174,9 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
 
     await enqueue(pendingEventStore, session.id, "warm");
     await router.handleNewEvent(session.id, sandboxedAgent);
-    persistence.seed("tenant_1", "ws_1", "edit.txt", "from web");
-    persistence.seed("tenant_1", "ws_1", "added.txt", "new from web");
-    persistence.delete("tenant_1", "ws_1", "deleted.txt");
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "edit.txt", "from web");
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "added.txt", "new from web");
+    workspaceClient.deleteWorkspaceFile("tenant_1/ws_1/", "deleted.txt");
 
     await enqueue(pendingEventStore, session.id, "verify");
     await router.handleNewEvent(session.id, sandboxedAgent);
@@ -1208,9 +1190,9 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     );
   });
 
-  it("the model can read an equipped Skill from inside the sandbox (/skills/<id>/SKILL.md)", async () => {
+  it("the model can read an equipped Skill from inside the sandbox (/skills/<skill-name>/SKILL.md)", async () => {
     // Seed the FakeProvisionSource with a Skill's SKILL.md, equip it on the
-    // agent, run a turn, and assert the session can read it at /skills/<id> —
+    // agent, run a turn, and assert the session can read it at /skills/<skill-name> —
     // proving Skills-as-projection works end to end (ADR-0005 §4).
     const skillStore = new TinySkillStore();
     const skillArtifactStore = new TinySkillArtifactStore();
@@ -1236,10 +1218,10 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     const skillReadingAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
         descriptors = input.agent.skillDescriptors;
-        // The adapter is pointed at the in-sandbox /skills/<id> root and reads
+        // The adapter is pointed at the in-sandbox /skills/<skill-name> root and reads
         // SKILL.md from there, exactly as Pi's sandbox-mapped read would.
         const root = input.agent.skillPaths?.[0];
-        // Projections mount outside /workspace, so read via an absolute-path
+        // Projections live outside /home/user/workspace, so read via an absolute-path
         // exec (cat) — the FakeSandboxClient's built-in cat reads any abs path.
         for await (const chunk of input.toolExecutor!.exec(["cat", `${root}/SKILL.md`])) {
           if (chunk.stream === "stdout") readBody = chunk.text;
@@ -1270,10 +1252,10 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     await enqueue(pendingEventStore, session.id, "load the skill");
     await router.handleNewEvent(session.id, agent);
 
-    // The projection landed at /skills/<id>/SKILL.md and was readable inside the
+    // The projection landed at /skills/<skill-name>/SKILL.md and was readable inside the
     // sandbox with the seeded content.
     const id = sandboxClient.created[0];
-    expect(sandboxClient.filesOf(id).get(`/skills/${skill.id}/SKILL.md`)?.content).toBe(
+    expect(sandboxClient.filesOf(id).get("/skills/greeter/SKILL.md")?.content).toBe(
       SKILL_BODY,
     );
     expect(readBody).toBe(SKILL_BODY);
@@ -1296,13 +1278,41 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
 
     expect(sandboxClient.created).toHaveLength(1);
     expect(readBody).toBe(UPDATED_BODY);
+    expect(sandboxClient.filesOf(id).has("/skills/greeter/SKILL.md")).toBe(false);
+    expect(await sandboxClient.readFile(id, "/skills/greeter-v2/SKILL.md")).toBe(UPDATED_BODY);
     expect(descriptors).toEqual([
       {
         name: "greeter-v2",
         description: "greets better",
-        path: `/skills/${skill.id}/SKILL.md`,
+        path: "/skills/greeter-v2/SKILL.md",
       },
     ]);
+  });
+
+  it.each([["same", "same"], ["../escape"], ["nested/name"], ["."]])("rejects ambiguous or unsafe equipped Skill paths: %j", async (...names) => {
+    const skillStore = new TinySkillStore();
+    const skillArtifactStore = new TinySkillArtifactStore();
+    const ids: string[] = [];
+    for (const name of names) {
+      const skill = await skillStore.create({ tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name });
+      ids.push(skill.id);
+      await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "body");
+    }
+    let adapterRan = false;
+    const adapter: Adapter = {
+      async *run(): AsyncIterable<SessionEvent> { adapterRan = true; },
+    };
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } = createDeps({ adapter, skillStore, skillArtifactStore });
+    const agent = { ...sandboxedAgent, skills: ids };
+    const session = await sessionStore.create({ tenantId: "tenant_1", agentId: agent.id, agent, workspaceId: "ws_1" });
+    await enqueue(pendingEventStore, session.id, "load equipped Skills");
+    await router.handleNewEvent(session.id, agent);
+    expect(adapterRan).toBe(false);
+    expect(sandboxClient.created).toHaveLength(0);
+    expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data).toContainEqual(expect.objectContaining({
+      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "sandbox_prepare_failed" }) }),
+    }));
+    expect((await sessionStore.getById(session.id))?.status).toBe("idle");
   });
 
   it("an existing Session picks up live Agent system, newly equipped Skills, and MCP", async () => {

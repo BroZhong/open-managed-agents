@@ -1,5 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { WorkspaceMetadataStore } from "@oma-server/store";
+import { workspaceObjectPrefix } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -41,6 +42,13 @@ export function workspaceEntityRoutes(
     }
 
     const tenant = c.get("tenant");
+    if (id !== undefined) {
+      try {
+        workspaceObjectPrefix(tenant.tenantId, id);
+      } catch {
+        return c.json({ error: "Workspace id must contain 1–128 letters, numbers, underscores or hyphens" }, 400);
+      }
+    }
     const workspace = await workspaceStore.create({
       tenantId: tenant.tenantId,
       id,

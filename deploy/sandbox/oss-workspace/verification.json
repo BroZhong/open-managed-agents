@@ -1,0 +1,553 @@
+{
+  "verifiedAt": "2026-09-14T10:49:48.460Z",
+  "cluster": "c4d4dbd36064d4341835496ed01023600",
+  "profile": "welltop",
+  "productionMutations": false,
+  "inventory": {
+    "kubernetes": "1.36.1-aliyun.1",
+    "agentIdentity": "0.5.1",
+    "sandboxController": "v0.6.6-release.1",
+    "sandboxManager": "v0.6.11",
+    "e2bSdk": "2.24.0",
+    "aliyunCli": "3.4.2",
+    "ossutil": "2.4.0",
+    "rrsa": true,
+    "bucket": "agentry",
+    "bucketPrivate": true,
+    "blockPublicAccess": true,
+    "httpsRequestTimeoutSeconds": 180,
+    "tlsExpiresAt": "2026-12-13T07:53:21Z",
+    "automaticCertificateRenewal": false
+  },
+  "actualMount": {
+    "workspace": "/home/user/workspace",
+    "targetShape": "/run/csi/mount-root/oss/<opaque-hash>",
+    "workspaceIsSymlink": true,
+    "filesystem": "fuse.ossfs",
+    "source": "ossfs",
+    "fsroot": "/",
+    "commandUid": 1000,
+    "commandGid": 1000,
+    "scopeAttestation": "E2B getInfo security.agents.kruise.io/storage-auth JSON includes credentialProviderName and attributes.bucket-name/sub-path; original csi-volume-config is consumed"
+  },
+  "initialProbes": [
+    {
+      "testId": "1e0e5a3a2fdf4de89ba266bcabc984bf",
+      "result": "Incorrect diagnostic required literal mountpoint; refused before writes",
+      "sandboxCleaned": true,
+      "prefixCleaned": true
+    },
+    {
+      "testId": "ff8e90b060ad4f9092de8f96debeac8a",
+      "result": "Same initial diagnostic; refused before writes",
+      "sandboxCleaned": true,
+      "prefixCleaned": true
+    }
+  ],
+  "soak": {
+    "testId": "2f77a2bc90ac4ccb933599d455c1ade5",
+    "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+    "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5",
+    "initialWriteAt": "2026-09-14T09:44:46.011Z",
+    "initialHostRead": true,
+    "unicodeBinaryEmptyWrites": true,
+    "nextCheckAt": "2026-09-14T10:49:46.450Z",
+    "status": "passed",
+    "cleanup": "verified: own Sandbox absent, exact OSS prefix empty",
+    "finalWriteAt": "2026-09-14T10:49:47.561Z",
+    "mountedWriteIntervalSeconds": 3901.55,
+    "finalHostRead": true,
+    "sameSandboxThroughout": true,
+    "report": {
+      "testId": "2f77a2bc90ac4ccb933599d455c1ade5",
+      "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5",
+      "domain": "sandbox.agentry.welltop.tech",
+      "startedAt": "2026-09-14T09:44:44.591Z",
+      "events": [
+        {
+          "at": "2026-09-14T09:44:45.388Z",
+          "event": "created",
+          "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+          "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5"
+        },
+        {
+          "at": "2026-09-14T09:44:46.011Z",
+          "event": "initial-mounted-write",
+          "exitCode": 0,
+          "stdout": "{\"candidateMounts\": [\"370 1038 0:115 / /run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0 rw,nosuid,nodev,relatime master:162 - fuse.ossfs ossfs rw,user_id=0,group_id=0,allow_other\"], \"exists\": true, \"realpath\": \"/run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0\"}\n{\"uid\": 1000, \"gid\": 1000, \"mountinfo\": [\"370 1038 0:115 / /run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0 rw,nosuid,nodev,relatime master:162 - fuse.ossfs ossfs rw,user_id=0,group_id=0,allow_other\"]}\ninitial-close-read-ok\n",
+          "stderr": ""
+        },
+        {
+          "at": "2026-09-14T09:44:46.450Z",
+          "event": "initial-host-read-verified"
+        },
+        {
+          "at": "2026-09-14T09:44:46.450Z",
+          "event": "soak-wait-started",
+          "nextCheckAt": "2026-09-14T10:49:46.450Z"
+        },
+        {
+          "at": "2026-09-14T10:49:47.561Z",
+          "event": "after-expiry-mounted-write",
+          "exitCode": 0,
+          "stdout": "after-expiry-close-read-rename-delete-ok\n",
+          "stderr": ""
+        },
+        {
+          "at": "2026-09-14T10:49:47.913Z",
+          "event": "credential-refresh-soak-passed",
+          "elapsedSeconds": 3903
+        },
+        {
+          "at": "2026-09-14T10:49:48.112Z",
+          "event": "sandbox-cleaned",
+          "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx"
+        },
+        {
+          "at": "2026-09-14T10:49:48.459Z",
+          "event": "prefix-cleaned",
+          "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5"
+        }
+      ],
+      "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+      "nextCheckAt": "2026-09-14T10:49:46.450Z",
+      "passed": true,
+      "finishedAt": "2026-09-14T10:49:48.460Z"
+    }
+  },
+  "releaseBlockers": [
+    "New Sandbox image was built and smoked locally only; it is not published or pinned by a registry digest in the live SandboxSet.",
+    "Production maintenance switch not performed; inventory found an active claimed Sandbox and SANDBOX_TEMPLATE=auto-story."
+  ],
+  "mountedFilesProbe": {
+    "testId": "2f77a2bc90ac4ccb933599d455c1ade5",
+    "mainPrefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5",
+    "otherPrefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_other_2f77a2bc90ac4ccb933599d455c1ade5",
+    "events": [
+      {
+        "at": "2026-09-14T09:50:59.417Z",
+        "event": "created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-nsxxj",
+        "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5"
+      },
+      {
+        "at": "2026-09-14T09:50:59.807Z",
+        "event": "concurrent-b-written",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-nsxxj",
+        "stdout": ""
+      },
+      {
+        "at": "2026-09-14T09:50:59.901Z",
+        "event": "concurrent-a-written",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+        "stdout": ""
+      },
+      {
+        "at": "2026-09-14T09:51:00.482Z",
+        "event": "concurrent-host-read-passed"
+      },
+      {
+        "at": "2026-09-14T09:51:02.359Z",
+        "event": "node-local-install-passed",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-nsxxj",
+        "stdout": "/home/user/.local/oma-node/node_modules/is-number/index.js\n"
+      },
+      {
+        "at": "2026-09-14T09:51:10.893Z",
+        "event": "python-local-install-passed",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-nsxxj",
+        "stdout": "/home/user/.local/oma-python/six.py\n"
+      },
+      {
+        "at": "2026-09-14T09:51:10.929Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-nsxxj"
+      },
+      {
+        "at": "2026-09-14T09:52:39.065Z",
+        "event": "created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-zlcfg",
+        "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5"
+      },
+      {
+        "at": "2026-09-14T09:52:39.877Z",
+        "event": "rebuild-persistence-passed",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-zlcfg",
+        "stdout": "persisted-files-readable-and-local-dependencies-absent\n"
+      },
+      {
+        "at": "2026-09-14T09:52:40.470Z",
+        "event": "created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-5zldw",
+        "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_other_2f77a2bc90ac4ccb933599d455c1ade5"
+      },
+      {
+        "at": "2026-09-14T09:52:40.923Z",
+        "event": "separate-workspace-passed",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-5zldw",
+        "stdout": "other-workspace-isolated\n"
+      },
+      {
+        "at": "2026-09-14T09:52:41.446Z",
+        "event": "separate-workspace-not-visible",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-zlcfg",
+        "stdout": "other-object-not-visible\n"
+      },
+      {
+        "at": "2026-09-14T09:52:41.446Z",
+        "event": "extra-infrastructure-acceptance-passed"
+      },
+      {
+        "at": "2026-09-14T09:52:41.480Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-zlcfg"
+      },
+      {
+        "at": "2026-09-14T09:52:41.533Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-5zldw"
+      },
+      {
+        "at": "2026-09-14T09:52:41.724Z",
+        "event": "other-prefix-cleaned",
+        "prefix": "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_other_2f77a2bc90ac4ccb933599d455c1ade5"
+      }
+    ]
+  },
+  "manifestValidation": {
+    "command": "kubectl --kubeconfig <temporary explicit Shanghai kubeconfig> apply --dry-run=server -f deploy/sandbox/oss-workspace/storage.yaml -f deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml",
+    "result": "All six resources accepted; no actual apply"
+  },
+  "clientVerifierProbe": {
+    "testId": "d3244599d1a945afadd087c101c7944c",
+    "prefix": "probe_client_d3244599d1a945afadd087c101c7944c/ws_d3244599d1a945afadd087c101c7944c/",
+    "events": [
+      {
+        "at": "2026-09-14T09:55:22.263Z",
+        "event": "created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-ppc8b"
+      },
+      {
+        "at": "2026-09-14T09:55:23.200Z",
+        "event": "real-client-mount-verified"
+      },
+      {
+        "at": "2026-09-14T09:55:23.219Z",
+        "event": "wrong-prefix-rejected-before-probe"
+      },
+      {
+        "at": "2026-09-14T09:55:23.359Z",
+        "event": "local-fallback-rejected-before-probe"
+      },
+      {
+        "at": "2026-09-14T09:55:23.867Z",
+        "event": "mount-recovery-verified"
+      },
+      {
+        "at": "2026-09-14T09:55:24.089Z",
+        "event": "verification-marker-objects-cleaned"
+      },
+      {
+        "at": "2026-09-14T09:55:24.122Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-ppc8b"
+      },
+      {
+        "at": "2026-09-14T09:55:24.283Z",
+        "event": "prefix-cleaned",
+        "prefix": "probe_client_d3244599d1a945afadd087c101c7944c/ws_d3244599d1a945afadd087c101c7944c/"
+      }
+    ]
+  },
+  "signedMediaProbe": {
+    "verifiedAt": "2026-09-14T10:11:00Z",
+    "source": "Python writes onto real fuse.ossfs; PNG fixture and FFmpeg-generated MP4; same independent soak prefix",
+    "png": {
+      "status": 200,
+      "contentType": "image/png",
+      "bytes": 68,
+      "exactHostBytesMatch": true
+    },
+    "mp4": {
+      "status": 200,
+      "contentType": "video/mp4",
+      "bytes": 1768,
+      "exactHostBytesMatch": true
+    },
+    "discoveredIssue": "OSS globally rejects response-content-type query override with 400 InvalidRequest; removed unsupported query from V4 signing",
+    "signedUrlsRecorded": false
+  },
+  "artifactHygiene": {
+    "filesChecked": 7,
+    "matchedCurrentCredentialValues": 0,
+    "signedDownloadUrls": 0,
+    "method": "Read-only in-process comparison against current welltop and E2B credentials; values never emitted"
+  },
+  "applicationHarnessTypecheck": {
+    "command": "pnpm --dir server --filter @oma-server/api exec tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck --typeRoots node_modules/@types ../../../deploy/sandbox/oss-workspace/verify-application.mts",
+    "result": "passed"
+  },
+  "applicationProbe": {
+    "testId": "4b01f6e8fa444961935ee2abb9fcfbcf",
+    "startedAt": "2026-09-14T10:11:36.471Z",
+    "events": [
+      {
+        "at": "2026-09-14T10:11:36.961Z",
+        "event": "starting",
+        "reportPath": "/tmp/oma-oss-soak-tools/application-state.json"
+      },
+      {
+        "at": "2026-09-14T10:11:38.849Z",
+        "event": "sandbox-created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-hrq6x",
+        "prefix": "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf/"
+      },
+      {
+        "at": "2026-09-14T10:11:40.253Z",
+        "event": "adapter-upload-read-passed"
+      },
+      {
+        "at": "2026-09-14T10:11:40.595Z",
+        "event": "adapter-upload-edit-passed"
+      },
+      {
+        "at": "2026-09-14T10:11:41.077Z",
+        "event": "adapter-shell-create-passed"
+      },
+      {
+        "at": "2026-09-14T10:11:41.598Z",
+        "event": "initial-turn-observed",
+        "types": [
+          "user.message",
+          "session.status_running",
+          "agent.message",
+          "session.status_idle",
+          "session.turn_completed"
+        ],
+        "errorCodes": []
+      },
+      {
+        "at": "2026-09-14T10:11:41.979Z",
+        "event": "public-signed-get-passed"
+      },
+      {
+        "at": "2026-09-14T10:11:41.979Z",
+        "event": "authenticated-upload-turn-preview-download-and-skill-passed"
+      },
+      {
+        "at": "2026-09-14T10:11:41.998Z",
+        "event": "unauthenticated-cross-tenant-cross-workspace-and-path-rejection-passed"
+      },
+      {
+        "at": "2026-09-14T10:13:13.374Z",
+        "event": "sandbox-created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-bpcjw",
+        "prefix": "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf/"
+      },
+      {
+        "at": "2026-09-14T10:13:18.101Z",
+        "event": "concurrent-sessions-and-existing-423-gate-passed"
+      },
+      {
+        "at": "2026-09-14T10:13:18.545Z",
+        "event": "sandbox-created",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-d8r8b",
+        "prefix": "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf/"
+      },
+      {
+        "at": "2026-09-14T10:13:19.689Z",
+        "event": "application-sandbox-rebuild-persistence-passed"
+      },
+      {
+        "at": "2026-09-14T10:13:20.578Z",
+        "event": "skill-reprojection-on-existing-session-passed"
+      },
+      {
+        "at": "2026-09-14T10:13:21.511Z",
+        "event": "completed-answer-and-saved-file-preserved-after-check-or-refresh-failure"
+      },
+      {
+        "at": "2026-09-14T10:13:22.679Z",
+        "event": "pre-execution-storage-failure-rejected-and-explicit-retry-recovered"
+      },
+      {
+        "at": "2026-09-14T10:13:25.171Z",
+        "event": "adapter-failure-and-interrupt-preserve-completed-writes"
+      },
+      {
+        "at": "2026-09-14T10:13:25.438Z",
+        "event": "session-deletion-retains-workspace-and-host-rename-delete-passed"
+      },
+      {
+        "at": "2026-09-14T10:13:25.438Z",
+        "event": "application-acceptance-passed",
+        "adapterRuns": 9
+      },
+      {
+        "at": "2026-09-14T10:13:25.470Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-hrq6x"
+      },
+      {
+        "at": "2026-09-14T10:13:25.470Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-bpcjw"
+      },
+      {
+        "at": "2026-09-14T10:13:25.470Z",
+        "event": "sandbox-cleaned",
+        "sandboxId": "sandbox-system--code-interpreter-vfscli-d8r8b"
+      },
+      {
+        "at": "2026-09-14T10:13:26.019Z",
+        "event": "prefix-cleaned",
+        "prefix": "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf/"
+      },
+      {
+        "at": "2026-09-14T10:13:26.277Z",
+        "event": "prefix-cleaned",
+        "prefix": "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf_other/"
+      }
+    ],
+    "failedChecks": [],
+    "scope": "real application HTTP handlers, SessionRouter, SandboxManager, E2B SDK and OSS SDK; in-memory control metadata/auth and Skill artifact source; deterministic Adapter, no LLM/provider or browser rendering claim",
+    "passed": true,
+    "finishedAt": "2026-09-14T10:13:26.277Z"
+  },
+  "limitations": [
+    "Application HTTP/Adapter and actual local browser rendering acceptance passed with the documented native dialog/download observation limits; live LLM/provider and production Supabase Skill reads are not claimed.",
+    "The captured live SandboxSet image predates the implementation. The rebuilt image passed local build/smoke only; registry publication, digest pinning and a coordinated maintenance switch remain required for production."
+  ],
+  "workspaceListRegression": {
+    "at": "2026-09-14T10:24:30.920Z",
+    "sandboxId": "sandbox-system--code-interpreter-vfscli-drmnx",
+    "source": "borrowed existing 65-minute soak instance; no new Sandbox, mount probe or files",
+    "listingPaths": [
+      "/home/user/workspace/binary.bin",
+      "/home/user/workspace/concurrent-a.txt",
+      "/home/user/workspace/concurrent-b.txt",
+      "/home/user/workspace/empty.bin",
+      "/home/user/workspace/signed-probe.mp4",
+      "/home/user/workspace/signed-probe.png",
+      "/home/user/workspace/初始 文件.txt"
+    ],
+    "result": "real E2BSandboxClient.list traverses CSI Workspace symlink after find -H fix",
+    "expiresAtBefore": "2026-09-14T11:09:44Z",
+    "expiresAtAfter": "2026-09-14T11:09:44.000Z",
+    "credentialsRecorded": false
+  },
+  "browserProbe": {
+    "verifiedAt": "2026-09-14T10:28:10Z",
+    "scope": "Actual local Vite UI and real HTTP server, OSS, E2B, SessionRouter, SandboxManager and ToolExecutor; synthetic in-memory control/auth/Skill source, deterministic Adapter; no live LLM/provider or production deployment claim",
+    "checksPassed": [
+      "Synthetic sign-in",
+      "Chinese filename upload and initial text preview",
+      "Turn running disables write controls",
+      "Idle automatically refreshes three Workspace files",
+      "Edited upload preview matches edited-in-sandbox",
+      "Completed answer names all three actual ToolExecutor.list files and /skills/probe-skill/SKILL.md",
+      "PNG image DOM complete=true and naturalWidth=naturalHeight=1",
+      "Refresh preserves three files and completed answer",
+      "No browser console errors or warnings during the successful flow before the Rename attempt",
+      "Browser media download command completed"
+    ],
+    "nativeInteractionLimits": [
+      "Built-in browser Download button waitForEvent timed out; native download event not independently verified",
+      "Rename window.prompt was not exposed by getJsDialog, so no rename was submitted. After the attempt, stopping Vite exposed Error: prompt() is not supported from the existing window.prompt implementation; this is recorded separately from the successful flow's earlier empty console check."
+    ],
+    "separateApiEvidence": "The real application harness already passed signed GET/download status, MIME and byte equality plus rename/delete; those API results do not claim native browser event coverage.",
+    "screenshot": "oss-workspace-acceptance.png in task visualization output; contains no credentials",
+    "cleanup": "Local HTTP server stopped, only its own Sandbox deleted and own OSS prefix confirmed empty; Kubernetes no longer returns the Sandbox",
+    "report": {
+      "testId": "be96a78ceff74f0583d35b7b18f7851e",
+      "startedAt": "2026-09-14T10:22:46.969Z",
+      "events": [
+        {
+          "at": "2026-09-14T10:22:47.457Z",
+          "event": "ui-server-ready",
+          "pid": 19307,
+          "url": "http://127.0.0.1:3000",
+          "agentId": "agent_1",
+          "sessionId": "sess_1",
+          "workspaceId": "probe_app_be96a78ceff74f0583d35b7b18f7851e",
+          "tenantId": "3e2454ff-403b-4ae9-9714-8ef9febbaa9f"
+        },
+        {
+          "at": "2026-09-14T10:24:26.260Z",
+          "event": "sandbox-created",
+          "sandboxId": "sandbox-system--code-interpreter-vfscli-kgxk9",
+          "prefix": "3e2454ff-403b-4ae9-9714-8ef9febbaa9f/probe_app_be96a78ceff74f0583d35b7b18f7851e/"
+        },
+        {
+          "at": "2026-09-14T10:24:27.112Z",
+          "event": "adapter-upload-read-passed"
+        },
+        {
+          "at": "2026-09-14T10:24:27.509Z",
+          "event": "adapter-upload-edit-passed"
+        },
+        {
+          "at": "2026-09-14T10:24:28.046Z",
+          "event": "adapter-shell-create-passed"
+        },
+        {
+          "at": "2026-09-14T10:24:28.510Z",
+          "event": "tool-executor-list-traverses-workspace-symlink",
+          "paths": [
+            "shell-created.txt",
+            "上传.txt",
+            "生成 图片.png"
+          ]
+        },
+        {
+          "at": "2026-09-14T10:28:09.774Z",
+          "event": "ui-server-stopping"
+        },
+        {
+          "at": "2026-09-14T10:28:09.974Z",
+          "event": "sandbox-cleaned",
+          "sandboxId": "sandbox-system--code-interpreter-vfscli-kgxk9"
+        },
+        {
+          "at": "2026-09-14T10:28:10.361Z",
+          "event": "prefix-cleaned",
+          "prefix": "3e2454ff-403b-4ae9-9714-8ef9febbaa9f/probe_app_be96a78ceff74f0583d35b7b18f7851e/"
+        }
+      ],
+      "failedChecks": [],
+      "scope": "real application HTTP handlers, SessionRouter, SandboxManager, E2B SDK and OSS SDK; in-memory control metadata/auth and Skill artifact source; deterministic Adapter, no LLM/provider or browser rendering claim",
+      "finishedAt": "2026-09-14T10:28:10.362Z"
+    }
+  },
+  "cleanupVerification": {
+    "verifiedAt": "2026-09-14T10:50:37.480420+00:00",
+    "sandboxesAbsent": [
+      "sandbox-system--code-interpreter-vfscli-5zldw",
+      "sandbox-system--code-interpreter-vfscli-684g5",
+      "sandbox-system--code-interpreter-vfscli-99chn",
+      "sandbox-system--code-interpreter-vfscli-bpcjw",
+      "sandbox-system--code-interpreter-vfscli-d8r8b",
+      "sandbox-system--code-interpreter-vfscli-drmnx",
+      "sandbox-system--code-interpreter-vfscli-hrq6x",
+      "sandbox-system--code-interpreter-vfscli-kgxk9",
+      "sandbox-system--code-interpreter-vfscli-nsxxj",
+      "sandbox-system--code-interpreter-vfscli-ppc8b",
+      "sandbox-system--code-interpreter-vfscli-zlcfg"
+    ],
+    "exactPrefixesEmpty": [
+      "3e2454ff-403b-4ae9-9714-8ef9febbaa9f/probe_app_be96a78ceff74f0583d35b7b18f7851e/",
+      "859e6ba7-b7cd-4ede-b446-cb6e027f74c2/probe_app_4378e7ef8f8e47a491ba827316392cf2/",
+      "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf/",
+      "e39a4db8-f4a7-4185-b91e-b45941bd3888/probe_app_4b01f6e8fa444961935ee2abb9fcfbcf_other/",
+      "probe_1e0e5a3a2fdf4de89ba266bcabc984bf/ws_1e0e5a3a2fdf4de89ba266bcabc984bf/",
+      "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_2f77a2bc90ac4ccb933599d455c1ade5/",
+      "probe_2f77a2bc90ac4ccb933599d455c1ade5/ws_other_2f77a2bc90ac4ccb933599d455c1ade5/",
+      "probe_client_d3244599d1a945afadd087c101c7944c/ws_d3244599d1a945afadd087c101c7944c/",
+      "probe_ff8e90b060ad4f9092de8f96debeac8a/ws_ff8e90b060ad4f9092de8f96debeac8a/"
+    ],
+    "method": "Independent read-only kubectl --ignore-not-found and OSS ListObjectsV2 KeyCount=0 for this task's exact generated identities only",
+    "localUiPort3000Closed": true,
+    "temporaryKubeconfigDeleted": true,
+    "defaultKubeContextUnchanged": true
+  }
+}

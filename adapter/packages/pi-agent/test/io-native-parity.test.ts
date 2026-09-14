@@ -153,8 +153,8 @@ describe("native read/edit/ls through byte-preserving filesystem hooks", () => {
     await writeFile(join(root, "target.txt"), "symlink 中文");
     await symlink("target.txt", join(root, "alias.txt"));
     const expected = await execute(native("read"), { path: "alias.txt" });
-    expect(await execute(sandbox("read"), { path: "~/alias.txt" })).toEqual(expected);
-    expect(await execute(sandbox("read"), { path: "/home/user/alias.txt" })).toEqual(expected);
+    expect(await execute(sandbox("read"), { path: "~/workspace/alias.txt" })).toEqual(expected);
+    expect(await execute(sandbox("read"), { path: "/home/user/workspace/alias.txt" })).toEqual(expected);
   });
 
   it("paginates text above the previous 32 MiB cap using native notices", async () => {
@@ -186,7 +186,7 @@ describe("native read/edit/ls through byte-preserving filesystem hooks", () => {
     await symlink("empty", join(root, "dir-link"));
     await symlink("file.txt", join(root, "file-link"));
     await symlink("missing", join(root, "dangling"));
-    expect(await execute(sandbox("ls"), { path: "~" })).toEqual(await execute(native("ls"), { path: "." }));
+    expect(await execute(sandbox("ls"), { path: "~/workspace" })).toEqual(await execute(native("ls"), { path: "." }));
     expect(await execute(sandbox("ls"), { path: "empty" })).toEqual(await execute(native("ls"), { path: "empty" }));
   });
 
@@ -200,9 +200,9 @@ describe("native read/edit/ls through byte-preserving filesystem hooks", () => {
       vi.spyOn(fsPromises, "stat").mockImplementation(forbid),
       vi.spyOn(fsPromises, "realpath").mockImplementation(forbid)];
     syncBuiltinESMExports();
-    expect(text(await execute(sandbox("read", ex), { path: "~/Capture d'écran.png" }))).toBe("remote-only text");
-    await execute(sandbox("write", ex), { path: "~/new/note.txt", content: "one" });
-    await execute(sandbox("edit", ex), { path: "~/new/note.txt", edits: [{ oldText: "one", newText: "two" }] });
+    expect(text(await execute(sandbox("read", ex), { path: "~/workspace/Capture d'écran.png" }))).toBe("remote-only text");
+    await execute(sandbox("write", ex), { path: "~/workspace/new/note.txt", content: "one" });
+    await execute(sandbox("edit", ex), { path: "~/workspace/new/note.txt", edits: [{ oldText: "one", newText: "two" }] });
     expect(fileSystem.files.get("new/note.txt")).toBe("two");
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
   });
@@ -221,8 +221,8 @@ describe("native read/edit/ls through byte-preserving filesystem hooks", () => {
     const state: { callComponent?: { preview?: { diff?: string; error?: string } } } = {};
     const theme = { fg: (_name: string, value: string) => value,
       bg: (_name: string, value: string) => value, bold: (value: string) => value };
-    tool.renderCall!({ path: "~/story.txt", edits: [{ oldText: "old", newText: "new" }] }, theme as never, {
-      state, cwd: "/home/user", argsComplete: true, invalidate: invalidated.resolve,
+    tool.renderCall!({ path: "~/workspace/story.txt", edits: [{ oldText: "old", newText: "new" }] }, theme as never, {
+      state, cwd: "/home/user/workspace", argsComplete: true, invalidate: invalidated.resolve,
     } as never);
     await invalidated.promise;
     expect(state.callComponent?.preview?.error).toBeUndefined();

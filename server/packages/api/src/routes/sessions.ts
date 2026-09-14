@@ -1,5 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
+import { workspaceObjectPrefix } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession } from "../lib/public-projection.js";
@@ -54,6 +55,13 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     }
 
     const tenant = c.get("tenant");
+    if (workspaceIdInput !== undefined) {
+      try {
+        workspaceObjectPrefix(tenant.tenantId, workspaceIdInput);
+      } catch {
+        return c.json({ error: "workspace_id must contain 1–128 letters, numbers, underscores or hyphens" }, 400);
+      }
+    }
     const agent = await deps.agentStore.getById(agentId);
     if (!agent || agent.tenantId !== tenant.tenantId) {
       return c.json({ error: "Agent not found" }, 404);

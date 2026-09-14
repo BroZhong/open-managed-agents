@@ -30,10 +30,19 @@ RUN echo 'cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  /tmp
 
 FROM ${BASE_IMAGE} AS runtime
 USER root
-ARG IMAGE_VERSION=0.2.1
+ARG IMAGE_VERSION=0.2.2
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ENV WORKSPACE_DIR=/home/user \
-    MEDIAKIT_OUTPUT_PATH=/home/user/media \
+ENV HOME=/home/user \
+    WORKSPACE_DIR=/home/user/workspace \
+    STORY_SEED_WORKSPACE=/home/user/workspace \
+    MEDIAKIT_OUTPUT_PATH=/home/user/workspace/media \
+    XDG_CACHE_HOME=/home/user/.cache \
+    NPM_CONFIG_CACHE=/home/user/.cache/npm \
+    NPM_CONFIG_PREFIX=/home/user/.local/npm \
+    NODE_PATH=/home/user/.local/oma-node/node_modules \
+    PIP_CACHE_DIR=/home/user/.cache/pip \
+    PYTHONPATH=/home/user/.local/oma-python \
+    TMPDIR=/tmp \
     MEDIAKIT_SURFACE=skill \
     MEDIAKIT_RUNTIME=pi-agent \
     PATH=/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -48,8 +57,11 @@ RUN sed -i \
       libfribidi0 libharfbuzz0b libwebp7 libwebpmux3 libgnutls30 zlib1g \
       fontconfig fonts-dejavu-core fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/* && \
-    mkdir -p /home/user/media /opt/auto-story && \
-    chown user:user /home/user /home/user/media && chmod 0775 /home/user /home/user/media
+    mkdir -p /opt/auto-story && \
+    test ! -e "$WORKSPACE_DIR" && test ! -L "$WORKSPACE_DIR" && \
+    install -d -o user -g user /home/user/.cache/npm /home/user/.cache/pip \
+      /home/user/.local/npm /home/user/.local/oma-node \
+      /home/user/.local/oma-python /home/user/.local/venvs
 COPY requirements.txt versions.json /opt/auto-story/
 # Install Gemini independently; expose scientific packages from the clean ACS
 # base after this venv's packages, without modifying Jupyter's environment.

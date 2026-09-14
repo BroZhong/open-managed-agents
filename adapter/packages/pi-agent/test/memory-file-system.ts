@@ -10,8 +10,8 @@ export class MemoryFileSystem implements ToolFileSystem {
 
   private key(path: string): string {
     const normalized = posix.normalize(path);
-    return normalized === "/home/user" ? "."
-      : normalized.startsWith("/home/user/") ? normalized.slice(11) : normalized;
+    return normalized === "/home/user/workspace" ? "."
+      : normalized.startsWith("/home/user/workspace/") ? normalized.slice(21) : normalized;
   }
 
   private check(options?: ToolFileSystemOptions): void { options?.signal?.throwIfAborted(); }
@@ -47,7 +47,7 @@ export class MemoryFileSystem implements ToolFileSystem {
   async realpath(path: string, options?: ToolFileSystemOptions): Promise<string> {
     this.check(options); path = this.key(path); this.calls.push(`realpath ${path}`);
     if (!this.files.has(path) && !this.hasDirectory(path)) this.missing(path);
-    return posix.resolve("/home/user", path);
+    return posix.resolve("/home/user/workspace", path);
   }
   async readdir(path: string, options?: ToolFileSystemOptions): Promise<string[]> {
     this.check(options); path = this.key(path); this.calls.push(`readdir ${path}`);
@@ -64,7 +64,7 @@ export class MemoryFileSystem implements ToolFileSystem {
   }
   async createTempFile(options?: ToolFileSystemOptions): Promise<string> {
     this.check(options);
-    const path = `/home/user/.tmp/output-${++this.temporary}.log`;
+    const path = `/home/user/workspace/.tmp/output-${++this.temporary}.log`;
     await this.mkdir(".tmp", options);
     await this.writeFile(path, new Uint8Array(), options);
     this.calls.push(`createTempFile ${path}`);

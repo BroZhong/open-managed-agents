@@ -1,0 +1,264 @@
+{
+  "date": "2026-09-14",
+  "sourceCommit": "2f21683",
+  "productionBaseline": "df7f1ebd500e375162887aa2318886d47dd5a839",
+  "cluster": "agent-platform/cn-shanghai",
+  "url": "https://agentry.welltop.tech",
+  "deployedImages": {
+    "server": {
+      "tag": "oss-workspace-2f21683",
+      "digest": "sha256:a37ff0d2ef1d0503781f98cdfe5e78cd3b609cd1e7efa03d9e945ab4b3efc51b",
+      "public": "registry.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:a37ff0d2ef1d0503781f98cdfe5e78cd3b609cd1e7efa03d9e945ab4b3efc51b",
+      "vpc": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:a37ff0d2ef1d0503781f98cdfe5e78cd3b609cd1e7efa03d9e945ab4b3efc51b"
+    },
+    "web": {
+      "tag": "oss-workspace-2f21683",
+      "digest": "sha256:14202012ed917d20d861245c2a1b77ae4c3faf8af8e3c98811ef2d2428f7cadf",
+      "public": "registry.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:14202012ed917d20d861245c2a1b77ae4c3faf8af8e3c98811ef2d2428f7cadf",
+      "vpc": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:14202012ed917d20d861245c2a1b77ae4c3faf8af8e3c98811ef2d2428f7cadf"
+    },
+    "auto-story-v2": {
+      "tag": "auto-story-v2-oss-workspace-f98d729",
+      "digest": "sha256:254c2618e695504a673665d2dc261a8799d51492f40e9aeff7d98fc6f8f9f5c1",
+      "public": "registry.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:254c2618e695504a673665d2dc261a8799d51492f40e9aeff7d98fc6f8f9f5c1",
+      "vpc": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:254c2618e695504a673665d2dc261a8799d51492f40e9aeff7d98fc6f8f9f5c1"
+    }
+  },
+  "defaultTemplate": "auto-story-v2",
+  "cacheBuilds": [
+    {
+      "component": "server",
+      "unchangedBuildSeconds": 6.16,
+      "exitCode": 0,
+      "cachedRunSteps": 9,
+      "allRunStepsCached": true
+    },
+    {
+      "component": "web",
+      "unchangedBuildSeconds": 6.09,
+      "exitCode": 0,
+      "cachedRunSteps": 3,
+      "allRunStepsCached": true
+    }
+  ],
+  "runtimeImageCheck": {
+    "event": "actual-api-import-target-sources-and-pi-seed-verified",
+    "checkedSourceFiles": 19,
+    "architecture": "x64"
+  },
+  "productionChecks": [
+    {
+      "at": "2026-09-14T11:49:21.871Z",
+      "event": "production-auth-agent-named-skill-session-upload-passed",
+      "agentId": "agent_JP4JiF7JCChSPIyi50tKn",
+      "sessionId": "sess_WlZaMnm95HopcKIB5QrQX"
+    },
+    {
+      "at": "2026-09-14T11:49:44.624Z",
+      "event": "production-real-pi-turn-submitted"
+    },
+    {
+      "at": "2026-09-14T11:51:00.592Z",
+      "event": "production-pi-native-edit-shell-binary-list-preview-download-auth-passed",
+      "files": [
+        "preview.png",
+        "shell-result.txt",
+        "上传.txt"
+      ],
+      "previewHost": "agentry.oss-cn-shanghai.aliyuncs.com"
+    },
+    {
+      "at": "2026-09-14T11:52:17.864Z",
+      "event": "production-active-turn-file-write-locked",
+      "status": 423
+    },
+    {
+      "at": "2026-09-14T11:53:33.186Z",
+      "event": "production-reclaimed-sandbox-rebuilt-and-ui-refreshed",
+      "oldSandbox": "auto-story-v2-dm7lb",
+      "newSandbox": "auto-story-v2-xf98p",
+      "completedTurns": 2,
+      "uiFiles": 4
+    },
+    {
+      "at": "2026-09-14T11:53:34.204Z",
+      "event": "production-session-termination-retains-files-passed"
+    },
+    {
+      "at": "2026-09-14T11:53:47.103Z",
+      "event": "production-test-skills-agent-cleaned"
+    },
+    {
+      "at": "2026-09-14T11:54:55.805Z",
+      "event": "production-test-oss-prefix-cleaned",
+      "deletedObjects": 5
+    },
+    {
+      "event": "production-test-tenant-metadata-cleaned",
+      "deletedRows": {
+        "events": 45,
+        "event_counters": 1,
+        "pending_events": 0,
+        "sessions": 1,
+        "workspaces": 1,
+        "skills": 0,
+        "agent_files": 0,
+        "agents": 0,
+        "users": 1
+      }
+    },
+    {
+      "event": "production-test-session-redis-cleaned",
+      "deletedKeys": 0
+    }
+  ],
+  "finalState": {
+    "oma-server": {
+      "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:a37ff0d2ef1d0503781f98cdfe5e78cd3b609cd1e7efa03d9e945ab4b3efc51b",
+      "ready": 1,
+      "desired": 1
+    },
+    "oma-web": {
+      "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:14202012ed917d20d861245c2a1b77ae4c3faf8af8e3c98811ef2d2428f7cadf",
+      "ready": 1,
+      "desired": 1
+    },
+    "defaultTemplate": "auto-story-v2",
+    "templates": [
+      {
+        "name": "auto-story-v2",
+        "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:254c2618e695504a673665d2dc261a8799d51492f40e9aeff7d98fc6f8f9f5c1"
+      }
+    ],
+    "testSandboxesRemaining": 0,
+    "applicationData": {
+      "sessions": [
+        {
+          "status": "idle",
+          "count": 20
+        }
+      ],
+      "users": 1,
+      "agents": 4,
+      "pending": 0
+    },
+    "https://agentry.welltop.tech": 200,
+    "https://agentry.welltop.tech/api/health": 200
+  },
+  "unitTests": {
+    "serverPassed": 753,
+    "serverSkipped": 3,
+    "adapterPassed": 354,
+    "webPassed": 229,
+    "deploymentPassed": 9,
+    "deploymentSkipped": 1
+  },
+  "isolatedImageChecks": {
+    "autoStoryVariants": [
+      {
+        "at": "2026-09-14T11:30:03.094Z",
+        "event": "created",
+        "template": "oma-release-auto-story",
+        "sandboxId": "sandbox-system--oma-release-auto-story-k6scn",
+        "prefix": "oma_release_12ec37aa4ac4426eacf3017266f1d180/image_test/"
+      },
+      {
+        "at": "2026-09-14T11:30:34.819Z",
+        "event": "created",
+        "template": "oma-release-auto-story",
+        "sandboxId": "sandbox-system--oma-release-auto-story-2xg68",
+        "prefix": "oma_release_12ec37aa4ac4426eacf3017266f1d180/image_test/"
+      },
+      {
+        "at": "2026-09-14T11:30:36.140Z",
+        "event": "image-native-mount-rebuild-passed",
+        "template": "oma-release-auto-story",
+        "paths": [
+          "bytes.bin",
+          "shell.txt",
+          "上传.txt"
+        ]
+      },
+      {
+        "at": "2026-09-14T11:30:36.282Z",
+        "event": "cleaned",
+        "template": "oma-release-auto-story",
+        "prefix": "oma_release_12ec37aa4ac4426eacf3017266f1d180/image_test/",
+        "sandboxIds": [
+          "sandbox-system--oma-release-auto-story-k6scn",
+          "sandbox-system--oma-release-auto-story-2xg68"
+        ]
+      },
+      {
+        "at": "2026-09-14T11:30:52.982Z",
+        "event": "created",
+        "template": "oma-release-auto-story-v2",
+        "sandboxId": "sandbox-system--oma-release-auto-story-v2-gs57h",
+        "prefix": "oma_release_175acb05297a4bba933d7799895e1106/image_test/"
+      },
+      {
+        "at": "2026-09-14T11:31:23.309Z",
+        "event": "created",
+        "template": "oma-release-auto-story-v2",
+        "sandboxId": "sandbox-system--oma-release-auto-story-v2-7w8f4",
+        "prefix": "oma_release_175acb05297a4bba933d7799895e1106/image_test/"
+      },
+      {
+        "at": "2026-09-14T11:31:25.095Z",
+        "event": "image-native-mount-rebuild-passed",
+        "template": "oma-release-auto-story-v2",
+        "paths": [
+          "bytes.bin",
+          "shell.txt",
+          "上传.txt"
+        ]
+      },
+      {
+        "at": "2026-09-14T11:31:25.253Z",
+        "event": "cleaned",
+        "template": "oma-release-auto-story-v2",
+        "prefix": "oma_release_175acb05297a4bba933d7799895e1106/image_test/",
+        "sandboxIds": [
+          "sandbox-system--oma-release-auto-story-v2-gs57h",
+          "sandbox-system--oma-release-auto-story-v2-7w8f4"
+        ]
+      }
+    ],
+    "codeInterpreterVfscli": [
+      {
+        "at": "2026-09-14T11:35:59.499Z",
+        "event": "created",
+        "template": "oma-release-code-interpreter-vfscli",
+        "sandboxId": "sandbox-system--oma-release-code-interpreter-vfscli-6ns9m",
+        "prefix": "oma_release_edfde475df36402b90ee2b13ec454a80/image_test/"
+      },
+      {
+        "at": "2026-09-14T11:37:09.812Z",
+        "event": "created",
+        "template": "oma-release-code-interpreter-vfscli",
+        "sandboxId": "sandbox-system--oma-release-code-interpreter-vfscli-6t54d",
+        "prefix": "oma_release_edfde475df36402b90ee2b13ec454a80/image_test/"
+      },
+      {
+        "at": "2026-09-14T11:37:11.528Z",
+        "event": "image-native-mount-rebuild-passed",
+        "template": "oma-release-code-interpreter-vfscli",
+        "paths": [
+          "bytes.bin",
+          "shell.txt",
+          "上传.txt"
+        ]
+      },
+      {
+        "at": "2026-09-14T11:37:11.781Z",
+        "event": "cleaned",
+        "template": "oma-release-code-interpreter-vfscli",
+        "prefix": "oma_release_edfde475df36402b90ee2b13ec454a80/image_test/",
+        "sandboxIds": [
+          "sandbox-system--oma-release-code-interpreter-vfscli-6ns9m",
+          "sandbox-system--oma-release-code-interpreter-vfscli-6t54d"
+        ]
+      }
+    ]
+  }
+}

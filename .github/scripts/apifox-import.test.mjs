@@ -11,7 +11,7 @@ function response(overrides = {}) {
     data: {
       counters: {
         endpointCreated: 0,
-        endpointUpdated: 54,
+        endpointUpdated: 55,
         endpointFailed: 0,
         endpointIgnored: 0,
         schemaCreated: 0,
@@ -46,10 +46,10 @@ test("accepts complete overwrite counters for the generated contract", () => {
 
   assert.deepEqual(validateImportResponse(document, response()), {
     endpointCreated: 0,
-    endpointUpdated: 54,
+    endpointUpdated: 55,
     schemaCreated: 0,
     schemaUpdated: 49,
-    expectedEndpoints: 54,
+    expectedEndpoints: 55,
     expectedSchemas: 49,
   });
 });
@@ -61,18 +61,18 @@ test("accepts a first import that creates every resource", () => {
     validateImportResponse(
       document,
       response({
-        endpointCreated: 54,
+        endpointCreated: 55,
         endpointUpdated: 0,
         schemaCreated: 49,
         schemaUpdated: 0,
       }),
     ),
     {
-      endpointCreated: 54,
+      endpointCreated: 55,
       endpointUpdated: 0,
       schemaCreated: 49,
       schemaUpdated: 0,
-      expectedEndpoints: 54,
+      expectedEndpoints: 55,
       expectedSchemas: 49,
     },
   );
@@ -85,7 +85,7 @@ test("rejects ignored, failed, or incomplete resources", () => {
     () =>
       validateImportResponse(
         document,
-        response({ endpointUpdated: 53, endpointIgnored: 1 }),
+        response({ endpointUpdated: 54, endpointIgnored: 1 }),
       ),
     /did not overwrite every endpoint/i,
   );
@@ -98,8 +98,8 @@ test("rejects ignored, failed, or incomplete resources", () => {
     /did not overwrite every schema/i,
   );
   assert.throws(
-    () => validateImportResponse(document, response({ endpointUpdated: 53 })),
-    /processed 53 endpoints instead of 54/i,
+    () => validateImportResponse(document, response({ endpointUpdated: 54 })),
+    /processed 54 endpoints instead of 55/i,
   );
   assert.throws(
     () => validateImportResponse(document, response({ schemaUpdated: 48 })),

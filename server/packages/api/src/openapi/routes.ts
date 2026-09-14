@@ -55,6 +55,9 @@ function protectedRoute<const R extends RouteConfig>(config: R) {
     ...config,
     responses: {
       ...config.responses,
+      ...(config.tags?.includes("Sessions/Workspace Files") ? {
+        503: errorResponse("Workspace storage is unavailable; saved files are retained"),
+      } : {}),
       401:
         config.responses[401] ??
         errorResponse("Missing or invalid tenant credential"),
@@ -858,7 +861,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "appendSessionEvents",
     summary: "Append User events to a Session",
     description:
-      "Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch. Every accepted batch returns the same acknowledgement shape; interrupted is true only for user.interrupt.",
+      "Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch. Every accepted batch returns the same acknowledgement shape; interrupted reports whether an active Turn was actually stopped.",
     tags: ["Sessions/Events"],
     request: {
       params: idParams,
@@ -875,6 +878,22 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       400: errorResponse("Invalid or unsupported event batch"),
       404: errorResponse("Session not found"),
       410: errorResponse("Session is terminated"),
+    },
+  }),
+  protectedRoute({
+    method: "get",
+    path: "/v1/sessions/{id}/pending",
+    operationId: "listPendingSessionEvents",
+    summary: "Preview unclaimed queued input for a Session",
+    description: "Returns at most 20 unclaimed entries. count is the page size; has_more reports additional queued input. The active Turn's claimed input is excluded.",
+    tags: ["Sessions/Events"],
+    request: { params: idParams },
+    responses: {
+      200: jsonResponse(z.object({
+        count: z.number().int(), has_more: z.boolean(),
+        data: z.array(z.object({ id: z.string(), type: z.string(), data: z.unknown(), arrived_at: z.string() })),
+      }), "Queued input preview"),
+      404: errorResponse("Session not found"),
     },
   }),
   protectedRoute({
@@ -1115,9 +1134,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       ),
       400: errorResponse("Invalid path"),
       404: errorResponse("Session or file not found"),
-      501: errorResponse(
-        "Storage adapter cannot create a reachable signed URL",
-      ),
+      503: errorResponse("Workspace storage is unavailable"),
     },
   }),
   protectedRoute({

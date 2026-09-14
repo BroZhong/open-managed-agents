@@ -96,11 +96,10 @@ ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS owner_id        TEXT NOT NULL D
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS source_skill_id TEXT;
 UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND owner_id = '';
 
--- Preserve unknown upload times for legacy Skills; updated_at cannot tell us
--- when a Skill was uploaded. New uploads and forks explicitly set created_at.
+-- Preserve unknown upload times for legacy Skills; updated_at is not creation time.
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
 
--- Workspaces are tenant-owned; the S3-authoritative home of a Session's
+-- Workspaces are tenant-owned; the OSS-backed home of a Session's
 -- artifacts. A user-supplied id is used as-is, else auto-generated. The
 -- (tenant_id, id) PK makes binding to a user-supplied id idempotent so many
 -- Sessions can share one Workspace concurrently. See ADR-0002 §4.

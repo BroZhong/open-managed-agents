@@ -5,7 +5,7 @@ import type { TurnStatus } from "@/lib/file-source";
 
 interface WorkspacePanelProps {
   sessionId: string;
-  /** Bumped by the file-change SSE event and turn end to trigger a refetch. */
+  /** Bumped by Turn end to trigger an OSS file-list refetch. */
   refreshKey: number;
   /**
    * Turn state from the host page's SSE (session-detail's `useSessionEvents`).

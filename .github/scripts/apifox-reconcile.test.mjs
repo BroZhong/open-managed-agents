@@ -23,7 +23,10 @@ test("accepts the repository's generated OpenAPI inventory", () => {
     ...operation,
   }));
 
-  assert.equal(desired.length, 54);
+  assert.equal(desired.length, 55);
+  assert.ok(desired.some((operation) =>
+    operation.method === "GET" && operation.path === "/v1/sessions/{id}/pending"
+  ));
   assert.deepEqual(createReconciliationPlan(desired, remote, 0), {
     deleteEndpoints: [],
   });

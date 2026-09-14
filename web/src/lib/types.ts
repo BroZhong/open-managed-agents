@@ -25,19 +25,6 @@ export interface WorkspaceFile {
   updated_at: string | null;
 }
 
-/**
- * Payload of the Host's `workspace.file_change` SSE event (emitted on sync
- * completion, per ADR-0002 §5). Consumed defensively: the frontend refetches
- * the tree on any occurrence, and applies incremental hints when present.
- */
-export interface WorkspaceFileChangeEvent extends SessionEvent {
-  type: "workspace.file_change";
-  data: {
-    changed?: string[];
-    deleted?: string[];
-  };
-}
-
 export interface UserMessageEvent extends SessionEvent {
   type: "user.message";
   data: { content: Array<{ type: "text"; text: string }> };
@@ -45,7 +32,14 @@ export interface UserMessageEvent extends SessionEvent {
 
 export interface AgentMessageEvent extends SessionEvent {
   type: "agent.message";
-  data: { content: Array<{ type: "text"; text: string }> };
+  data: {
+    content: Array<{ type: "text"; text: string }>;
+    /**
+     * Why the runtime stopped producing this message. Absent means it finished
+     * normally; `"aborted"` marks the half-written output of an Interrupted Turn.
+     */
+    stopReason?: string;
+  };
 }
 
 export interface AgentMessageStreamStartEvent extends SessionEvent {
@@ -91,6 +85,12 @@ export interface SessionStatusRunningEvent extends SessionEvent {
 export interface SessionStatusIdleEvent extends SessionEvent {
   type: "session.status_idle";
   data: Record<string, never>;
+}
+
+/** A Turn that ended because of an Interrupt rather than by the Agent finishing. */
+export interface SessionTurnAbortedEvent extends SessionEvent {
+  type: "session.turn_aborted";
+  data: { turnId: string };
 }
 
 export interface SessionErrorEvent extends SessionEvent {
@@ -140,5 +140,6 @@ export type TypedSessionEvent =
   | AgentMcpToolUseEvent
   | SessionStatusRunningEvent
   | SessionStatusIdleEvent
+  | SessionTurnAbortedEvent
   | SessionErrorEvent
   | SpanModelRequestEndEvent;

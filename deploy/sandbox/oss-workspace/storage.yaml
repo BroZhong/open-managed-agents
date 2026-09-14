@@ -1,0 +1,89 @@
+# Verified Shanghai resources, 2026-09-14. No Secret data.
+# Apply only after the maintenance and drift review in README.md.
+apiVersion: agentidentity.alibabacloud.com/v1alpha1
+kind: AgentIdentity
+metadata:
+  name: agentry-workspace
+  namespace: sandbox-system
+spec:
+  accessTokenValidity: 24h
+  description: Agentry Workspace OSS access scoped to each sandbox mount
+---
+apiVersion: agentidentity.alibabacloud.com/v1alpha1
+kind: CredentialProvider
+metadata:
+  name: agentry-oss-rw
+  namespace: sandbox-system
+spec:
+  ram:
+    source:
+      provider: RRSA
+      rrsa:
+        policy: |
+          {
+            "Version": "1",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["oss:GetObject", "oss:PutObject", "oss:DeleteObject", "oss:AbortMultipartUpload", "oss:ListParts"],
+                "Resource": {{ build_policy_oss_resource() }}
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["oss:ListObjects", "oss:ListMultipartUploads"],
+                "Resource": {{ build_policy_oss_resource(limit_sub_path=false) }},
+                "Condition": {"StringLike": {"oss:Prefix": {{ build_policy_oss_prefix_condition() }}}}
+              }
+            ]
+          }
+        roleName: AgentrySandboxOssRole
+        tokenValidity: 1h
+  type: RAM
+---
+apiVersion: agentidentity.alibabacloud.com/v1alpha1
+kind: AgentRole
+metadata:
+  name: agentry-workspace-storage
+  namespace: sandbox-system
+spec:
+  rules:
+  - action: GetResourceCredential
+    effect: Allow
+    resource: CredentialProvider/agentry-oss-rw
+---
+apiVersion: agentidentity.alibabacloud.com/v1alpha1
+kind: AgentRoleBinding
+metadata:
+  name: agentry-workspace-storage
+  namespace: sandbox-system
+spec:
+  agentRoleRef:
+    apiGroup: agentidentity.alibabacloud.com
+    kind: AgentRole
+    name: agentry-workspace-storage
+  subjects:
+  - agentAuthorizationConfiguration:
+      agentName: agentry-workspace
+    authorizationType: Agent
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: agentry-workspace-oss
+spec:
+  accessModes:
+  - ReadWriteMany
+  capacity:
+    storage: 50Gi
+  csi:
+    driver: ossplugin.csi.alibabacloud.com
+    volumeAttributes:
+      authType: agent-identity
+      bucket: agentry
+      otherOpts: -o sigv4 -o region=cn-shanghai -o uid=1000 -o gid=1000 -o umask=007
+        -o allow_other
+      path: /
+      url: https://oss-cn-shanghai-internal.aliyuncs.com
+    volumeHandle: agentry-workspace-oss
+  persistentVolumeReclaimPolicy: Retain
+  volumeMode: Filesystem

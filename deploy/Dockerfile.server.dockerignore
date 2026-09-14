@@ -9,3 +9,6 @@ dist
 web
 docs
 sandbox
+.env
+.env.*
+!.env.example

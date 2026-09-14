@@ -1,9 +1,7 @@
+import { posix } from "node:path";
 import type { SkillArtifactStore } from "@oma-server/store";
-import type {
-  SandboxExecChunk,
-  SandboxExecOptions,
-} from "./sandbox-client.js";
-import type { SandboxFsAccess } from "./workspace-persistence.js";
+import type { SandboxExecChunk, SandboxExecOptions } from "./sandbox-client.js";
+import type { SandboxFsAccess } from "./sandbox-client.js";
 
 /**
  * A single **Read-only Projection** (a value; CONTEXT.md "Read-only Projection",
@@ -19,10 +17,9 @@ import type { SandboxFsAccess } from "./workspace-persistence.js";
  */
 export interface ReadonlyProjection {
   /**
-   * Absolute sandbox path the content lands at (e.g. `/skills/<id>`, `/repo`).
-   * **MUST** lie outside the Workspace's `workspaceDir`, so the Workspace sync's
-   * full scan never mistakes it for a user-created artifact and writes it back
-   * (the invariant enforced by {@link assertProjectionOutsideWorkspace}).
+   * Absolute sandbox path the content lands at (e.g. `/skills/<skill-name>`, `/repo`).
+   * **MUST** lie outside the Workspace's `workspaceDir`, so they cannot enter persistent Workspace storage
+   * (enforced by {@link assertProjectionOutsideWorkspace}).
    */
   targetPath: string;
   source: ProvisionCoordinate;
@@ -69,12 +66,7 @@ export interface ProvisionSource {
   project(coord: ProvisionCoordinate, target: ProjectionTarget): Promise<void>;
 }
 
-/**
- * The minimal sandbox write capability a {@link ProvisionSource} is handed, with
- * the backend sandbox `id` already bound by the caller (mirrors
- * {@link import("./workspace-persistence.js").HydrateTarget} for the Workspace
- * side). The adapter never learns which backend (e2b, a fake, …) it talks to.
- */
+/** Backend-independent filesystem and command access bound to one sandbox. */
 export interface ProjectionTarget {
   /**
    * Absolute sandbox path to write into. **MUST** be outside the Workspace — the
@@ -82,7 +74,7 @@ export interface ProjectionTarget {
    * asserting this via {@link assertProjectionOutsideWorkspace} before projecting.
    */
   targetPath: string;
-  /** Reused verbatim from the Workspace seam: writeFile/readFile/list, id-bound. */
+  /** Filesystem primitives bound to the sandbox. */
   fs: SandboxFsAccess;
   /**
    * Run a command inside the sandbox (argv form), streaming output. Same shape as
@@ -96,48 +88,30 @@ export interface ProjectionTarget {
   ): AsyncIterable<SandboxExecChunk>;
 }
 
-/**
- * The **critical invariant** (design doc §1 note, ADR-0005 §3, deletion test §7):
- * a projection's `targetPath` MUST lie *outside* the Workspace's `workspaceDir`.
- * If it were inside, the next Workspace sync's full recursive scan of
- * `workspaceDir` would pick the projected content up, treat it as a user artifact,
- * and write it back — polluting the Workspace (and, on the next hydrate, deleting
- * or duplicating it). Keeping projections outside `workspaceDir` is exactly why
- * that scan never sees them (see the "never synced" test).
- *
- * The check belongs to the SandboxManager (#77), which is the layer that knows
- * `workspaceDir`; #76 provides this reusable predicate/assert pair so #77 can call
- * it and **fail loud** rather than silently corrupt a Workspace.
- *
- * "Outside" means `targetPath` is neither equal to `workspaceDir` nor nested under
- * it. Paths are normalized (trailing slashes stripped) before comparison so
- * `/workspace` and `/workspace/` are treated the same, and `/workspaceX` is *not*
- * considered inside `/workspace`.
- */
+/** Normalize paths before checking whether one is equal to or nested in another. */
 export function isInsideWorkspace(
   targetPath: string,
   workspaceDir: string,
 ): boolean {
-  const target = stripTrailingSlashes(targetPath);
-  const ws = stripTrailingSlashes(workspaceDir);
+  const target = stripTrailingSlashes(posix.normalize(targetPath));
+  const ws = stripTrailingSlashes(posix.normalize(workspaceDir));
   return target === ws || target.startsWith(`${ws}/`);
 }
 
-/**
- * Fail-loud guard for the containment invariant above: throws if `targetPath` is
- * inside `workspaceDir`, otherwise returns. The SandboxManager (#77) calls this on
- * every projection in an EnvSpec before creating the sandbox, so a mis-declared
- * projection is rejected up front — never allowed to pollute the Workspace.
- */
+/** Projections must not overlap Workspace files, including during replacement. */
 export function assertProjectionOutsideWorkspace(
   targetPath: string,
   workspaceDir: string,
 ): void {
-  if (isInsideWorkspace(targetPath, workspaceDir)) {
+  if (
+    !posix.isAbsolute(targetPath) ||
+    isInsideWorkspace(targetPath, workspaceDir) ||
+    isInsideWorkspace(workspaceDir, targetPath) ||
+    posix.normalize(targetPath) === "/"
+  ) {
     throw new Error(
-      `Read-only projection targetPath "${targetPath}" is inside the workspace ` +
-        `"${workspaceDir}"; projections MUST lie outside the workspace or the ` +
-        `next sync would write them back (design doc §1, ADR-0005 §3).`,
+      `Read-only projection targetPath "${targetPath}" overlaps or is inside the workspace ` +
+        `"${workspaceDir}"; projections MUST be absolute, outside the workspace, and not contain it.`,
     );
   }
 }
@@ -239,10 +213,7 @@ export class FakeProvisionSource implements ProvisionSource {
    * exactly (same keys+values), so a test seeds `{ kind, ref }` and later projects
    * with the same coordinate.
    */
-  seed(
-    coord: ProvisionCoordinate,
-    files: Record<string, string>,
-  ): void {
+  seed(coord: ProvisionCoordinate, files: Record<string, string>): void {
     this.canned.set(coordKey(coord), new Map(Object.entries(files)));
   }
 

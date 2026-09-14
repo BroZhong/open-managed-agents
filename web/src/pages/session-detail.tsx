@@ -12,66 +12,64 @@ import { TokenUsageMetrics } from "@/components/token-usage-metrics";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
+import { useInterrupt } from "@/lib/hooks/use-interrupt";
 import { useAgentSkills } from "@/lib/hooks/use-skills";
+import { useQueuedInput } from "@/lib/hooks/use-queued-input";
 import { cn } from "@/lib/utils";
-import type { SessionEvent } from "@/lib/types";
+
+/** Read the display text out of a `user.message` event payload. */
+function messageText(data: unknown): string {
+  if (!data || typeof data !== "object") return "";
+  const content = (data as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  const first = content[0] as { text?: unknown } | undefined;
+  return typeof first?.text === "string" ? first.text : "";
+}
 import { summarizeTokenUsage } from "@/lib/token-usage";
 
 type Tab = "conversation" | "timeline" | "workspace";
 
 export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
+  // Route parameter changes reuse the page. Give each Session its own composer,
+  // queue observer, and event stream so none survive into another one.
+  return <SessionDetail key={id} id={id} />;
+}
+
+function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate();
   const { data: session, isLoading: sessionLoading } = useSession(id);
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
-  const { events, activeDeltas, status, isConnected, fileChange } = useSessionEvents(id);
+  const { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce } =
+    useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
+  const { interrupt, isPending: isInterrupting } = useInterrupt(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
-  const [optimisticEvents, setOptimisticEvents] = useState<SessionEvent[]>([]);
-  const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
 
-  const unconfirmedEvents = useMemo(() => {
-    return optimisticEvents.filter(
-      (oe) =>
-        !events.some((e) => {
-          if (e.type !== "user.message") return false;
-          const oeData = oe.data as { content: Array<{ type: string; text: string }> };
-          const eData = e.data as { content: Array<{ type: string; text: string }> };
-          return oeData.content[0]?.text === eData.content[0]?.text;
-        }),
-    );
-  }, [events, optimisticEvents]);
-
-  const displayEvents = useMemo(() => {
-    if (unconfirmedEvents.length === 0) return events;
-    // Only show optimistic messages in conversation if agent is NOT running
-    if (effectiveTurnStatus === "running") return events;
-    return [...events, ...unconfirmedEvents];
-  }, [events, unconfirmedEvents, effectiveTurnStatus]);
-
-  const handleSend = useCallback(
-    async (text: string) => {
-      // Optimistically add user message
-      const optimistic: SessionEvent = {
-        seq: -Date.now(),
-        type: "user.message",
-        data: { content: [{ type: "text", text }] },
-        ts: new Date().toISOString(),
-      };
-      setOptimisticEvents((prev) => [...prev, optimistic]);
-      await send(text);
-    },
-    [send],
+  // Whether input is waiting to run is the Host's fact, re-read whenever a Turn
+  // starts or ends. This is what keeps the `queued` strip visible through the gap
+  // an Interrupt opens and restores it after a reload (issue #114).
+  const { entries: serverQueued, hasMore: hasMoreQueuedInput } = useQueuedInput(
+    id,
+    turnLifecycleNonce,
   );
 
+  const queuedInput = serverQueued.map((entry) => ({
+    id: entry.id,
+    text: messageText(entry.data),
+  }));
+
+  const handleInterrupt = useCallback(async () => {
+    if (isInterrupting) return;
+    // Nothing to undo if the Host reports it stopped nothing: the Turn had
+    // already finished, and the status the SSE stream reports will say so.
+    await interrupt().catch(() => false);
+  }, [interrupt, isInterrupting]);
+
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
-  const effectiveStatus = session?.status === "terminated"
-    ? "terminated"
-    : effectiveTurnStatus === "running"
-      ? "running"
-      : (session?.status ?? "idle");
-  const inputDisabled = isPending;
+  const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
+  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" ? "running" : (session?.status ?? "idle");
   const tokenUsage = useMemo(() => summarizeTokenUsage(events), [events]);
 
   if (sessionLoading) {
@@ -170,18 +168,21 @@ export default function SessionDetailPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex-1 overflow-hidden">
               <ConversationView
-                events={displayEvents}
+                events={events}
                 activeDeltas={activeDeltas}
                 sessionStatus={effectiveTurnStatus}
               />
             </div>
             <MessageInput
-              onSend={handleSend}
-              disabled={inputDisabled}
-              pendingMessages={
-                effectiveTurnStatus === "running" ? unconfirmedEvents : []
-              }
+              onSend={send}
+              sending={isPending}
+              // Not gated on `status === "running"`: the queue outlives the Turn
+              // that was running when it was filled (issue #114).
+              queuedInput={queuedInput}
+              hasMoreQueuedInput={hasMoreQueuedInput}
               skills={equippedSkills}
+              running={status === "running"}
+              onInterrupt={handleInterrupt}
             />
           </div>
           {/* Slide-out Workspace panel */}

@@ -1,27 +1,15 @@
-# Optional stock warm pool for the `code-interpreter` E2B template on the
-# `agent-platform` ACS cluster in cn-shanghai (Alibaba ACK managed Agent Sandbox
-# / OpenKruise `agents.kruise.io`).
-#
-# The SandboxSet name IS the E2B templateID: clients that call
-# `Sandbox.create("code-interpreter")` get a pre-warmed pod from this pool.
-# Without a SandboxSet for the template, `POST /sandboxes` returns
-# 400 "Template or Checkpoint not found".
-#
-# Only two things are meant to be tuned here:
-#   - spec.replicas      → warm-pool size
-#   - the container image tag
-# Everything else (runtimes, ECI scheduling labels, resources) is fixed by the
-# cluster's serverless/ECI contract.
-#
-# Apply (idempotent):
-#   kubectl apply -f deploy/sandbox/sandboxset-code-interpreter.yaml
+# Inactive stock-image reference only; not an accepted application template.
+# OSS Workspace runtime/tooling acceptance currently covers code-interpreter-vfscli.
+# Do not apply or select this pool during the storage switch without separate
+# validation. replicas=0 avoids maintaining an unvalidated warm pool by default.
+# Use the explicit Shanghai kubeconfig described in oss-workspace/README.md.
 apiVersion: agents.kruise.io/v1alpha1
 kind: SandboxSet
 metadata:
   name: code-interpreter
   namespace: sandbox-system
 spec:
-  replicas: 1
+  replicas: 0
   # csi injects the NAS/OSS mounts; agent-runtime injects the e2b envd daemon.
   runtimes:
     - name: csi
@@ -36,11 +24,9 @@ spec:
         alibabacloud.com/compute-qos: default
     spec:
       automountServiceAccountToken: false
-      imagePullSecrets:
-        - name: ali-shanghai
       containers:
         - name: sandbox
-          image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:1cf094551dd4822ccb184fa95da7bd170af001b3a1a23ae45e1499eb5007391d
+          image: registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6
           resources:
             requests:
               cpu: "1"

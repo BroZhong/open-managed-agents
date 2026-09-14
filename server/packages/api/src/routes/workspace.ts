@@ -1,5 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { ArtifactStore, Session, SessionStore } from "@oma-server/store";
+import { validateArtifactPath, resolveArtifactContentType } from "@oma-server/store";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
@@ -28,12 +29,16 @@ export interface WorkspaceRouteDeps {
 /**
  * Reject workspace-relative paths that try to escape their tenant/workspace
  * prefix. The ArtifactStore also normalizes, but we fail fast here so a bad
- * request never reaches the S3 backend.
+ * request never reaches OSS. Paths have been decoded once by the HTTP layer;
+ * the shared validator never decodes literal percent signs again.
  */
 function isSafePath(path: string): boolean {
-  if (!path) return false;
-  const segments = path.split("/");
-  return !segments.some((s) => s === "." || s === "..");
+  try {
+    validateArtifactPath(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -55,12 +60,19 @@ function joinPath(dir: string, name: string): string {
 }
 
 /**
- * Host proxy over the session's Workspace S3 store. S3 is the source of truth,
+ * Host proxy over the session's Workspace Store. OSS is the source of truth,
  * so files created by any means (including shell/bash) show up in the listing.
- * Contents are proxied through the Host — never presigned URLs. See ADR-0002 §5.
+ * Contents are proxied through the Host, with short-lived signed GET for media.
  */
 export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+
+  // Do not turn a failed list into an empty Workspace or expose storage SDK
+  // errors (which can contain signed requests or credentials) to the browser.
+  router.onError((_error, c) => c.json({
+    error: "Workspace storage is unavailable. Retry the file operation.",
+    code: "workspace_storage_error",
+  }, 503));
 
   async function resolveSession(
     sessionId: string,
@@ -73,8 +85,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
   /**
    * Idle write gate (ADR-0006 §3). Returns true if the session's active turn is
-   * `running`, meaning a checkpoint sync may clobber the write and the caller
-   * must reject with 423. `idle`, no active-turn record, or no turnStreamStore
+   * `running`; the caller must reject with 423. `idle`, no active-turn record, or no turnStreamStore
    * wired → false (allow the write). Read active-turn STATUS, not sandbox
    * liveness — a sandbox outlives its turn on its TTL.
    */
@@ -163,6 +174,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
       from,
     );
     if (!src) return c.json({ error: "File not found" }, 404);
+    if (from === to) return c.json({ type: "workspace_file_renamed", from, to });
 
     await deps.artifactStore.put({
       tenantId: tenant.tenantId,
@@ -267,22 +279,12 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
       ? Math.min(MAX_EXPIRES, Math.max(MIN_EXPIRES, Math.trunc(raw)))
       : DEFAULT_EXPIRES;
 
-    let url: string;
-    try {
-      url = await deps.artifactStore.createSignedReadUrl(
-        tenant.tenantId,
-        session.workspaceId,
-        path,
-        expiresIn,
-      );
-    } catch {
-      // Backend can list/get but cannot produce a reachable signed URL (e.g. no
-      // public base configured) — treat as "presigned reads not available".
-      return c.json(
-        { error: "Presigned reads not available (storage public base not configured)" },
-        501,
-      );
-    }
+    const url = await deps.artifactStore.createSignedReadUrl(
+      tenant.tenantId,
+      session.workspaceId,
+      path,
+      expiresIn,
+    );
     return c.json({ url, expiresIn });
   });
 
@@ -294,7 +296,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const prefix = c.req.query("prefix") || undefined;
+    const prefix = c.req.query("prefix")?.replace(/\/$/, "") || undefined;
     if (prefix !== undefined && !isSafePath(prefix)) {
       return c.json({ error: "Invalid prefix" }, 400);
     }
@@ -328,7 +330,12 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
     const marker = "/workspace/files/";
     const idx = fullPath.indexOf(marker);
     const raw = idx >= 0 ? fullPath.slice(idx + marker.length) : "";
-    const path = decodeURIComponent(raw);
+    let path: string;
+    try {
+      path = decodeURIComponent(raw);
+    } catch {
+      return c.json({ error: "Invalid file path encoding" }, 400);
+    }
 
     if (!path || !isSafePath(path)) {
       return c.json({ error: "Invalid file path" }, 400);
@@ -344,7 +351,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
     }
 
     const download = c.req.query("download") === "1";
-    const contentType = artifact.contentType ?? "application/octet-stream";
+    const contentType = resolveArtifactContentType(path, artifact.contentType);
     const headers: Record<string, string> = {
       "content-type": contentType,
       "content-length": String(artifact.body.byteLength),
@@ -354,8 +361,13 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
       // Strip quotes AND CR/LF so a crafted filename can't break out of the
       // header value or inject a new header (defense-in-depth; path is already
       // isSafePath-checked).
-      const filename = basename(path).replace(/[\r\n"]/g, "");
-      headers["content-disposition"] = `attachment; filename="${filename}"`;
+      const filename = basename(path);
+      const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
+      const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (char) =>
+        `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+      );
+      headers["content-disposition"] = `attachment; filename="${fallback}"` +
+        (fallback !== filename ? `; filename*=UTF-8''${encoded}` : "");
     } else {
       headers["content-disposition"] = "inline";
     }

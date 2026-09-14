@@ -1,5 +1,108 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { S3SkillArtifactStore } from "../src/s3/skill-artifact-store.js";
+
+interface RecordedCall {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: unknown;
+}
+
+/**
+ * A fake HTTP layer backed by an in-memory object map keyed by the full
+ * storage object key (`object/<bucket>/<tenant>/skills/<skill-id>/<path>`). This is
+ * the S3/Supabase Storage boundary the store speaks to; mocking it lets us
+ * assert exactly what keys get written/read/listed/deleted.
+ */
+function makeFakeFetch(initial: Record<string, Uint8Array> = {}) {
+  const objects = new Map<string, Uint8Array>(Object.entries(initial));
+  const calls: RecordedCall[] = [];
+
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    const headers = Object.fromEntries(
+      Object.entries((init?.headers as Record<string, string>) ?? {}),
+    );
+    let body: unknown;
+    if (init?.body != null) {
+      body = init.body instanceof Uint8Array ? init.body : init.body;
+    }
+    calls.push({ url, method, headers, body });
+
+    const listMatch = url.match(/\/object\/list\/([^/]+)$/);
+    if (listMatch && method === "POST") {
+      const { prefix, limit, offset } = JSON.parse(String(init!.body)) as {
+        prefix: string;
+        limit: number;
+        offset: number;
+      };
+      // Mimic Supabase Storage's object/list: it is NOT recursive. For a given
+      // prefix it returns files at that exact level, plus a single folder
+      // placeholder (id/metadata null) per subdir name for anything deeper.
+      const base = `object/${listMatch[1]}/${prefix}`;
+      const seenFolders = new Set<string>();
+      const fileEntries: Array<Record<string, unknown>> = [];
+      for (const k of [...objects.keys()].sort()) {
+        if (!k.startsWith(base)) continue;
+        const rel = k.slice(base.length);
+        const slash = rel.indexOf("/");
+        if (slash === -1) {
+          fileEntries.push({
+            name: rel,
+            id: k,
+            updated_at: "2024-01-01T00:00:00Z",
+            metadata: { size: objects.get(k)!.byteLength },
+          });
+        } else {
+          seenFolders.add(rel.slice(0, slash));
+        }
+      }
+      const folderEntries = [...seenFolders].sort().map((name) => ({
+        name,
+        id: null,
+        updated_at: null,
+        metadata: null,
+      }));
+      const all = [...folderEntries, ...fileEntries];
+      return jsonResponse(all.slice(offset, offset + limit));
+    }
+
+    const objMatch = url.match(/\/object\/(.+)$/);
+    if (objMatch) {
+      const key = `object/${objMatch[1]}`;
+      if (method === "GET") {
+        const val = objects.get(key);
+        if (!val) return new Response(null, { status: 404 });
+        return new Response(val, {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        });
+      }
+      if (method === "HEAD") {
+        return new Response(null, { status: objects.has(key) ? 200 : 404 });
+      }
+      if (method === "POST") {
+        const buf =
+          init!.body instanceof Uint8Array
+            ? init!.body
+            : new TextEncoder().encode(String(init!.body));
+        objects.set(key, buf);
+        return jsonResponse({ Key: objMatch[1] });
+      }
+      if (method === "DELETE") {
+        const existed = objects.delete(key);
+        return existed
+          ? jsonResponse({ message: "Deleted" })
+          : new Response(null, { status: 404 });
+      }
+    }
+
+    return new Response("unexpected", { status: 500 });
+  }) as unknown as typeof fetch;
+
+  return { fetchImpl, objects, calls };
+}
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), {
@@ -8,176 +111,55 @@ function jsonResponse(data: unknown): Response {
   });
 }
 
-describe("S3SkillArtifactStore", () => {
-  it("copies Skill files with bounded concurrent reads and writes", async () => {
-    const fileCount = 17;
-    const tenantId = "tenant";
-    const sourceSkillId = "source";
-    const targetSkillId = "target";
-    const sourcePrefix = `object/workspace/${tenantId}/skills/${sourceSkillId}/`;
-    const targetPrefix = `object/workspace/${tenantId}/skills/${targetSkillId}/`;
-    const objects = new Map<string, Uint8Array>(
-      Array.from({ length: fileCount }, (_, index) => [
-        `${sourcePrefix}file-${index}.md`,
-        new TextEncoder().encode(`file ${index}`),
-      ]),
-    );
-    let activeGets = 0;
-    let activePuts = 0;
-    let maxConcurrentGets = 0;
-    let maxConcurrentPuts = 0;
+function makeStore(fake: ReturnType<typeof makeFakeFetch>) {
+  return new S3SkillArtifactStore({
+    endpoint: "http://storage.local/storage/v1",
+    serviceKey: "svc-key",
+    bucket: "workspace",
+    fetch: fake.fetchImpl,
+  });
+}
 
-    const fetchImpl = (async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (url.endsWith("/object/list/workspace") && method === "POST") {
-        return jsonResponse(
-          Array.from({ length: fileCount }, (_, index) => ({
-            name: `file-${index}.md`,
-            id: `file-${index}`,
-            metadata: { size: 6 },
-          })),
-        );
-      }
-
-      const objectKey = `object/${url.split("/object/")[1] ?? ""}`;
-      if (method === "GET") {
-        activeGets++;
-        maxConcurrentGets = Math.max(maxConcurrentGets, activeGets);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        const body = objects.get(objectKey);
-        activeGets--;
-        return body
-          ? new Response(body, { status: 200 })
-          : new Response(null, { status: 404 });
-      }
-      if (method === "POST") {
-        activePuts++;
-        maxConcurrentPuts = Math.max(maxConcurrentPuts, activePuts);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        objects.set(objectKey, init?.body as unknown as Uint8Array);
-        activePuts--;
-        return jsonResponse({ Key: objectKey });
-      }
-      return new Response("unexpected", { status: 500 });
-    }) as typeof fetch;
-
-    const store = new S3SkillArtifactStore({
-      endpoint: "http://storage.local/storage/v1",
-      serviceKey: "service-key",
-      bucket: "workspace",
-      fetch: fetchImpl,
-    });
-
-    await store.copyTree(tenantId, sourceSkillId, targetSkillId);
-
-    expect(maxConcurrentGets).toBeGreaterThan(1);
-    expect(maxConcurrentGets).toBeLessThanOrEqual(8);
-    expect(maxConcurrentPuts).toBeGreaterThan(1);
-    expect(maxConcurrentPuts).toBeLessThanOrEqual(8);
-    expect(
-      [...objects.keys()].filter((key) => key.startsWith(targetPrefix)),
-    ).toHaveLength(fileCount);
-    for (let index = 0; index < fileCount; index++) {
-      expect(
-        new TextDecoder().decode(objects.get(`${targetPrefix}file-${index}.md`)),
-      ).toBe(`file ${index}`);
-    }
+describe("Supabase Skill artifact storage retained after OSS Workspace cutover", () => {
+  it("keeps Skill forks isolated by tenant and ID while supporting tree copy and deletion", async () => {
+    const fake = makeFakeFetch();
+    const store = makeStore(fake);
+    await store.put("tenant", "original", "SKILL.md", "# Writer");
+    await store.put("tenant", "original", "scripts/helper", new Uint8Array([0, 255]));
+    await store.copyTree("tenant", "original", "fork");
+    expect(await store.list("tenant", "fork")).toEqual(["scripts/helper", "SKILL.md"]);
+    expect(await store.get("other", "fork", "SKILL.md")).toBeNull();
+    expect(await store.get("tenant", "other", "SKILL.md")).toBeNull();
+    await store.deleteTree("tenant", "original");
+    expect(await store.list("tenant", "original")).toEqual([]);
+    expect(new TextDecoder().decode((await store.get("tenant", "fork", "SKILL.md"))!)).toBe("# Writer");
+    expect([...fake.objects.keys()]).toEqual([
+      "object/workspace/tenant/skills/fork/scripts/helper",
+      "object/workspace/tenant/skills/fork/SKILL.md",
+    ]);
+    expect(fake.calls[0].headers.Authorization).toBe("Bearer svc-key");
   });
 
-  it("deletes an unequipped Skill's files with bounded concurrency", async () => {
-    const fileCount = 17;
-    const tenantId = "tenant";
-    const skillId = "fork";
-    const prefix = `object/workspace/${tenantId}/skills/${skillId}/`;
-    const objects = new Set(
-      Array.from({ length: fileCount }, (_, index) => `${prefix}file-${index}.md`),
-    );
-    let activeDeletes = 0;
-    let maxConcurrentDeletes = 0;
-
-    const fetchImpl = (async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (url.endsWith("/object/list/workspace") && method === "POST") {
-        return jsonResponse(
-          Array.from({ length: fileCount }, (_, index) => ({
-            name: `file-${index}.md`,
-            id: `file-${index}`,
-            metadata: { size: 6 },
-          })),
-        );
-      }
-      if (method === "DELETE") {
-        activeDeletes++;
-        maxConcurrentDeletes = Math.max(maxConcurrentDeletes, activeDeletes);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        objects.delete(`object/${url.split("/object/")[1] ?? ""}`);
-        activeDeletes--;
-        return jsonResponse({ message: "Deleted" });
-      }
-      return new Response("unexpected", { status: 500 });
-    }) as typeof fetch;
-    const store = new S3SkillArtifactStore({
-      endpoint: "http://storage.local/storage/v1",
-      serviceKey: "service-key",
-      bucket: "workspace",
-      fetch: fetchImpl,
-    });
-
-    await store.deleteTree(tenantId, skillId);
-
-    expect(maxConcurrentDeletes).toBeGreaterThan(1);
-    expect(maxConcurrentDeletes).toBeLessThanOrEqual(8);
-    expect(objects.size).toBe(0);
+  it("recursively lists every Supabase page, including empty files and nested Skill assets", async () => {
+    const initial: Record<string, Uint8Array> = {};
+    for (let index = 0; index < 1001; index++) initial[`object/workspace/t/skills/s/file-${index}`] = new Uint8Array();
+    initial["object/workspace/t/skills/s/references/guide.md"] = new TextEncoder().encode("guide");
+    const store = makeStore(makeFakeFetch(initial));
+    const files = await store.getAll("t", "s");
+    expect(files).toHaveLength(1002);
+    expect(files.find((file) => file.path === "file-1000")?.body).toEqual(new Uint8Array());
+    expect(new TextDecoder().decode(files.find((file) => file.path === "references/guide.md")?.body)).toBe("guide");
   });
 
-  it("waits for the active batch to settle before reporting an I/O failure", async () => {
-    let slowDeleteFinished = false;
-    const fetchImpl = (async (
-      input: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      const url = String(input);
-      const method = (init?.method ?? "GET").toUpperCase();
-      if (url.endsWith("/object/list/workspace") && method === "POST") {
-        return jsonResponse([
-          { name: "fails.md", id: "fails", metadata: { size: 1 } },
-          { name: "slow.md", id: "slow", metadata: { size: 1 } },
-        ]);
-      }
-      if (method === "DELETE" && url.endsWith("/fails.md")) {
-        return new Response("failed", { status: 500 });
-      }
-      if (method === "DELETE" && url.endsWith("/slow.md")) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        slowDeleteFinished = true;
-        return jsonResponse({ message: "Deleted" });
-      }
-      return new Response("unexpected", { status: 500 });
-    }) as typeof fetch;
-    const store = new S3SkillArtifactStore({
-      endpoint: "http://storage.local/storage/v1",
-      serviceKey: "service-key",
-      bucket: "workspace",
-      fetch: fetchImpl,
+  it("rejects traversal and reports Skill storage service failures", async () => {
+    const store = makeStore(makeFakeFetch());
+    await expect(store.put("tenant", "fork", "../secret", "bad")).rejects.toThrow("Invalid skill path");
+    const failed = new S3SkillArtifactStore({
+      endpoint: "http://storage.local/storage/v1", serviceKey: "test-key",
+      fetch: async () => new Response("unavailable", { status: 503 }),
     });
-
-    await expect(store.deleteTree("tenant", "fork")).rejects.toThrow(
-      "Supabase deleteObject failed",
-    );
-    try {
-      expect(slowDeleteFinished).toBe(true);
-    } finally {
-      if (!slowDeleteFinished) {
-        await new Promise((resolve) => setTimeout(resolve, 30));
-      }
-    }
+    await expect(failed.list("tenant", "fork")).rejects.toThrow("503");
+    await expect(failed.get("tenant", "fork", "SKILL.md")).rejects.toThrow("503");
+    await expect(failed.put("tenant", "fork", "SKILL.md", "# Skill")).rejects.toThrow("503");
   });
 });

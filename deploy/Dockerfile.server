@@ -4,7 +4,8 @@
 # Built and published by deploy/scripts/build-base-images.sh. The image pins
 # Node and pnpm so normal source builds never need Docker Hub or Corepack fetches.
 ARG NODE_BASE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/node-base:22-slim-pnpm-10.12.4
-FROM ${NODE_BASE}
+FROM ${NODE_BASE} AS base
+ARG TARGETARCH
 
 WORKDIR /app
 # Pi's extension installer shells out to npm. Audit/funding/update checks add no
@@ -13,7 +14,10 @@ WORKDIR /app
 ENV CI=true \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_PREFER_OFFLINE=true
+
+FROM base AS manifests
 
 # ─── Dependency layer (cached across source-only changes) ───────────────────
 # Copy ONLY the workspace manifests + lockfiles first, so `pnpm install` is its
@@ -47,12 +51,14 @@ COPY server/packages/store/package.json ./server/packages/store/
 COPY server/packages/store-memory/package.json ./server/packages/store-memory/
 # END WORKSPACE PACKAGE MANIFESTS
 
-# Install the adapter workspace first (server references it by relative path).
-RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
- && cd /app/server && pnpm install --no-frozen-lockfile
+# Copy each workspace separately from the manifest stage: a server dependency
+# change must not invalidate the adapter or Pi extension layers.
+FROM base AS adapter-deps
+COPY --from=manifests /app/adapter/ ./adapter/
+RUN --mount=type=cache,id=oma-pnpm-${TARGETARCH},target=/root/.local/share/pnpm/store,sharing=locked \
+    cd /app/adapter && pnpm install --no-frozen-lockfile --prefer-offline
 
-COPY deploy/patch-tintinweb-pi-subagents.mjs /tmp/patch-tintinweb-pi-subagents.mjs
-COPY deploy/patch-pi-mcp-adapter.mjs /tmp/patch-pi-mcp-adapter.mjs
+FROM adapter-deps AS pi-seed
 
 # Pi extensions used by every managed Pi runtime. Install them with Pi's own
 # package manager (rather than merely adding npm dependencies) so the generated
@@ -61,17 +67,22 @@ COPY deploy/patch-pi-mcp-adapter.mjs /tmp/patch-pi-mcp-adapter.mjs
 # emptyDir; deploy/k8s.yaml copies this immutable seed into it before the server
 # starts, then overlays the refreshable auth.json Secret.
 ARG PI_WEB_ACCESS_VERSION=0.13.0
+RUN --mount=type=cache,id=oma-npm-${TARGETARCH},target=/root/.npm,sharing=locked \
+    PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
+      npm:pi-web-access@${PI_WEB_ACCESS_VERSION}
 ARG PI_MCP_ADAPTER_VERSION=2.11.0
+RUN --mount=type=cache,id=oma-npm-${TARGETARCH},target=/root/.npm,sharing=locked \
+    PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
+      npm:pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}
+COPY deploy/patch-pi-mcp-adapter.mjs /tmp/patch-pi-mcp-adapter.mjs
+RUN node /tmp/patch-pi-mcp-adapter.mjs \
+      /opt/pi-agent-seed/npm/node_modules/pi-mcp-adapter
+
 ARG PI_SUBAGENTS_VERSION=0.13.0
-RUN PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
-      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
-      npm:pi-web-access@${PI_WEB_ACCESS_VERSION} \
- && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
-      /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
-      npm:pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION} \
- && node /tmp/patch-pi-mcp-adapter.mjs \
-      /opt/pi-agent-seed/npm/node_modules/pi-mcp-adapter \
- && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
+RUN --mount=type=cache,id=oma-npm-${TARGETARCH},target=/root/.npm,sharing=locked \
+    PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
       /app/adapter/packages/pi-agent/node_modules/.bin/pi install \
       npm:@tintinweb/pi-subagents@${PI_SUBAGENTS_VERSION} \
  && PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
@@ -80,6 +91,7 @@ RUN PI_CODING_AGENT_DIR=/opt/pi-agent-seed \
 # The pinned extension currently constructs child SDK sessions with Pi's
 # Host-native built-ins. Apply a version/anchor-guarded overlay that injects the
 # parent Turn's exact Sandbox-backed customTools and fails closed when absent.
+COPY deploy/patch-tintinweb-pi-subagents.mjs /tmp/patch-tintinweb-pi-subagents.mjs
 RUN node /tmp/patch-tintinweb-pi-subagents.mjs \
       /opt/pi-agent-seed/npm/node_modules/@tintinweb/pi-subagents
 
@@ -94,17 +106,23 @@ RUN chmod 0644 /opt/pi-agent-seed/subagents.json \
       /opt/pi-agent-seed/agents/storyboard-stage.md
 
 # ─── Source layer (changes on every code edit; deps above stay cached) ──────
+FROM adapter-deps AS runtime
+COPY --from=manifests /app/server/ ./server/
+RUN --mount=type=cache,id=oma-pnpm-${TARGETARCH},target=/root/.local/share/pnpm/store,sharing=locked \
+    cd /app/server && pnpm install --no-frozen-lockfile --prefer-offline
+COPY --from=pi-seed /opt/pi-agent-seed/ /opt/pi-agent-seed/
 COPY adapter/ ./adapter/
 COPY server/ ./server/
 
 # Re-run install so any manifest not copied above (or workspace linking) settles.
 # With the deps already installed + cached in the store, this is near-instant.
-RUN cd /app/adapter && pnpm install --no-frozen-lockfile \
- && cd /app/server && pnpm install --no-frozen-lockfile
+RUN --mount=type=cache,id=oma-pnpm-${TARGETARCH},target=/root/.local/share/pnpm/store,sharing=locked \
+    cd /app/adapter && pnpm install --no-frozen-lockfile --prefer-offline \
+ && cd /app/server && pnpm install --no-frozen-lockfile --prefer-offline
 
 ENV PORT=3000
 EXPOSE 3000
 
-# Entrypoint: the full PG + Redis + S3 + sandbox wiring (config-driven from env).
+# Entrypoint: the full PG + Redis + OSS Workspace + Supabase Skills + sandbox wiring (config-driven from env).
 WORKDIR /app/server/packages/api
 CMD ["pnpm", "exec", "tsx", "src/dev-server.ts"]

@@ -177,9 +177,9 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(String((options.appendSystemPrompt as string[])[1])).toContain(
       "/skills/skill_abc/SKILL.md",
     );
-    expect(options.cwd).toBe("/home/user");
-    expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user");
-    expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user");
+    expect(options.cwd).toBe("/home/user/workspace");
+    expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user/workspace");
+    expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user/workspace");
     expect(sdkSeam.sessionOptions[0].thinkingLevel).toBe("high");
     expect(sdkSeam.sessionOptions[0].modelRuntime?.getModel("anthropic", "claude-sonnet-4-5"))
       .toMatchObject({ id: "claude-sonnet-4-5", provider: "anthropic" });

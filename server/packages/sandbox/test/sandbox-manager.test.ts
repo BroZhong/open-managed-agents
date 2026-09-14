@@ -1,667 +1,324 @@
 import { describe, it, expect, vi } from "vitest";
-import type { ToolExecutor, ToolFileSystem } from "@open-managed-agents/adapter-core";
-import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import {
-  FakeWorkspacePersistence,
-  type WorkspacePersistence,
-} from "../src/workspace-persistence.js";
-import { FakeProvisionSource } from "../src/provision-source.js";
+import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import {
   DefaultSandboxManager,
   SandboxSessionClosed,
   type EnvSpec,
-  type SandboxManager,
-  type SandboxSession,
 } from "../src/sandbox-manager.js";
+import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
+import { FakeProvisionSource } from "../src/provision-source.js";
 
-const TENANT = "tenant_1";
-const WS = "ws_1";
-
-/**
- * A fully in-memory harness: FakeSandboxClient + FakeWorkspacePersistence +
- * FakeProvisionSource (registered under both "fake" and "s3" for dispatch
- * proof). No real S3/e2b. Returns the pieces so a test can seed the Workspace,
- * seed projections, reclaim a sandbox, and open sessions.
- */
-function makeManager(opts?: {
-  seed?: Array<[string, string]>;
-  sandboxClient?: FakeSandboxClient;
-}) {
-  const sandboxClient = opts?.sandboxClient ?? new FakeSandboxClient();
-  const persistence = new FakeWorkspacePersistence();
-  for (const [path, content] of opts?.seed ?? []) {
-    persistence.seed(TENANT, WS, path, content);
-  }
+const mount = {
+  bucket: "agentry",
+  prefix: "tenant_1/ws_1/",
+  agentName: "agentry-workspace",
+  pvName: "agentry-workspace-oss",
+  credentialProviderName: "agentry-oss-rw",
+};
+function specFor(extra: Partial<EnvSpec> = {}): EnvSpec {
+  return {
+    tenantId: "tenant_1",
+    workspaceId: "ws_1",
+    workspaceMount: mount,
+    ...extra,
+  };
+}
+function makeManager() {
+  const client = new FakeSandboxClient();
   const provision = new FakeProvisionSource();
-  const manager: SandboxManager = new DefaultSandboxManager({
-    sandboxClient,
-    persistence,
-    provisionSources: { fake: provision, s3: provision },
+  const manager = new DefaultSandboxManager({
+    sandboxClient: client,
+    provisionSources: { s3: provision },
   });
-  return { manager, sandboxClient, persistence, provision };
+  return { client, provision, manager };
 }
 
-function specFor(overrides: Partial<EnvSpec> = {}): EnvSpec {
-  return { tenantId: TENANT, workspaceId: WS, ...overrides };
-}
-
-async function drainExec(
-  it: AsyncIterable<{ stream: "stdout" | "stderr"; text: string }>,
-): Promise<string> {
-  let out = "";
-  for await (const chunk of it) {
-    if (chunk.stream === "stdout") out += chunk.text;
-  }
-  return out;
-}
-
-describe("SandboxManager / SandboxSession", () => {
-  // ─── invariant §1: open is cheap; lazy create ──────────────────────────────
-
-  it("open starts NO sandbox — a pure-chat turn spins up nothing", () => {
-    const { manager, sandboxClient } = makeManager();
-    const session = manager.open(specFor());
-    expect(session).toBeDefined();
-    expect(sandboxClient.created).toHaveLength(0);
-    expect(sandboxClient.liveCount).toBe(0);
-  });
-
-  it("forwards process exit status and cancellation through the executor boundary", async () => {
-    const controller = new AbortController();
-    const exits: unknown[] = [];
-    const sandboxClient = new FakeSandboxClient({
-      execHandler(command, _files, opts) {
-        if (command[0] !== "rg") return undefined;
-        expect(opts?.signal).toBe(controller.signal);
-        opts?.onExit?.({ exitCode: 2 });
-        return [{ stream: "stderr", text: "regex parse error" }];
-      },
+describe("mounted Workspace Sandbox Manager", () => {
+  it("checks the mount before native filesystem operations and keeps the capability stable after rebuild", async () => {
+    const { client, manager } = makeManager();
+    const unavailable = () => { throw new Error("Unexpected filesystem operation"); };
+    const nativeRead = vi.fn(async (id: string, path: string) => client.readFileBytes(id, path));
+    const nativeWrite = vi.fn(async (id: string, path: string, bytes: Uint8Array) => client.writeFileBytes(id, path, bytes));
+    const fileSystem = (id: string): ToolFileSystem => ({
+      readFile: (path) => nativeRead(id, path),
+      writeFile: (path, bytes) => nativeWrite(id, path, bytes),
+      appendFile: unavailable, access: unavailable, stat: unavailable,
+      lstat: unavailable, realpath: unavailable, readdir: unavailable,
+      mkdir: unavailable, createTempFile: unavailable,
     });
-    const { manager } = makeManager({ sandboxClient });
+    Object.assign(client, { fileSystem });
     const session = manager.open(specFor());
-    await drainExec(session.exec(["rg", "["], {
-      signal: controller.signal,
-      onExit: (result) => exits.push(result),
-    }));
-    expect(exits).toEqual([{ exitCode: 2 }]);
-    await session.dispose();
-  });
-
-  it("forwards native filesystem paths, bytes and cancellation through a stable lazy capability", async () => {
-    const binary = new Uint8Array([255, 0, 239, 187, 191]);
-    const fs: ToolFileSystem = {
-      readFile: vi.fn(async () => binary),
-      writeFile: vi.fn(async () => {}),
-      appendFile: vi.fn(async () => {}),
-      access: vi.fn(async () => {}),
-      stat: vi.fn(async () => ({ isFile: true, isDirectory: false, isSymbolicLink: false, size: 5, mtimeMs: 123 })),
-      lstat: vi.fn(async () => ({ isFile: false, isDirectory: false, isSymbolicLink: true, size: 4, mtimeMs: 123 })),
-      realpath: vi.fn(async () => "/skills/example/SKILL.md"),
-      readdir: vi.fn(async () => ["empty", "file"]),
-      mkdir: vi.fn(async () => {}),
-      createTempFile: vi.fn(async () => "/tmp/oma-pi-result/output.log"),
-    };
-    const sandboxClient = Object.assign(new FakeSandboxClient(), { fileSystem: vi.fn((_id: string) => fs) });
-    const { manager } = makeManager({ sandboxClient });
-    const session = manager.open(specFor());
-    const capability = session.fileSystem!;
-    const options = { signal: new AbortController().signal };
-    expect(sandboxClient.created).toEqual([]);
-    expect(await capability.readFile("image", options)).toBe(binary);
-    await capability.writeFile("image", binary, options);
-    await capability.appendFile("/tmp/output", binary, options);
-    await capability.access("/skills/example", 4, options);
-    await capability.stat("image", options);
-    await capability.lstat("link", options);
-    expect(await capability.realpath("link", options)).toBe("/skills/example/SKILL.md");
-    expect(await capability.readdir(".", options)).toEqual(["empty", "file"]);
-    await capability.mkdir("empty", options);
-    const temporary = await capability.createTempFile(options);
-    await capability.readFile(temporary, options);
-    expect(fs.writeFile).toHaveBeenCalledWith("/home/user/image", binary, options);
-    expect(fs.appendFile).toHaveBeenCalledWith("/tmp/output", binary, options);
-    expect(fs.access).toHaveBeenCalledWith("/skills/example", 4, options);
-    expect(fs.stat).toHaveBeenCalledWith("/home/user/image", options);
-    expect(fs.lstat).toHaveBeenCalledWith("/home/user/link", options);
-    expect(fs.readdir).toHaveBeenCalledWith("/home/user", options);
-    expect(fs.mkdir).toHaveBeenCalledWith("/home/user/empty", options);
-    expect(fs.readFile).toHaveBeenLastCalledWith(temporary, options);
-    const oldId = sandboxClient.created[0];
-    sandboxClient.reclaim(oldId);
-    await capability.access("new", undefined, options);
+    const capability = session.fileSystem;
+    await capability.writeFile("native.bin", new Uint8Array([0, 255]));
+    expect(await capability.readFile("native.bin")).toEqual(new Uint8Array([0, 255]));
+    expect(nativeRead.mock.calls[0][1]).toBe("/home/user/workspace/native.bin");
+    const first = client.created[0];
+    client.setMountFailure(first, "credential unavailable");
+    await expect(capability.writeFile("blocked.bin", new Uint8Array())).rejects.toThrow(/Workspace storage/);
+    expect(nativeWrite).toHaveBeenCalledTimes(1);
+    client.reclaim(first);
+    expect(await capability.readFile("native.bin")).toEqual(new Uint8Array([0, 255]));
     expect(session.fileSystem).toBe(capability);
-    expect(sandboxClient.created).toHaveLength(2);
-    expect(sandboxClient.fileSystem).toHaveBeenLastCalledWith(sandboxClient.created[1]);
-    await session.dispose();
-    await expect(capability.readdir(".")).rejects.toBeInstanceOf(SandboxSessionClosed);
-  });
-
-  it("does not provision a sandbox for pre-aborted native I/O", async () => {
-    const { manager, sandboxClient } = makeManager();
-    const session = manager.open(specFor());
-    await expect(session.fileSystem!.mkdir("unused", { signal: AbortSignal.abort() })).rejects.toMatchObject({ name: "AbortError" });
-    expect(sandboxClient.created).toEqual([]);
+    expect(client.created).toHaveLength(2);
+    expect(nativeRead.mock.calls.at(-1)?.[0]).toBe(client.created[1]);
     await session.dispose();
   });
 
-  it("the first primitive triggers exactly one create + hydrate", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["main.py", "hi"]] });
-    const session = manager.open(specFor());
-
-    expect(await session.readFile("main.py")).toBe("hi");
-    expect(sandboxClient.created).toHaveLength(1);
-
-    // A second primitive reuses the same sandbox — no second create.
-    await session.list();
-    expect(sandboxClient.created).toHaveLength(1);
-  });
-
-  it("does not create a second sandbox under concurrent first primitives", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["x.txt", "X"]] });
-    const session = manager.open(specFor());
-
-    await Promise.all([
-      session.readFile("x.txt"),
-      session.list(),
-      drainExec(session.exec(["echo", "hi"])),
-    ]);
-
-    expect(sandboxClient.created).toHaveLength(1);
-  });
-
-  it("hydrates the sandbox workspace and projects skills on first primitive", async () => {
-    const { manager, sandboxClient, provision } = makeManager({
-      seed: [["notes/todo.md", "buy milk"]],
-    });
-    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
-    provision.seed(coord, { "SKILL.md": "# skill body" });
-
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/skl_1", source: coord }] }),
-    );
-    await session.list();
-
-    const id = sandboxClient.created[0];
-    // Workspace hydrated under the canonical /home/user ...
-    expect(await sandboxClient.readFile(id, "/home/user/notes/todo.md")).toBe("buy milk");
-    // ... and the skill projected OUTSIDE the workspace at /skills.
-    expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe("# skill body");
-    expect(provision.projected).toHaveLength(1);
-  });
-
-  it("reads a projected Skill through the session primitives (absolute path is NOT re-based under workspace)", async () => {
-    // Regression: the Pi adapter's tools run with cwd=/home/user and hand the
-    // executor a Pi-resolved ABSOLUTE path — a workspace file as `/home/user/x`
-    // and a projected Skill as `/skills/<id>/SKILL.md`. If readFile/list re-base
-    // every path under workspaceDir, a projected Skill read becomes
-    // `/home/user/skills/…` and is unreadable (the invisible-Skill bug found in
-    // an earlier E2E run). Absolute paths must pass through untouched.
-    const { manager, provision } = makeManager({
-      seed: [["main.py", "print('hi')"]],
-    });
-    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
-    provision.seed(coord, { "SKILL.md": "# skill body" });
-
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/skl_1", source: coord }] }),
-    );
-
-    // The projected Skill is readable at its real absolute path.
-    expect(await session.readFile("/skills/skl_1/SKILL.md")).toBe("# skill body");
-    // Listing the projection root (outside the workspace) surfaces its files.
-    const skillEntries = await session.list("/skills/skl_1");
-    expect(skillEntries.map((e) => e.path)).toContain("/skills/skl_1/SKILL.md");
-
-    // A workspace file still resolves under workspaceDir via BOTH forms.
-    expect(await session.readFile("main.py")).toBe("print('hi')");
-    expect(await session.readFile("/home/user/main.py")).toBe("print('hi')");
-  });
-
-  // ─── invariant §2: two opens → two independent sessions ───────────────────
-
-  it("two opens yield two independent sessions (binding in object identity)", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["a", "1"]] });
+  it("writes are shared immediately and survive disposal and rebuilding", async () => {
+    const { client, manager } = makeManager();
     const a = manager.open(specFor());
     const b = manager.open(specFor());
-
-    expect(a).not.toBe(b);
-
-    await a.readFile("a");
-    // Only a's primitive created a sandbox; b is still cold.
-    expect(sandboxClient.created).toHaveLength(1);
-
-    await b.readFile("a");
-    expect(sandboxClient.created).toHaveLength(2);
-    expect(sandboxClient.created[0]).not.toBe(sandboxClient.created[1]);
+    await a.writeFile("中文 空格.txt", "saved by a");
+    expect(await b.readFile("中文 空格.txt")).toBe("saved by a");
+    await b.writeFile("other.txt", "saved by b");
+    expect(await a.readFile("other.txt")).toBe("saved by b");
+    const id = client.created[0];
+    client.reclaim(id);
+    expect(await a.readFile("中文 空格.txt")).toBe("saved by a");
+    await a.dispose();
+    await b.dispose();
+    const rebuilt = manager.open(specFor());
+    expect(await rebuilt.readFile("other.txt")).toBe("saved by b");
+  });
+  it("rejects projection ancestors and normalized paths into the mounted Workspace", () => {
+    const { manager } = makeManager();
+    for (const targetPath of [
+      "/home/user",
+      "/",
+      "/skills/../home/user/workspace/skills",
+      "skills/writer",
+    ]) {
+      expect(() =>
+        manager.open(
+          specFor({
+            projections: [{ targetPath, source: { kind: "s3", ref: {} } }],
+          }),
+        ),
+      ).toThrow();
+    }
   });
 
-  // ─── invariant §3/§7: transparent self-heal; re-hydrate AND re-project ────
-
-  it("self-heals a reclaimed sandbox: rebuild + re-hydrate + re-project, no caller error", async () => {
-    const { manager, sandboxClient, provision } = makeManager({
-      seed: [["main.py", "print('hi')"]],
-    });
-    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
-    provision.seed(coord, { "SKILL.md": "body" });
-
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/skl_1", source: coord }] }),
-    );
-
-    // Turn 1: create + hydrate + project sandbox #1.
-    expect(await session.readFile("main.py")).toBe("print('hi')");
-    const first = sandboxClient.created[0];
-    expect(provision.projected).toHaveLength(1);
-
-    // The gateway reclaims it between turns.
-    sandboxClient.reclaim(first);
-    expect(await sandboxClient.isAlive(first)).toBe(false);
-
-    // Turn 2: the next primitive must NOT throw. It rebuilds, re-hydrates, and
-    // — critically — RE-PROJECTS (a rebuilt sandbox without /skills is broken).
-    expect(await session.readFile("main.py")).toBe("print('hi')");
-    const second = sandboxClient.created[1];
-    expect(second).not.toBe(first);
-    // Re-hydrated: workspace file present in the fresh sandbox.
-    expect(await sandboxClient.readFile(second, "/home/user/main.py")).toBe(
-      "print('hi')",
-    );
-    // Re-projected: /skills present in the fresh sandbox, and project ran twice.
-    expect(sandboxClient.filesOf(second).get("/skills/skl_1/SKILL.md")?.content).toBe(
-      "body",
-    );
-    expect(provision.projected).toHaveLength(2);
-    // The dead sandbox was best-effort destroyed.
-    expect(sandboxClient.destroyed).toContain(first);
-  });
-
-  it("passes a generous explicit lifetime and tenant/workspace metadata on create", async () => {
-    const { manager, sandboxClient } = makeManager();
+  it("requests the exact trusted CSI prefix and rejects another Workspace before creating", async () => {
+    const { client, manager } = makeManager();
     const session = manager.open(specFor());
-    await session.writeFile("a.txt", "hi");
-
-    const id = sandboxClient.created[0];
-    const created = sandboxClient.createOptsOf(id);
-    expect(created.timeoutSeconds).toBeGreaterThanOrEqual(60 * 60);
-    expect(created.metadata?.["oma.dev/tenant"]).toBe(TENANT);
-    expect(created.metadata?.["oma.dev/workspace"]).toBe(WS);
+    await session.writeFile("a", "saved");
+    expect(client.createOptsOf(client.created[0]).metadata).toEqual({
+      "oma.dev/tenant": "tenant_1",
+      "oma.dev/workspace": "ws_1",
+      "security.agents.kruise.io/agent-name": "agentry-workspace",
+      "e2b.agents.kruise.io/csi-volume-config":
+        '[{"pvName":"agentry-workspace-oss","mountPath":"/home/user/workspace","subPath":"tenant_1/ws_1","attributes":{"credentialProviderName":"agentry-oss-rw"}}]',
+    });
+    expect(() =>
+      manager.open(
+        specFor({ workspaceMount: { ...mount, prefix: "other/ws_1/" } }),
+      ),
+    ).toThrow(/prefix/);
+    expect(client.created).toHaveLength(1);
   });
 
-  it("honors EnvSpec image/env and the lifetime default", async () => {
-    const sandboxClient = new FakeSandboxClient();
-    const manager = new DefaultSandboxManager({
-      sandboxClient,
-      persistence: new FakeWorkspacePersistence(),
-      provisionSources: {},
-      defaults: { lifetimeSeconds: 123 },
+  it("a missing mount or expired permissions blocks tools and disposal still preserves saved files", async () => {
+    const { client, manager } = makeManager();
+    const session = manager.open(specFor());
+    await session.writeFile("saved.txt", "already closed");
+    const id = client.created[0];
+    client.setMountFailure(id, "permission denied");
+    await expect(
+      session.writeFile("failed.txt", "must not exist"),
+    ).rejects.toThrow(/Workspace storage/);
+    await expect(session.checkWorkspace()).rejects.toThrow(/Workspace storage/);
+    await expect(session.prepare()).rejects.toThrow(/Workspace storage/);
+    await session.dispose();
+    expect(client.destroyed).toEqual([id]);
+    const next = manager.open(specFor());
+    expect(await next.readFile("saved.txt")).toBe("already closed");
+    await expect(next.readFile("failed.txt")).rejects.toThrow(/no such file/);
+    await expect(
+      session.writeFile("after-dispose", "x"),
+    ).rejects.toBeInstanceOf(SandboxSessionClosed);
+  });
+
+  it("a wrong mounted prefix blocks reads until the same mount recovers", async () => {
+    const { client, manager } = makeManager();
+    const session = manager.open(specFor());
+    await session.writeFile("saved.txt", "saved");
+    const id = client.created[0];
+    client.setMountIdentity(id, {
+      mountPath: "/home/user/workspace",
+      bucket: "agentry",
+      prefix: "tenant_1/other/",
     });
-    const session = manager.open(
-      specFor({ image: "custom:img", env: { FOO: "bar" } }),
+    await expect(session.readFile("saved.txt")).rejects.toThrow(
+      /Workspace storage/,
     );
-    await session.writeFile("a.txt", "hi");
-
-    const opts = sandboxClient.createOptsOf(sandboxClient.created[0]);
-    expect(opts.image).toBe("custom:img");
-    expect(opts.env).toEqual({ FOO: "bar" });
-    expect(opts.timeoutSeconds).toBe(123);
+    client.setMountIdentity(id, {
+      mountPath: "/home/user/workspace",
+      bucket: "agentry",
+      prefix: "tenant_1/ws_1/",
+    });
+    expect(await session.readFile("saved.txt")).toBe("saved");
+    expect(client.created).toHaveLength(1);
   });
 
-  it("fails loud if no ProvisionSource is registered for a projection kind", async () => {
-    const sandboxClient = new FakeSandboxClient();
-    const manager = new DefaultSandboxManager({
-      sandboxClient,
-      persistence: new FakeWorkspacePersistence(),
-      provisionSources: {}, // no "git" adapter
-    });
+  it("cleans failed provisioning and allows the next attempt to create again", async () => {
+    const { client, manager } = makeManager();
+    vi.spyOn(client, "verifyWorkspaceMount").mockRejectedValueOnce(
+      new Error("secret provider detail"),
+    );
+    const session = manager.open(specFor());
+    await expect(session.writeFile("a.txt", "first")).rejects.toThrow(
+      /Workspace storage/,
+    );
+    expect(client.destroyed).toEqual([client.created[0]]);
+    await session.writeFile("a.txt", "retry");
+    expect(await session.readFile("a.txt")).toBe("retry");
+    expect(client.created).toHaveLength(2);
+  });
+
+  it("reprojects Skills by name including renamed targets, and restores them on rebuild", async () => {
+    const { client, manager, provision } = makeManager();
+    const source = {
+      kind: "s3",
+      ref: { tenantId: "tenant_1", skillId: "skill_123" },
+    };
+    provision.seed(source, { "SKILL.md": "v1", "old.txt": "obsolete" });
     const session = manager.open(
+      specFor({ projections: [{ targetPath: "/skills/writer", source }] }),
+    );
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+    await session.writeFile("data.txt", "workspace");
+    const id = client.created[0];
+    await client.writeFile(
+      id,
+      "/home/user/.local/cache.txt",
+      "local dependency",
+    );
+    provision.seed(source, { "SKILL.md": "v2" });
+    await session.prepare([{ targetPath: "/skills/editor", source }]);
+    expect(await session.readFile("/skills/editor/SKILL.md")).toBe("v2");
+    await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow();
+    expect((await session.list()).map((entry) => entry.path)).toEqual([
+      "data.txt",
+    ]);
+    expect(await session.readFile("/home/user/.local/cache.txt")).toBe(
+      "local dependency",
+    );
+    client.reclaim(id);
+    await expect(session.checkWorkspace()).rejects.toThrow(/Workspace storage/);
+    expect(await session.readFile("/skills/editor/SKILL.md")).toBe("v2");
+    expect(await session.readFile("data.txt")).toBe("workspace");
+    await expect(
+      session.readFile("/home/user/.local/cache.txt"),
+    ).rejects.toThrow();
+  });
+
+  it("keeps another Workspace isolated while same-Workspace overwrites remain last-close wins", async () => {
+    const { manager } = makeManager();
+    const a = manager.open(specFor());
+    const b = manager.open(specFor());
+    const other = manager.open(
       specFor({
-        projections: [{ targetPath: "/repo", source: { kind: "git", ref: {} } }],
+        workspaceId: "ws_2",
+        workspaceMount: { ...mount, prefix: "tenant_1/ws_2/" },
       }),
     );
-    await expect(session.readFile("x")).rejects.toThrow(
-      /No ProvisionSource registered for kind "git"/,
-    );
+    await a.writeFile("a.txt", "one");
+    await b.writeFile("a.txt", "two");
+    await other.writeFile("a.txt", "other");
+    expect(await a.readFile("a.txt")).toBe("two");
+    expect(await other.readFile("a.txt")).toBe("other");
   });
 
-  // ─── invariant §4: checkpoint delta + empty no-op ──────────────────────────
+  it.each(["mount check", "removal", "partial projection"])("removes old Skill names when a failed %s is retried after another rename", async (failure) => {
+    const { client, manager, provision } = makeManager();
+    const source = { kind: "s3", ref: { tenantId: "tenant_1", skillId: "skill_123" } };
+    provision.seed(source, { "SKILL.md": "original" });
+    const session = manager.open(specFor({ projections: [{ targetPath: "/skills/writer", source }] }));
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("original");
+    const id = client.created[0];
+    provision.seed(source, { "SKILL.md": "renamed", "helper.txt": "helper" });
+    if (failure === "mount check") client.setMountFailure(id, "storage offline");
+    else if (failure === "removal") vi.spyOn(client, "remove").mockRejectedValueOnce(new Error("remove unavailable"));
+    else {
+      const write = client.writeFile.bind(client);
+      vi.spyOn(client, "writeFile").mockImplementationOnce(write).mockRejectedValueOnce(new Error("copy unavailable"));
+    }
+    await expect(session.prepare([{ targetPath: "/skills/editor", source }])).rejects.toThrow();
+    client.setMountFailure(id);
+    await session.prepare([{ targetPath: "/skills/final-name", source }]);
+    expect(await session.readFile("/skills/final-name/SKILL.md")).toBe("renamed");
+    await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow(/no such file/);
+    await expect(session.readFile("/skills/editor/SKILL.md")).rejects.toThrow(/no such file/);
+    expect(client.created).toHaveLength(1);
+  });
 
-  it("checkpoint returns the delta of files changed this turn", async () => {
-    const { manager, persistence } = makeManager({ seed: [["a.txt", "A"]] });
+  it("pure chat preparation, availability checks and disposal never create a Sandbox", async () => {
+    const { client, manager } = makeManager();
     const session = manager.open(specFor());
-
-    await session.writeFile("b.txt", "B");
-    const result = await session.checkpoint();
-
-    expect(result.changed).toContain("b.txt");
-    expect(result.deleted).toEqual([]);
-    expect(persistence.contentOf(TENANT, WS, "b.txt")).toBe("B");
-  });
-
-  it("checkpoint on a never-created (pure-chat) session → EMPTY, no throw, no create", async () => {
-    const { manager, sandboxClient } = makeManager();
-    const session = manager.open(specFor());
-
-    const result = await session.checkpoint();
-    expect(result).toEqual({
-      tenantId: TENANT,
-      workspaceId: WS,
-      changed: [],
-      deleted: [],
-    });
-    // Did NOT create a sandbox just to sync.
-    expect(sandboxClient.created).toHaveLength(0);
-  });
-
-  it("checkpoint on a reclaimed sandbox → EMPTY, no throw", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["f", "1"]] });
-    const session = manager.open(specFor());
-
-    await session.readFile("f"); // create + hydrate
-    const id = sandboxClient.created[0];
-    sandboxClient.reclaim(id);
-
-    const result = await session.checkpoint();
-    expect(result.changed).toEqual([]);
-    expect(result.deleted).toEqual([]);
-  });
-
-  // ─── turn-boundary downward refresh ─────────────────────────────
-
-  it("refresh on a cold session is a no-op and never creates a sandbox", async () => {
-    const { manager, sandboxClient } = makeManager();
-    const session = manager.open(specFor());
-
-    await session.refresh();
-
-    expect(sandboxClient.created).toEqual([]);
-    expect(sandboxClient.destroyed).toEqual([]);
-  });
-
-  it("refresh reconciles Workspace and reprojects Skills in the same live sandbox", async () => {
-    const { manager, sandboxClient, persistence, provision } = makeManager({
-      seed: [
-        ["edit.txt", "before"],
-        ["deleted.txt", "remove me"],
-      ],
-    });
-    const coord = { kind: "s3", ref: { tenantId: TENANT, skillId: "skl_1" } };
-    provision.seed(coord, {
-      "SKILL.md": "old skill",
-      "obsolete.md": "remove me",
-    });
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/skl_1", source: coord }] }),
-    );
-    expect(await session.readFile("edit.txt")).toBe("before");
-    const id = sandboxClient.created[0];
-
-    // Simulate idle-time Host edits to both authoritative domains.
-    persistence.seed(TENANT, WS, "edit.txt", "from web");
-    persistence.seed(TENANT, WS, "added.txt", "new from web");
-    persistence.delete(TENANT, WS, "deleted.txt");
-    provision.seed(coord, { "SKILL.md": "new skill" });
-
-    await session.refresh();
-
-    expect(sandboxClient.created).toEqual([id]);
-    expect(sandboxClient.destroyed).toEqual([]);
-    expect(await sandboxClient.readFile(id, "/home/user/edit.txt")).toBe("from web");
-    expect(await sandboxClient.readFile(id, "/home/user/added.txt")).toBe("new from web");
-    await expect(
-      sandboxClient.readFile(id, "/home/user/deleted.txt"),
-    ).rejects.toThrow();
-    expect(await sandboxClient.readFile(id, "/skills/skl_1/SKILL.md")).toBe(
-      "new skill",
-    );
-    await expect(
-      sandboxClient.readFile(id, "/skills/skl_1/obsolete.md"),
-    ).rejects.toThrow();
-    expect(provision.projected).toHaveLength(2);
-  });
-
-  it("refresh replaces the equipped projection set without rebuilding", async () => {
-    const { manager, sandboxClient, provision } = makeManager();
-    const oldCoord = { kind: "s3", ref: { skillId: "old" } };
-    const newCoord = { kind: "s3", ref: { skillId: "new" } };
-    provision.seed(oldCoord, { "SKILL.md": "old" });
-    provision.seed(newCoord, { "SKILL.md": "new" });
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/old", source: oldCoord }] }),
-    );
-    expect(await session.readFile("/skills/old/SKILL.md")).toBe("old");
-    const id = sandboxClient.created[0];
-
-    await session.refresh([
-      { targetPath: "/skills/new", source: newCoord },
-    ]);
-
-    expect(sandboxClient.created).toEqual([id]);
-    expect(sandboxClient.destroyed).toEqual([]);
-    await expect(session.readFile("/skills/old/SKILL.md")).rejects.toThrow();
-    expect(await session.readFile("/skills/new/SKILL.md")).toBe("new");
-  });
-
-  it("retries a failed checkpoint before downward refresh preserves sandbox-only bytes", async () => {
-    const sandboxClient = new FakeSandboxClient();
-    const backing = new FakeWorkspacePersistence();
-    let failNextSync = true;
-    const persistence: WorkspacePersistence = {
-      hydrate: (target) => backing.hydrate(target),
-      refresh: (hydration, target) => backing.refresh(hydration, target),
-      async sync(hydration, target) {
-        if (failNextSync) {
-          failNextSync = false;
-          throw new Error("temporary medium failure");
-        }
-        return backing.sync(hydration, target);
-      },
-    };
-    const manager = new DefaultSandboxManager({
-      sandboxClient,
-      persistence,
-      provisionSources: {},
-    });
-    const session = manager.open(specFor());
-    await session.list();
-    const id = sandboxClient.created[0];
-    const png = Uint8Array.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff,
-    ]);
-    await sandboxClient.writeFileBytes(id, "/home/user/result.png", png);
-
-    await expect(session.checkpoint()).rejects.toThrow("temporary medium failure");
-    expect(backing.bytesOf(TENANT, WS, "result.png")).toBeUndefined();
-
-    await session.refresh();
-
-    expect(backing.bytesOf(TENANT, WS, "result.png")).toEqual(png);
-    expect(await sandboxClient.readFileBytes(id, "/home/user/result.png")).toEqual(png);
-  });
-
-  // ─── invariant §5/§8: dispose sync-before-destroy, idempotent, closes ─────
-
-  it("dispose syncs the last turn's files BEFORE destroying the sandbox", async () => {
-    const { manager, sandboxClient, persistence } = makeManager({
-      seed: [["a.txt", "A"]],
-    });
-    const session = manager.open(specFor());
-
-    await session.writeFile("late.txt", "written in the last turn");
-    const id = sandboxClient.created[0];
-
-    const result = await session.dispose();
-
-    // The last turn's file was synced back (pre-sync is load-bearing) ...
-    expect(result.changed).toContain("late.txt");
-    expect(persistence.contentOf(TENANT, WS, "late.txt")).toBe(
-      "written in the last turn",
-    );
-    // ... and only then was the sandbox destroyed.
-    expect(sandboxClient.destroyed).toEqual([id]);
-    expect(sandboxClient.liveCount).toBe(0);
-  });
-
-  it("dispose on a pure-chat session (never created) → empty no-op", async () => {
-    const { manager, sandboxClient } = makeManager();
-    const session = manager.open(specFor());
-
-    const result = await session.dispose();
-    expect(result).toEqual({
-      tenantId: TENANT,
-      workspaceId: WS,
-      changed: [],
-      deleted: [],
-    });
-    expect(sandboxClient.created).toHaveLength(0);
-    expect(sandboxClient.destroyed).toHaveLength(0);
-  });
-
-  it("dispose is idempotent — a second dispose is an empty no-op", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["f", "1"]] });
-    const session = manager.open(specFor());
-
-    await session.readFile("f");
-    const first = await session.dispose();
-    expect(first.changed.length + first.deleted.length).toBeGreaterThanOrEqual(0);
-
-    const second = await session.dispose();
-    expect(second).toEqual({
-      tenantId: TENANT,
-      workspaceId: WS,
-      changed: [],
-      deleted: [],
-    });
-    // Destroyed exactly once.
-    expect(sandboxClient.destroyed).toHaveLength(1);
-  });
-
-  it("after dispose, any primitive throws SandboxSessionClosed (no resurrection)", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["f", "1"]] });
-    const session = manager.open(specFor());
-
-    await session.readFile("f");
+    await session.prepare();
+    await session.checkWorkspace();
     await session.dispose();
-
-    await expect(session.readFile("f")).rejects.toBeInstanceOf(
-      SandboxSessionClosed,
-    );
-    await expect(session.writeFile("f", "x")).rejects.toBeInstanceOf(
-      SandboxSessionClosed,
-    );
-    await expect(session.list()).rejects.toBeInstanceOf(SandboxSessionClosed);
-    await expect(drainExec(session.exec(["echo", "hi"]))).rejects.toBeInstanceOf(
-      SandboxSessionClosed,
-    );
-    // No new sandbox was created by the rejected primitives.
-    expect(sandboxClient.created).toHaveLength(1);
+    await session.dispose();
+    expect(client.created).toEqual([]);
+    expect(client.destroyed).toEqual([]);
   });
 
-  // ─── invariant §6: projection inside workspace fails loud at open ─────────
-
-  it("rejects a legacy workspaceDir override outside canonical /home/user", () => {
-    const { manager } = makeManager();
-    const legacySpec = {
-      ...specFor(),
-      workspaceDir: "/workspace",
-    } as EnvSpec;
-
-    expect(() => manager.open(legacySpec)).toThrow(/workspace root is fixed.*\/home\/user/i);
-  });
-
-  it("open FAILS LOUD when a projection.targetPath is inside workspaceDir", () => {
-    const { manager } = makeManager();
-    expect(() =>
-      manager.open(
-        specFor({
-          projections: [
-            {
-              targetPath: "/home/user/skills",
-              source: { kind: "s3", ref: {} },
-            },
-          ],
-        }),
-      ),
-    ).toThrow(/inside the workspace/);
-  });
-
-  it("open fails loud at open time — before any sandbox is created", () => {
-    const { manager, sandboxClient } = makeManager();
-    expect(() =>
-      manager.open(
-        specFor({
-          projections: [
-            { targetPath: "/home/user/x", source: { kind: "s3", ref: {} } },
-          ],
-        }),
-      ),
-    ).toThrow();
-    expect(sandboxClient.created).toHaveLength(0);
-  });
-
-  // ─── path handling ─────────────────────────────────────────────────────────
-
-  it("does NOT guard against `..` — the sandbox is the trust boundary, not this path rewrite", async () => {
-    // Sandbox-as-tool convention (E2B / opensandbox / Anthropic code exec): the
-    // disposable sandbox is the isolation boundary, so paths are taken at face
-    // value. A `..` is passed through to the sandbox (which resolves it against
-    // the same throwaway container) — it is NOT rejected at this layer with an
-    // "escapes workspace" error. Here it simply hits a non-existent file, and
-    // the error that surfaces is the sandbox's own not-found, not a path guard.
-    const { manager } = makeManager();
+  it("concurrent tool calls share one create and keep cwd, env, timeout and Interrupt signal", async () => {
+    const { client, manager } = makeManager();
     const session = manager.open(specFor());
-    await expect(session.readFile("../etc/passwd")).rejects.not.toThrow(
-      /escapes workspace/,
-    );
-  });
-
-  it("list returns workspace-relative paths and supports a glob filter", async () => {
-    const { manager } = makeManager({
-      seed: [
-        ["src/a.ts", "a"],
-        ["src/b.ts", "b"],
-        ["README.md", "r"],
-      ],
-    });
-    const session = manager.open(specFor());
-
-    const all = await session.list();
-    expect(all.map((e) => e.path).sort()).toEqual([
-      "README.md",
-      "src/a.ts",
-      "src/b.ts",
+    await Promise.all([
+      session.writeFile("a", "A"),
+      session.writeFile("b", "B"),
     ]);
-
-    const ts = await session.list("**/*.ts");
-    expect(ts.map((e) => e.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(client.created).toHaveLength(1);
+    const exec = vi.spyOn(client, "exec");
+    const signal = new AbortController().signal;
+    for await (const _chunk of session.exec(["echo", "hi"], {
+      timeoutSeconds: 0,
+      signal,
+      env: { FOO: "bar" },
+    })) {
+      /* drain */
+    }
+    expect(exec).toHaveBeenCalledWith(client.created[0], ["echo", "hi"], {
+      cwd: "/home/user/workspace",
+      timeoutSeconds: 0,
+      signal,
+      env: { FOO: "bar" },
+    });
   });
 
-  // ─── §3 structural: SandboxSession IS a ToolExecutor ──────────────────────
-
-  it("a SandboxSession is structurally a ToolExecutor", () => {
-    const { manager } = makeManager();
+  it("retries disposal after a gateway failure without reopening execution", async () => {
+    const { client, manager } = makeManager();
     const session = manager.open(specFor());
-    // Compiles only if the primitive signatures match exactly.
-    const asExecutor: ToolExecutor = session satisfies ToolExecutor;
-    expect(asExecutor).toBe(session);
+    await session.writeFile("saved", "kept");
+    vi.spyOn(client, "destroy").mockRejectedValueOnce(
+      new Error("gateway unavailable"),
+    );
+    await expect(session.dispose()).rejects.toThrow(/gateway unavailable/);
+    await expect(session.readFile("saved")).rejects.toBeInstanceOf(
+      SandboxSessionClosed,
+    );
+    await session.dispose();
+    expect(client.destroyed).toHaveLength(1);
   });
 
-  // ─── reserved list/reclaim (no active sweep today) ────────────────────────
-
-  it("list is a reserved no-op returning [] (no cross-session registry)", async () => {
-    const { manager } = makeManager();
-    expect(await manager.list()).toEqual([]);
-    expect(await manager.list({ tenantId: TENANT })).toEqual([]);
-  });
-
-  it("reclaim best-effort destroys a known sandbox id", async () => {
-    const { manager, sandboxClient } = makeManager({ seed: [["f", "1"]] });
-    const session = manager.open(specFor());
-    await session.readFile("f");
-    const id = sandboxClient.created[0];
-
-    await manager.reclaim(id);
-    expect(sandboxClient.destroyed).toContain(id);
-    // Idempotent: reclaiming an unknown id is harmless.
-    await expect(manager.reclaim("sbx-unknown")).resolves.toBeUndefined();
+  it("does not expose an incompletely projected Sandbox when failed cleanup is retried", async () => {
+    const { client, manager, provision } = makeManager();
+    const source = { kind: "s3", ref: { skillId: "skill_123" } };
+    provision.seed(source, { "SKILL.md": "body" });
+    vi.spyOn(provision, "project").mockRejectedValueOnce(
+      new Error("Skill source unavailable"),
+    );
+    vi.spyOn(client, "destroy").mockRejectedValueOnce(
+      new Error("gateway unavailable"),
+    );
+    const session = manager.open(
+      specFor({ projections: [{ targetPath: "/skills/writer", source }] }),
+    );
+    await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow(
+      /Skill source/,
+    );
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("body");
   });
 });

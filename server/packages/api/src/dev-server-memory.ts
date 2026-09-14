@@ -28,6 +28,7 @@ import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
+const adapterProcessEnv = adapterProcessEnvFromHost(process.env);
 
 // ─── Claude Code Adapter (spawns `claude` CLI) ──────────────────────────────
 
@@ -64,7 +65,7 @@ class DevClaudeCodeAdapter implements Adapter {
 
     const child = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: adapterProcessEnvFromHost(process.env),
+      env: adapterProcessEnv,
     });
     child.stdin.end();
 
@@ -196,7 +197,7 @@ class DevCodexAdapter implements Adapter {
 
     const child = spawn("codex", args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: adapterProcessEnvFromHost(process.env),
+      env: adapterProcessEnv,
     });
     child.stdin.end();
 
@@ -269,10 +270,10 @@ async function main() {
   // Create a dev seed key so auth can be tested
   await stores.apiKeyStore.create("dev", "dev-console");
 
-  // In-memory dev mode has no S3 Workspace to hydrate from, so the
-  // sandbox-backed ToolExecutor is intentionally not wired here. Use the full
-  // dev server (S3 + SANDBOX_ENABLED=true) to exercise the kruise sandbox.
-  // Host-owned values are scoped to allowed Agents and stay out of Agent records.
+  // In-memory development has no real OSS mount. Use the full server with
+  // Workspace OSS configuration to exercise sandbox-backed execution.
+  // Keep Host env translation identical to the full server even though the
+  // in-memory entrypoint has no real SandboxManager.
   const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({

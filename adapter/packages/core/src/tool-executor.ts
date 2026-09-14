@@ -12,7 +12,7 @@
  * Concrete implementations:
  *  - in-process / local executor over a per-call temp dir (#39, verifies the
  *    seam before the real sandbox lands)
- *  - sandbox-backed executor that hydrates from / syncs to an S3 Workspace and
+ *  - sandbox-backed executor over a verified OSS-mounted Workspace that
  *    proxies into a kruise Sandbox (#42/#43)
  */
 
@@ -79,7 +79,7 @@ export class ExecAbortedBeforeStartError extends Error {
  * a split-brain cwd where path tools are virtualized under one root while bash
  * and extensions (including subagents) inherit another.
  */
-export const SANDBOX_WORKSPACE_ROOT = "/home/user";
+export const SANDBOX_WORKSPACE_ROOT = "/home/user/workspace";
 
 /** Options for a single `exec` invocation. */
 export interface ExecOptions {

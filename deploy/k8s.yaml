@@ -1,3 +1,9 @@
+# Managed WW remains off by default. To enable it, provision its Secret first
+# (kubectl --kubeconfig "$OMA_APP_KUBECONFIG" -n oma-infra create secret generic ...),
+# then configure all three variables together and restart the Host:
+# DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL, DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS,
+# DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN (from oma-secrets OPENGROVE_WW_ACCESS_TOKEN).
+# The auto-story per-Agent Secret is a separate existing configuration.
 # Open Managed Agents Server + Web on the `agent-platform` ACS cluster in
 # cn-shanghai. Application resources live in `oma-infra`; the ACK-managed
 # sandbox control plane and warm pools live in `sandbox-system`.
@@ -20,6 +26,8 @@
 #     --from-literal=ALIYUN_ACCESS_KEY_ID=... \
 #     --from-literal=ALIYUN_ACCESS_KEY_SECRET=... \
 #     --from-literal=ALIYUN_SUPABASE_INSTANCE=... \
+#     --from-literal=WORKSPACE_OSS_ACCESS_KEY_ID=... \
+#     --from-literal=WORKSPACE_OSS_ACCESS_KEY_SECRET=... \
 #     --from-literal=E2B_DOMAIN=... \
 #     --from-literal=E2B_API_KEY=... \
 #     --from-literal=DEFAULT_SANDBOX_VFS_TOKEN=... \
@@ -69,13 +77,23 @@ data:
   S3_ENDPOINT: "http://172.17.255.52:80/storage/v1"
   S3_BUCKET: "workspace"
   STORAGE_PUBLIC_BASE: "http://172.17.255.52:80/storage/v1"
+  WORKSPACE_OSS_REGION: "oss-cn-shanghai"
+  WORKSPACE_OSS_BUCKET: "agentry"
+  WORKSPACE_OSS_ENDPOINT: "https://oss-cn-shanghai.aliyuncs.com"
+  WORKSPACE_OSS_PUBLIC_ENDPOINT: "https://oss-cn-shanghai.aliyuncs.com"
+  # Shanghai CSI identity resources. Host object-storage credentials stay on
+  # the Host; Sandbox credentials are issued separately by Agent Identity/RRSA.
+  WORKSPACE_OSS_AGENT_NAME: "agentry-workspace"
+  WORKSPACE_OSS_PV_NAME: "agentry-workspace-oss"
+  WORKSPACE_OSS_CREDENTIAL_PROVIDER: "agentry-oss-rw"
   # In-cluster sing-box mixed inbound used for external LLM calls.
   OMA_PROXY_URL: "http://10.0.165.246:7890"
   # Sandbox is mandatory (issue #54). This turns on the sandbox-backed
   # ToolExecutor; the E2B endpoint + key come from oma-secrets (below).
   SANDBOX_ENABLED: "true"
   # E2B templateID = SandboxSet metadata.name in sandbox-system.
-  SANDBOX_TEMPLATE: "auto-story"
+  SANDBOX_TEMPLATE: "auto-story-v2"
+  E2B_REQUEST_TIMEOUT_MS: "185000"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -126,6 +144,14 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: REDIS_PASSWORD } }
             - name: SUPABASE_SERVICE_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: SUPABASE_SERVICE_KEY } }
+            # Required Host OSS credentials, independent of the Sandbox's RRSA
+            # identity and the Supabase service key used only for Skills.
+            - name: WORKSPACE_OSS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_ID } }
+            - name: WORKSPACE_OSS_ACCESS_KEY_SECRET
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_SECRET } }
+            - name: WORKSPACE_OSS_STS_TOKEN
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_STS_TOKEN, optional: true } }
             # Deployment-scoped credentials for the managed Aliyun RDS
             # Supabase Sessions MCP. Tenant and query shape are injected and
             # fixed by the Host; the Agent cannot supply SQL or an endpoint.

@@ -1,25 +1,54 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import { ArrowUp, Clock } from "lucide-react";
+import { ArrowUp, Clock, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { SessionEvent } from "@/lib/types";
 import type { EquippedSkill } from "@/lib/hooks/use-skills";
 
+/** One Queued Input to show above the composer, in the order it will run. */
+export interface QueuedInput {
+  /** Stable identity — the Host's pending-event id. */
+  id: string;
+  text: string;
+}
+
 interface MessageInputProps {
-  onSend: (text: string) => void;
+  onSend: (text: string) => void | Promise<void>;
   disabled?: boolean;
-  pendingMessages?: SessionEvent[];
+  /** Whether the Host is still accepting the current send request. */
+  sending?: boolean;
+  /**
+   * Input accepted by the Host but not yet executing, oldest first. Reflects the
+   * server's queue rather than this component's own sends, so it stays correct
+   * between Turns and across a reload (issue #114).
+   */
+  queuedInput?: QueuedInput[];
+  /** Whether more Queued Input exists beyond the listed entries. */
+  hasMoreQueuedInput?: boolean;
   skills?: Array<Pick<EquippedSkill, "id" | "name" | "description">>;
+  /**
+   * Stop the Session's running Turn. When given together with `running`, the
+   * button becomes Stop — one control for "the Agent is working" instead of a
+   * Send button the user has to guess is inert (issue #113).
+   */
+  onInterrupt?: () => void;
+  /** Whether a Turn of this Session is running right now. */
+  running?: boolean;
 }
 
 export function MessageInput({
   onSend,
   disabled = false,
-  pendingMessages = [],
+  sending = false,
+  queuedInput = [],
+  hasMoreQueuedInput = false,
   skills = [],
+  onInterrupt,
+  running = false,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const skillQuery =
@@ -44,16 +73,26 @@ export function MessageInput({
     textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
   }, []);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
-    setText("");
-    requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
-    });
+    if (!trimmed || disabled || sending || submittingRef.current) return;
+    submittingRef.current = true;
+    setSendError(null);
+    try {
+      await onSend(trimmed);
+      setText((current) => current === text ? "" : current);
+      requestAnimationFrame(() => {
+        if (textareaRef.current && !textareaRef.current.value) {
+          textareaRef.current.style.height = "auto";
+        }
+      });
+    } catch (error) {
+      setSendError(error instanceof Error && error.message
+        ? error.message
+        : "Failed to send message. Please try again.");
+    } finally {
+      submittingRef.current = false;
+    }
   }
 
   function selectSkill(index: number) {
@@ -100,26 +139,45 @@ export function MessageInput({
     }
   }
 
-  const canSend = text.trim().length > 0 && !disabled;
+  // While a Turn runs the button's job is to stop it, not to send: a Stop needs
+  // no typed text to be meaningful. Enter still queues a message, so typing
+  // ahead during a running Turn keeps working.
+  const showStop = running && Boolean(onInterrupt);
+  const canSend = text.trim().length > 0 && !disabled && !sending;
+  const buttonEnabled = showStop || canSend;
 
   return (
     <div className="bg-[var(--color-bg)] px-6 py-4">
-      {pendingMessages.length > 0 && (
-        <div className="mx-auto mb-2 max-w-3xl space-y-1.5">
-          {pendingMessages.map((msg, i) => {
-            const data = msg.data as { content: Array<{ type: string; text: string }> };
-            const msgText = data.content?.[0]?.text || "";
-            return (
-              <div key={i} className="flex items-center gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
-                <Clock className="h-3.5 w-3.5 flex-shrink-0 animate-pulse" />
-                <span className="truncate">{msgText}</span>
-                <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
-              </div>
-            );
-          })}
+      {queuedInput.length > 0 && (
+        <div
+          className="mx-auto mb-2 max-w-3xl space-y-1.5"
+          aria-label="Queued input"
+        >
+          {queuedInput.map((entry) => (
+            <div key={entry.id} className="flex items-center gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
+              <Clock className="h-3.5 w-3.5 flex-shrink-0 animate-pulse" />
+              <span className="truncate">{entry.text}</span>
+              <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
+            </div>
+          ))}
+          {hasMoreQueuedInput && (
+            <p className="px-3 text-xs text-[var(--color-fg-subtle)]">
+              More input is queued
+            </p>
+          )}
         </div>
       )}
       <div className="mx-auto max-w-3xl">
+        {sending && (
+          <p role="status" className="mb-2 px-3 text-xs text-[var(--color-fg-subtle)]">
+            Sending...
+          </p>
+        )}
+        {sendError && (
+          <p role="alert" className="mb-2 px-3 text-sm text-red-500">
+            {sendError}
+          </p>
+        )}
         <div className="relative rounded-2xl bg-[var(--color-bg-surface)] shadow-sm ring-1 ring-[var(--color-border)]  focus-within:ring-[var(--color-fg-subtle)] transition-shadow">
           {skillSuggestions.length > 0 && (
             <div
@@ -168,7 +226,7 @@ export function MessageInput({
             }}
             onKeyDown={handleKeyDown}
             placeholder="Send a message..."
-            disabled={disabled}
+            disabled={disabled || sending}
             rows={1}
             aria-autocomplete="list"
             aria-controls={skillSuggestions.length > 0 ? "equipped-skill-suggestions" : undefined}
@@ -181,17 +239,22 @@ export function MessageInput({
           />
           <button
             type="button"
-            aria-label="Send message"
-            onClick={handleSubmit}
-            disabled={!canSend}
+            aria-label={showStop ? "Stop generating" : "Send message"}
+            title={showStop ? "Stop the current turn" : undefined}
+            onClick={showStop ? onInterrupt : handleSubmit}
+            disabled={!buttonEnabled}
             className={cn(
               "absolute bottom-2.5 right-3 flex h-7 w-7 items-center justify-center rounded-lg transition-all",
-              canSend
+              buttonEnabled
                 ? "bg-[var(--color-fg)] text-white hover:opacity-80"
                 : "bg-[var(--color-bg-muted)] text-[var(--color-fg-subtle)]"
             )}
           >
-            <ArrowUp className="h-4 w-4" />
+            {showStop ? (
+              <Square className="h-3 w-3 fill-current" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
           </button>
         </div>
       </div>

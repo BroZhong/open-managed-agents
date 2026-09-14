@@ -54,7 +54,21 @@ ssh vfs-dev \
 ```
 
 The default image tag is the current 12-character Git SHA. Local caches under
-`.buildx-cache/` keep dependency layers warm across builds. The Web image uses
+`.buildx-cache/` keep dependency layers warm across builds. BuildKit also keeps
+architecture-specific pnpm stores and npm download caches on the selected
+builder. Reuse that builder between releases; deleting it or pruning its cache
+requires downloading dependencies again. Cache mounts survive failed installs,
+but are not included in the published runtime image or the local layer export.
+
+Web source edits reuse the manifest-only install layer. Server dependencies,
+adapter dependencies, and Pi extensions are separate stages, so a Server-only
+dependency change does not reinstall Pi extensions. Extensions install in
+separate cached steps and prefer already downloaded packages. Check the build
+output for `CACHED`; a second unchanged build should perform no installations.
+ACR builds disable provenance attestations because this registry rejects the
+BuildKit attestation manifest format.
+
+The Web image uses
 the same-origin `/api` endpoint by default; override it with `WEB_API_URL` only
 when building for a different ingress layout.
 

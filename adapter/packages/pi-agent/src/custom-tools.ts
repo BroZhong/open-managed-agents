@@ -29,7 +29,7 @@ import { sandboxSearchFiles, sandboxSearchSpawn } from "./sandbox-search.js";
 export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
   const fs = executorFileSystem(executor);
   const cwd = SANDBOX_WORKSPACE_ROOT;
-  const homeDir = cwd;
+  const homeDir = "/home/user";
   return [
     defineTool(createBashToolDefinition(cwd, {
       operations: bashOperations(executor),

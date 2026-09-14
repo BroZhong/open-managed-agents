@@ -33,6 +33,7 @@ export interface RedisLike {
   rpush(key: string, ...values: string[]): Promise<number>;
   lpop(key: string): Promise<string | null>;
   lindex(key: string, index: number): Promise<string | null>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
   lrem(key: string, count: number, value: string): Promise<number>;
   llen(key: string): Promise<number>;
 

@@ -106,8 +106,11 @@ export type {
   ArtifactPutInput,
 } from "./interfaces/artifact-store.js";
 
-export { S3ArtifactStore } from "./s3/artifact-store.js";
-export type { S3ArtifactStoreOptions } from "./s3/artifact-store.js";
+
+export { OSSArtifactStore } from "./oss/artifact-store.js";
+export type { OSSArtifactStoreOptions, OSSObjectClient } from "./oss/artifact-store.js";
+export { workspaceObjectPrefix, validateArtifactPath } from "./workspace-path.js";
+export { resolveArtifactContentType } from "./artifact-content-type.js";
 
 export { S3SkillArtifactStore } from "./s3/skill-artifact-store.js";
 export type { S3SkillArtifactStoreOptions } from "./s3/skill-artifact-store.js";

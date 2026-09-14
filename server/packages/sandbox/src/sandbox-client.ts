@@ -1,17 +1,8 @@
+import type { WorkspaceMountTarget } from "./workspace-mount.js";
+
 /**
- * SandboxClient — the low-level port over a single disposable sandbox.
- *
- * Per ADR-0002 §4, the sandbox backend is the official `e2b` SDK against a
- * self-hosted gateway (#53, replacing the kruise CRD; NOT
- * `@alibaba-group/opensandbox`). Sandboxes are short-lived and hold no
- * authoritative state: created lazily, hydrated from S3, and destroyed at
- * session end — there is no pause/resume, because that model is 1:1
- * per-instance and conflicts with 1:N Workspace sharing.
- *
- * This port is deliberately small (`create/exec/readFile/writeFile/list/
- * destroy`) so it can be backed by e2b in production and by a fake in tests,
- * and so the {@link SandboxManager} above it never learns which backend it
- * is talking to.
+ * Low-level port over a disposable E2B sandbox. Workspace files reside in the
+ * identity-scoped OSS mount; local HOME and Skill projections are disposable.
  */
 
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -75,8 +66,7 @@ export interface SandboxHandle {
 }
 
 /**
- * Low-level sandbox lifecycle + file/exec port. One implementation targets the
- * kruise CRD; a fake implements the same surface in-memory for tests.
+ * Low-level sandbox lifecycle + file/exec port. Production uses the E2B SDK; a fake implements the same surface in-memory for tests.
  */
 export interface SandboxClient {
   /** Native I/O primitives at absolute sandbox paths, separate from persistence. */
@@ -84,6 +74,9 @@ export interface SandboxClient {
 
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
+
+  /** Verify the real OSS mount, exact prefix and ordinary-user read/write access. */
+  verifyWorkspaceMount(id: string, target: WorkspaceMountTarget): Promise<void>;
 
   /** Run a command (argv form — no shell parsing implied) and stream output. */
   exec(
@@ -95,7 +88,7 @@ export interface SandboxClient {
   /** Read a UTF-8 file at an absolute path inside the sandbox. */
   readFile(id: string, path: string): Promise<string>;
 
-  /** Read exact file bytes without UTF-8 decoding (Workspace persistence). */
+  /** Read exact file bytes without UTF-8 decoding (including binary Workspace files). */
   readFileBytes(id: string, path: string): Promise<Uint8Array>;
 
   /** Write a UTF-8 file, creating parent directories as needed. */
@@ -121,4 +114,19 @@ export interface SandboxClient {
 
   /** Tear the sandbox down. Idempotent — destroying twice is a no-op. */
   destroy(id: string): Promise<void>;
+}
+
+export interface SandboxFsAccess {
+  /** Write a UTF-8 file at an absolute sandbox path, creating parents. */
+  writeFile(path: string, content: string): Promise<void>;
+  /** Read a UTF-8 file at an absolute sandbox path. */
+  readFile(path: string): Promise<string>;
+  /** Write exact bytes at an absolute sandbox path, creating parents. */
+  writeFileBytes(path: string, content: Uint8Array): Promise<void>;
+  /** Read exact bytes at an absolute sandbox path. */
+  readFileBytes(path: string): Promise<Uint8Array>;
+  /** Remove a file or directory tree. Missing paths are an idempotent no-op. */
+  remove(path: string): Promise<void>;
+  /** List files under an absolute sandbox directory (recursively). */
+  list(dir: string): Promise<SandboxFileEntry[]>;
 }

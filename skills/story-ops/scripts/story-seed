@@ -1,0 +1,1102 @@
+#!/usr/bin/env -S node --no-warnings
+
+const fs = require("fs");
+const http = require("http");
+const https = require("https");
+const path = require("path");
+const crypto = require("crypto");
+
+const SKILL_ROOT = path.resolve(__dirname, "..");
+const WORKSPACE = path.resolve(process.env.STORY_SEED_WORKSPACE || process.cwd());
+const SYSTEM_DIR = path.join(WORKSPACE, ".story-seed");
+
+const REQUIRED_FIELDS = [
+  "视角人物",
+  "场景目标",
+  "核心冲突",
+  "章末钩子",
+  "关键揭示",
+  "章节高潮",
+  "对白重点",
+];
+
+const REQUIRED_SECTIONS = [
+  "故事基础信息",
+  "角色表",
+  "付费点",
+  "分章大纲",
+];
+
+function usage() {
+  return `故事种子命令行工具
+
+用法：
+  story-seed doctor
+  story-seed init <项目名>
+  story-seed validate <章节大纲.md> [--json] [--fix]
+  story-seed ops:ping
+  story-seed ops:submit <项目名|项目目录> [--force] [--allow-external]
+  story-seed ops:feedback [--json]
+  story-seed smoke
+`;
+}
+
+function slugify(input) {
+  const s = String(input || "").trim();
+  const slug = s
+    .normalize("NFKC")
+    .replace(/[^\p{Letter}\p{Number}\s._-]/gu, "")
+    .trim()
+    .replace(/[\s_]+/gu, "-")
+    .replace(/-+/gu, "-")
+    .replace(/^\.+|\.+$/gu, "")
+    .toLowerCase();
+  return slug || `untitled-project-${contentHash(s || "untitled-project").slice(0, 8)}`;
+}
+
+function legacySlugify(input) {
+  const s = String(input || "").trim();
+  return s
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .toLowerCase() || "untitled-project";
+}
+
+function projectsRoot() {
+  return path.join(WORKSPACE, "项目");
+}
+
+function projectDirForInit(projectId) {
+  const preferred = path.join(projectsRoot(), slugify(projectId));
+  const legacySlug = legacySlugify(projectId);
+  const legacy = path.join(projectsRoot(), legacySlug);
+  if (!fs.existsSync(preferred) && legacySlug !== "untitled-project" && fs.existsSync(legacy)) return legacy;
+  return preferred;
+}
+
+function isSafeProjectName(value) {
+  const name = String(value || "").trim();
+  return Boolean(name)
+    && name !== "."
+    && name !== ".."
+    && !name.includes("/")
+    && !name.includes("\\");
+}
+
+function realpathIfExists(target) {
+  try {
+    return fs.realpathSync(target);
+  } catch {
+    return "";
+  }
+}
+
+function isInside(parent, child) {
+  const parentReal = realpathIfExists(parent);
+  const childReal = realpathIfExists(child);
+  if (!parentReal || !childReal) return false;
+  const rel = path.relative(parentReal, childReal);
+  return rel === "" || (rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeIfMissing(file, text) {
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, text, "utf8");
+  }
+}
+
+function globalNotesTemplate() {
+  return `# 共创笔记
+
+只记**跨项目复用的作者决策及其原因**（决定 + 原因成对）。
+你自己能推导的 craft 经验、项目进度、产物总结不写；只对单个项目成立的决策写进 项目/<项目名>/创作决策.md。
+硬判据：条目里出现项目名、角色名或章节号的，一律进项目级 创作决策.md；拿不准先记项目级，作者换了项目还表达同样偏好，再升级到这里。
+
+## 故事架构师记录区
+-
+
+## 金牌编辑记录区
+-
+`;
+}
+
+function ensureGlobalNotes() {
+  ensureDir(WORKSPACE);
+  writeIfMissing(path.join(WORKSPACE, "共创笔记.md"), globalNotesTemplate());
+}
+
+function initProject(projectId) {
+  const dir = projectDirForInit(projectId);
+  ensureGlobalNotes();
+  ensureDir(dir);
+  writeIfMissing(
+    path.join(dir, "故事设计.md"),
+    `# 故事设计
+
+## 故事基础信息
+题材类型：
+背景设定：
+核心卖点：
+
+## 角色表
+姓名：
+身份：
+性格特征：
+核心动机：
+关键关系：
+
+## 付费点
+免费章节：
+付费起始：
+
+## 待确认问题
+-
+`,
+  );
+  writeIfMissing(
+    path.join(dir, "章节大纲.md"),
+    `# 大纲提交稿
+
+## 一、故事基础信息
+题材类型：
+背景设定：
+核心卖点：
+
+## 二、角色表
+姓名：
+身份：
+性格特征：
+核心动机：
+关键关系：
+
+## 三、付费点
+免费章节：
+付费起始：
+
+## 四、分章大纲
+
+第 1 章：章节标题
+- 视角人物：
+- 场景目标：
+- 核心冲突：
+- 章末钩子：
+- 关键揭示：
+- 章节高潮：
+- 对白重点：
+`,
+  );
+  return dir;
+}
+
+function chapterBlocks(text) {
+  const heading = /^\s*(?:#{1,6}\s*)?(?:Chapter\s+(\d+)\s*[：:]\s*(.+)|第\s*(\d+)\s*章[：:]\s*(.+))\s*$/gim;
+  const matches = [...text.matchAll(heading)];
+  return matches.map((m, idx) => {
+    const start = m.index;
+    const end = idx + 1 < matches.length ? matches[idx + 1].index : text.length;
+    return {
+      number: Number(m[1] || m[3]),
+      title: (m[2] || m[4]).trim(),
+      text: text.slice(start, end).trim(),
+    };
+  });
+}
+
+function getField(blockText, fieldName) {
+  const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const fieldDelimiter = "(?:[：:]\\s*(?:\\*\\*)?|(?:\\*\\*)\\s*[：:])";
+  const heading = "\\n\\s*(?:#{1,6}\\s*)?(?:Chapter\\s+\\d+\\s*[：:]|第\\s*\\d+\\s*章[：:])";
+  const nextField = `\\n-\\s*(?:\\*\\*)?\\s*[^\\n：:]+?\\s*${fieldDelimiter}`;
+  const re = new RegExp(`^-\\s*(?:\\*\\*)?\\s*${escaped}\\s*${fieldDelimiter}\\s*([\\s\\S]*?)(?=${nextField}|${heading}|$)`, "im");
+  const m = blockText.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function extractFreeChapterCount(text) {
+  const patterns = [
+    /免费章节\s*[：:]\s*第\s*\d+\s*[章集]\s*[-–—~至到]\s*第\s*(\d+)\s*[章集]/,
+    /免费章节\s*[：:]\s*第\s*\d+\s*[章集]\s+第\s*(\d+)\s*[章集]/,
+    /免费章节\s*[：:]\s*前\s*(\d+)\s*[章集]/,
+    /免费章节\s*[：:]\s*第\s*(\d+)\s*[章集]/,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+function extractFirstPaidChapter(text) {
+  const m = text.match(/(?:付费起始|首付费章节)\s*[：:]\s*第\s*(\d+)\s*[章集]/);
+  return m ? Number(m[1]) : null;
+}
+
+function hasRequiredSection(text, sectionName) {
+  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^\\s*(?:#{1,6}\\s*)?(?:[一二三四五六七八九十]+[、.．]\\s*)?${escaped}\\s*$`, "im");
+  return re.test(text);
+}
+
+function normalizeUploadOutline(text) {
+  return String(text || "").replace(/第\s*(\d+)\s*章\s*[：:]/g, "第$1章：");
+}
+
+// 只修两类纯标记错误：code_fence（删围栏标记行，保留围栏内文字）、horizontal_rule（删整行 ---）。
+// ai_meta 与结构类错误可能伤及正文，一律不自动修。幂等：干净文件不写回。
+function fixOutlineMechanical(file) {
+  const original = fs.readFileSync(file, "utf8");
+  const lines = original.split(/\r?\n/);
+  const removed = [];
+  const kept = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      removed.push({ code: "code_fence", line: i + 1, text: line });
+      continue;
+    }
+    if (/^---$/.test(line)) {
+      removed.push({ code: "horizontal_rule", line: i + 1, text: line });
+      continue;
+    }
+    kept.push(line);
+  }
+  if (removed.length > 0) {
+    fs.writeFileSync(file, kept.join("\n"));
+  }
+  return removed;
+}
+
+function validateOutline(file) {
+  const text = fs.readFileSync(file, "utf8");
+  const issues = [];
+  const warnings = [];
+  const chapters = chapterBlocks(text);
+
+  for (const section of REQUIRED_SECTIONS) {
+    if (!hasRequiredSection(text, section)) {
+      issues.push({
+        code: "missing_section",
+        section,
+        message: `章节大纲缺少必填部分：${section}。`,
+      });
+    }
+  }
+
+  if (chapters.length !== 30) {
+    issues.push({
+      code: "chapter_count",
+      message: `应为 30 章，当前找到 ${chapters.length} 章。`,
+    });
+  }
+
+  for (let i = 0; i < chapters.length; i += 1) {
+    const expected = i + 1;
+    const ch = chapters[i];
+    if (ch.number !== expected) {
+      issues.push({
+        code: "chapter_sequence",
+        chapter: ch.number,
+        message: `章节编号应为第 ${expected} 章，当前为第 ${ch.number} 章。`,
+      });
+    }
+
+    for (const field of REQUIRED_FIELDS) {
+      const value = getField(ch.text, field);
+      if (value === null) {
+        issues.push({
+          code: "missing_field",
+          chapter: ch.number,
+          field,
+          message: `第 ${ch.number} 章缺少字段：${field}。`,
+        });
+      } else if (value.length === 0) {
+        warnings.push({
+          code: "empty_field",
+          chapter: ch.number,
+          field,
+          message: `第 ${ch.number} 章字段为空：${field}。`,
+        });
+      }
+    }
+
+  }
+
+  const freeChapterCount = extractFreeChapterCount(text);
+  const firstPaidChapter = extractFirstPaidChapter(text);
+  if (freeChapterCount === null) {
+    warnings.push({
+      code: "free_chapters_summary_missing",
+      message: "未检测到机器可读的「免费章节：第1章-第N章」；提交给故事花园前必须补齐。",
+    });
+  }
+  if (firstPaidChapter === null) {
+    warnings.push({
+      code: "first_paid_chapter_missing",
+      message: "未检测到机器可读的「付费起始：第N章」；提交给故事花园前必须补齐。",
+    });
+  }
+  if (freeChapterCount !== null && firstPaidChapter !== null && firstPaidChapter !== freeChapterCount + 1) {
+    warnings.push({
+      code: "paywall_summary_mismatch",
+      message: `免费章节与付费起始不连续：免费到第 ${freeChapterCount} 章，付费起始为第 ${firstPaidChapter} 章。`,
+    });
+  }
+
+  const blockingContentChecks = [
+    { code: "code_fence", re: /```/, label: "代码块" },
+    { code: "horizontal_rule", re: /^---$/m, label: "分隔线" },
+    { code: "ai_meta", re: /\b(let me|i will|as an ai|i can't|i cannot|here'?s my approach)\b/i, label: "AI 元话术或拒绝语" },
+  ];
+  for (const check of blockingContentChecks) {
+    if (check.re.test(text)) {
+      issues.push({
+        code: check.code,
+        message: `章节大纲包含 ${check.label}，不应出现在导出的 章节大纲.md 中。`,
+      });
+    }
+  }
+
+  const chapter5 = chapters.find((c) => c.number === 5);
+  const chapter6 = chapters.find((c) => c.number === 6);
+  const chapter30 = chapters.find((c) => c.number === 30);
+
+  if (chapter5) {
+    const hook = getField(chapter5.text, "章末钩子") || "";
+    if (hook.length < 80) {
+      warnings.push({
+        code: "chapter5_hook_light",
+        chapter: 5,
+        message: "第 5 章钩子偏薄；审核应确认它是否足够形成开篇段强转折或重大危机。",
+      });
+    }
+  }
+
+  if (freeChapterCount !== null) {
+    const lastFree = chapters.find((c) => c.number === freeChapterCount);
+    const hook = lastFree ? getField(lastFree.text, "章末钩子") || "" : "";
+    if (!lastFree) {
+      warnings.push({
+        code: "last_free_chapter_missing",
+        chapter: freeChapterCount,
+        message: `免费章节写到第 ${freeChapterCount} 章，但大纲中没有找到该章节。`,
+      });
+    } else if (hook.length < 80) {
+      warnings.push({
+        code: "paywall_hook_light",
+        chapter: freeChapterCount,
+        message: `第 ${freeChapterCount} 章是免费末章，但章末钩子偏薄；需要强悬念或重大反转承接付费起始。`,
+      });
+    }
+  }
+
+  if (chapter6) {
+    const combined = chapter6.text.toLowerCase();
+    if (!/(payoff|reveal|answer|rescue|truth|confront|escape|decision|choice|confession|prove|兑现|揭示|回答|救援|真相|对峙|逃脱|决定|选择|坦白|证明)/i.test(combined)) {
+      warnings.push({
+        code: "chapter6_payoff_unclear",
+        chapter: 6,
+        message: "第 6 章没有清楚兑现第 5 章的承诺。",
+      });
+    }
+  }
+
+  if (chapter30) {
+    const combined = chapter30.text.toLowerCase();
+    if (!/(resolve|resolution|defeat|healed|choice|ending|closes|closure|finally|reconciles|wins|truth|解决|击败|治愈|选择|结局|关闭|收束|最终|和解|胜利|真相)/i.test(combined)) {
+      warnings.push({
+        code: "chapter30_closure_unclear",
+        chapter: 30,
+        message: "第 30 章没有清楚收束主情感线或主外部冲突。",
+      });
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    issueCount: issues.length,
+    warningCount: warnings.length,
+    issues,
+    warnings,
+  };
+}
+
+function smokeOutline() {
+  const chunks = [];
+  for (let i = 1; i <= 30; i += 1) {
+    const isFive = i === 5;
+    const isSix = i === 6;
+    const isThirty = i === 30;
+    chunks.push(`第 ${i} 章：冒烟测试章节 ${i}
+- 视角人物：主角。
+- 场景目标：主角追求一个不可跳过的具体目标。
+- 核心冲突：对手迫使主角做出比上一章更困难的选择，并改变后续可选路径。
+- 章末钩子：${isFive ? "开篇段以一次代价高昂的公开背叛结束，迫使观众想知道主角是否会同时失去爱情、地位和安全感。" : isSix ? "第 6 章承接背叛后的救援与真相揭示，同时暴露一个更强的隐藏敌人。" : isThirty ? "最终选择击败外部阻力，解决主冲突，并让主角的情感伤口获得有代价的收束。" : "高潮制造一个主动后果，让下一章变得紧迫，并迫使主角下一章立刻行动。"}
+- 关键揭示：一个新事实改变主角对局势的理解。
+- 章节高潮：本章情绪最高点让主角付出代价或做出选择。
+- 对白重点：围绕目标与阻力展开短促对抗，暴露人物立场和隐瞒。`);
+  }
+  return `# 大纲提交稿
+
+## 一、故事基础信息
+题材类型：都市悬疑、女性成长
+背景设定：当代城市，主角被家庭和职场低估，却被旧日秘密重新拖回危险中心。
+核心卖点：被所有人当作普通人的主角，被迫在公开背叛后暴露隐藏能力，夺回人生主动权。
+
+## 二、角色表
+姓名：主角
+身份：被低估的普通女性
+性格特征：外表克制，内心敏锐，长期压抑自我但关键时刻敢下注。
+核心动机：保护自己珍视的人，同时摆脱被他人定义的人生。
+关键关系：与家人存在误解和低估，与旧日敌人存在未清算的秘密。
+
+## 三、付费点
+免费章节：第1章 - 第6章
+付费起始：第7章
+
+## 四、分章大纲
+
+${chunks.join("\n\n")}`;
+}
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function readJsonIfExists(file) {
+  if (!fs.existsSync(file)) return {};
+  return readJson(file);
+}
+
+function writeJson(file, data) {
+  ensureDir(path.dirname(file));
+  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function systemFile(...segments) {
+  return path.join(SYSTEM_DIR, ...segments);
+}
+
+function updateOpsState(data) {
+  writeJson(opsStateFile(), { ...readJsonIfExists(opsStateFile()), ...data });
+}
+
+function opsApiBase() {
+  const fromEnv = process.env.OPENGROVE_WW_BASE_URL || process.env.WW_BASE_URL;
+  if (!fromEnv) {
+    throw new Error("缺少 OPENGROVE_WW_BASE_URL：请先登录 OpenGrove 后再运行故事种子运营命令");
+  }
+  return fromEnv.replace(/\/+$/, "");
+}
+
+// 员工运行环境常见"全流量走本地代理、禁直连 DNS"(HTTP_PROXY 指向
+// localhost);Node 原生 http 不读代理变量,必须显式改走代理,否则
+// getaddrinfo ENOTFOUND。逻辑沿用 0.2.5 验证过的实现,含代理认证。
+function envValue(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function noProxyMatches(hostname) {
+  const noProxy = envValue("NO_PROXY", "no_proxy");
+  if (!noProxy) return false;
+  const host = hostname.toLowerCase();
+  return noProxy.split(",").some((entry) => {
+    const token = entry.trim().toLowerCase();
+    if (!token) return false;
+    if (token === "*") return true;
+    const [pattern] = token.split(":");
+    if (!pattern) return false;
+    if (pattern.startsWith("*.")) return host === pattern.slice(2) || host.endsWith(pattern.slice(1));
+    if (pattern.startsWith(".")) return host === pattern.slice(1) || host.endsWith(pattern);
+    return host === pattern;
+  });
+}
+
+function httpProxyFor(target) {
+  if (noProxyMatches(target.hostname)) return null;
+  const proxy = target.protocol === "https:"
+    ? envValue("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+    : envValue("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy");
+  if (!proxy) return null;
+  let parsed;
+  try {
+    parsed = new URL(proxy);
+  } catch {
+    return null;
+  }
+  return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : null;
+}
+
+function requestOptionsFor(target, method, headers) {
+  const proxy = httpProxyFor(target);
+  if (!proxy) {
+    return {
+      client: target.protocol === "https:" ? https : http,
+      options: {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || undefined,
+        method,
+        path: `${target.pathname}${target.search}`,
+        headers,
+      },
+    };
+  }
+  const proxyHeaders = { ...headers, host: target.host };
+  if (proxy.username || proxy.password) {
+    proxyHeaders["proxy-authorization"] = `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64")}`;
+  }
+  return {
+    client: proxy.protocol === "https:" ? https : http,
+    options: {
+      protocol: proxy.protocol,
+      hostname: proxy.hostname,
+      port: proxy.port || undefined,
+      method,
+      path: target.href,
+      headers: proxyHeaders,
+    },
+  };
+}
+
+function wwAccessToken() {
+  const token = process.env.OPENGROVE_WW_ACCESS_TOKEN;
+  if (!token) {
+    throw new Error("缺少 OPENGROVE_WW_ACCESS_TOKEN：请先登录 OpenGrove 后再运行故事种子运营命令");
+  }
+  return token;
+}
+
+// 统一的 ww HTTP 入口:https 目标经代理时先 CONNECT 建隧道再发 TLS 请求,
+// http/无代理沿用 requestOptionsFor。返回值和 client.request 一致。
+function wwHttpRequest(target, method, headers, onResponse) {
+  const proxy = httpProxyFor(target);
+  if (!proxy || target.protocol !== "https:") {
+    const { client, options } = requestOptionsFor(target, method, headers);
+    return client.request(options, onResponse);
+  }
+  const tunnelHeaders = {};
+  if (proxy.username || proxy.password) {
+    tunnelHeaders["proxy-authorization"] = `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64")}`;
+  }
+  const targetPort = target.port || 443;
+  const proxyClient = proxy.protocol === "https:" ? https : http;
+  const pending = new (require("events").EventEmitter)();
+  let realRequest = null;
+  let aborted = false;
+  const pendingBodies = [];
+  let pendingEnd = false;
+  let pendingTimeout = null;
+  const connectReq = proxyClient.request({
+    protocol: proxy.protocol,
+    hostname: proxy.hostname,
+    port: proxy.port || (proxy.protocol === "https:" ? 443 : 80),
+    method: "CONNECT",
+    path: `${target.hostname}:${targetPort}`,
+    headers: tunnelHeaders,
+  });
+  connectReq.on("connect", (res, socket) => {
+    if (aborted) { socket.destroy(); return; }
+    if (res.statusCode !== 200) {
+      pending.emit("error", new Error(`代理 CONNECT 失败：${res.statusCode}`));
+      socket.destroy();
+      return;
+    }
+    realRequest = https.request({
+      host: target.hostname,
+      servername: target.hostname,
+      port: targetPort,
+      method,
+      path: `${target.pathname}${target.search}`,
+      headers,
+      socket,
+      agent: false,
+    }, onResponse);
+    realRequest.on("error", (err) => pending.emit("error", err));
+    for (const body of pendingBodies) realRequest.write(body);
+    if (pendingEnd) realRequest.end();
+    if (pendingTimeout) realRequest.setTimeout(pendingTimeout.ms, pendingTimeout.fn);
+  });
+  connectReq.on("error", (err) => pending.emit("error", err));
+  connectReq.end();
+  // 轻量代理对象:在隧道建立前缓存 write/end/setTimeout 调用
+  return {
+    on: (event, fn) => { pending.on(event, fn); return undefined; },
+    write: (data) => { if (realRequest) return realRequest.write(data); pendingBodies.push(data); return true; },
+    end: () => { if (realRequest) return realRequest.end(); pendingEnd = true; return undefined; },
+    setTimeout: (ms, fn) => {
+      if (realRequest) return realRequest.setTimeout(ms, fn);
+      pendingTimeout = { ms, fn };
+      connectReq.setTimeout(ms, fn);
+      return undefined;
+    },
+    destroy: (err) => { aborted = true; connectReq.destroy(); if (realRequest) realRequest.destroy(err); if (err) pending.emit("error", err); },
+  };
+}
+
+function opsStateFile() {
+  return systemFile("ops", "state.json");
+}
+
+function submissionReceiptsFile() {
+  return systemFile("ops", "submissions.json");
+}
+
+function submissionReceipt(projectName) {
+  const receipts = readJsonIfExists(submissionReceiptsFile());
+  return receipts[projectName] || null;
+}
+
+function saveSubmissionReceipt(projectName, receipt) {
+  const file = submissionReceiptsFile();
+  writeJson(file, { ...readJsonIfExists(file), [projectName]: receipt });
+}
+
+function parseOptions(args) {
+  const options = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    if (!token.startsWith("--")) continue;
+    const key = token.slice(2);
+    const next = args[i + 1];
+    if (next && !next.startsWith("--")) {
+      options[key] = next;
+      i += 1;
+    } else {
+      options[key] = true;
+    }
+  }
+  return options;
+}
+
+function readTextIfExists(file) {
+  if (!fs.existsSync(file)) return "";
+  return fs.readFileSync(file, "utf8");
+}
+
+function contentHash(text) {
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+function fileMtimeIso(file) {
+  try {
+    return fs.statSync(file).mtime.toISOString();
+  } catch {
+    return "";
+  }
+}
+
+function timeMs(value) {
+  const ms = Date.parse(String(value || ""));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function resolveProjectDir(input, options = {}) {
+  if (!input) throw new Error("ops:submit 需要 <项目名|项目目录>");
+  const direct = path.isAbsolute(input) ? input : path.resolve(process.cwd(), input);
+  const root = projectsRoot();
+  const candidates = [
+    direct,
+    path.join(root, input),
+    path.join(root, slugify(input)),
+    path.join(root, legacySlugify(input)),
+  ];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate) || !fs.statSync(candidate).isDirectory()) continue;
+    if (isInside(root, candidate) || options["allow-external"]) return candidate;
+    throw new Error(
+      `项目目录不在故事种子 workspace 内：${candidate}。如确需提交外部目录，请显式加 --allow-external。`,
+    );
+  }
+  throw new Error(`未找到项目目录：${input}`);
+}
+
+function submissionPayload(projectInput, options = {}) {
+  const dir = resolveProjectDir(projectInput, options);
+  const projectName = path.basename(dir);
+  const outlineFile = path.join(dir, "章节大纲.md");
+  const outline = readTextIfExists(outlineFile);
+  if (!outline.trim()) {
+    throw new Error(`项目目录缺少可上传文件：${path.relative(WORKSPACE, outlineFile)}`);
+  }
+  const validation = validateOutline(outlineFile);
+  if (validation.issues.length > 0) {
+    throw new Error(`章节大纲结构未通过，拒绝上传：${validation.issues.map((issue) => issue.message).join("；")}`);
+  }
+  const blockingWarnings = validation.warnings.filter((warning) => [
+    "free_chapters_summary_missing",
+    "first_paid_chapter_missing",
+    "paywall_summary_mismatch",
+    "last_free_chapter_missing",
+  ].includes(warning.code));
+  if (blockingWarnings.length > 0) {
+    throw new Error(`章节大纲缺少故事花园所需付费摘要，拒绝上传：${blockingWarnings.map((warning) => warning.message).join("；")}`);
+  }
+  const normalizedOutline = normalizeUploadOutline(outline);
+  const payload = {
+    projectName,
+    content: normalizedOutline,
+    contentHash: contentHash(normalizedOutline),
+    outlineMtime: fileMtimeIso(outlineFile),
+    normalized: normalizedOutline !== outline,
+    submittedAt: new Date().toISOString(),
+    client: "story-seed",
+    files: [{
+      path: "章节大纲.md",
+      bytes: Buffer.byteLength(normalizedOutline, "utf8"),
+    }],
+  };
+  return { dir, payload };
+}
+
+function alreadySubmittedSameContent(previous, payload) {
+  const previousHash = typeof previous?.contentHash === "string" ? previous.contentHash.trim() : "";
+  if (previousHash) return previousHash === payload.contentHash;
+
+  // Backward compatibility for receipts written before content hashes existed:
+  // if the local outline has been modified after the old submission, treat it as
+  // a new version and allow normal submit; otherwise keep blocking duplicates.
+  const submittedAt = timeMs(previous?.submittedAt);
+  const outlineMtime = timeMs(payload.outlineMtime);
+  return !outlineMtime || !submittedAt || outlineMtime <= submittedAt;
+}
+
+async function postWwJson(route, body) {
+  const base = opsApiBase();
+  const url = `${base}${route.startsWith("/") ? route : `/${route}`}`;
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const rawBody = JSON.stringify(body);
+    const headers = {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: `Bearer ${wwAccessToken()}`,
+      "content-length": Buffer.byteLength(rawBody),
+    };
+    const request = wwHttpRequest(target, "POST", headers, (response) => {
+      const chunks = [];
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const text = chunks.join("");
+        let body = {};
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch {
+          body = { error: { message: text } };
+        }
+        if ((response.statusCode || 500) >= 400 || body.error) {
+          const error = body.error || {};
+          const message = error.message || body.message || `${response.statusCode} ${response.statusMessage}`;
+          reject(new Error(`ww 大纲 API 请求失败：${message}`));
+          return;
+        }
+        resolve(body.data ?? body);
+      });
+    });
+    request.setTimeout(15000, () => {
+      request.destroy(new Error(`ww 大纲 API 请求超时：${url}`));
+    });
+    request.on("error", reject);
+    request.write(rawBody);
+    request.end();
+  });
+}
+
+async function getWwJson(route) {
+  const base = opsApiBase();
+  const url = `${base}${route.startsWith("/") ? route : `/${route}`}`;
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const headers = {
+      accept: "application/json",
+      authorization: `Bearer ${wwAccessToken()}`,
+    };
+    const request = wwHttpRequest(target, "GET", headers, (response) => {
+      const chunks = [];
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const text = chunks.join("");
+        let body = {};
+        try {
+          body = text ? JSON.parse(text) : {};
+        } catch {
+          body = { error: { message: text } };
+        }
+        if ((response.statusCode || 500) >= 400 || body.error) {
+          const error = body.error || {};
+          const message = error.message || body.message || `${response.statusCode} ${response.statusMessage}`;
+          reject(new Error(`ww 大纲 API 请求失败：${message}`));
+          return;
+        }
+        resolve(body.data ?? body);
+      });
+    });
+    request.setTimeout(15000, () => {
+      request.destroy(new Error(`ww 大纲 API 请求超时：${url}`));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function reviewDashboardFile() {
+  return systemFile("review", "dashboard.json");
+}
+
+function reviewStatusText(status) {
+  if (status === 1 || status === "1") return "approved";
+  if (status === 2 || status === "2") return "rejected";
+  return "pending";
+}
+
+// 0.2.5 及更早版本把回执写成 submissions/<项目名>.json;0.2.10 起收敛为
+// ops/submissions.json 单文件。读映射时兼容两处,老包升级后审核页才认得旧提交。
+function legacySubmissionReceipts() {
+  const dir = systemFile("submissions");
+  if (!fs.existsSync(dir)) return {};
+  const receipts = {};
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith(".json")) continue;
+    const receipt = readJsonIfExists(path.join(dir, name));
+    const recordId = receipt && (receipt.recordId ?? receipt.id);
+    const projectName = (receipt && receipt.projectName) || name.replace(/\.json$/, "");
+    if (recordId !== undefined && recordId !== null && recordId !== "" && isSafeProjectName(projectName)) {
+      receipts[projectName] = { recordId: String(recordId) };
+    }
+  }
+  return receipts;
+}
+
+async function opsFeedback() {
+  const receipts = { ...legacySubmissionReceipts(), ...readJsonIfExists(submissionReceiptsFile()) };
+  const projectByRecordId = new Map(
+    Object.entries(receipts)
+      .filter(([projectName, receipt]) => isSafeProjectName(projectName) && receipt && receipt.recordId)
+      .map(([projectName, receipt]) => [String(receipt.recordId), projectName]),
+  );
+  const uploads = [];
+  const pageSize = 100;
+  for (let page = 1; page <= 20; page += 1) {
+    const body = await getWwJson(`/v1/novel-outlines?page=${page}&page_size=${pageSize}`);
+    const items = body && Array.isArray(body.uploads) ? body.uploads : [];
+    if (!items.length) break;
+    uploads.push(...items);
+    const total = Number(body.total || uploads.length);
+    if (uploads.length >= total) break;
+  }
+  const reviewFieldsPresent = uploads.some((item) => item && item.review_status !== undefined);
+  const entries = uploads.map((item) => {
+    const recordId = String(item.id ?? "");
+    return {
+      recordId,
+      projectName: projectByRecordId.get(recordId) || "",
+      status: reviewFieldsPresent ? reviewStatusText(item.review_status) : "pending",
+      comment: String(item.review_comment || ""),
+      reviewedAt: String(item.reviewed_at || ""),
+      createdAt: String(item.created_at || ""),
+    };
+  });
+  let feedbackFiles = 0;
+  for (const entry of entries) {
+    if (entry.status !== "rejected" || !entry.projectName) continue;
+    if (!isSafeProjectName(entry.projectName)) continue;
+    const projectDir = path.join(projectsRoot(), entry.projectName);
+    if (!fs.existsSync(projectDir) || !isInside(projectsRoot(), projectDir)) continue;
+    const lines = [
+      "# 平台审核意见",
+      "",
+      `- 审核结论：驳回`,
+      entry.reviewedAt ? `- 审核时间：${entry.reviewedAt}` : "",
+      "",
+      "## 修改意见",
+      "",
+      entry.comment || "（平台未附具体意见）",
+      "",
+      "> 修复责任归属：大纲修改归故事架构师（按上述意见改 章节大纲.md）；重新评审归金牌编辑；评审通过后重新 ops:submit 归首席运营官。",
+    ].filter((line) => line !== "");
+    fs.writeFileSync(path.join(projectDir, "平台审核意见.md"), `${lines.join("\n")}\n`, "utf8");
+    feedbackFiles += 1;
+  }
+  const gradeOf = { approved: "good", rejected: "weak", pending: "unknown" };
+  const alertOf = {
+    approved: "平台审核已通过，等待进入制作环节",
+    rejected: "平台审核已驳回，请按修改意见调整后重新提交",
+    pending: reviewFieldsPresent ? "等待平台编辑审核" : "审核服务尚未上线，暂无法获取审核状态",
+  };
+  const items = entries.map((entry, index) => ({
+    id: entry.projectName || `record-${entry.recordId || index}`,
+    title: entry.projectName || "已提交大纲",
+    grade: gradeOf[entry.status],
+    topAlert: alertOf[entry.status],
+    sections: {
+      diagnosis: {
+        strengths: entry.status === "approved" ? ["平台审核通过"] : [],
+        suggestions: entry.status === "rejected"
+          ? [entry.comment || "平台未附具体意见"]
+          : entry.status === "pending"
+            ? ["等待平台编辑处理"]
+            : [],
+      },
+    },
+  }));
+  writeJson(reviewDashboardFile(), { items });
+  updateOpsState({ lastFeedbackAt: new Date().toISOString() });
+  return {
+    checked: uploads.length,
+    reviewFieldsPresent,
+    feedbackFiles,
+    dashboardFile: path.relative(WORKSPACE, reviewDashboardFile()),
+    entries,
+  };
+}
+
+async function opsPing() {
+  opsApiBase();
+  wwAccessToken();
+  process.stdout.write("故事种子上传通道：已配置\n");
+}
+
+async function opsSubmit(projectInput, options = {}) {
+  const { payload } = submissionPayload(projectInput, options);
+  const previous = submissionReceipt(payload.projectName);
+  if (previous && !options.force && alreadySubmittedSameContent(previous, payload)) {
+    throw new Error(
+      `项目「${payload.projectName}」已于 ${previous.submittedAt} 提交过；`
+      + "当前章节大纲内容未变化，重复提交会在故事花园生成重复任务。确需重复提交请加 --force。"
+    );
+  }
+  const response = await postWwJson("/v1/novel-outlines", {
+    content: payload.content,
+    title: payload.projectName,
+  });
+  saveSubmissionReceipt(payload.projectName, {
+    recordId: response && response.id != null ? String(response.id) : "",
+    submittedAt: payload.submittedAt,
+    contentHash: payload.contentHash,
+    outlineMtime: payload.outlineMtime,
+    normalized: Boolean(payload.normalized),
+    resubmitted: Boolean(previous),
+  });
+  updateOpsState({
+    endpoint: opsApiBase(),
+    lastSubmissionAt: payload.submittedAt,
+    lastSubmissionProject: payload.projectName,
+    lastSubmissionNormalized: Boolean(payload.normalized),
+  });
+  process.stdout.write(`已上传讲故事大纲：${payload.projectName}\n`);
+  process.stdout.write("故事种子不展示后端记录 id 或 OSS 链接；故事花园会从大纲服务读取后续任务。\n");
+}
+
+async function main() {
+  const [cmd, arg, ...rest] = process.argv.slice(2);
+  const optionArgs = arg && String(arg).startsWith("--") ? [arg, ...rest] : rest;
+  const json = optionArgs.includes("--json");
+  const options = parseOptions(optionArgs);
+
+  if (!cmd || cmd === "--help" || cmd === "-h") {
+    process.stdout.write(usage());
+    return;
+  }
+
+  if (cmd === "doctor") {
+    const skill = path.join(SKILL_ROOT, "SKILL.md");
+    const ok = fs.existsSync(skill) && fs.existsSync(WORKSPACE);
+    process.stdout.write(ok ? "故事种子检查：通过\n" : "故事种子检查：失败\n");
+    process.exit(ok ? 0 : 1);
+  }
+
+  if (cmd === "init") {
+    if (!arg) throw new Error("init 需要 <项目名>");
+    const dir = initProject(arg);
+    process.stdout.write(`已初始化 ${path.relative(WORKSPACE, dir)}\n`);
+    return;
+  }
+
+  if (cmd === "validate") {
+    if (!arg || String(arg).startsWith("--")) throw new Error("validate 需要 <章节大纲.md>");
+    const file = path.isAbsolute(arg) ? arg : path.resolve(process.cwd(), arg);
+    const fix = optionArgs.includes("--fix");
+    const fixed = fix ? fixOutlineMechanical(file) : [];
+    const result = validateOutline(file);
+    if (fix) result.fixed = fixed;
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      if (fix) {
+        if (fixed.length > 0) {
+          const counts = {};
+          for (const item of fixed) counts[item.code] = (counts[item.code] || 0) + 1;
+          const labels = { code_fence: "代码块标记", horizontal_rule: "分隔线" };
+          const summary = Object.entries(counts).map(([code, n]) => `${n} 处${labels[code] || code}`).join("，");
+          process.stdout.write(`已修复：${summary}。删除的行：\n`);
+          for (const item of fixed) process.stdout.write(`  第 ${item.line} 行：${item.text}\n`);
+        } else {
+          process.stdout.write("无可自动修复的机械格式问题。\n");
+        }
+      }
+      process.stdout.write(result.ok ? "大纲结构：通过\n" : "大纲结构：不通过\n");
+      for (const issue of result.issues) process.stdout.write(`错误 ${issue.message}\n`);
+      for (const warning of result.warnings) process.stdout.write(`提醒 ${warning.message}\n`);
+    }
+    process.exit(result.ok ? 0 : 1);
+  }
+
+  if (cmd === "ops:ping") {
+    await opsPing();
+    return;
+  }
+
+  if (cmd === "ops:submit") {
+    await opsSubmit(arg, options);
+    return;
+  }
+
+  if (cmd === "ops:feedback") {
+    const result = await opsFeedback();
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      process.stdout.write(`已同步平台审核状态：${result.checked} 条提交记录\n`);
+      if (!result.reviewFieldsPresent) {
+        process.stdout.write("提示：审核服务尚未上线，全部记录按待审展示。\n");
+      }
+      if (result.feedbackFiles) {
+        process.stdout.write(`已写入驳回意见：${result.feedbackFiles} 个项目（项目/<项目名>/平台审核意见.md）\n`);
+      }
+      process.stdout.write(`审核看板缓存：${result.dashboardFile}\n`);
+    }
+    return;
+  }
+
+  if (cmd === "smoke") {
+    const dir = initProject("smoke");
+    const outline = path.join(dir, "章节大纲.md");
+    fs.writeFileSync(outline, smokeOutline(), "utf8");
+    const result = validateOutline(outline);
+    process.stdout.write(result.ok ? "故事种子冒烟测试：通过\n" : "故事种子冒烟测试：失败\n");
+    if (!result.ok) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    }
+    process.exit(result.ok ? 0 : 1);
+  }
+
+  throw new Error(`未知命令：${cmd}`);
+}
+
+main().catch((err) => {
+  process.stderr.write(`story-seed: ${err.message}\n`);
+  process.stderr.write(usage());
+  process.exit(2);
+});

@@ -20,11 +20,8 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const STORAGE_KEY = "oma_api_key";
 
 export interface WorkspaceFileChange {
-  /** Monotonic counter — bumped on every workspace.file_change event or turn end. */
+  /** Refresh counter advanced by the Host Turn completion state. */
   nonce: number;
-  /** Incremental hint from the Host, when the event carries one (may be empty). */
-  changed: string[];
-  deleted: string[];
 }
 
 function projectStatusIntoSessionCollection(
@@ -68,15 +65,14 @@ export function useSessionEvents(sessionId: string) {
   );
   const [status, setStatus] = useState<"idle" | "running">("idle");
   const [isConnected, setIsConnected] = useState(false);
-  // Signals the Workspace panel to refresh its tree. Driven by the Host's
-  // `workspace.file_change` SSE event (incremental) and by turn end
-  // (session.status_idle) as a backstop. Consumed defensively — works even if
-  // #43 has not yet emitted the file-change event.
-  const [fileChange, setFileChange] = useState<WorkspaceFileChange>({
-    nonce: 0,
-    changed: [],
-    deleted: [],
-  });
+  // Bumped on every Turn lifecycle transition. The Session's queued input can
+  // only change when a Turn starts (an entry was consumed) or ends (the next one
+  // may start), so this is the exact revalidation signal the pending-input read
+  // needs — and it is what keeps the `queued` strip correct across the gap an
+  // Interrupt opens (issue #114).
+  const [turnLifecycleNonce, setTurnLifecycleNonce] = useState(0);
+  // Mounted files are visible through OSS; Turn end requests a fresh listing.
+  const [fileChange, setFileChange] = useState<WorkspaceFileChange>({ nonce: 0 });
   // Reconnect anchor: the last seq we've received. Seeded from history on the
   // first connect, then advanced as each event with a real seq arrives. On a
   // reconnect we replay it as `Last-Event-ID` so the server's paginated
@@ -118,7 +114,7 @@ export function useSessionEvents(sessionId: string) {
     dispatch({ type: "history.loaded", events: [] });
     setStatus("idle");
     setIsConnected(false);
-    setFileChange({ nonce: 0, changed: [], deleted: [] });
+    setFileChange({ nonce: 0 });
   }
 
   const projectStatus = useCallback((nextStatus: "idle" | "running") => {
@@ -201,30 +197,17 @@ export function useSessionEvents(sessionId: string) {
   }, [queryClient, sessionId]);
 
   const addEvent = useCallback((event: SessionEvent) => {
-    // Every id-bearing frame is a persisted Complete Event and therefore part
-    // of durable history. Workspace file changes additionally refresh the file
-    // tree, but must not disappear from Timeline when they arrive via SSE
-    // replay (JSON history already includes the same events).
+    // Retain every durable event, including historical event types.
     dispatch({ type: "event.received", event });
-    if (event.type === "workspace.file_change") {
-      const data = (event.data ?? {}) as { changed?: unknown; deleted?: unknown };
-      const changed = Array.isArray(data.changed)
-        ? data.changed.filter((x): x is string => typeof x === "string")
-        : [];
-      const deleted = Array.isArray(data.deleted)
-        ? data.deleted.filter((x): x is string => typeof x === "string")
-        : [];
-      setFileChange((prev) => ({ nonce: prev.nonce + 1, changed, deleted }));
-      return;
-    }
 
     if (event.type === "session.status_running") {
       projectStatus("running");
+      setTurnLifecycleNonce((n) => n + 1);
     }
     if (event.type === "session.status_idle") {
       projectStatus("idle");
-      // Backstop: refetch the tree once on turn end (no incremental hint).
-      setFileChange((prev) => ({ nonce: prev.nonce + 1, changed: [], deleted: [] }));
+      setTurnLifecycleNonce((n) => n + 1);
+      setFileChange((prev) => ({ nonce: prev.nonce + 1 }));
     }
   }, [projectStatus]);
 
@@ -430,5 +413,5 @@ export function useSessionEvents(sessionId: string) {
     };
   }, [sessionId, addEvent, projectStatus]);
 
-  return { events, activeDeltas, status, isConnected, fileChange };
+  return { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce };
 }

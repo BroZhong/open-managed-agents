@@ -1,14 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type {
-  SkillArtifactStore,
-  SkillFile,
-} from "@oma-server/store";
+import type { SkillArtifactStore, SkillFile } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import {
-  FakeWorkspacePersistence,
-  type HydrateTarget,
-  type SandboxFsAccess,
-} from "../src/workspace-persistence.js";
+import type { SandboxFsAccess } from "../src/sandbox-client.js";
+
 import {
   S3ProvisionSource,
   FakeProvisionSource,
@@ -20,7 +14,6 @@ import {
 } from "../src/provision-source.js";
 
 const TENANT = "tenant_1";
-const WS = "ws_1";
 const WORKSPACE_DIR = "/workspace";
 
 /** SandboxFsAccess over a FakeSandboxClient sandbox (id bound), as the Manager builds it. */
@@ -48,10 +41,6 @@ function projectionTargetFor(
   };
 }
 
-function hydrateTargetFor(fs: SandboxFsAccess): HydrateTarget {
-  return { tenantId: TENANT, workspaceId: WS, workspaceDir: WORKSPACE_DIR, fs };
-}
-
 /**
  * A minimal in-memory {@link SkillArtifactStore} for the S3 adapter test, so the
  * test never touches real S3. Only `getAll`/`put` are meaningful for projection;
@@ -62,8 +51,14 @@ class FakeSkillArtifactStore implements SkillArtifactStore {
   private prefix(t: string, s: string): string {
     return `${t}/skills/${s}/`;
   }
-  async put(t: string, s: string, path: string, body: Uint8Array | string): Promise<void> {
-    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+  async put(
+    t: string,
+    s: string,
+    path: string,
+    body: Uint8Array | string,
+  ): Promise<void> {
+    const bytes =
+      typeof body === "string" ? new TextEncoder().encode(body) : body;
     this.files.set(`${this.prefix(t, s)}${path}`, bytes);
   }
   async getAll(t: string, s: string): Promise<SkillFile[]> {
@@ -106,7 +101,10 @@ describe("ProvisionSource seam", () => {
       kind: "s3",
       ref: { tenantId: TENANT, skillId: "skl_1" },
     };
-    await source.project(coord, projectionTargetFor(client, id, "/skills/skl_1"));
+    await source.project(
+      coord,
+      projectionTargetFor(client, id, "/skills/skl_1"),
+    );
 
     const fs = fsAccessFor(client, id);
     expect(await fs.readFile("/skills/skl_1/SKILL.md")).toBe("# hello skill");
@@ -129,9 +127,9 @@ describe("ProvisionSource seam", () => {
       projectionTargetFor(client, id, "/skills/skl_binary"),
     );
 
-    expect(await client.readFileBytes(id, "/skills/skl_binary/asset.png")).toEqual(
-      bytes,
-    );
+    expect(
+      await client.readFileBytes(id, "/skills/skl_binary/asset.png"),
+    ).toEqual(bytes);
   });
 
   it("dispatches by coordinate.kind to the registered adapter", async () => {
@@ -156,7 +154,9 @@ describe("ProvisionSource seam", () => {
     // Only the git adapter ran; the s3 adapter was untouched.
     expect(git.projected).toEqual([coord]);
     expect(s3.projected).toEqual([]);
-    expect(await fsAccessFor(client, id).readFile("/repo/f.txt")).toBe("from-git");
+    expect(await fsAccessFor(client, id).readFile("/repo/f.txt")).toBe(
+      "from-git",
+    );
   });
 
   it("projected content lands OUTSIDE the workspace dir", async () => {
@@ -178,52 +178,26 @@ describe("ProvisionSource seam", () => {
     expect(files.every((f) => !f.startsWith("/workspace"))).toBe(true);
   });
 
-  it("NEVER synced: a projection under /skills is not pushed or deleted by a workspace sync", async () => {
-    // One sandbox holds both a hydrated Workspace (/workspace) and a Read-only
-    // Projection (/skills/skl_1). This is the core guarantee: the Workspace sync's
-    // full scan of /workspace never sees /skills, so projected files are neither
-    // pushed to the Store nor deleted from it.
-    const persistence = new FakeWorkspacePersistence();
-    persistence.seed(TENANT, WS, "main.py", "print(1)");
-
-    const client = new FakeSandboxClient();
-    const { id } = await client.create();
-    const fs = fsAccessFor(client, id);
-
-    // Hydrate the Workspace, then project a Skill outside it.
-    const session = await persistence.hydrate(hydrateTargetFor(fs));
-    const source = new FakeProvisionSource();
-    const coord: ProvisionCoordinate = { kind: "fake", ref: { id: "skl_1" } };
-    source.seed(coord, { "SKILL.md": "skill body", "helper.py": "x = 1" });
-    await source.project(coord, projectionTargetFor(client, id, "/skills/skl_1"));
-
-    // A normal user edit inside the workspace, then sync.
-    await client.writeFile(id, "/workspace/notes.txt", "hi");
-    const result = await persistence.sync(session, hydrateTargetFor(fs));
-
-    // Only the workspace file was pushed; NOTHING from /skills was pushed…
-    expect(result.changed).toEqual(["notes.txt"]);
-    expect(result.changed.some((p) => p.includes("SKILL") || p.includes("skl_1"))).toBe(false);
-    // …and NOTHING from /skills was deleted.
-    expect(result.deleted).toEqual([]);
-    // The Store holds only workspace files — no projected paths leaked in.
-    expect(persistence.pathsOf(TENANT, WS)).toEqual(["main.py", "notes.txt"]);
-    // The projection is still intact in the sandbox, untouched by the sync.
-    expect(await fs.readFile("/skills/skl_1/SKILL.md")).toBe("skill body");
-  });
-
   it("fails loud when a projection targetPath is inside the workspace", async () => {
     expect(() =>
       assertProjectionOutsideWorkspace("/workspace/skills/x", WORKSPACE_DIR),
     ).toThrow(/inside the workspace/);
     // The workspace dir itself is inside (equal).
-    expect(() => assertProjectionOutsideWorkspace("/workspace", WORKSPACE_DIR)).toThrow();
-    expect(() => assertProjectionOutsideWorkspace("/workspace/", WORKSPACE_DIR)).toThrow();
+    expect(() =>
+      assertProjectionOutsideWorkspace("/workspace", WORKSPACE_DIR),
+    ).toThrow();
+    expect(() =>
+      assertProjectionOutsideWorkspace("/workspace/", WORKSPACE_DIR),
+    ).toThrow();
     // Outside paths pass silently.
-    expect(() => assertProjectionOutsideWorkspace("/skills/x", WORKSPACE_DIR)).not.toThrow();
+    expect(() =>
+      assertProjectionOutsideWorkspace("/skills/x", WORKSPACE_DIR),
+    ).not.toThrow();
     // A sibling that merely shares a prefix is NOT inside.
     expect(isInsideWorkspace("/workspaceX", WORKSPACE_DIR)).toBe(false);
-    expect(() => assertProjectionOutsideWorkspace("/workspaceX", WORKSPACE_DIR)).not.toThrow();
+    expect(() =>
+      assertProjectionOutsideWorkspace("/workspaceX", WORKSPACE_DIR),
+    ).not.toThrow();
   });
 
   it("S3ProvisionSource rejects a ref missing tenantId/skillId (fail loud)", async () => {

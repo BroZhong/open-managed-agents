@@ -29,8 +29,9 @@ test("the tintinweb extension exposes only the managed Sandbox-backed Agent type
   assert.match(agent, /^prompt_mode: append$/m);
   assert.match(agent, /^max_turns: 30$/m);
   assert.doesNotMatch(agent, /^(?:model|thinking):/m);
-  assert.match(agent, /Treat `\/home\/user` as the only Workspace root/);
-  assert.match(agent, /Equipped Skills are\s+projected under `\/skills\/`/);
+  assert.match(agent, /Treat `\/home\/user\/workspace` as the persistent Workspace root/);
+  assert.match(agent, /Equipped Skills are read-only\s+projections under `\/skills\/<skill-name>\/`/);
+  assert.match(agent, /HOME remains local at `\/home\/user`/);
   assert.doesNotMatch(agent, /Treat `\/workspace` as the only Workspace root/);
 });
 

@@ -23,6 +23,14 @@ type Env = {
 // changing Last-Event-ID.
 const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 10_000;
 
+/**
+ * How many queued inputs `GET /v1/sessions/:id/pending` previews. The console
+ * shows the waiting messages inline above its composer, so a handful is the most
+ * that is ever useful; the bound keeps one request from serializing a runaway
+ * queue.
+ */
+const PENDING_PREVIEW_LIMIT = 20;
+
 export interface EventRouteDeps {
   eventLogStore: EventLogIngressStore;
   pendingEventStore: PendingEventIngressStore;
@@ -109,8 +117,12 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       if (events.length !== 1) {
         return c.json({ error: "user.interrupt must be the only event in a batch" }, 400);
       }
-      deps.sessionRouter?.interrupt(sessionId);
-      return c.json({ accepted: true, interrupted: true }, 202);
+      // Report what actually happened rather than always claiming success: the
+      // active-Turn controllers are per-process, so an interrupt for a Turn
+      // running on another replica stops nothing (issue #113). The request itself
+      // was still accepted, so the status stays 202.
+      const interrupted = deps.sessionRouter?.interrupt(sessionId) ?? false;
+      return c.json({ accepted: true, interrupted }, 202);
     }
 
     const pendingEvents = events.filter((event) => PENDING_USER_TYPES.has(event.type));
@@ -190,6 +202,54 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
     }
 
     return c.json({ accepted: true as const, interrupted: false }, 202);
+  });
+
+  // GET /v1/sessions/:id/pending — This Session's queued input, as a server fact
+  //
+  // Queued input is server state, not a client guess (issue #114). Without this,
+  // a console can only approximate "is anything waiting?" from its own optimistic
+  // sends, which vanish on reload and go blank in the gap between one Turn ending
+  // and the next starting. Reports the entries no live execution attempt holds:
+  // a claimed head is already promoted into the event log, so it shows up as
+  // history and must not be double-counted as still waiting.
+  registerContractRoute(router, getOpenApiRoute("listPendingSessionEvents"), async (c) => {
+    const sessionId = c.req.param("id")!;
+    const tenant = c.get("tenant");
+
+    const session = await deps.sessionStore.getById(sessionId);
+    if (!session || session.tenantId !== tenant.tenantId) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    const store = deps.pendingEventStore;
+    // A narrow store double may not implement listUnclaimed. Degrade to the
+    // depth alone rather than failing the request: a count with no preview still
+    // keeps the queued indicator honest.
+    if (typeof store.listUnclaimed !== "function") {
+      const depth = await store.count(sessionId);
+      // Same response shape as the normal path, so a client never has to branch:
+      // an unlistable queue is reported as "there is input, none previewable".
+      return c.json({ count: 0, has_more: depth > 0, data: [] });
+    }
+
+    // Read one past the preview so `has_more` is exact without a second query.
+    // `count` deliberately describes the returned page, not the whole queue: the
+    // only available total (`count`) includes the claimed head, and mixing that
+    // in would report a running message as also waiting. A client that needs to
+    // say "more is queued" has `has_more` and does not need a total to be honest.
+    const found = await store.listUnclaimed(sessionId, PENDING_PREVIEW_LIMIT + 1);
+    const events = found.slice(0, PENDING_PREVIEW_LIMIT);
+    return c.json({
+      count: events.length,
+      // Bounded on purpose: this feeds a "what's queued" strip, not an archive.
+      has_more: found.length > PENDING_PREVIEW_LIMIT,
+      data: events.map((event) => ({
+        id: event.id,
+        type: event.type,
+        data: event.data,
+        arrived_at: event.arrivedAt.toISOString(),
+      })),
+    });
   });
 
   // GET /v1/sessions/:id/events — List events or SSE stream

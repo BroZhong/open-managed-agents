@@ -10,3 +10,6 @@ server
 adapter
 docs
 sandbox
+.env
+.env.*
+!.env.example

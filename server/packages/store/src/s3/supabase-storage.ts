@@ -1,8 +1,6 @@
 /**
- * Shared Supabase Storage REST primitives, used by both the Workspace artifact
- * store and the Skill artifact store (which differ only in their key prefix).
- * Keeping the request/list/normalize logic in one place avoids duplicating the
- * Supabase wire details across the two stores.
+ * Supabase Storage REST primitives retained for Skill bodies and projections.
+ * Workspace file operations use the independent OSS client.
  */
 
 export interface SupabaseStorageOptions {
@@ -22,10 +20,6 @@ export interface SupabaseListEntry {
   id?: string | null;
   updated_at?: string | null;
   metadata?: { size?: number; mimetype?: string } | null;
-}
-
-export interface SupabaseObjectInfo {
-  userMetadata: Record<string, unknown> | null;
 }
 
 export const DEFAULT_BUCKET = "workspace";
@@ -76,37 +70,19 @@ export class SupabaseStorageClient {
     return { Authorization: `Bearer ${this.serviceKey}` };
   }
 
-  private encodeUrlPath(path: string): string {
-    return path.split("/").map(encodeURIComponent).join("/");
-  }
-
   private objectUrl(key: string): string {
-    return (
-      `${this.endpoint}/object/${encodeURIComponent(this.bucket)}/` +
-      this.encodeUrlPath(key)
-    );
+    const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+    return `${this.endpoint}/object/${encodeURIComponent(this.bucket)}/${encodedKey}`;
   }
 
   /** Upsert an object at an absolute (already-prefixed) key. */
-  async putObject(
-    key: string,
-    body: Uint8Array,
-    contentType?: string,
-    userMetadata?: Record<string, unknown>,
-  ): Promise<void> {
+  async putObject(key: string, body: Uint8Array, contentType?: string): Promise<void> {
     const res = await this.fetchImpl(this.objectUrl(key), {
       method: "POST",
       headers: {
         ...this.authHeaders(),
         "Content-Type": contentType ?? "application/octet-stream",
         "x-upsert": "true",
-        ...(userMetadata
-          ? {
-              "x-metadata": Buffer.from(JSON.stringify(userMetadata), "utf8").toString(
-                "base64",
-              ),
-            }
-          : {}),
       },
       body: body as unknown as BodyInit,
     });
@@ -131,49 +107,6 @@ export class SupabaseStorageClient {
     };
   }
 
-  /** Check object existence without transferring its body. */
-  async objectExists(key: string): Promise<boolean> {
-    const res = await this.fetchImpl(this.objectUrl(key), {
-      method: "HEAD",
-      headers: this.authHeaders(),
-    });
-    if (res.status === 404) return false;
-    if (!res.ok) {
-      const detail = await safeText(res);
-      throw new Error(`Supabase objectExists failed: ${res.status} ${detail}`);
-    }
-    return true;
-  }
-
-  /** Fetch the custom metadata needed to disambiguate codec and legacy keys. */
-  async getObjectInfo(
-    key: string,
-    opts: { invalidKeyAsMissing?: boolean } = {},
-  ): Promise<SupabaseObjectInfo | null> {
-    const res = await this.fetchImpl(
-      `${this.endpoint}/object/info/authenticated/${encodeURIComponent(this.bucket)}/` +
-        this.encodeUrlPath(key),
-      {
-        method: "GET",
-        headers: this.authHeaders(),
-      },
-    );
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      const detail = await safeText(res);
-      if (
-        res.status === 400 &&
-        opts.invalidKeyAsMissing &&
-        /"(?:error|code)"\s*:\s*"InvalidKey"/.test(detail)
-      ) {
-        return null;
-      }
-      throw new Error(`Supabase getObjectInfo failed: ${res.status} ${detail}`);
-    }
-    const info = (await res.json()) as { metadata?: Record<string, unknown> | null };
-    return { userMetadata: info.metadata ?? null };
-  }
-
   /** Delete an object. Returns true if it existed. */
   async deleteObject(key: string): Promise<boolean> {
     const res = await this.fetchImpl(this.objectUrl(key), {
@@ -188,40 +121,17 @@ export class SupabaseStorageClient {
   }
 
   /**
-   * Sign a short-lived download URL for an already-prefixed key. Returns the
-   * relative signedURL (caller prefixes the public base). Signs on the internal
-   * endpoint; the bucket stays private. Read-only — never signs writes.
-   */
-  async createSignedUrl(key: string, expiresInSec: number): Promise<string> {
-    const res = await this.fetchImpl(
-      `${this.endpoint}/object/sign/${encodeURIComponent(this.bucket)}/` +
-        this.encodeUrlPath(key),
-      {
-        method: "POST",
-        headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ expiresIn: expiresInSec }),
-      },
-    );
-    if (!res.ok) throw new Error(`Supabase sign failed: ${res.status} ${await safeText(res)}`);
-    const { signedURL } = (await res.json()) as { signedURL: string };
-    return signedURL;
-  }
-
-  /**
    * Recursively list files under `listPrefix` (Supabase's list is not
    * recursive), invoking `onFile(fullKey)` for each concrete file.
    */
   async listRecursive(listPrefix: string, onFile: (fullKey: string) => void): Promise<void> {
     let offset = 0;
     for (;;) {
-      const res = await this.fetchImpl(
-        `${this.endpoint}/object/list/${encodeURIComponent(this.bucket)}`,
-        {
-          method: "POST",
-          headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
-        },
-      );
+      const res = await this.fetchImpl(`${this.endpoint}/object/list/${encodeURIComponent(this.bucket)}`, {
+        method: "POST",
+        headers: { ...this.authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
+      });
       if (!res.ok) {
         throw new Error(`Supabase list failed: ${res.status} ${await safeText(res)}`);
       }
@@ -239,43 +149,4 @@ export class SupabaseStorageClient {
     }
   }
 
-  /** As {@link listRecursive}, but also surfaces each file's size + mtime. */
-  async listRecursiveDetailed(
-    listPrefix: string,
-    onFile: (
-      fullKey: string,
-      size: number,
-      updatedAt?: string | null,
-    ) => void | Promise<void>,
-  ): Promise<void> {
-    let offset = 0;
-    for (;;) {
-      const res = await this.fetchImpl(
-        `${this.endpoint}/object/list/${encodeURIComponent(this.bucket)}`,
-        {
-          method: "POST",
-          headers: { ...this.authHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ prefix: listPrefix, limit: LIST_PAGE_SIZE, offset }),
-        },
-      );
-      if (!res.ok) {
-        throw new Error(`Supabase list failed: ${res.status} ${await safeText(res)}`);
-      }
-      const entries = (await res.json()) as SupabaseListEntry[];
-      for (const entry of entries) {
-        const isFolder = entry.id == null && entry.metadata == null;
-        if (isFolder) {
-          await this.listRecursiveDetailed(`${listPrefix}${entry.name}/`, onFile);
-        } else {
-          await onFile(
-            `${listPrefix}${entry.name}`,
-            entry.metadata?.size ?? 0,
-            entry.updated_at,
-          );
-        }
-      }
-      if (entries.length < LIST_PAGE_SIZE) break;
-      offset += entries.length;
-    }
-  }
 }
