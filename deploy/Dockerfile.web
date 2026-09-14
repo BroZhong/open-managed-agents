@@ -10,10 +10,13 @@ ARG NODE_BASE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/node-base:22-slim-pn
 ARG NGINX_BASE=registry-vpc.cn-shanghai.aliyuncs.com/welltop/nginx-base:1.27-alpine
 
 FROM --platform=$BUILDPLATFORM ${NODE_BASE} AS build
+ARG BUILDARCH
 WORKDIR /app/web
-COPY web/ ./
+COPY web/package.json web/pnpm-lock.yaml ./
 ENV CI=true
-RUN pnpm install --no-frozen-lockfile
+RUN --mount=type=cache,id=oma-pnpm-${BUILDARCH},target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --no-frozen-lockfile --prefer-offline
+COPY web/ ./
 ARG VITE_API_URL
 ENV VITE_API_URL=${VITE_API_URL}
 RUN pnpm build

@@ -187,6 +187,7 @@ build_with_cache() {
   run rm -rf "${cache_next}"
   run docker buildx build \
     --platform "${PLATFORM}" \
+    --provenance=false \
     --cache-from "type=local,src=${cache_dir}" \
     --cache-to "type=local,dest=${cache_next},mode=max" \
     "${output[@]}" \
