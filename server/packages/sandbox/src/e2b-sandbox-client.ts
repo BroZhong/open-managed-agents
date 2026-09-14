@@ -1,5 +1,12 @@
 import { Sandbox } from "e2b";
-import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import {
+  WORKSPACE_MOUNT_PROBE,
+  WORKSPACE_MOUNT_PROBE_CLEANUP,
+} from "./workspace-mount-probe.js";
+import {
+  WorkspaceMountUnavailable,
+  type WorkspaceMountTarget,
+} from "./workspace-mount.js";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -20,6 +27,7 @@ export interface E2BSandbox {
     run(
       cmd: string,
       opts?: {
+        user?: string;
         cwd?: string;
         envs?: Record<string, string>;
         timeoutMs?: number;
@@ -32,7 +40,12 @@ export interface E2BSandbox {
         onStdout?: (data: string) => void | Promise<void>;
         onStderr?: (data: string) => void | Promise<void>;
       },
-    ): Promise<{ exitCode: number; stdout: string; stderr: string; error?: string }>;
+    ): Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      error?: string;
+    }>;
   };
   files: {
     read(path: string, opts?: { format?: "text" }): Promise<string>;
@@ -40,6 +53,9 @@ export interface E2BSandbox {
     write(path: string, data: string | ArrayBuffer): Promise<unknown>;
     remove(path: string): Promise<void>;
   };
+  getInfo(opts?: {
+    requestTimeoutMs?: number;
+  }): Promise<{ metadata: Record<string, string> }>;
   /** True while the gateway still has this sandbox running (not reclaimed). */
   isRunning(): Promise<boolean>;
   kill(): Promise<void>;
@@ -57,16 +73,11 @@ export type CreateSandboxFn = (
     metadata?: Record<string, string>;
     envs?: Record<string, string>;
     timeoutMs?: number;
+    requestTimeoutMs: number;
   },
 ) => Promise<E2BSandbox>;
 
 const DEFAULT_TEMPLATE = "code-interpreter";
-// E2B's recommended user directory — the exec `user`'s own home, so it exists
-// and is writable without a chown. Mkdir'ing the old root-owned `/workspace` as
-// the non-privileged user failed silently (issue #85); `/home/user` sidesteps
-// that entirely. This is the create-time existence guard only; the effective
-// cwd is chosen by SandboxManager (EnvSpec.workspaceDir), which defaults here.
-const DEFAULT_WORKSPACE_DIR = SANDBOX_WORKSPACE_ROOT;
 
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.brozhong.com"); SDK resolves api.<domain>. */
@@ -80,6 +91,14 @@ export interface E2BSandboxClientOptions {
    * pass a fake so the client can be exercised with no network.
    */
   createSandbox?: CreateSandboxFn;
+  /** Slightly exceeds ALB 180s so its timeout response can reach the SDK. */
+  requestTimeoutMs?: number;
+  /** Host OSS readback proves the mount writes into the exact trusted prefix. */
+  verifyWorkspaceProbe: (
+    target: WorkspaceMountTarget,
+    probeName: string,
+    expectedContent: string,
+  ) => Promise<void>;
 }
 
 /**
@@ -100,6 +119,9 @@ export class E2BSandboxClient implements SandboxClient {
   private readonly apiKey: string;
   private readonly defaultTemplate: string;
   private readonly createSandbox: CreateSandboxFn;
+  private readonly requestTimeoutMs: number;
+  private readonly verifyWorkspaceProbe: E2BSandboxClientOptions["verifyWorkspaceProbe"];
+  private readonly creationMetadata = new Map<string, Record<string, string>>();
   /** id -> live sandbox handle, so subsequent ops resolve the instance. */
   private readonly sandboxes = new Map<string, E2BSandbox>();
 
@@ -110,11 +132,14 @@ export class E2BSandboxClient implements SandboxClient {
     this.apiKey = opts.apiKey;
     this.defaultTemplate = opts.defaultTemplate ?? DEFAULT_TEMPLATE;
     this.createSandbox = opts.createSandbox ?? defaultCreateSandbox;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? 185_000;
+    this.verifyWorkspaceProbe = opts.verifyWorkspaceProbe;
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
     const template = resolveTemplate(opts.image, this.defaultTemplate);
     const sandbox = await this.createSandbox(template, {
+      requestTimeoutMs: this.requestTimeoutMs,
       apiKey: this.apiKey,
       domain: this.domain,
       ...(opts.metadata ? { metadata: opts.metadata } : {}),
@@ -127,11 +152,80 @@ export class E2BSandboxClient implements SandboxClient {
         : {}),
     });
     this.sandboxes.set(sandbox.sandboxId, sandbox);
-    // Ensure the workspace dir exists before hydrate/exec.
-    await this.drain(
-      this.exec(sandbox.sandboxId, ["mkdir", "-p", DEFAULT_WORKSPACE_DIR]),
-    );
+    this.creationMetadata.set(sandbox.sandboxId, { ...opts.metadata });
     return { id: sandbox.sandboxId };
+  }
+
+  async verifyWorkspaceMount(
+    id: string,
+    target: WorkspaceMountTarget,
+  ): Promise<void> {
+    try {
+      const sandbox = this.require(id);
+      const requested = this.creationMetadata.get(id) ?? {};
+      const info = await sandbox.getInfo({ requestTimeoutMs: 20_000 });
+      const volume = JSON.parse(
+        requested["e2b.agents.kruise.io/csi-volume-config"] ?? "null",
+      )?.[0];
+      const authorization = JSON.parse(
+        info.metadata["security.agents.kruise.io/storage-auth"] ?? "null",
+      );
+      if (
+        !volume ||
+        volume.mountPath !== target.mountPath ||
+        volume.subPath !== target.prefix.slice(0, -1) ||
+        info.metadata["security.agents.kruise.io/agent-name"] !==
+          requested["security.agents.kruise.io/agent-name"] ||
+        !Array.isArray(authorization) ||
+        authorization.length !== 1 ||
+        authorization[0]?.credentialProviderName !==
+          volume.attributes?.credentialProviderName ||
+        authorization[0]?.attributes?.["bucket-name"] !== target.bucket ||
+        authorization[0]?.attributes?.["sub-path"] !==
+          target.prefix.slice(0, -1)
+      ) {
+        throw new WorkspaceMountUnavailable();
+      }
+      const result = await sandbox.commands.run(
+        ["python3", "-c", WORKSPACE_MOUNT_PROBE, target.mountPath]
+          .map(shellQuote)
+          .join(" "),
+        { user: "user", cwd: "/home/user", timeoutMs: 20_000 },
+      );
+      if (result.exitCode !== 0) throw new WorkspaceMountUnavailable();
+      const probe = JSON.parse(result.stdout);
+      if (
+        !/^[a-f0-9]{32}$/.test(probe.probeName) ||
+        !/^[a-f0-9]{64}$/.test(probe.content) ||
+        !/^\/run\/csi\/mount-root\/oss\/[a-f0-9]{32}$/.test(probe.realPath)
+      )
+        throw new WorkspaceMountUnavailable();
+      try {
+        await this.verifyWorkspaceProbe(target, probe.probeName, probe.content);
+      } finally {
+        const cleanup = await sandbox.commands.run(
+          [
+            "python3",
+            "-c",
+            WORKSPACE_MOUNT_PROBE_CLEANUP,
+            probe.realPath,
+            probe.probeName,
+          ]
+            .map(shellQuote)
+            .join(" "),
+          { user: "user", cwd: "/home/user", timeoutMs: 20_000 },
+        );
+        if (
+          cleanup.exitCode !== 0 ||
+          cleanup.stdout.trim() !== "OMA_WORKSPACE_PROBE_REMOVED"
+        )
+          throw new WorkspaceMountUnavailable();
+      }
+    } catch {
+      // SDK/provider errors can contain sensitive diagnostics. Keep the error
+      // stable and safe for the Agent, Turn stream and application logs.
+      throw new WorkspaceMountUnavailable();
+    }
   }
 
   async *exec(
@@ -203,11 +297,12 @@ export class E2BSandboxClient implements SandboxClient {
     const sandbox = this.require(id);
     // `find` prints: <mtime-epoch-seconds> <size-bytes> <path>, one per file.
     // We use it (rather than the SDK's `files.list`) so size + mtime are always
-    // present and the listing is fully recursive, matching the old client and
-    // keeping the executor's sync logic working.
+    // present and the listing is fully recursive, the ToolExecutor listing contract.
     const res = await sandbox.commands.run(
-      `find ${shellQuote(dir)} -type f -printf '%T@ %s %p\\n' 2>/dev/null || true`,
+      `find ${shellQuote(dir)} -type f -printf '%T@ %s %p\\n'`,
     );
+    if (res.exitCode !== 0)
+      throw new Error("Sandbox file list failed; retry after storage recovers");
     return parseFindOutput(res.stdout);
   }
 
@@ -225,12 +320,13 @@ export class E2BSandboxClient implements SandboxClient {
   async destroy(id: string): Promise<void> {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox) return; // already gone — idempotent.
-    this.sandboxes.delete(id);
     try {
       await sandbox.kill();
-    } catch {
-      // Swallow not-found / already-killed; destroy is idempotent.
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error;
     }
+    this.sandboxes.delete(id);
+    this.creationMetadata.delete(id);
   }
 
   // ─── internals ────────────────────────────────────────────────────────────
@@ -241,12 +337,6 @@ export class E2BSandboxClient implements SandboxClient {
       throw new Error(`No live sandbox for ${id} (create it first)`);
     }
     return sandbox;
-  }
-
-  private async drain(it: AsyncIterable<SandboxExecChunk>): Promise<void> {
-    for await (const _chunk of it) {
-      // discard
-    }
   }
 }
 

@@ -21,5 +21,8 @@ if [ -z "$selected" ]; then
   exit 127
 fi
 
-export STORY_SEED_WORKSPACE=${STORY_SEED_WORKSPACE:-/home/user}
+export STORY_SEED_WORKSPACE=${STORY_SEED_WORKSPACE:-/home/user/workspace}
+# Relative input arguments and output files use the same persistent root.
+# The Host verifies the OSS mount; this launcher never creates a local fallback.
+cd "$STORY_SEED_WORKSPACE"
 exec node "$selected" "$@"

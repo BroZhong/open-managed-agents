@@ -11,7 +11,7 @@ import type {
   SkillStore,
   SkillArtifactStore,
 } from "@oma-server/store";
-import { PendingEventClaimLostError } from "@oma-server/store";
+import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -20,10 +20,10 @@ import type {
   EnvSpec,
   SandboxManager,
   SandboxSession,
-  SyncResult,
+  WorkspaceMountSpec,
   ReadonlyProjection,
 } from "@oma-server/sandbox";
-import { syncHasChanges } from "@oma-server/sandbox";
+import { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";
 import type {
   Adapter,
   AdapterInput,
@@ -84,7 +84,7 @@ export interface SessionRouterDeps {
    * When present and the agent is sandboxed, the router `open`s exactly one
    * {@link SandboxSession} per Session (cheap — lazy, no sandbox is started
    * until the first tool call), injects it as the per-run {@link ToolExecutor},
-   * `checkpoint`s it at each turn end, and `dispose`s it — destroying the
+   * checks its Workspace availability at each Turn end, and `dispose`s it — destroying the
    * sandbox — at session end. Absent ⇒ a sandboxed agent fails loud (see
    * {@link isSandboxedButUnprovisionable}); an opted-out agent runs with no
    * injected executor (its own tool execution, no sandbox).
@@ -94,6 +94,8 @@ export interface SessionRouterDeps {
    * only a lookup Map (`sessions`) and never a lifecycle registry.
    */
   sandboxManager?: SandboxManager;
+  /** Deployment-owned mount identity; the Host derives its prefix from Session ownership. */
+  workspaceMount?: Omit<WorkspaceMountSpec, "prefix">;
   /**
    * Per-Agent editable Files (IDENTITY/SOUL/USER/MEMORY). When present, the
    * router assembles the running Agent's Files into `appendSystemPrompt` in a
@@ -114,7 +116,7 @@ export interface SessionRouterDeps {
    * router selects the Agent's *equipped* Skills that are valid (exist, in this
    * tenant, owned by this Agent when `ownerType==='agent'`, and non-empty) and
    * declares each as a **Read-only Projection** into the sandbox at
-   * `/skills/<id>` (ADR-0005 §4). The Skill *content* flows S3→sandbox inside
+   * `/skills/<skill-name>` (ADR-0005 §4). The Skill *content* flows S3→sandbox inside
    * the SandboxManager (via `S3ProvisionSource`) — never through the Host — so
    * the router consults `skillArtifactStore` only to confirm a Skill is
    * non-empty (mirroring the old `materializeSkills`' zero-files skip), not to
@@ -183,6 +185,7 @@ export class SessionRouter {
   private readonly eventStreamHub: EventStreamHub;
   private readonly resolveAdapter: (runtime: string) => Adapter;
   private readonly sandboxManager?: SandboxManager;
+  private readonly workspaceMount?: Omit<WorkspaceMountSpec, "prefix">;
   private readonly agentFileStore?: AgentFileStore;
   private readonly agentStore?: AgentStore;
   private readonly skillStore?: SkillStore;
@@ -214,7 +217,7 @@ export class SessionRouter {
    * One {@link SandboxSession} per session, reused across turns. This is a
    * **lookup** map, NOT a lifecycle registry: the SandboxSession owns its own
    * lifecycle (lazy create on first primitive, transparent self-heal after a
-   * gateway reclaim, sync-before-destroy on dispose). The router only remembers
+   * gateway reclaim, execution-resource cleanup on dispose). The router only remembers
    * *which* session belongs to a sessionId so the same long-lived binding is
    * reused turn after turn and disposed exactly once at session end. Each entry
    * is a distinct session bound to that Session's EnvSpec — never shared across
@@ -229,6 +232,7 @@ export class SessionRouter {
     this.eventStreamHub = deps.eventStreamHub;
     this.resolveAdapter = deps.resolveAdapter;
     this.sandboxManager = deps.sandboxManager;
+    this.workspaceMount = deps.workspaceMount;
     this.agentFileStore = deps.agentFileStore;
     this.agentStore = deps.agentStore;
     this.skillStore = deps.skillStore;
@@ -566,12 +570,8 @@ export class SessionRouter {
 
   /**
    * Terminate a session: stop the active turn and destroy its sandbox (if one
-   * was ever created). `SandboxSession.dispose` syncs the last turn's files THEN
-   * tears the sandbox down (ADR-0005 §5, design doc §3), returning the final
-   * delta; a pure-chat session that never created a sandbox disposes to an empty
-   * no-op. We drop the lookup entry first so a concurrent turn can't reuse a
-   * disposing session, then emit any final file-change so the tree reflects the
-   * last turn's writes.
+   * was ever created). Disposal releases execution resources; successfully
+   * closed files already belong to the Workspace and are retained.
    */
   async terminateSession(sessionId: string): Promise<void> {
     this.interrupt(sessionId);
@@ -581,11 +581,9 @@ export class SessionRouter {
     this.notifyIdleIfSettled();
     await this.pendingEventStore.clear(sessionId);
     const session = this.sessions.get(sessionId);
+    if (session) await session.dispose();
+    // Keep a failed disposal's closed handle so a later DELETE can retry cleanup.
     this.sessions.delete(sessionId);
-    if (session) {
-      const result = await session.dispose();
-      if (syncHasChanges(result)) await this.emitFileChange(sessionId, result);
-    }
   }
 
   /**
@@ -615,8 +613,7 @@ export class SessionRouter {
    * Compute the complete recipe the SandboxManager needs for this Session
    * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
    * Agent's image/env, and each validated equipped Skill as a Read-only
-   * Projection at `/skills/<id>` (outside `/home/user`, so the workspace sync
-   * never writes it back — the invariant the manager fail-loud asserts).
+   * Projection at `/skills/<skill-name>` outside the persistent Workspace.
    *
    * `equippedSkills` is precomputed by the caller (it needs async store
    * lookups for ownership + non-empty validation), so `specFor` stays a pure
@@ -635,14 +632,17 @@ export class SessionRouter {
     agent: Agent,
     equippedSkills: EquippedSkill[],
   ): EnvSpec {
+    if (!this.workspaceMount) throw new Error("OSS Workspace mount is not configured");
     const mergedEnv = {
       ...this.defaultSandboxEnv,
       ...agent.sandbox?.env,
       ...this.managedSandboxEnvByAgentId?.[agent.id],
+      ...WORKSPACE_ENV,
     };
     return {
       tenantId: session.tenantId,
       workspaceId: session.workspaceId,
+      workspaceMount: { ...this.workspaceMount, prefix: workspaceObjectPrefix(session.tenantId, session.workspaceId) },
       image: agent.sandbox?.image,
       env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
       projections: this.skillProjections(session, equippedSkills),
@@ -652,7 +652,7 @@ export class SessionRouter {
   /**
    * Get (or lazily open) this session's {@link SandboxSession} (design doc §6).
    * `open` is **cheap** — it starts no sandbox; the first filesystem/code
-   * primitive triggers create+hydrate+project — so obtaining it here spins
+   * primitive triggers create+mount verification+projection — so obtaining it here spins
    * nothing up for a pure-chat turn. The session is remembered in {@link sessions}
    * and reused across turns; it is disposed only at session end.
    *
@@ -678,8 +678,8 @@ export class SessionRouter {
     session: Session,
     equippedSkills: EquippedSkill[],
   ): ReadonlyProjection[] {
-    return equippedSkills.map(({ id }) => ({
-      targetPath: `/skills/${id}`,
+    return equippedSkills.map(({ id, descriptor }) => ({
+      targetPath: `/skills/${descriptor.name}`,
       source: {
         kind: "s3",
         ref: { tenantId: session.tenantId, skillId: id },
@@ -687,89 +687,28 @@ export class SessionRouter {
     }));
   }
 
-  /**
-   * Append + publish a `workspace.file_change` for a non-empty sync delta
-   * (ADR-0002 §4–§5, ADR-0005 §5). The Host is the sole emitter of this event —
-   * the SandboxManager/SandboxSession only *returns* a {@link SyncResult}; the
-   * Adapter reports tool results only and never emits a workspace/artifact
-   * event. The event is persisted to the event log (so reconnecting clients
-   * replay it) and published live for the SSE stream's file-tree updates. The
-   * caller guards with {@link syncHasChanges}, so this is only reached when there
-   * is a change to broadcast — a pure-chat turn produces no file-change noise.
-   */
-  private async emitFileChange(
-    sessionId: string,
-    result: SyncResult,
-    idempotencyKey?: string,
-    pendingFence?: PendingEventFence,
-  ): Promise<void> {
-    const data = {
-      workspaceId: result.workspaceId,
-      changed: result.changed,
-      deleted: result.deleted,
-    };
-    const stored = await this.eventLogStore.append(sessionId, {
-      type: "workspace.file_change",
-      data,
-      sessionThreadId: "sthr_primary",
-      idempotencyKey,
-      pendingFence,
-    });
-    this.eventStreamHub.publish(sessionId, {
-      type: stored.type,
-      seq: stored.seq,
-      data: stored.data,
-    });
-  }
-
-  /**
-   * Run the session's turn-end checkpoint sync and, when it produced changes,
-   * emit the `workspace.file_change` event (ADR-0005 §5). Owned by the
-   * SandboxSession (scan + content-hash push + baseline-diff deletion, inside
-   * the injected `WorkspacePersistence`); the Host only broadcasts the delta.
-   *
-   * A checkpoint of a session that never created a sandbox (pure chat) or whose
-   * sandbox was reclaimed returns an empty result and never throws (design doc
-   * §3). A *genuine* medium failure DOES throw — we lift the old `syncWorkspace`
-   * try/catch that turns such a failure into a `session.error`
-   * (`workspace_sync_error`) rather than failing the turn.
-   */
-  private async checkpointWorkspace(
+  /** Check availability without changing the completed answer or claiming all handles are saved. */
+  private async checkWorkspace(
     sessionId: string,
     sandbox: SandboxSession,
     idempotencyPrefix?: string,
     pendingFence?: PendingEventFence,
   ): Promise<void> {
-    let result: SyncResult;
     try {
-      result = await sandbox.checkpoint();
-    } catch (err) {
-      // A sync failure must not fail the turn; surface it as a session error.
-      const error = { message: String(err), code: "workspace_sync_error" };
-      const errorEvent = await this.eventLogStore.append(sessionId, {
+      await sandbox.checkWorkspace();
+    } catch {
+      const error = {
+        message: "Workspace storage could not be checked. The answer is retained; file save status is unconfirmed. Retry the file operation or check the Workspace before continuing.",
+        code: "workspace_storage_error",
+      };
+      const stored = await this.eventLogStore.append(sessionId, {
         type: "session.error",
         data: { error },
         sessionThreadId: "sthr_primary",
-        idempotencyKey: idempotencyPrefix
-          ? `${idempotencyPrefix}:workspace_sync_error`
-          : undefined,
+        idempotencyKey: idempotencyPrefix,
         pendingFence,
       });
-      this.eventStreamHub.publish(sessionId, {
-        type: errorEvent.type,
-        seq: errorEvent.seq,
-        data: errorEvent.data,
-      });
-      return;
-    }
-
-    if (syncHasChanges(result)) {
-      await this.emitFileChange(
-        sessionId,
-        result,
-        idempotencyPrefix ? `${idempotencyPrefix}:workspace_file_change` : undefined,
-        pendingFence,
-      );
+      this.eventStreamHub.publish(sessionId, { type: stored.type, seq: stored.seq, data: stored.data });
     }
   }
 
@@ -874,7 +813,7 @@ export class SessionRouter {
   /**
    * Persist the durable turn boundary before acknowledging its pending input.
    * The ordering is the recovery protocol:
-   *   full output/checkpoint → durable idle → completion marker → pending ack.
+   *   full output/storage check → durable idle → completion marker → pending ack.
    * A crash before the marker retries under turn-scoped idempotency keys; a
    * crash after the marker only re-acks and never reruns the Adapter.
    */
@@ -1160,8 +1099,7 @@ export class SessionRouter {
       // Select the Agent's valid equipped Skills up front — the async store
       // validation feeds BOTH the EnvSpec projections (via `sandboxFor`) and the
       // in-sandbox `skillPaths` handed to the adapter, so the two never diverge.
-      const equippedSkills = await this.equippedSkills(currentAgent);
-      if (leaseLost) return;
+      let equippedSkills: EquippedSkill[] = [];
 
       // Bind the per-session SandboxSession (lazy — no sandbox yet). A pure-chat
       // turn never touches it, so nothing is created. Needs the Session record
@@ -1171,27 +1109,23 @@ export class SessionRouter {
       if (!session) {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
-      const sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
-      const projections = this.skillProjections(session, equippedSkills);
-
-      // The write gate is already running at this point. Before adapter.run,
-      // reconcile any idle-time Workspace edits from S3 and re-project the
-      // current equipped Skills into the same live sandbox. Cold sessions stay
-      // lazy: refresh only updates their projection recipe and creates nothing.
-      if (sandbox) {
-        try {
-          await sandbox.refresh(projections);
+      let sandbox: SandboxSession | undefined;
+      try {
+          equippedSkills = await this.equippedSkills(currentAgent);
+          if (leaseLost) return;
+          sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
+          await sandbox?.prepare(this.skillProjections(session, equippedSkills));
           if (leaseLost) return;
         } catch (error) {
           const refreshError = {
-            message: error instanceof Error ? error.message : String(error),
-            code: "sandbox_refresh_failed",
+            message: error instanceof Error ? error.message : "Sandbox preparation failed",
+            code: "sandbox_prepare_failed",
           };
           const stored = await this.eventLogStore.append(sessionId, {
             type: "session.error",
             data: { error: refreshError },
             sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_refresh_failed"),
+            idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_prepare_failed"),
             pendingFence,
           });
           this.eventStreamHub.publish(sessionId, {
@@ -1216,16 +1150,16 @@ export class SessionRouter {
             pendingFence,
           )) return;
           continue;
-        }
       }
 
       // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
       // skipped). Skills are no longer materialized to a Host temp dir — they are
       // projected into the sandbox by the SandboxManager (ADR-0005 §4); the
-      // adapter is pointed at their in-sandbox `/skills/<id>` roots below.
+      // adapter is pointed at their in-sandbox `/skills/<skill-name>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
+      if (sandbox) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
       if (leaseLost) return;
-      const skillPaths = equippedSkills.map(({ id }) => `/skills/${id}`);
+      const skillPaths = equippedSkills.map(({ descriptor }) => `/skills/${descriptor.name}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
 
       const adapterInput = this.buildAdapterInput(
@@ -1409,32 +1343,21 @@ export class SessionRouter {
         });
       }
 
-      // Checkpoint can mutate S3. Extend and validate the exact generation
-      // immediately before crossing that external side-effect boundary.
-      const checkpointLease = await this.renewPendingClaim(sessionId, claim);
-      if (!checkpointLease) {
+      // Fence the availability check and its optional durable diagnostic.
+      const storageCheckLease = await this.renewPendingClaim(sessionId, claim);
+      if (!storageCheckLease) {
         leaseLost = true;
         turnController.abort(new PendingLeaseLostError());
         if (this.turnStreamStore) await this.turnStreamStore.reclaim(turnId);
         return;
       }
 
-      // Turn-end lifecycle checkpoint (ADR-0005 §5): sync the sandbox Workspace
-      // back through the persistence seam and emit the resulting file-change
-      // event. Owned by the SandboxSession; a pure-chat turn never created a
-      // sandbox, so this is a cheap empty no-op.
       if (sandbox) {
-        await this.checkpointWorkspace(
-          sessionId,
-          sandbox,
-          this.turnKey(pendingEvent.id, "checkpoint"),
-          pendingFence,
-        );
+        await this.checkWorkspace(sessionId, sandbox,
+          this.turnKey(pendingEvent.id, "workspace_storage_check"), pendingFence);
       }
 
-      // Checkpoint may be slow and is not transactionally coupled to PG. Fence
-      // again before any global Redis cleanup/idle mutation or durable commit;
-      // a late old generation must leave a newer Host's active turn untouched.
+      // Fence again before changing global Turn state after the storage check.
       const completionLease = await this.renewPendingClaim(sessionId, claim);
       if (!completionLease) {
         leaseLost = true;
@@ -1560,9 +1483,9 @@ export class SessionRouter {
         mcpServers: agentConfig.mcpServers,
         skills: agentConfig.skills,
         // Per-call Host injections (ADR-0002): assembled Agent Files and the
-        // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<id>`
+        // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<skill-name>`
         // paths *inside the sandbox* (ADR-0005 §4) — the adapter points Pi's
-        // sandbox-mapped read tool at them (SKILL.md at `/skills/<id>/SKILL.md`).
+        // sandbox-mapped read tool at them (SKILL.md at `/skills/<skill-name>/SKILL.md`).
         // Undefined when their stores are absent, preserving prior behavior.
         appendSystemPrompt: appendSystemPrompt && appendSystemPrompt.length > 0
           ? appendSystemPrompt
@@ -1603,7 +1526,7 @@ export class SessionRouter {
 
   /**
    * Select the Agent's equipped Skills that should be projected into
-   * the sandbox as Read-only Projections at `/skills/<id>` (ADR-0005 §4). This
+   * the sandbox as Read-only Projections at `/skills/<skill-name>` (ADR-0005 §4). This
    * is the *validation* half of the old `materializeSkills`, minus the Host
    * temp-dir write: it decides WHICH Skills become projections/descriptors; the *content*
    * flows S3→sandbox inside the SandboxManager (`S3ProvisionSource`), never
@@ -1644,12 +1567,19 @@ export class SessionRouter {
       // S3→sandbox by the manager, so the router never touches Skill content.
       const files = await this.skillArtifactStore.list(agentConfig.tenantId, skillId);
       if (!files.includes("SKILL.md")) continue;
+      // Names become path components without rewriting: reject ambiguity rather
+      // than silently hiding a second equipped Skill behind the first.
+      validateArtifactPath(skill.name);
+      if (skill.name.includes("/")) throw new Error("Skill name must be one directory name");
+      if (valid.some(({ descriptor }) => descriptor.name === skill.name)) {
+        throw new Error(`Equipped Skills have a duplicate name: ${skill.name}`);
+      }
       valid.push({
         id: skillId,
         descriptor: {
           name: skill.name,
           description: skill.description,
-          path: `/skills/${skillId}/SKILL.md`,
+          path: `/skills/${skill.name}/SKILL.md`,
         },
       });
     }

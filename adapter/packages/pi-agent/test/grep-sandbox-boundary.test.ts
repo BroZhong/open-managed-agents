@@ -113,7 +113,7 @@ describe("sandbox-backed grep boundary", () => {
       executor,
       {
         pattern: "Need(le|less)",
-        path: "/home/user/src",
+        path: "/home/user/workspace/src",
         glob: "**/*.ts",
         ignoreCase: true,
         literal: false,

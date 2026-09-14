@@ -29,3 +29,31 @@ HTTP protocol fixture, including pagination, multipart upload, overwrite rename,
 Unicode download headers, media signing, cross-Tenant/Workspace denial and the
 existing per-Session 423 gate. The fixture is not evidence of live cloud IAM;
 real-cloud acceptance is recorded separately under `deploy/sandbox/oss-workspace`.
+
+## #125 — mounted execution
+
+SandboxManager now creates a restricted CSI mount at `/home/user/workspace`.
+Before each tool operation it checks the gateway's storage authorization,
+ordinary-user `fuse.ossfs` mount identity and a closed-file probe read back through
+the Host OSS store. Probe files use only the reserved control directory. A failed
+check blocks execution; it never creates a local fallback Workspace. Expired
+Sandbox resources rebuild with the same trusted prefix.
+
+Skills still come from Supabase through `S3ProvisionSource`. In response to the
+user's additional requirement, their projection and Adapter discovery paths are
+`/skills/<skill-name>`, while source ownership stays keyed by Skill ID. Invalid or
+duplicate equipped names fail before execution. Rename/retry removes stale
+projection paths, including paths left by a partially failed copy.
+
+- Sandbox focused checks: `pnpm --dir server/packages/sandbox exec vitest run test/sandbox-manager.test.ts test/e2b-sandbox-client.test.ts test/provision-source.test.ts` — 53 passed.
+- Router mounted-execution checks: `pnpm --dir server/packages/session-router exec vitest run test/session-router-sandbox.test.ts` — 27 passed.
+- Adapter tool/Skill boundary checks — 25 passed.
+- Sandbox and Router typechecks — passed.
+- Local `linux/amd64` image build and ordinary-user smoke — passed; see `deploy/sandbox/code-interpreter-vfscli/local-build-verification.json`.
+
+Real isolated cloud checks confirmed Host/Sandbox Unicode, empty and binary file
+visibility, concurrent writes, Workspace isolation, rebuild persistence, and
+local Node/Python installation. `/home/user` and dependencies stay local. These
+checks do not promise general POSIX semantics, instant cache visibility, or
+preservation of open/background writes at Turn end. Image publication and a
+production maintenance cutover have not been performed.

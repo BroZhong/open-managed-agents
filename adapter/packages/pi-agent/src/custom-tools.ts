@@ -84,7 +84,7 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
 /**
  * Map a Pi-resolved absolute path back to the workspace-relative POSIX path the
  * {@link ToolExecutor} expects. Pi resolves each model path against
- * {@link SANDBOX_WORKSPACE_ROOT}; `/home/user/note.txt` therefore becomes
+ * {@link SANDBOX_WORKSPACE_ROOT}; `/home/user/workspace/note.txt` therefore becomes
  * `note.txt`, while the root itself becomes `.`. Absolute read-only projections
  * such as `/skills/<id>` stay absolute so the SandboxManager can route them
  * outside the writable Workspace.

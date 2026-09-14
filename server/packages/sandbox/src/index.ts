@@ -26,21 +26,11 @@ export {
 } from "./fake-sandbox-client.js";
 
 export {
-  contentHash,
-  syncHasChanges,
-  type WorkspaceSyncResult,
-} from "./workspace-sync.js";
-
-export {
-  S3WorkspacePersistence,
-  FakeWorkspacePersistence,
-  type WorkspacePersistence,
-  type HydrateTarget,
-  type HydrationSession,
-  type SandboxFsAccess,
-  type SandboxFsEntry,
-  type SyncResult,
-} from "./workspace-persistence.js";
+  WorkspaceMountUnavailable,
+  type WorkspaceMountSpec,
+  type WorkspaceMountTarget,
+} from "./workspace-mount.js";
+export type { SandboxFsAccess } from "./sandbox-client.js";
 
 export {
   S3ProvisionSource,

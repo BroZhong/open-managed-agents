@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   E2BSandboxClient,
   parseFindOutput,
@@ -12,6 +12,7 @@ import type { SandboxExecChunk } from "../src/sandbox-client.js";
 interface RunCall {
   cmd: string;
   opts?: {
+    user?: string;
     cwd?: string;
     envs?: Record<string, string>;
     timeoutMs?: number;
@@ -33,18 +34,24 @@ class FakeSandbox implements E2BSandbox {
   readonly reads = new Map<string, string | Uint8Array>();
   killed = false;
   running = true;
+  metadata: Record<string, string> = {};
+  async getInfo() {
+    return { metadata: this.metadata };
+  }
   /** When set, isRunning throws (simulates a not-found/transport error). */
   isRunningThrows = false;
   private runHandler?: (
     cmd: string,
   ) =>
-    | { stdout?: string; stderr?: string; exitCode?: number; throwExit?: boolean }
+    | {
+        stdout?: string;
+        stderr?: string;
+        exitCode?: number;
+        throwExit?: boolean;
+      }
     | undefined;
 
-  constructor(
-    id: string,
-    runHandler?: FakeSandbox["runHandler"],
-  ) {
+  constructor(id: string, runHandler?: FakeSandbox["runHandler"]) {
     this.sandboxId = id;
     this.runHandler = runHandler;
   }
@@ -68,7 +75,10 @@ class FakeSandbox implements E2BSandbox {
   };
 
   files = {
-    read: async (path: string, opts?: { format?: "text" | "bytes" }): Promise<string | Uint8Array> => {
+    read: async (
+      path: string,
+      opts?: { format?: "text" | "bytes" },
+    ): Promise<string | Uint8Array> => {
       const body = this.reads.get(path);
       if (body === undefined) throw new Error(`no such file ${path}`);
       if (opts?.format === "bytes") {
@@ -76,7 +86,10 @@ class FakeSandbox implements E2BSandbox {
       }
       return typeof body === "string" ? body : new TextDecoder().decode(body);
     },
-    write: async (path: string, data: string | ArrayBuffer): Promise<unknown> => {
+    write: async (
+      path: string,
+      data: string | ArrayBuffer,
+    ): Promise<unknown> => {
       this.writes.push({ path, data });
       this.reads.set(
         path,
@@ -108,10 +121,20 @@ class FakeSandbox implements E2BSandbox {
 /** Build a client wired to a fake factory; expose the created sandboxes. */
 function makeClient(
   runHandler?: FakeSandbox["runHandler"],
-  opts?: { failKill?: boolean },
+  opts?: {
+    failKill?: boolean;
+    verifyWorkspaceProbe?: (
+      target: unknown,
+      name: string,
+      body: string,
+    ) => Promise<void>;
+  },
 ): {
   client: E2BSandboxClient;
-  factoryCalls: Array<{ template: string; opts: Parameters<CreateSandboxFn>[1] }>;
+  factoryCalls: Array<{
+    template: string;
+    opts: Parameters<CreateSandboxFn>[1];
+  }>;
   sandboxes: FakeSandbox[];
 } {
   const factoryCalls: Array<{
@@ -123,6 +146,23 @@ function makeClient(
   const createSandbox: CreateSandboxFn = async (template, o) => {
     factoryCalls.push({ template, opts: o });
     const s = new FakeSandbox(`sbx-${++counter}`, runHandler);
+    const volume = JSON.parse(
+      o.metadata?.["e2b.agents.kruise.io/csi-volume-config"] ?? "null",
+    )?.[0];
+    if (volume)
+      s.metadata = {
+        "security.agents.kruise.io/agent-name":
+          o.metadata!["security.agents.kruise.io/agent-name"],
+        "security.agents.kruise.io/storage-auth": JSON.stringify([
+          {
+            credentialProviderName: volume.attributes.credentialProviderName,
+            attributes: {
+              "bucket-name": "agentry",
+              "sub-path": volume.subPath,
+            },
+          },
+        ]),
+      };
     if (opts?.failKill) {
       s.kill = async () => {
         throw new Error("not found");
@@ -136,6 +176,7 @@ function makeClient(
     apiKey: "gw-key",
     defaultTemplate: "code-interpreter",
     createSandbox,
+    verifyWorkspaceProbe: opts?.verifyWorkspaceProbe ?? (async () => {}),
   });
   return { client, factoryCalls, sandboxes };
 }
@@ -150,12 +191,22 @@ async function collect(
 
 describe("E2BSandboxClient", () => {
   it("requires domain and apiKey", () => {
-    expect(() => new E2BSandboxClient({ domain: "", apiKey: "k" })).toThrow(
-      /domain/,
-    );
-    expect(() => new E2BSandboxClient({ domain: "d", apiKey: "" })).toThrow(
-      /apiKey/,
-    );
+    expect(
+      () =>
+        new E2BSandboxClient({
+          domain: "",
+          apiKey: "k",
+          verifyWorkspaceProbe: async () => {},
+        }),
+    ).toThrow(/domain/);
+    expect(
+      () =>
+        new E2BSandboxClient({
+          domain: "d",
+          apiKey: "",
+          verifyWorkspaceProbe: async () => {},
+        }),
+    ).toThrow(/apiKey/);
   });
 
   it("create passes templateID + apiKey + domain and returns the sandboxId", async () => {
@@ -189,16 +240,102 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].template).toBe("code-interpreter");
   });
 
-  it("create runs mkdir -p on the default workspace dir once ready", async () => {
-    const { client, sandboxes } = makeClient();
+  it("create leaves mount provisioning to CSI and gives ALB cold starts enough request time", async () => {
+    const { client, sandboxes, factoryCalls } = makeClient();
     await client.create();
-    const sb = sandboxes[0];
-    // Default is E2B's user home /home/user (issue #85: the old root-owned
-    // /workspace could not be mkdir'd by the non-privileged exec user).
-    // argv is shell-quoted per element: 'mkdir' '-p' '/home/user'.
-    expect(
-      sb.runCalls.some((c) => c.cmd === "'mkdir' '-p' '/home/user'"),
-    ).toBe(true);
+    expect(sandboxes[0].runCalls).toEqual([]);
+    expect(factoryCalls[0].opts.requestTimeoutMs).toBe(185_000);
+  });
+
+  const target = {
+    mountPath: "/home/user/workspace",
+    bucket: "agentry",
+    prefix: "tenant_1/ws_1/",
+  };
+  const mountOptions = {
+    metadata: {
+      "security.agents.kruise.io/agent-name": "agentry-workspace",
+      "e2b.agents.kruise.io/csi-volume-config":
+        '[{"pvName":"agentry-workspace-oss","mountPath":"/home/user/workspace","subPath":"tenant_1/ws_1","attributes":{"credentialProviderName":"agentry-oss-rw"}}]',
+    },
+  };
+  const probe = {
+    probeName: "a".repeat(32),
+    content: "b".repeat(64),
+    realPath: "/run/csi/mount-root/oss/" + "c".repeat(32),
+  };
+  const validProbe = (cmd: string) => ({
+    stdout: cmd.includes("OMA_WORKSPACE_PROBE_REMOVED")
+      ? "OMA_WORKSPACE_PROBE_REMOVED\n"
+      : JSON.stringify(probe),
+  });
+
+  it("proves ordinary-user mount writes reach the exact Host OSS prefix then removes the probe", async () => {
+    const readback = vi.fn(async () => {});
+    const { client, sandboxes } = makeClient(validProbe, {
+      verifyWorkspaceProbe: readback,
+    });
+    const { id } = await client.create(mountOptions);
+    await client.verifyWorkspaceMount(id, target);
+    expect(readback).toHaveBeenCalledWith(
+      target,
+      probe.probeName,
+      probe.content,
+    );
+    expect(sandboxes[0].runCalls).toHaveLength(2);
+    expect(sandboxes[0].runCalls[0].cmd).toContain("/proc/self/mountinfo");
+    expect(sandboxes[0].runCalls[0].cmd).toContain(".oma-workspace-checks");
+    for (const call of sandboxes[0].runCalls) {
+      expect(call.opts?.user).toBe("user");
+      expect(call.opts?.timeoutMs).toBe(20_000);
+    }
+  });
+
+  it("rejects another prefix in gateway identity metadata before creating a probe", async () => {
+    const { client, sandboxes } = makeClient(validProbe);
+    const { id } = await client.create(mountOptions);
+    sandboxes[0].metadata["security.agents.kruise.io/storage-auth"] =
+      '[{"credentialProviderName":"agentry-oss-rw","attributes":{"bucket-name":"agentry","sub-path":"other/ws_1"}}]';
+    await expect(client.verifyWorkspaceMount(id, target)).rejects.toThrow(
+      /Workspace storage/,
+    );
+    expect(sandboxes[0].runCalls).toEqual([]);
+  });
+
+  it("failed Host readback still cleans the probe and never exposes provider diagnostics", async () => {
+    const { client, sandboxes } = makeClient(validProbe, {
+      verifyWorkspaceProbe: async () => {
+        throw new Error("secret STS token");
+      },
+    });
+    const { id } = await client.create(mountOptions);
+    await expect(client.verifyWorkspaceMount(id, target)).rejects.toThrow(
+      /Workspace storage/,
+    );
+    expect(sandboxes[0].runCalls.at(-1)?.cmd).toContain(
+      "OMA_WORKSPACE_PROBE_REMOVED",
+    );
+    await expect(client.verifyWorkspaceMount(id, target)).rejects.not.toThrow(
+      /secret/,
+    );
+  });
+
+  it("fails closed on missing mount, read/write or cleanup errors", async () => {
+    for (const failCleanup of [false, true]) {
+      const { client } = makeClient((cmd) => {
+        if (cmd.includes("OMA_WORKSPACE_PROBE_REMOVED") || !failCleanup)
+          return {
+            stdout: "",
+            stderr: "private provider diagnostics",
+            exitCode: 1,
+          };
+        return validProbe(cmd);
+      });
+      const { id } = await client.create(mountOptions);
+      await expect(client.verifyWorkspaceMount(id, target)).rejects.toThrow(
+        /Workspace storage/,
+      );
+    }
   });
 
   it("exec streams stdout and stderr chunks and wraps in cd/argv", async () => {
@@ -291,7 +428,9 @@ describe("E2BSandboxClient", () => {
     const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
     sandboxes[0].reads.set("/workspace/image.png", bytes);
 
-    expect(await client.readFileBytes(id, "/workspace/image.png")).toEqual(bytes);
+    expect(await client.readFileBytes(id, "/workspace/image.png")).toEqual(
+      bytes,
+    );
     await client.writeFileBytes(id, "/workspace/copy.png", bytes);
 
     const written = sandboxes[0].writes.find(
@@ -328,6 +467,18 @@ describe("E2BSandboxClient", () => {
     expect(findCall!.cmd).toContain("-type f");
   });
 
+  it("list reports filesystem failures instead of pretending the directory is empty", async () => {
+    const { client } = makeClient(() => ({
+      stdout: "",
+      stderr: "Input/output error",
+      exitCode: 1,
+    }));
+    const { id } = await client.create();
+    await expect(client.list(id, "/home/user/workspace")).rejects.toThrow(
+      /list/i,
+    );
+  });
+
   it("isAlive reflects the sandbox isRunning state", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create();
@@ -360,6 +511,18 @@ describe("E2BSandboxClient", () => {
     await expect(client.destroy(id)).resolves.toBeUndefined();
   });
 
+  it("destroy reports transport failure and retains the handle so cleanup can be retried", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const kill = vi
+      .spyOn(sandboxes[0], "kill")
+      .mockRejectedValueOnce(new Error("gateway temporarily unavailable"));
+    await expect(client.destroy(id)).rejects.toThrow(/temporarily unavailable/);
+    await client.destroy(id);
+    expect(kill).toHaveBeenCalledTimes(2);
+    expect(await client.isAlive(id)).toBe(false);
+  });
+
   it("destroy swallows a kill failure (idempotent)", async () => {
     const { client } = makeClient(undefined, { failKill: true });
     const { id } = await client.create();
@@ -386,7 +549,9 @@ describe("parseFindOutput", () => {
 
 describe("resolveTemplate", () => {
   it("uses the default when no image is given", () => {
-    expect(resolveTemplate(undefined, "code-interpreter")).toBe("code-interpreter");
+    expect(resolveTemplate(undefined, "code-interpreter")).toBe(
+      "code-interpreter",
+    );
   });
 
   it("honours a bare template name", () => {
@@ -394,10 +559,14 @@ describe("resolveTemplate", () => {
   });
 
   it("falls back to default for a container-image ref (registry path or tag)", () => {
-    expect(resolveTemplate("open-managed-agents/sandbox:latest", "code-interpreter")).toBe(
+    expect(
+      resolveTemplate("open-managed-agents/sandbox:latest", "code-interpreter"),
+    ).toBe("code-interpreter");
+    expect(resolveTemplate("nginx:1.25", "code-interpreter")).toBe(
       "code-interpreter",
     );
-    expect(resolveTemplate("nginx:1.25", "code-interpreter")).toBe("code-interpreter");
-    expect(resolveTemplate("repo/image", "code-interpreter")).toBe("code-interpreter");
+    expect(resolveTemplate("repo/image", "code-interpreter")).toBe(
+      "code-interpreter",
+    );
   });
 });

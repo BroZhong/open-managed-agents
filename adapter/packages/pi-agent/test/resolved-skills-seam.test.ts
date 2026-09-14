@@ -162,9 +162,9 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(String((options.appendSystemPrompt as string[])[1])).toContain(
       "/skills/skill_abc/SKILL.md",
     );
-    expect(options.cwd).toBe("/home/user");
-    expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user");
-    expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user");
+    expect(options.cwd).toBe("/home/user/workspace");
+    expect(sdkSeam.sessionOptions[0].cwd).toBe("/home/user/workspace");
+    expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe("/home/user/workspace");
   });
 
   it("preserves native skillPaths when no ToolExecutor is injected", async () => {

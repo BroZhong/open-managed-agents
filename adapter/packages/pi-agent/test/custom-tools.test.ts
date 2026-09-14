@@ -104,23 +104,23 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     const ex = new MemExecutor();
     const tools = buildCustomTools(ex);
     await run(toolByName(tools, "write"), { path: "sub/note.txt", content: "hello" });
-    // The model-facing path was resolved against /home/user and stripped back
+    // The model-facing path was resolved against /home/user/workspace and stripped back
     // to the workspace-relative path the executor expects.
     expect(ex.files.get("sub/note.txt")).toBe("hello");
     expect(ex.calls).toContain("write sub/note.txt");
   });
 
-  it("treats /home/user as the canonical model-visible workspace root", async () => {
+  it("treats /home/user/workspace as the canonical model-visible workspace root", async () => {
     const ex = new MemExecutor();
     const tools = buildCustomTools(ex);
 
     await run(toolByName(tools, "write"), {
-      path: "/home/user/sub/note.txt",
+      path: "/home/user/workspace/sub/note.txt",
       content: "canonical-root",
     });
 
     expect(ex.files.get("sub/note.txt")).toBe("canonical-root");
-    expect(ex.files.has("/home/user/sub/note.txt")).toBe(false);
+    expect(ex.files.has("/home/user/workspace/sub/note.txt")).toBe(false);
     expect(ex.calls).toContain("write sub/note.txt");
   });
 
@@ -132,7 +132,7 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     expect(ex.calls).toContain("read note.txt");
   });
 
-  it("keeps /skills absolute and outside the /home/user Workspace mapping", async () => {
+  it("keeps /skills absolute and outside the /home/user/workspace Workspace mapping", async () => {
     const skillPath = "/skills/skill_abc/SKILL.md";
     const ex = new MemExecutor().seed(skillPath, "# Projected Skill");
     const tools = buildCustomTools(ex);
@@ -142,7 +142,7 @@ describe("buildCustomTools — Pi native factories redirected into the executor"
     expect(out).toBe("# Projected Skill");
     expect(ex.calls).toContain(`read ${skillPath}`);
     expect(ex.calls).not.toContain("read skills/skill_abc/SKILL.md");
-    expect(ex.calls).not.toContain("read /home/user/skills/skill_abc/SKILL.md");
+    expect(ex.calls).not.toContain("read /home/user/workspace/skills/skill_abc/SKILL.md");
   });
 
   it("edit reads, applies the patch, and writes back through the executor", async () => {

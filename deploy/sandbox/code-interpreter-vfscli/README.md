@@ -1,145 +1,145 @@
-# `code-interpreter-vfscli` sandbox image
+# `code-interpreter-vfscli` Sandbox image
 
-The custom sandbox image the brozhong HK cluster serves for Agents that opt in
-with `sandbox.image: "code-interpreter-vfscli"`. It exists to fix three gaps in
-the stock ACS `code-interpreter` base while keeping the E2B protocol intact.
+This is the application template for Shanghai `agent-platform`
+(`c4d4dbd36064d4341835496ed01023600`). The image adds `vfs-cli`, a stable
+`story-seed` launcher, and Python on the E2B command PATH. It preserves the ACS
+base's `ENTRYPOINT` and `CMD` so the injected `agent-runtime` continues to work.
+The deployed image digest and infrastructure inventory are recorded in
+[`../oss-workspace/README.md`](../oss-workspace/README.md).
 
-## What it adds over the ACS base
+## Workspace and local directories
 
-| Gap in the stock base | Fix in this image |
+The Host, parent Agent, child Agents, and launcher use the same persistent
+Workspace: `/home/user/workspace`. CSI creates a root-owned symlink to the real
+`fuse.ossfs` mount. The image leaves this path absent; image build checks reject
+an existing directory or symlink there. Building an image cannot prove that a
+runtime OSS mount works.
+
+Before tools execute, the Host checks E2B identity metadata, the real mount and
+ordinary-user read/write access. It reads a temporary probe back through the
+Host OSS store to prove the exact bucket and Tenant/Workspace prefix, then
+cleans the probe. A failed check blocks execution. The launcher does not create
+a Workspace directory or fall back to HOME.
+
+`HOME=/home/user` stays local. Dependency and cache defaults match
+[`workspace-environment.ts`](../../../server/packages/session-router/src/workspace-environment.ts):
+
+| Purpose | Directory |
 | --- | --- |
-| Old default `/workspace` sits under root-owned `/`; e2b `exec` runs as the non-privileged `user`, so `mkdir /workspace` failed silently and bash `>` / program writes to it failed (**#85**) | Canonical `WORKSPACE_DIR=/home/user` — E2B's recommended user home, owned by `user` by construction |
-| Parent/child tools and persistence could drift onto different roots | One fixed `/home/user` contract shared by Pi, subagents, SandboxManager, and the image |
-| `vfs-cli` absent | Go static binary (linux/amd64) COPYd onto `/usr/local/bin` |
-| `story-seed` absent | Stable `/usr/local/bin/story-seed` launcher resolves the script from an equipped Skill projection and runs it with Node |
-| `python`/`pip` live in `/opt/venv/bin`, absent from e2b exec's non-login PATH (`python: command not found`) | symlinked into `/usr/local/bin` |
+| Node packages | `/home/user/.local/oma-node/node_modules` (`NODE_PATH`) |
+| npm global prefix | `/home/user/.local/npm` (`NPM_CONFIG_PREFIX`) |
+| Python packages | `/home/user/.local/oma-python` (`PYTHONPATH`) |
+| Python virtual environments | `/home/user/.local/venvs/<name>` |
+| npm / pip caches | `/home/user/.cache/npm`, `/home/user/.cache/pip` |
+| Other caches / temporary files | `/home/user/.cache`, `/tmp` |
 
-python3, node, and jupyter come from the base. The base's `ENTRYPOINT`/`CMD`
-(the jupyter start-up script the e2b `agent-runtime` hooks into) are inherited
-**unchanged** — do not set them in the Dockerfile.
-
-## Runtime credentials are NOT in the image
-
-`VFS_TOKEN` is a **per-Agent secret**, injected at run time via `sandbox.env`
-(→ e2b `create` envs). It is never baked into the image — the image is
-token-free and safe to push to a shared registry, and every Agent supplies its
-own token. Only non-secret vfs-cli defaults (if any) belong in the image.
-
-`story-seed` follows the same rule. `OPENGROVE_WW_BASE_URL` and
-`OPENGROVE_WW_ACCESS_TOKEN` are injected by the Host when the sandbox is
-created. The bearer token lives in the Kubernetes Secret and never in this
-image, the ConfigMap, a Skill, or an Agent record. The Host injects the WW pair
-only for Agent ids in `DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS`; it is not a
-deployment-wide credential available to other tenants.
-
-That contract is unchanged, but the WW integration is **off by default** since
-issue #116: `deploy/k8s.yaml` ships none of the three
-`DEFAULT_SANDBOX_OPENGROVE_WW_*` variables, because shipping only some of them
-made `oma-server` fail loud at startup. Until an operator runs the
-all-or-nothing enablement procedure documented in that manifest, no sandbox
-receives `OPENGROVE_WW_BASE_URL` / `OPENGROVE_WW_ACCESS_TOKEN` and the
-`test -n "$OPENGROVE_WW_*"` checks in the E2E section below will not pass.
-
-This is still a general Bash sandbox. Code running inside an allowed Agent's
-sandbox can read its environment and can override variables for a child
-process. This integration keeps the bearer out of persisted Agent
-configuration and configuration APIs, and prevents cross-Agent injection; it
-does not hide the raw bearer from code inside the target sandbox. Strict
-non-disclosure requires a Host-side fixed-upstream proxy rather than an
-environment variable.
-
-## How `story-seed` is resolved
-
-The image contains only a generic launcher, not a fourth copy of the business
-script. At run time `/usr/local/bin/story-seed` finds
-`/skills/<fork-id>/scripts/story-seed` among the equipped Skill projections and
-executes it with Node. If several equipped Skills contain byte-identical copies,
-the launcher chooses one deterministically; if they differ, it fails loud.
-
-This keeps the executable implementation owned by the Skill Fork, so updating
-and re-equipping a Skill does not require rebuilding the sandbox image. The
-launcher sets `STORY_SEED_WORKSPACE=/home/user` unless the caller already
-provided a value.
-
-## Build
-
-The vfs-cli binary is a versioned build artifact, not source — it lives under
-`bin/` (gitignored) and is staged by `build.sh`, not committed.
+Supported installation examples inside the Sandbox:
 
 ```bash
-# Local build (amd64 via emulation on a Mac is fine — the image is small):
+npm install --prefix "$HOME/.local/oma-node" --no-save is-number
+node -e 'console.log(require("is-number")(42))'
+python3 -m pip install --target "$PYTHONPATH" packaging
+python3 -c 'import packaging; print(packaging.__version__)'
+```
+
+CommonJS uses `NODE_PATH`; native ESM does not. ESM callers can use
+`createRequire` from `node:module` or an explicit local import path. An isolated
+Python environment can use `python3 -m venv "$HOME/.local/venvs/project"`.
+These directories may be lost when a Sandbox is rebuilt; reinstall then. Shell
+commands are not rewritten: installing `node_modules` or `.venv` under the
+Workspace can persist them, so follow the local installation conventions.
+
+## Skills and `story-seed`
+
+Equipped Skills are read-only projections under `/skills/<skill-name>/`, outside
+the Workspace. Skill IDs remain internal storage coordinates. The launcher
+finds `/skills/<skill-name>/scripts/story-seed` and invokes that file with Node;
+it contains no additional copy of the business script. Identical equipped
+copies are accepted; conflicting copies or a missing script fail clearly.
+
+The launcher defaults `STORY_SEED_WORKSPACE` to `/home/user/workspace` and changes
+cwd to it, so relative CLI input arguments and generated files use the same
+root. `STORY_SEED_WORKSPACE` and `OMA_SKILLS_ROOT` can be overridden deliberately
+for local tests. A missing Workspace fails before Node runs and is not created.
+
+## Runtime credentials
+
+No cloud key, E2B key, VFS token or WW bearer is baked into this image. OSS
+credentials are supplied by Agent Identity with bucket/subPath-scoped STS
+permissions. `VFS_TOKEN` is injected for the relevant Agent at runtime.
+
+The optional story-seed WW integration remains off by default. Its Host-side
+allowlist and all-or-nothing secret configuration are documented in
+[`../../k8s.yaml`](../../k8s.yaml). When enabled, the allowlisted Sandbox receives
+`OPENGROVE_WW_BASE_URL` and `OPENGROVE_WW_ACCESS_TOKEN`. Sandbox code can access
+its own environment; this is not a mechanism for hiding the bearer from that
+Agent's code. Do not print either value during verification.
+
+## Build and release
+
+`bin/vfs-cli` is a gitignored build artifact. Use an approved linux/amd64 binary
+and a build host that can reach the Shanghai VPC ACS mirror, such as `vfs-dev`.
+An alternate build environment must supply an approved reachable `BASE_IMAGE`.
+
+```bash
+# Build locally on the chosen build host; this does not publish or deploy.
 VFS_CLI_SRC=/path/to/linux-amd64/vfs-cli ./build.sh
 
-# Build + push to the HK personal ACR:
+# Run only when publishing this image is authorized.
 VFS_CLI_SRC=/path/to/linux-amd64/vfs-cli PUSH=1 ./build.sh
 ```
 
-### On the Shanghai build host (vfs-dev)
+The default target is
+`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox:code-interpreter-vfscli-0.5.0`.
+`REGISTRY`, `TAG`, `VERSION`, `BASE_IMAGE` and `CACHE_DIR` are explicit overrides.
+The build always targets linux/amd64 and uses a persistent buildx cache. The
+local cache is excluded from Git and Docker build context. It runs
+`test-story-seed-launcher.sh` before Docker starts; the tests exercise named
+Skill discovery, identical/conflicting scripts, the default root, a local cwd
+override and a missing Workspace.
 
-The ACS base only pulls from a **region-local VPC** mirror. On vfs-dev
-(Shanghai) that is `registry-cn-shanghai-vpc...`; the HK VPC / public variants
-are unreachable from there (content is identical across regions). scp the
-vfs-cli binary over (its release CDN is slow/flaky from CN hosts), then:
+A local build and ordinary-user smoke passed on 2026-09-14; see
+[`local-build-verification.json`](./local-build-verification.json) for the exact
+base digest, binary hash and checks. It was not pushed to a registry.
 
-```bash
-BASE_IMAGE=registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6 \
-VFS_CLI_SRC=~/vfs-cli PUSH=1 ./build.sh
-```
-
-Shanghai → HK personal ACR pushes over the public endpoint (needs a separate
-`docker login` to the HK ACR; it coexists with the Shanghai login — `auths` are
-keyed per registry).
-
-### Cache
-
-`build.sh` uses a persistent buildx local cache (`.buildx-cache/`). The
-Dockerfile is ordered cache-first: apt/symlink/chown sit in one rarely-changing
-layer, and the vfs-cli binary is COPYd last — so a vfs-cli bump rebuilds only
-the final two layers, not the whole image.
-
-Before Docker starts, the build runs `test-story-seed-launcher.sh` against the
-three repository Skills. This verifies that their scripts are identical and
-that the launcher can run `doctor` without writing into a Skill projection.
-
-## Deploy
-
-1. Bump the image tag in `../sandboxset-code-interpreter-vfscli.yaml` to match
-   `VERSION` you built, then apply:
-
-   ```bash
-   kubectl apply -f ../sandboxset-code-interpreter-vfscli.yaml
-   kubectl get sbs -n sandbox-system code-interpreter-vfscli   # AVAILABLE >= 1
-   ```
-
-   The `oma-acr` pull secret must exist in `sandbox-system` (copy from
-   `oma-infra` if absent — that ns has no pull secret by default).
-
-2. Point production at it. `SANDBOX_TEMPLATE` in the `oma-server-config`
-   ConfigMap (`deploy/k8s.yaml`) is the *default* template; Agents can also opt
-   in per-Agent with `sandbox.image: "code-interpreter-vfscli"` without changing
-   the default. To make it the default, set
-   `SANDBOX_TEMPLATE=code-interpreter-vfscli` and roll the server.
-
-## E2E verification (#85 acceptance)
-
-Drive an Agent with `sandbox.image: "code-interpreter-vfscli"` and the story
-Skills equipped, then via the bash tool:
+The new image must be published and its registry digest reviewed before
+application cutover.
+Update [`../sandboxset-code-interpreter-vfscli.yaml`](../sandboxset-code-interpreter-vfscli.yaml)
+with that digest. During the approved release window use the explicit Shanghai
+kubeconfig from the inventory, without changing the default context:
 
 ```bash
-whoami                                   # -> user
-pwd                                      # -> /home/user  (the default cwd)
-echo hello > /home/user/f.txt && cat /home/user/f.txt   # -> hello  (was: permission denied under /workspace)
-python3 -c 'open("/home/user/p.txt","w").write("ok")'   # program write lands
-vfs-cli version                          # vfs-cli on PATH
-command -v story-seed                    # -> /usr/local/bin/story-seed
-story-seed doctor                        # -> 故事种子检查：通过
-test -n "$OPENGROVE_WW_BASE_URL"         # verifies presence without disclosure
-test -n "$OPENGROVE_WW_ACCESS_TOKEN"     # verifies presence without disclosure
+kubectl --kubeconfig "$OMA_SHANGHAI_KUBECONFIG" apply \
+  -f deploy/sandbox/sandboxset-code-interpreter-vfscli.yaml
+kubectl --kubeconfig "$OMA_SHANGHAI_KUBECONFIG" -n sandbox-system \
+  get sbs code-interpreter-vfscli
 ```
 
-All checks must succeed — except the two WW checks, which only apply once the
-WW integration has been explicitly enabled (see the note above and
-`deploy/k8s.yaml`). With WW off by default they are expected to fail, and that
-is not an image regression. Do not print either WW variable during verification.
-The write failures were the #85 symptom; `story-seed: not found` is the
-story-seed image regression to watch.
+The `ali-shanghai` image-pull Secret must already exist in `sandbox-system`.
+Follow the coordinated Host/storage/template release gate in the inventory;
+changing only `SANDBOX_TEMPLATE` does not update existing Sandbox resources or
+per-Agent template overrides. The stock `code-interpreter` reference template
+has not passed this application's OSS Workspace acceptance tests.
+
+## Runtime verification
+
+Run these through the application's verified Sandbox tools using a disposable
+Workspace and equipped story Skills:
+
+```bash
+whoami                                      # user
+pwd                                         # /home/user/workspace
+printf 'hello\n' > hello.txt
+python3 -c 'from pathlib import Path; Path("中文.txt").write_text("已保存", encoding="utf-8")'
+vfs-cli version
+command -v story-seed                        # /usr/local/bin/story-seed
+story-seed doctor
+```
+
+Check the same files through authenticated web upload/list/preview/download
+routes, then recreate the Sandbox and read them again. Check that local
+packages may be reinstalled and Skills still load outside the Workspace.
+Successful file close defines a saved write; Turn completion is not a
+transaction, a rollback point, or a guarantee for background/open file handles.
+Concurrent Sessions may overwrite the same file and OSS caches can delay
+visibility. Infrastructure-only checks do not replace the full release gate.

@@ -1,3 +1,8 @@
+import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import {
+  WorkspaceMountUnavailable,
+  type WorkspaceMountTarget,
+} from "./workspace-mount.js";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -7,7 +12,7 @@ import type {
   SandboxHandle,
 } from "./sandbox-client.js";
 
-interface FakeFile {
+export interface FakeFile {
   content: string | Uint8Array;
   mtimeMs: number;
 }
@@ -24,12 +29,14 @@ interface FakeSandbox {
    */
   reclaimed: boolean;
   createOpts: SandboxCreateOptions;
+  mount?: WorkspaceMountTarget;
+  mountFailure?: string;
 }
 
 /**
  * A custom command handler for the fake, keyed by the first argv element.
  * Receives the argv and the sandbox's in-memory file map and returns the
- * chunks to stream back. Lets tests simulate a tool reading a hydrated file
+ * chunks to stream back. Lets tests simulate a tool reading a mounted file
  * (e.g. `cat /home/user/foo.txt`) without any real process.
  */
 export type FakeExecHandler = (
@@ -54,25 +61,19 @@ export interface FakeSandboxClientOptions {
 
 /**
  * In-memory {@link SandboxClient} for tests. No processes, no k8s. It records
- * lifecycle calls (create/destroy) and keeps a per-sandbox file map so hydrate,
- * read, write, and list can be verified deterministically.
+ * lifecycle calls (create/destroy) and keeps a per-sandbox file map with a shared mounted subtree so reads, writes and rebuilds can be tested.
  */
 export class FakeSandboxClient implements SandboxClient {
   readonly created: string[] = [];
   readonly destroyed: string[] = [];
   private readonly sandboxes = new Map<string, FakeSandbox>();
+  private readonly workspaces = new Map<string, Map<string, FakeFile>>();
+  readonly mountChecks: Array<{ id: string; target: WorkspaceMountTarget }> =
+    [];
   private readonly generateId: () => string;
   private readonly execHandler?: FakeSandboxClientOptions["execHandler"];
   private counter = 0;
-  /**
-   * A monotonic clock for write mtimes. A real filesystem advances a file's
-   * mtime on every write, so two writes are never indistinguishable by mtime.
-   * `Date.now()` has millisecond resolution and collides when two writes land
-   * in the same millisecond (a hydrate + a same-size edit on a fast turn), which
-   * would let a size+mtime pre-filter wrongly skip a genuine change. Stamping
-   * `max(prevMtime + 1, Date.now())` keeps the fake a faithful stand-in: mtime
-   * always strictly advances on a write, never on a read/list.
-   */
+  /** Monotonic timestamps make successive writes observable in file listings. */
   private mtimeClock = 0;
 
   private nextMtime(): number {
@@ -81,8 +82,7 @@ export class FakeSandboxClient implements SandboxClient {
   }
 
   constructor(opts: FakeSandboxClientOptions = {}) {
-    this.generateId =
-      opts.generateId ?? (() => `sbx-fake-${++this.counter}`);
+    this.generateId = opts.generateId ?? (() => `sbx-fake-${++this.counter}`);
     this.execHandler = opts.execHandler;
   }
 
@@ -91,6 +91,34 @@ export class FakeSandboxClient implements SandboxClient {
     let n = 0;
     for (const s of this.sandboxes.values()) if (!s.destroyed) n++;
     return n;
+  }
+
+  /** Simulate a Host write into the authoritative mounted prefix. */
+  seedWorkspace(
+    prefix: string,
+    path: string,
+    content: string | Uint8Array,
+  ): void {
+    let files = this.workspaces.get(prefix);
+    if (!files) this.workspaces.set(prefix, (files = new Map()));
+    files.set(`${SANDBOX_WORKSPACE_ROOT}/${path}`, {
+      content: typeof content === "string" ? content : new Uint8Array(content),
+      mtimeMs: this.nextMtime(),
+    });
+  }
+
+  /** Relative-path snapshot of persisted content, including after destruction. */
+  workspaceContents(prefix: string): Map<string, FakeFile> {
+    return new Map(
+      [...(this.workspaces.get(prefix) ?? [])].map(([path, file]) => [
+        path.slice(SANDBOX_WORKSPACE_ROOT.length + 1),
+        file,
+      ]),
+    );
+  }
+
+  deleteWorkspaceFile(prefix: string, path: string): void {
+    this.workspaces.get(prefix)?.delete(`${SANDBOX_WORKSPACE_ROOT}/${path}`);
   }
 
   /** Inspect a sandbox's files (test helper). */
@@ -119,15 +147,61 @@ export class FakeSandboxClient implements SandboxClient {
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
     const id = this.generateId();
+    const volume = JSON.parse(
+      opts.metadata?.["e2b.agents.kruise.io/csi-volume-config"] ?? "[]",
+    )[0];
+    const prefix = volume ? `${volume.subPath}/` : undefined;
+    let shared: Map<string, FakeFile> | undefined;
+    if (prefix) {
+      shared = this.workspaces.get(prefix);
+      if (!shared) this.workspaces.set(prefix, (shared = new Map()));
+    }
     this.sandboxes.set(id, {
       id,
-      files: new Map(),
+      files:
+        volume && shared
+          ? new MountedFiles(volume.mountPath, shared)
+          : new Map(),
+      ...(volume
+        ? {
+            mount: {
+              mountPath: volume.mountPath,
+              prefix: prefix!,
+              bucket: "agentry",
+            },
+          }
+        : {}),
       destroyed: false,
       reclaimed: false,
       createOpts: opts,
     });
     this.created.push(id);
     return { id };
+  }
+
+  /** Fault injection at the same mount verification port production uses. */
+  setMountFailure(id: string, reason?: string): void {
+    this.require(id).mountFailure = reason;
+  }
+
+  setMountIdentity(id: string, target: WorkspaceMountTarget): void {
+    this.require(id).mount = target;
+  }
+
+  async verifyWorkspaceMount(
+    id: string,
+    target: WorkspaceMountTarget,
+  ): Promise<void> {
+    const sandbox = this.require(id);
+    this.mountChecks.push({ id, target });
+    if (
+      sandbox.mountFailure ||
+      !sandbox.mount ||
+      sandbox.mount.mountPath !== target.mountPath ||
+      sandbox.mount.prefix !== target.prefix ||
+      sandbox.mount.bucket !== target.bucket
+    )
+      throw new WorkspaceMountUnavailable();
   }
 
   async *exec(
@@ -257,5 +331,51 @@ export class FakeSandboxClient implements SandboxClient {
     if (sandbox.destroyed) throw new Error(`Sandbox ${id} is destroyed`);
     if (sandbox.reclaimed) throw new Error(`Sandbox ${id} was reclaimed`);
     return sandbox;
+  }
+}
+
+/** A mounted subtree shares its backing map; HOME and Skills remain per-instance. */
+class MountedFiles extends Map<string, FakeFile> {
+  private readonly local = new Map<string, FakeFile>();
+  constructor(
+    private readonly root: string,
+    private readonly mounted: Map<string, FakeFile>,
+  ) {
+    super();
+  }
+  private map(path: string): Map<string, FakeFile> {
+    return path.startsWith(`${this.root}/`) ? this.mounted : this.local;
+  }
+  override get(path: string): FakeFile | undefined {
+    return this.map(path).get(path);
+  }
+  override set(path: string, value: FakeFile): this {
+    this.map(path).set(path, value);
+    return this;
+  }
+  override has(path: string): boolean {
+    return this.map(path).has(path);
+  }
+  override delete(path: string): boolean {
+    return this.map(path).delete(path);
+  }
+  override get size(): number {
+    return this.local.size + this.mounted.size;
+  }
+  override clear(): void {
+    this.local.clear();
+    this.mounted.clear();
+  }
+  override entries(): MapIterator<[string, FakeFile]> {
+    return new Map([...this.local, ...this.mounted]).entries();
+  }
+  override keys(): MapIterator<string> {
+    return new Map([...this.local, ...this.mounted]).keys();
+  }
+  override values(): MapIterator<FakeFile> {
+    return new Map([...this.local, ...this.mounted]).values();
+  }
+  override [Symbol.iterator](): MapIterator<[string, FakeFile]> {
+    return this.entries();
   }
 }

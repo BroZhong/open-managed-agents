@@ -1,40 +1,27 @@
 #!/usr/bin/env bash
 # Build & push the code-interpreter-vfscli sandbox image.
 #
-# The image FROMs the ACS code-interpreter base and layers on a user-writable
-# canonical /home/user (#85), vfs-cli, and python on a
-# plain PATH. See ./Dockerfile for the layer-by-layer rationale.
+# Build only by default. PUSH=1 explicitly publishes to REGISTRY; an image
+# build does not update a SandboxSet or switch production Workspace storage.
+# The ACS base mirror must be reachable from the chosen build host. The default
+# is the Shanghai VPC mirror, so use vfs-dev or an authorized reachable mirror.
+# vfs-cli is staged as a linux/amd64 binary; no runtime secrets enter the image.
 #
-# Field-tested constraints this script encodes (see .scratch/deploy notes):
-#   - Sandboxes run linux/amd64 on the brozhong HK cluster → always build amd64,
-#     even from an arm64 Mac (emulation is fine; the image is small).
-#   - The ACS base only pulls from a *region-local VPC* ACR mirror. On the
-#     Shanghai build host (vfs-dev) that is the cn-shanghai-vpc mirror; the HK
-#     VPC / public variants are unreachable from there. BASE_IMAGE is overridable
-#     for exactly this reason.
-#   - vfs-cli's release CDN is slow/flaky from CN hosts, so the binary is COPYd
-#     from bin/ rather than curl'd at build time. Populate bin/vfs-cli first.
-#   - buildx + a persistent cache dir turns a warm rebuild (vfs-cli bump only)
-#     into two layers instead of the whole image.
-#
-# Usage:
-#   ./build.sh                 # build only, tag locally
-#   PUSH=1 ./build.sh          # build + push to $REGISTRY
-#
-# Env knobs (all have sensible defaults):
-#   REGISTRY     target repo (default: brozhong HK personal ACR)
-#   TAG          image tag   (default: code-interpreter-vfscli-<VERSION>)
-#   VERSION      semantic bump used in the default tag (default: 0.4.1)
-#   BASE_IMAGE   ACS base    (default: HK VPC mirror; set cn-shanghai-vpc on vfs-dev)
-#   VFS_CLI_SRC  path to the linux/amd64 vfs-cli binary to stage into bin/
+# Env knobs:
+#   REGISTRY     target image repository (default: Shanghai welltop registry)
+#   TAG          image tag (default: code-interpreter-vfscli-<VERSION>)
+#   VERSION      default tag version (0.5.0, OSS Workspace launcher)
+#   BASE_IMAGE   approved ACS base reachable from the build host
+#   VFS_CLI_SRC  path to an approved linux/amd64 vfs-cli binary
+#   CACHE_DIR    persistent local buildx layer cache
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-REGISTRY="${REGISTRY:-crpi-egv1p3qc9sh5spft.cn-hongkong.personal.cr.aliyuncs.com/brozhong/oma-sandbox}"
-VERSION="${VERSION:-0.4.1}"
+REGISTRY="${REGISTRY:-registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox}"
+VERSION="${VERSION:-0.5.0}"
 TAG="${TAG:-code-interpreter-vfscli-${VERSION}}"
-BASE_IMAGE="${BASE_IMAGE:-registry-cn-hongkong-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
+BASE_IMAGE="${BASE_IMAGE:-registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
 PLATFORM="linux/amd64"
 IMAGE="${REGISTRY}:${TAG}"
 CACHE_DIR="${CACHE_DIR:-.buildx-cache}"
@@ -61,7 +48,7 @@ sh ./test-story-seed-launcher.sh
 
 # ── Build (cache-first) ──────────────────────────────────────────────────────
 # Local layer cache persisted under CACHE_DIR so a vfs-cli-only bump reuses the
-# apt/symlink/chown layers. `--load` keeps the image locally when not pushing;
+# Python/local-directory layers. `--load` keeps the image locally when not pushing;
 # `--push` streams straight to the registry.
 BUILD_OUTPUT=(--load)
 if [[ "${PUSH:-0}" == "1" ]]; then
