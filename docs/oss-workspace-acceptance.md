@@ -128,6 +128,23 @@ Detailed live application results and >1h credential-refresh evidence are in
 running; a running check is not a passed check. Final refresh and cleanup results
 will be appended after completion.
 
+The required independent Standards and Spec reviews each found the same P1:
+root file listing did not follow CSI's Workspace symlink. Follow-up `a584914`
+uses `find -H` and adds real `ToolExecutor.list` assertions. Both reviewers
+confirmed the fix; real mounted listing and a browser-triggered Turn passed.
+See [the two-axis review and resolution](./oss-workspace-review.md).
+
+Actual local-browser acceptance subsequently covered sign-in, Chinese upload,
+text preview, running write controls, real Sandbox edit/create/list, the exact
+`/skills/probe-skill/SKILL.md` path, idle automatic refresh, loaded PNG dimensions
+and explicit Refresh retaining the answer and files. Its one Sandbox and unique
+OSS prefix were cleaned, and both local test servers were stopped. The browser's
+media-download command completed, but its native Download event was not observed;
+the existing Rename prompt reports unsupported in the built-in browser. Those
+native interactions are not claimed as passed. The real authenticated API
+download/signing/rename checks passed independently. The test uses synthetic
+control records and a deterministic Adapter, never a production user or live LLM.
+
 Production has not been changed. Publishing/pinning the reviewed images and an
 authorized maintenance switch remain release steps. The certificate expires
 2026-12-13 07:53:21 UTC and has no automatic renewal configured.

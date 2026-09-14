@@ -295,10 +295,10 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
     },
 
     async previewUrl(path: string): Promise<string> {
-      // Fetch through the authenticated Host proxy. Storage-signed URLs may
-      // point at a private/internal endpoint that the user's browser cannot
-      // reach; a blob URL also lets <img>, <video>, and downloads consume the
-      // response without putting the API token in a URL.
+      // Keep the console's authenticated Host preview path, including MIME
+      // fallback for ossfs files. Blob URLs let media and downloads consume
+      // the response without putting the API token in a URL. The separate
+      // short-lived OSS GET API always signs a public regional endpoint.
       const res = await fetch(`${filesBase}/${encodePath(path)}`, {
         headers: authHeaders(),
       });

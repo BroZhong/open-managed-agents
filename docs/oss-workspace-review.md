@@ -38,5 +38,17 @@ The follow-up changes listing to `find -H`, which follows the initial root
 symlink while preserving normal handling of symlinks encountered inside the
 tree. The live application harness now asserts uploaded and shell-created files
 through the real `ToolExecutor.list('.')` and checks the exact named Skill path.
-The 32 SDK boundary checks and Sandbox typecheck pass. Real-mount and browser
-verification results will be recorded in the final acceptance evidence.
+The 32 SDK boundary checks and Sandbox typecheck pass. Both independent
+reviewers confirmed that `a584914` resolves the finding in code, with no new
+finding in their directed review.
+
+The actual E2B client then listed seven files through the existing CSI symlink.
+A separate browser-triggered Turn exercised the new `ToolExecutor.list('.')`
+assertions against three uploaded/generated files, returned the exact named
+Skill path, and automatically refreshed the page after completion. These runs
+confirm the original failure path; their detailed evidence and cleanup are in
+`deploy/sandbox/oss-workspace/verification.json`.
+
+Final status: Standards 0 unresolved; Spec 0 unresolved. Native download-event
+and prompt limitations of the built-in browser are recorded separately from
+the passing Host API checks and are not represented as successful UI checks.
