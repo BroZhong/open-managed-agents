@@ -5,6 +5,21 @@ import {
 } from "../src/lib/sandbox-env.js";
 
 describe("sandboxEnvPolicyFromHost", () => {
+  it("makes the base Secret native defaults for every Agent without an allowlist", () => {
+    const baseEnv = {
+      OSS_READ_ACCESS_KEY_ID: "base-oss-id",
+      OSS_READ_ACCESS_KEY_SECRET: "base-oss-secret",
+      OPENGROVE_WW_ACCESS_TOKEN: "base-ww-token",
+      VFS_TOKEN: "base-vfs-token",
+    };
+    const hostEnv = { DEFAULT_SANDBOX_VFS_TOKEN: "legacy-vfs-token" };
+    const policy = sandboxEnvPolicyFromHost(hostEnv, baseEnv);
+
+    expect(policy.defaultSandboxEnv).toEqual(baseEnv);
+    expect(policy.managedSandboxEnvByAgentId).toBeUndefined();
+    expect(hostEnv).toEqual({ DEFAULT_SANDBOX_VFS_TOKEN: "legacy-vfs-token" });
+  });
+
   it("scopes auto-story credentials to allowed Agent ids without persisting defaults", () => {
     const policy = sandboxEnvPolicyFromHost({
       AUTO_STORY_AGENT_IDS: "agent_story, agent_story, agent_second",
@@ -21,6 +36,22 @@ describe("sandboxEnvPolicyFromHost", () => {
       MEDIAKIT_SURFACE: "skill", MEDIAKIT_RUNTIME: "pi-agent",
     });
     expect(policy.managedSandboxEnvByAgentId!.agent_unrelated).toBeUndefined();
+  });
+
+  it("uses shared Secret rotations for legacy Agents while keeping their extra keys", () => {
+    const baseEnv = { GEMINI_API_KEY: "rotated-key", MEDIAKIT_RUNTIME: "shared-runtime" };
+    const policy = sandboxEnvPolicyFromHost({
+      AUTO_STORY_AGENT_IDS: "agent_story",
+      AUTO_STORY_SANDBOX_ENV_JSON: JSON.stringify({
+        GEMINI_API_KEY: "old-copy", VFS_OSS_AK: "legacy-extra",
+      }),
+    }, baseEnv);
+    const managed = policy.managedSandboxEnvByAgentId!.agent_story;
+    expect({ ...policy.defaultSandboxEnv, ...managed }).toMatchObject({
+      ...baseEnv, VFS_OSS_AK: "legacy-extra",
+    });
+    expect(managed).not.toHaveProperty("GEMINI_API_KEY");
+    expect(managed).not.toHaveProperty("MEDIAKIT_RUNTIME");
   });
 
   it.each([undefined, "{secret-sentinel", "[]", "null", '{"BAD-NAME":"secret-sentinel"}', '{"VALID":42}'])

@@ -94,6 +94,10 @@ data:
   # E2B templateID = SandboxSet metadata.name in sandbox-system.
   SANDBOX_TEMPLATE: "auto-story-v2"
   E2B_REQUEST_TIMEOUT_MS: "185000"
+  # All Agents inherit valid environment keys directly from this existing
+  # Secret through E2B create.envs. Apply sandbox-base-secret-rbac.yaml first.
+  SANDBOX_BASE_SECRET_NAMESPACE: "sandbox-system"
+  SANDBOX_BASE_SECRET_NAME: "base-secret"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -111,6 +115,7 @@ spec:
         app: oma-server
         alibabacloud.com/acs: "true"
     spec:
+      serviceAccountName: oma-server
       imagePullSecrets:
         - name: ali-shanghai
       volumes:

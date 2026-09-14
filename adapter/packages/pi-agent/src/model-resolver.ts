@@ -58,7 +58,12 @@ export function resolveModel(
   catalog: ModelCatalog = builtinCatalog,
 ): Model<Api> {
   const wanted = classify(raw ?? "");
-  const model = catalog.getModel(wanted.provider, wanted.id);
+  let model = catalog.getModel(wanted.provider, wanted.id);
+  // Existing Agent selections use k3; some deployments expose its upstream
+  // model as kimi-k3. Keep an explicitly configured k3 model authoritative.
+  if (!model && wanted.provider === "kimi-coding-plan" && wanted.id === "k3") {
+    model = catalog.getModel(wanted.provider, "kimi-k3");
+  }
   if (!model) {
     throw new Error(
       `Pi model ${wanted.provider}/${wanted.id} is not configured; add it to the Host Pi models.json`,

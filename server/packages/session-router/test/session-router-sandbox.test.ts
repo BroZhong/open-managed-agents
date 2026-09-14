@@ -587,6 +587,36 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     });
   });
 
+  it("passes shared base credentials to native sandbox creation for existing and future Agents", async () => {
+    const workspaceClient = new FakeSandboxClient();
+    workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");
+    const baseEnv = {
+      OSS_READ_ACCESS_KEY_ID: "base-oss-id",
+      OSS_READ_ACCESS_KEY_SECRET: "base-oss-secret",
+      OPENGROVE_WW_ACCESS_TOKEN: "base-ww-token",
+    };
+    const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
+      adapter: toolReadingAdapter("hello.txt"),
+      sandboxClient: workspaceClient,
+      defaultSandboxEnv: baseEnv,
+    });
+
+    for (const agentId of ["agent_existing_without_env", "agent_created_later"]) {
+      const agent: Agent = { ...sandboxedAgent, id: agentId, sandbox: { enabled: true } };
+      const session = await sessionStore.create({
+        tenantId: "tenant_1", agentId, agent, workspaceId: "ws_1",
+      });
+      await enqueue(pendingEventStore, session.id, "read the file");
+      await router.handleNewEvent(session.id, agent);
+      expect((await sessionStore.getById(session.id))?.agent.sandbox?.env).toBeUndefined();
+    }
+
+    expect(sandboxClient.created).toHaveLength(2);
+    for (const id of sandboxClient.created) {
+      expect(sandboxClient.createOptsOf(id).env).toMatchObject(baseEnv);
+    }
+  });
+
   it("keeps deployment-managed sandbox env authoritative over Agent overrides", async () => {
     const workspaceClient = new FakeSandboxClient();
     workspaceClient.seedWorkspace("tenant_1/ws_1/", "hello.txt", "world");

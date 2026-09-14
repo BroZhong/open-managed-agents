@@ -39,7 +39,10 @@ export function adapterProcessEnvFromHost(
  * Translate Host deployment variables into the names exposed inside a sandbox.
  * Secret values remain process-local and are never persisted on an Agent.
  */
-export function sandboxEnvPolicyFromHost(env: HostEnv): SandboxEnvPolicy {
+export function sandboxEnvPolicyFromHost(
+  env: HostEnv,
+  baseSandboxEnv: Readonly<Record<string, string>> = {},
+): SandboxEnvPolicy {
   const defaultSandboxEnv: Record<string, string> = {};
 
   const vfsToken = nonBlank(env, "DEFAULT_SANDBOX_VFS_TOKEN");
@@ -116,22 +119,34 @@ export function sandboxEnvPolicyFromHost(env: HostEnv): SandboxEnvPolicy {
     }
     managedSandboxEnvByAgentId ??= {};
     managedSandboxEnvByAgentId = { ...managedSandboxEnvByAgentId };
+    // Once a shared Secret supplies a key, legacy preset copies must not pin
+    // its old value for three Agents after the shared credential is rotated.
+    const storyExtras = Object.fromEntries(
+      Object.entries(storyEnv).filter(([name]) => !Object.hasOwn(baseSandboxEnv, name)),
+    );
     for (const agentId of storyAgentIds) {
       managedSandboxEnvByAgentId = {
         ...managedSandboxEnvByAgentId,
         [agentId]: {
-          ...(storyEnv as Record<string, string>),
+          ...(storyExtras as Record<string, string>),
           // Preserve the separately managed WW endpoint/credential pairing.
           ...managedSandboxEnvByAgentId[agentId],
-          MEDIAKIT_SURFACE: "skill",
-          MEDIAKIT_RUNTIME: "pi-agent",
+          ...(!Object.hasOwn(baseSandboxEnv, "MEDIAKIT_SURFACE") ? { MEDIAKIT_SURFACE: "skill" } : {}),
+          ...(!Object.hasOwn(baseSandboxEnv, "MEDIAKIT_RUNTIME") ? { MEDIAKIT_RUNTIME: "pi-agent" } : {}),
         },
       };
     }
   }
 
+  // The shared Secret is the deployment's baseline for all present and future
+  // Agents. Explicit Agent env and scoped managed values retain their existing
+  // precedence in SessionRouter; the Secret never enters process.env or storage.
+  const mergedDefaultSandboxEnv = { ...defaultSandboxEnv, ...baseSandboxEnv };
+
   return {
-    ...(Object.keys(defaultSandboxEnv).length > 0 ? { defaultSandboxEnv } : {}),
+    ...(Object.keys(mergedDefaultSandboxEnv).length > 0
+      ? { defaultSandboxEnv: mergedDefaultSandboxEnv }
+      : {}),
     ...(managedSandboxEnvByAgentId ? { managedSandboxEnvByAgentId } : {}),
   };
 }
