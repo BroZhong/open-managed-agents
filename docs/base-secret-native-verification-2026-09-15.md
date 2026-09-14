@@ -75,6 +75,12 @@ is unchanged.
 
 Neither legacy Secret was deleted during this audit.
 
+This section records the configuration before the later
+[Ark Kimi cutover](pi-ark-gateway-verification-2026-09-15.md). That cutover now
+stores the Ark credential in `oma-pi-gateway` and removes the Kimi route's
+dependency on the legacy Host environment variable. The three legacy VFS
+variables below still require migration before retiring `oma-auto-story-env`.
+
 `sandbox-system/oma-auto-story-source-readonly` has no current Pod, Sandbox,
 or SandboxSet consumer. The sole discovered reference is historical
 SandboxTemplate `auto-story-v2-6d778d944c`. The current revision is
