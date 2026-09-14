@@ -88,9 +88,21 @@ rollback target with missing credentials.
 `oma-infra/oma-auto-story-env` remains referenced by the Host Deployment and
 its Pod. In addition to the legacy Agent allowlist and sandbox JSON, it supplies
 `KIMI_CODING_API_KEY`, which is absent from both `base-secret` and `oma-secrets`.
-Pi's model configuration consumes that value in the Host, so native sandbox
-injection cannot replace it. Move this key to the existing Host Secret and add
-an explicit Host `secretKeyRef` before removing the old reference.
+The live Host has `PI_CODING_AGENT_DIR=/opt/pi-agent-seed`. Secret
+`oma-pi-gateway` mounts its `models.json` and `auth.json` into this directory,
+overriding the image's seed files. The effective Kimi provider's API-key setting
+is `${KIMI_CODING_API_KEY}`; the mounted auth file only has an `openai-codex`
+credential. Thus the Kimi setting still resolves the legacy Host environment
+variable. This conclusion comes from the live files, not `deploy/pi-models.json`.
+The current Kimi endpoint is `api.kimi.com`; only the OpenAI provider routes
+through `sub2api.sub2api.svc.cluster.local`.
+
+Keep the Kimi credential with the existing model configuration by moving it to
+a separate data key in `oma-pi-gateway` and adding an explicit Host
+`secretKeyRef` for that key before removing the old Secret reference. Native
+sandbox injection does not supply the Host's model credentials. This refines the
+earlier suggestion to move it to the general-purpose `oma-secrets`; no Kimi
+credential was moved during either audit.
 
 The legacy sandbox JSON has 18 keys that match base plus three extra keys:
 `VFS_ACCESS_TOKEN`, `VFS_OSS_AK`, and `VFS_OSS_SK`. The access token equals base's
