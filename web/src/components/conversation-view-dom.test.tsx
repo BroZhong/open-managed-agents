@@ -273,3 +273,21 @@ it("follows growing deltas but leaves the scroll position alone when reading his
   fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
   expect(scroll).toHaveBeenCalled();
 });
+
+it("shows a persisted subagent notification once without presenting it as human input", () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  render(<ConversationView sessionStatus="waiting" events={[
+    { seq: 1, type: "subagent.result", ts: "2026-09-16", data: { source: "subagent_result", childId: "child", executionId: "exec", result: { status: "failed", reason: "Child provider error", output: "Partial child output" } } },
+    { seq: 2, type: "subagent.result_claimed", ts: "2026-09-16", data: { source: "subagent_result", notificationSeq: 1 } },
+  ]} />);
+  expect(screen.getAllByText("Subagent result")).toHaveLength(1);
+  expect(screen.getByText(/Child provider error/)).toBeTruthy();
+});
+
+
+it("reveals the process group targeted by a delegated tool deep link", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  render(<ConversationView events={activityEvents} sessionStatus="idle" focusToolUseId="read-1" />);
+  expect(screen.getByRole("button", { name: /Explored · reasoning/ }).getAttribute("aria-expanded")).toBe("true");
+  expect(screen.getByRole("button", { name: /Read file/ }).closest("[hidden]")).toBeNull();
+});

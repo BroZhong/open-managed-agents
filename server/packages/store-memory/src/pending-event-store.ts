@@ -11,6 +11,7 @@ interface ClaimState {
   ownerId?: string;
   generation: number;
   expiresAtMs: number;
+  interruptRequested?: boolean;
 }
 
 export class InMemoryPendingEventStore implements PendingEventIngressStore {
@@ -21,6 +22,19 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
   constructor(
     private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
   ) {}
+
+  async requestInterrupt(sessionId: string): Promise<boolean> {
+    const event = this.queues.get(sessionId)?.[0];
+    const claim = event ? this.claims.get(event.id) : undefined;
+    if (!claim?.ownerId) return false;
+    claim.interruptRequested = true;
+    return true;
+  }
+
+  async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
+    return this.queues.get(sessionId)?.[0]?.id === eventId &&
+      this.claims.get(eventId)?.interruptRequested === true;
+  }
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
@@ -205,4 +219,15 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       })
       .slice(0, limit);
   }
+  /** Internal rollback boundary for the in-memory delegation transaction. */
+  snapshotState() { return structuredClone({ queues: this.queues, claims: this.claims, nextId: this.nextId }); }
+  restoreState(state: ReturnType<InMemoryPendingEventStore["snapshotState"]>): void { this.queues = state.queues; this.claims = state.claims; this.nextId = state.nextId; }
+  async removeById(sessionId: string, eventId: string, onlyUnclaimed = false): Promise<boolean> {
+    const queue = this.queues.get(sessionId) ?? [];
+    const index = queue.findIndex((event) => event.id === eventId);
+    const claim = this.claims.get(eventId);
+    if (index < 0 || (onlyUnclaimed && claim?.ownerId && claim.expiresAtMs > Date.now())) return false;
+    queue.splice(index, 1); this.claims.delete(eventId); return true;
+  }
+
 }

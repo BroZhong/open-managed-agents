@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, createContext, useContext } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, ChevronDown, Circle, Check, Layers } from "lucide-react";
@@ -11,6 +11,9 @@ import {
 import { ThinkingBlock } from "@/components/thinking-block";
 import { SessionDisclosure } from "@/components/session-disclosure";
 import { ToolCard } from "@/components/tool-card";
+
+import { DelegationCard } from "@/components/delegation-card";
+const SessionContext = createContext("");
 
 interface Turn {
   id: string;
@@ -52,13 +55,17 @@ function groupMessagesIntoTurns(messages: DisplayMessage[]): Turn[] {
 }
 
 interface ConversationViewProps {
+  sessionId?: string;
+  focusToolUseId?: string;
   events: SessionEvent[];
   activeDeltas?: SessionDelta[];
-  sessionStatus: "idle" | "running";
+  sessionStatus: "idle" | "running" | "waiting";
 }
 
 export function ConversationView({
   events,
+  sessionId = "",
+  focusToolUseId,
   activeDeltas = [],
   sessionStatus,
 }: ConversationViewProps) {
@@ -114,10 +121,14 @@ export function ConversationView({
     setIsAtBottom(true);
   }
 
+  useEffect(() => {
+    if (focusToolUseId) document.getElementById(`tool-${focusToolUseId}`)?.scrollIntoView({ block: "center" });
+  }, [focusToolUseId, events.length]);
+
   const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
 
   return (
-    <div className="relative flex h-full flex-col">
+    <SessionContext.Provider value={sessionId}><div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
         <div ref={contentRef} className="session-thread">
           {messages.length === 0 && (
@@ -127,7 +138,8 @@ export function ConversationView({
             <TurnBlock
               key={turn.id}
               turn={turn}
-              running={idx === turns.length - 1 && sessionStatus === "running"}
+              running={idx === turns.length - 1 && (sessionStatus === "running" || sessionStatus === "waiting")}
+              focusToolUseId={focusToolUseId}
             />
           ))}
           {showTypingIndicator && <TypingIndicator />}
@@ -144,23 +156,24 @@ export function ConversationView({
           Jump to latest
         </button>
       )}
-    </div>
+    </div></SessionContext.Provider>
   );
 }
 
-function TurnBlock({ turn, running }: { turn: Turn; running: boolean }) {
+function TurnBlock({ turn, running, focusToolUseId }: { turn: Turn; running: boolean; focusToolUseId?: string }) {
   const activity = turn.responses.filter((message) => message.role === "thinking" || message.role === "tool_use");
   const answers = turn.responses.filter((message) => message.role !== "thinking" && message.role !== "tool_use");
+  const focused = activity.some((message) => !!focusToolUseId && message.toolUseId === focusToolUseId);
   return (
     <div className="session-turn">
       {turn.userMessage && <UserBubble text={turn.userMessage.text} />}
-      {activity.length > 0 && <ProcessGroup key="process" messages={activity} running={running} />}
+      {activity.length > 0 && <ProcessGroup key={`process:${focused ? focusToolUseId : ""}`} messages={activity} running={running} focused={focused} />}
       {answers.map((message) => <MessageBubble key={message.id} message={message} />)}
     </div>
   );
 }
 
-function ProcessGroup({ messages, running }: { messages: DisplayMessage[]; running: boolean }) {
+function ProcessGroup({ messages, running, focused }: { messages: DisplayMessage[]; running: boolean; focused: boolean }) {
   const tools = messages.filter((message) => message.role === "tool_use");
   const thinking = messages.some((message) => message.role === "thinking");
   const failed = tools.filter((message) => message.result?.isError).length;
@@ -169,7 +182,7 @@ function ProcessGroup({ messages, running }: { messages: DisplayMessage[]; runni
   const status = active ? "Working" : failed ? "Needs attention" : incomplete ? "Incomplete" : "Explored";
   const description = [thinking ? "reasoning" : "", tools.length ? `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}` : ""].filter(Boolean).join(" · ");
   return (
-    <SessionDisclosure className="session-process" active={active} defaultOpen={failed > 0} summary={<>
+    <SessionDisclosure className="session-process" active={active} defaultOpen={failed > 0 || focused} summary={<>
       {active ? <Circle size={12} className="animate-pulse" /> : failed || incomplete ? <Layers size={14} /> : <Check size={14} />}
       <span>{status} · {description}{failed ? ` · ${failed} failed` : ""}</span>
     </>}>
@@ -179,6 +192,7 @@ function ProcessGroup({ messages, running }: { messages: DisplayMessage[]; runni
 }
 
 function MessageBubble({ message, running = false }: { message: DisplayMessage; running?: boolean }) {
+  const sessionId = useContext(SessionContext);
   switch (message.role) {
     case "user":
       return <UserBubble text={message.text} />;
@@ -186,6 +200,10 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
       return <AssistantBubble text={message.text} aborted={message.aborted} />;
     case "assistant_streaming":
       return <AssistantBubble text={message.text} isStreaming />;
+    case "instruction":
+      return <div className="rounded-xl border border-blue-200 p-3 text-sm"><strong>Delegated instruction</strong><p className="whitespace-pre-wrap">{message.text}</p></div>;
+    case "notification":
+      return <div className="rounded-xl border border-blue-200 p-3 text-sm"><strong>Subagent result</strong><p className="whitespace-pre-wrap">{message.text}</p></div>;
     case "thinking":
       return (
         <ThinkingBlock
@@ -194,6 +212,7 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
         />
       );
     case "tool_use":
+      if (sessionId && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} />;
       return (
         <ToolCard
           name={message.name || "unknown"}

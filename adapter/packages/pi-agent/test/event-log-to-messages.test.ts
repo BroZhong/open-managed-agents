@@ -367,3 +367,22 @@ describe("eventLogToAgentMessages", () => {
     });
   });
 });
+
+describe("durable internal inputs", () => {
+  it("does not include an unclaimed result notification in an earlier Turn", () => {
+    const messages = eventLogToAgentMessages([{ type: "subagent.result", result: { output: "arrived late" } } as unknown as SessionEvent]);
+    expect(messages).toEqual([]);
+  });
+  it("rebuilds claimed results, child inputs, and steering with explicit source labels", () => {
+    const messages = eventLogToAgentMessages([
+      { type: "subagent.result_claimed", result: { status: "failed", output: "partial" } },
+      { type: "delegation.input", content: [{ type: "text", text: "write file" }] },
+      { type: "subagent.instruction", content: [{ type: "text", text: "use CSV" }] },
+    ] as unknown as SessionEvent[]);
+    expect(messages).toMatchObject([
+      { role: "user", content: [{ text: '<subagent_result>\n{"status":"failed","output":"partial"}\n</subagent_result>' }] },
+      { role: "user", content: [{ text: "<delegation>\nwrite file\n</delegation>" }] },
+      { role: "user", content: [{ text: "<delegation_instruction>\nuse CSV\n</delegation_instruction>" }] },
+    ]);
+  });
+});

@@ -74,6 +74,8 @@ export interface SandboxClient {
 
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
+  /** Attach a Host to a persisted, trusted Sandbox identity without creating it. */
+  reconnect?(id: string, metadata: Record<string, string>): Promise<boolean>;
 
   /** Verify the real OSS mount, exact prefix and ordinary-user read/write access. */
   verifyWorkspaceMount(id: string, target: WorkspaceMountTarget): Promise<void>;

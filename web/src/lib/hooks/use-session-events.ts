@@ -63,7 +63,7 @@ export function useSessionEvents(sessionId: string) {
     sessionEventStreamReducer,
     initialSessionEventStreamState,
   );
-  const [status, setStatus] = useState<"idle" | "running">("idle");
+  const [status, setStatus] = useState<"idle" | "running" | "waiting">("idle");
   const [isConnected, setIsConnected] = useState(false);
   // Bumped on every Turn lifecycle transition. The Session's queued input can
   // only change when a Turn starts (an entry was consumed) or ends (the next one
@@ -117,7 +117,7 @@ export function useSessionEvents(sessionId: string) {
     setFileChange({ nonce: 0 });
   }
 
-  const projectStatus = useCallback((nextStatus: "idle" | "running") => {
+  const projectStatus = useCallback((nextStatus: "idle" | "running" | "waiting") => {
     const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
     if (session?.status === "terminated") return;
 
@@ -202,6 +202,10 @@ export function useSessionEvents(sessionId: string) {
 
     if (event.type === "session.status_running") {
       projectStatus("running");
+      setTurnLifecycleNonce((n) => n + 1);
+    }
+    if (event.type === "session.status_waiting") {
+      projectStatus("waiting");
       setTurnLifecycleNonce((n) => n + 1);
     }
     if (event.type === "session.status_idle") {
@@ -343,6 +347,10 @@ export function useSessionEvents(sessionId: string) {
         const evt = historicalEvents[i];
         if (evt.type === "session.status_running") {
           projectStatus("running");
+          break;
+        }
+        if (evt.type === "session.status_waiting") {
+          projectStatus("waiting");
           break;
         }
         if (evt.type === "session.status_idle") {

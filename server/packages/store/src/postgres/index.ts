@@ -1,3 +1,4 @@
+import { PgDelegationStore } from "./delegation-store.js";
 import type { AgentStore } from "../interfaces/agent-store.js";
 import type { AgentFileStore } from "../interfaces/agent-file-store.js";
 import type { SkillStore } from "../interfaces/skill-store.js";
@@ -48,6 +49,7 @@ export interface PgStores {
   userStore: UserStore;
   workspaceStore: WorkspaceMetadataStore;
   loopStore: PgLoopStore;
+  delegationStore: PgDelegationStore;
 }
 
 export interface CreatePgStoresOpts {
@@ -73,5 +75,6 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     userStore: new PgUserStore(pool),
     workspaceStore: new PgWorkspaceMetadataStore(pool),
     loopStore: new PgLoopStore(pool),
+    delegationStore: new PgDelegationStore(pool),
   };
 }

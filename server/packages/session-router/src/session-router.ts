@@ -10,6 +10,8 @@ import type {
   Session,
   SkillStore,
   SkillArtifactStore,
+  DelegationStore,
+  DelegationExecution,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
@@ -35,6 +37,7 @@ import type {
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
 import { isStreamEvent } from "@open-managed-agents/adapter-core";
+import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -85,6 +88,9 @@ class PendingLeaseLostError extends Error {
 }
 
 export interface SessionRouterDeps {
+  delegationStore?: DelegationStore;
+  maxConcurrentSubagents?: number;
+  maxSubagentModelSteps?: number;
   eventLogStore: EventLogStore;
   pendingEventStore: PendingEventStore;
   sessionStore: SessionStore;
@@ -247,8 +253,28 @@ export class SessionRouter {
    * Sessions.
    */
   private readonly sessions = new Map<string, SandboxSession>();
+  private readonly delegationStore?: DelegationStore;
+  private readonly delegations?: DelegationCoordinator;
+  private readonly maxConcurrentSubagents: number;
 
   constructor(deps: SessionRouterDeps) {
+    this.delegationStore = deps.delegationStore;
+    this.maxConcurrentSubagents = deps.maxConcurrentSubagents ?? 4;
+    if (!Number.isInteger(this.maxConcurrentSubagents) || this.maxConcurrentSubagents < 1 || this.maxConcurrentSubagents > 64) {
+      throw new RangeError("maxConcurrentSubagents must be between 1 and 64");
+    }
+    const maxSteps = deps.maxSubagentModelSteps ?? 30;
+    if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000) throw new RangeError("maxSubagentModelSteps must be between 1 and 1000");
+    if (deps.delegationStore) this.delegations = new DelegationCoordinator({
+      store: deps.delegationStore, pending: deps.pendingEventStore,
+      sessions: deps.sessionStore, events: deps.eventLogStore, maxSteps,
+      wake: (sessionId) => {
+        void deps.sessionStore.getById(sessionId).then((session) => {
+          if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent);
+        }).catch((error) => this.reportDrainError(sessionId, error));
+      },
+      publish: (event) => deps.eventStreamHub.publish(event.sessionId, { type: event.type, seq: event.seq, data: event.data }),
+    });
     this.eventLogStore = deps.eventLogStore;
     this.pendingEventStore = deps.pendingEventStore;
     this.sessionStore = deps.sessionStore;
@@ -488,6 +514,19 @@ export class SessionRouter {
           stop();
           return;
         }
+        let shouldInterrupt = await this.pendingEventStore.interruptRequested?.(sessionId, claim.event.id) ?? false;
+        const execution = await this.delegationStore?.getByPendingEventId(claim.event.id);
+        if (execution && this.delegationStore) {
+          for (const command of await this.delegationStore.listCommands(execution.id)) {
+            if (command.kind !== "interrupt" || command.status !== "accepted") continue;
+            await this.delegationStore.applyCommand(command.id, this.fenceFor(claim), {
+              type: "session.interrupt_requested", data: { commandId: command.id, turnId: execution.turnId, source: "delegation" },
+              sessionThreadId: "sthr_primary", idempotencyKey: `interrupt:${command.id}`,
+            });
+            shouldInterrupt = true;
+          }
+        }
+        if (shouldInterrupt) { this.interrupt(sessionId); return; }
       } catch (error) {
         if (stopped) return;
         onLeaseLost(error);
@@ -496,10 +535,10 @@ export class SessionRouter {
         return;
       }
       if (!stopped) {
-        timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
+        timer = setTimeout(() => void tick(), Math.min(this.pendingClaimRenewIntervalMs, 1000));
       }
     };
-    timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
+    timer = setTimeout(() => void tick(), Math.min(this.pendingClaimRenewIntervalMs, 1000));
     this.claimHeartbeatStops.set(sessionId, stop);
     return stop;
   }
@@ -601,6 +640,14 @@ export class SessionRouter {
     activeRun.controller.abort(new DOMException(SESSION_INTERRUPTED_MESSAGE, "AbortError"));
     this.notifyIdleIfSettled();
     return true;
+  }
+
+  /** Accept a durable command; execution confirms interruption in its history. */
+  async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
+    if (!this.pendingEventStore.requestInterrupt) return { requested: true, interrupted: this.interrupt(sessionId) };
+    const requested = await this.pendingEventStore.requestInterrupt(sessionId);
+    if (requested) this.interrupt(sessionId);
+    return { requested, interrupted: false };
   }
 
   /**
@@ -712,7 +759,11 @@ export class SessionRouter {
     if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
     let sandbox = this.sessions.get(sessionId);
     if (!sandbox) {
-      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills));
+      const bindingId = session.delegation?.sandboxSessionId ?? sessionId;
+      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills), this.delegationStore ? {
+        withLock: (work) => this.delegationStore!.withEnvironmentLock(bindingId, work),
+        canReclaim: async () => !await this.delegationStore!.hasResourceUsers(bindingId),
+      } : undefined);
       this.sessions.set(sessionId, sandbox);
     }
     return sandbox; // lazy: no sandbox actually started yet.
@@ -867,6 +918,25 @@ export class SessionRouter {
     turnId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
+    const execution = await this.delegationStore?.getByPendingEventId(pendingEventId);
+    if (execution && !isTerminalExecution(execution) && this.delegationStore) {
+      const log = await this.readAllEvents(sessionId);
+      const startSeq = Number(/^turn_(\d+)/.exec(turnId)?.[1] ?? 0);
+      const turnEvents = log.filter((event) => event.seq > startSeq);
+      const interrupted = turnEvents.some((event) => event.type === "session.turn_aborted");
+      const finished = await this.delegationStore.finishExecution(execution.id, pendingFence,
+        outcomeFromEvents({ ...execution, turnId }, turnEvents, interrupted));
+      const parent = await this.sessionStore.getById(finished.callerSessionId);
+      if (parent && parent.status !== "terminated") {
+        void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
+      }
+    }
+    const pending = await this.pendingEventStore.peek(sessionId);
+    if (pending?.id === pendingEventId && pending.type === "subagent.result" && this.delegationStore) {
+      const data = pending.data as { executionId?: string };
+      if (data.executionId) await this.delegationStore.markNotificationProcessed(data.executionId, pendingFence);
+    }
+    await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
     const session = await this.sessionStore.getById(sessionId);
     if (session?.status !== "terminated") {
       if (this.sessionStore.updateStatusIfClaimed) {
@@ -954,7 +1024,7 @@ export class SessionRouter {
 
       // Promote: insert user message into canonical event log (correct seq position)
       const promotedEvent = await this.eventLogStore.append(sessionId, {
-        type: pendingEvent.type,
+        type: pendingEvent.type === "subagent.result" ? "subagent.result_claimed" : pendingEvent.type,
         data: pendingEvent.data,
         sessionThreadId: pendingEvent.sessionThreadId,
         ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
@@ -966,8 +1036,11 @@ export class SessionRouter {
       // completion marker means all durable output + idle already committed and
       // only the pending acknowledgement was interrupted — never rerun the
       // Adapter in that case.
-      const priorEvents = await this.readAllEvents(sessionId);
+      let priorEvents = await this.readAllEvents(sessionId);
       turnId = `turn_${promotedEvent.seq}_a${claim.generation}`;
+      const waits = await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [];
+      const resumableWaits = waits.filter((wait) => wait.status !== "cancelled");
+      if (resumableWaits.length) turnId = resumableWaits[0].callerTurnId;
       if (this.turnCompleted(priorEvents, pendingEvent.id)) {
         await this.reclaimEarlierAttempts(
           sessionId,
@@ -984,12 +1057,48 @@ export class SessionRouter {
         continue;
       }
 
-      const attemptEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq);
+      let currentAgent = claimedSession.loopId
+        ? claimedSession.agent
+        : await this.resolveCurrentAgent(agentConfig);
+      const waitingConfig = resumableWaits[0]?.checkpoint.config as { model?: string; thinking?: string } | undefined;
+      if (typeof waitingConfig?.model === "string") currentAgent = { ...currentAgent, model: waitingConfig.model };
+      let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
+      if (delegationExecution && this.delegationStore) {
+        currentAgent = { ...currentAgent, mcpServers: undefined,
+          model: delegationExecution.model ?? currentAgent.model };
+        const started = await this.delegationStore.startExecution(
+          delegationExecution.id, pendingFence, turnId,
+          { model: currentAgent.model, thinking: delegationExecution.thinking,
+            runtime: currentAgent.runtime, maxModelSteps: delegationExecution.maxSteps,
+            modelSource: delegationExecution.model ? "override" : "agent" },
+          this.maxConcurrentSubagents,
+        );
+        if (!started) {
+          await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);
+          return;
+        }
+        delegationExecution = started;
+        if (isTerminalExecution(started)) {
+          if (started.status === "recovery_required") {
+            await this.repairDanglingToolUses(sessionId, pendingEvent.id, started.turnId ?? turnId,
+              priorEvents.filter((event) => event.seq > promotedEvent.seq), pendingFence);
+            await this.eventLogStore.append(sessionId, {
+              type: "session.error", data: { turnId: started.turnId ?? turnId,
+                error: { code: "recovery_required", message: started.result?.reason } },
+              sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pendingEvent.id}:recovery_required`, pendingFence,
+            });
+          }
+          if (!await this.completeTurn(sessionId, pendingEvent.id, started.turnId ?? turnId, pendingFence)) return;
+          continue;
+        }
+      }
+
+      const attemptEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq && event.type !== "subagent.result");
       const alreadyIdle = attemptEvents.some((event) => event.type === "session.status_idle");
       const partialDurableOutput = attemptEvents.some(
         (event) => event.type !== "session.status_running",
       );
-      if (alreadyIdle || partialDurableOutput) {
+      if ((alreadyIdle || partialDurableOutput) && resumableWaits.length === 0) {
         await this.repairDanglingToolUses(
           sessionId,
           pendingEvent.id,
@@ -1092,9 +1201,6 @@ export class SessionRouter {
       // captured in the same dispatch transaction part of that occurrence.
       // Recovery must therefore use the durable Session snapshot even if the
       // Agent changes after commit but before the pending input is claimed.
-      const currentAgent = claimedSession.loopId
-        ? claimedSession.agent
-        : await this.resolveCurrentAgent(agentConfig);
       if (leaseLost) return;
 
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
@@ -1158,6 +1264,10 @@ export class SessionRouter {
       if (!session) {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
+      const delegationRun: DelegationRun = { session, turnId, fence: pendingFence,
+        signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId };
+      await this.delegationStore?.acquireResourceUse(sessionId,
+        session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
       let sandbox: SandboxSession | undefined;
       try {
           equippedSkills = await this.equippedSkills(currentAgent);
@@ -1213,13 +1323,32 @@ export class SessionRouter {
 
       let adapterInput: AdapterInput;
       try {
+        if (resumableWaits.length && this.delegations) {
+          await this.delegations.recoverWaits(delegationRun, resumableWaits);
+          priorEvents = await this.readAllEvents(sessionId);
+          const turnEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq);
+          const completedTools = new Set(turnEvents.filter((event) => event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result")
+            .map((event) => (event.data as { toolUseId?: string }).toolUseId));
+          if (turnEvents.some((event) => (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
+            !completedTools.has((event.data as { toolUseId?: string }).toolUseId))) {
+            await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId, turnEvents, pendingFence);
+            await this.eventLogStore.append(sessionId, {
+              type: "session.error", data: { turnId, error: { code: "recovery_required",
+                message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } },
+              sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pendingEvent.id}:unsafe_continuation`, pendingFence,
+            });
+            if (!await this.completeTurn(sessionId, pendingEvent.id, turnId, pendingFence)) return;
+            continue;
+          }
+        }
         adapterInput = this.buildAdapterInput(
           sessionId,
           turnId,
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox,
+          sandbox && this.delegations ? fencedExecutor(sandbox,
+            () => this.delegations!.assertOwner(delegationRun), turnController.signal) : sandbox,
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,
@@ -1229,7 +1358,42 @@ export class SessionRouter {
           // hung turn instead of locking the session forever.
           turnController.signal,
         );
+        if (this.delegations && currentAgent.runtime === "pi-agent" && !session.delegation) {
+          adapterInput.subagents = this.delegations.capability(delegationRun);
+        }
+        if (delegationExecution && this.delegations) {
+          adapterInput.execution = {
+            isChild: true, maxModelSteps: delegationExecution.maxSteps,
+            thinking: delegationExecution.thinking,
+            steering: this.delegations.steering(delegationRun, delegationExecution),
+          };
+        }
+        if (resumableWaits.length) {
+          adapterInput.history = this.adapterHistory(priorEvents);
+          adapterInput.continuation = { toolResults: [] };
+          adapterInput.execution = { ...adapterInput.execution,
+            completedModelSteps: priorEvents.filter((event) => event.type === "span.model_request_start" &&
+              (event.data as { turnId?: string }).turnId === turnId).length };
+          if (waitingConfig?.thinking) adapterInput.execution.thinking = waitingConfig.thinking;
+        }
+        if (this.delegations) adapterInput.execution = { ...adapterInput.execution,
+          onResolved: async (config) => {
+            await this.delegations!.assertOwner(delegationRun);
+            delegationRun.effectiveConfig = { ...config };
+            if (delegationExecution) await this.delegationStore!.updateEffectiveConfig(delegationExecution.id, pendingFence, config);
+          },
+        };
       } catch (error) {
+        if (turnController.signal.aborted && !leaseLost && this.delegations) {
+          await this.delegations.interruptChildren(session, turnId, pendingFence);
+          const interruptedEvents = await this.readAllEvents(sessionId);
+          await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId,
+            interruptedEvents.filter((event) => event.seq > promotedEvent.seq), pendingFence);
+          await this.eventLogStore.append(sessionId, { type: "session.turn_aborted", data: { turnId },
+            sessionThreadId: "sthr_primary", idempotencyKey: this.turnKey(pendingEvent.id, "turn_aborted"), pendingFence });
+          if (!await this.completeTurn(sessionId, pendingEvent.id, turnId, pendingFence)) return;
+          continue;
+        }
         if (!(error instanceof ManagedMcpResolutionError)) throw error;
         // Catalog/tenant refusals are durable policy decisions, not transient
         // Adapter failures. Record one terminal Turn and acknowledge its input;
@@ -1282,7 +1446,9 @@ export class SessionRouter {
 
       // blockIndex increments on each stream_start, aligning a turn's deltas to
       // the full Event they roll up into (shared turnId + blockIndex).
-      let blockIndex = -1;
+      let blockIndex = resumableWaits.length
+        ? Math.max(-1, ...priorEvents.filter((event) => (event.data as { turnId?: string })?.turnId === turnId)
+          .map((event) => (event.data as { blockIndex?: number })?.blockIndex ?? -1)) : -1;
       let durableEventIndex = 0;
       const pendingStreamBlocks: PendingStreamBlock[] = [];
       // The Complete Events this attempt persisted, in order. Only the Adapter
@@ -1291,6 +1457,9 @@ export class SessionRouter {
       const attemptStoredEvents: StoredEvent[] = [];
 
       const persistCompleteEvent = async (event: SessionEvent): Promise<void> => {
+        // Session lifecycle belongs to the durable input, not Pi's temporary
+        // prompt completion (a synchronous tool may still hold a wait).
+        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
         const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
           if (!block.completeTypes.has(event.type)) return false;
           if (block.toolUseId === undefined) return true;
@@ -1312,17 +1481,24 @@ export class SessionRouter {
         const pendingBlock = pendingBlockIndex === -1
           ? undefined
           : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
-        const completeEvent = pendingBlock
+        const alignedEvent = pendingBlock
           ? { ...event, turnId, blockIndex: pendingBlock.blockIndex }
           : { ...event, turnId };
-        const stored = await this.eventLogStore.append(sessionId, {
+        const completeEvent = delegationExecution ? { ...alignedEvent,
+          callerSessionId: delegationExecution.callerSessionId,
+          callerTurnId: delegationExecution.callerTurnId,
+          callerToolUseId: delegationExecution.callerToolUseId,
+          executionId: delegationExecution.id,
+        } : alignedEvent;
+        const consumed = await this.delegations?.persistToolResult(delegationRun, completeEvent);
+        const stored = consumed ?? await this.eventLogStore.append(sessionId, {
           type: completeEvent.type,
           data: completeEvent,
           sessionThreadId: "sthr_primary",
           ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
           idempotencyKey: this.turnKey(
             pendingEvent.id,
-            `event:${durableEventIndex++}`,
+            this.delegations ? `event:${event.id}` : `event:${durableEventIndex++}`,
           ),
           pendingFence,
         });
@@ -1567,6 +1743,14 @@ export class SessionRouter {
 
       if (leaseLost) return;
 
+      // A temporary Adapter return cannot finish a Turn that still owns a
+      // durable wait. Reclaim the same input and continue from its checkpoint.
+      if (!turnController.signal.aborted && this.delegationStore &&
+        (await this.delegationStore.listWaits(sessionId, pendingEvent.id)).some((wait) => wait.status === "waiting")) {
+        await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);
+        return;
+      }
+
       // Interrupted Turn cleanup (issue #112). A Turn stopped while a tool was
       // running leaves the *other* shape of Interrupt: the assistant message is
       // a normal one, and the only trace is a tool_use with no result. Close
@@ -1574,6 +1758,7 @@ export class SessionRouter {
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
       if (turnController.signal.aborted) {
+        await this.delegations?.interruptChildren(session, turnId, pendingFence);
         await this.repairDanglingToolUses(
           sessionId,
           pendingEvent.id,
@@ -1644,6 +1829,7 @@ export class SessionRouter {
         }
         throw error;
       } finally {
+        await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
         stopHeartbeat();
         signal.removeEventListener("abort", forwardOuterAbort);
       }
@@ -1714,15 +1900,14 @@ export class SessionRouter {
       content = [{ type: "text", text: "" }];
     }
 
-    const message: UserMessage = {
-      role: "user",
-      content,
-    };
+    const message: UserMessage = { role: "user", content };
+    if (promotedEvent.type === "subagent.result_claimed") {
+      message.source = "subagent_result";
+      message.content = [{ type: "text", text: JSON.stringify(eventData) }];
+    } else if (promotedEvent.type === "delegation.input") message.source = "delegation";
 
     // History: all events before the current promoted event
-    const history = priorEvents
-      .filter((e) => e.seq < promotedEvent.seq)
-      .map((e) => ({ type: e.type, ...(e.data as object) }) as unknown as SessionEvent);
+    const history = this.adapterHistory(priorEvents.filter((e) => e.seq < promotedEvent.seq));
 
     return {
       sessionId,
@@ -1757,6 +1942,11 @@ export class SessionRouter {
       // runtime's native cancel so a user interrupt can end a hung turn.
       signal,
     };
+  }
+
+  private adapterHistory(events: StoredEvent[]): SessionEvent[] {
+    return events.filter((event) => event.type !== "subagent.result")
+      .map((event) => ({ ...(event.data as object), type: event.type }) as SessionEvent);
   }
 
   /**

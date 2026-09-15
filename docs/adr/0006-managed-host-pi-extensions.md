@@ -4,19 +4,22 @@
 
 Accepted. Amends ADR-0002 and ADR-0003 for a narrow class of managed Pi
 extensions; all filesystem, command, and workspace operations remain governed by
-ADR-0002 and ADR-0005.
+ADR-0002 and ADR-0005. ADR-0010 supersedes the former plugin-based
+delegation and shared parent/child lifecycle decisions.
 
 ## Context
 
 ADR-0002 deliberately made the injected per-`run()` `ToolExecutor` the only
 route from Pi into a Workspace and its Sandbox. It also described the Adapter as
-a stateless translator that touches no infrastructure. Three Pi extensions now
-provide Host-resident network/orchestration capability:
+a stateless translator that touches no infrastructure. Two managed Pi extensions
+provide Host-resident network capability:
 
 - `pi-web-access` performs public web search and content retrieval;
 - `pi-mcp-adapter` connects to an administrator-approved HTTP or stdio MCP
-  server;
-- `@tintinweb/pi-subagents` creates child Pi sessions for delegated reasoning.
+  server.
+
+Delegation is implemented by the Host and Adapter, as specified in ADR-0010.
+It is not a Pi extension.
 
 These extensions are discovered by Pi's `DefaultResourceLoader` and execute in
 the Host process. Pretending that they pass through `ToolExecutor` would hide a
@@ -82,59 +85,34 @@ The initial controls are:
   endpoint exposes descriptive metadata, transport, configurable fields, and
   required environment-variable names, but never the connection definition or
   any resolved value.
-- The subagent extension's three default Agent types are disabled and scheduling
-  is off. The deployment publishes one `storyboard-stage` type whose
-  authoritative frontmatter inherits the parent's selected model, requests all seven tools, and forces
-  `extensions: false`, `skills: false`, foreground mode, and `isolated: true`.
-  The managed overlay refuses to create the child if any corresponding custom
-  implementation is absent, so an incomplete bridge cannot fall back to a Host
-  builtin.
-- Child Agents receive the parent's exact seven custom `ToolDefinition`s. Those
-  definitions close over the same per-Turn `ToolExecutor`, so both sessions read
-  and write the same Sandbox and can run `vfs-cli`; neither touches Host files.
-  The child inherits the parent's system prompt (including equipped Skill
-  descriptors), while Skill bodies remain projected inside the Sandbox.
+- Child Sessions are restricted to their own per-Turn Sandbox-backed tools.
+  They do not load Web/MCP extensions, Host-native tools, or nested delegation.
+  The Host may inherit system instructions and equipped Skill descriptors, but
+  Skill bodies remain in the Sandbox. Child resources and model runtime are
+  independent of the parent Turn; see ADR-0010.
 
 ### 2. Extension lifecycle is scoped to one managed Turn
 
 SDK consumers explicitly bind extensions before prompting and emit
 `session_shutdown` before disposing the Pi session. Startup failures still
-dispose the partially-created session. This prevents MCP connections, child
-watchers, and extension state from surviving a Turn.
+dispose the partially-created session. This prevents MCP connections and
+extension state from surviving that Pi instance. It does not terminate child
+Sessions, whose execution and resources are owned independently by the Host.
 
-### 3. Child custom tools use a per-Turn, fail-closed capability bridge
+### 3. Delegation crosses a Host capability seam
 
-`@tintinweb/pi-subagents@0.13.0` has no public `customTools` provider for child
-sessions. Each Adapter Turn therefore creates a fresh Pi `EventBus`. An inline
-extension factory publishes that Turn's tool-definition array and Pi
-`ModelRuntime` over a private
-request/reply channel on the bus. The named extension already carries the
-parent's `ExtensionAPI` into its child runner; a source overlay requests the
-definitions there and passes them to the child `createAgentSession({
-customTools, modelRuntime, noTools: "builtin" })` call. Pi SDK 0.80.10 replaced
-the child SDK's `modelRegistry` option with `modelRuntime`; sharing the parent's
-runtime preserves its exact model definitions and authentication. Child thinking
-defaults to the selected model's highest supported level unless explicitly
-overridden for the delegated task.
+Each managed parent Turn receives a `HostSubagentCapability` object that binds
+its Tenant, Session, Turn, current execution lease, and tool-use identity. The
+Adapter registers `Agent`, `get_subagent_result`, and `steer_subagent`; their
+schemas contain task inputs, never authority fields. No plugin installation,
+source overlay, business subtype, or private usage EventBus is required.
 
-Tool definitions and the model runtime pass by reference inside one process. No capability is stored
-in global state or serialized into prompts, files, arguments, or environment.
-Concurrent parents own different buses and cannot request one another's tools.
-The response handler is removed on `session_shutdown`; a missing response or
-any missing `bash/read/write/edit/ls/grep/find` definition aborts child creation
-rather than falling back to native tools. The package overlay checks the exact
-package version, pristine source SHA-256, and exact source anchors during the
-image build; an upstream source change fails the build.
-
-The same private EventBus carries provider-reported usage from every child
-assistant request (`input`, `output`, cache read, and cache write). A single
-child-session subscription covers the initial run and later resumes; the parent
-Pi Adapter validates each payload and emits one durable
-`span.model_request_end` Complete Event. The Host then attributes that event to
-the API key that accepted the Turn just like a parent-model request. This is an
-accounting bridge only: child text and tool activity remain summarized by the
-extension's normal parent `Agent` tool result. Its parent-side listener is also
-removed on `session_shutdown`, preserving the per-Turn lifecycle boundary.
+The Host creates and schedules child Sessions through the ordinary Session
+Router. Each child Turn constructs a fresh Pi session, model runtime and
+Sandbox tool definitions. Its own Complete Events record all model requests,
+text, tool activity, failures and usage. Parent shutdown closes only the parent
+Pi instance. Structured wait recovery and asynchronous result delivery are
+specified in ADR-0010.
 
 ### 4. MCP file materialization is a narrow Adapter bridge
 
@@ -196,7 +174,7 @@ Host-readable Skill paths without managed descriptors.
   integration.
 - `ToolExecutor` remains the sole Workspace/Sandbox boundary, but is no longer
   claimed to mediate unrelated Host web/MCP network tools. Child Agents cross
-  the same boundary through the exact same per-Turn definitions.
+  the same boundary through independent per-Turn definitions and resource leases.
 - The MCP allowlist is centralized in a Host-owned catalog instead of duplicated
   between API validation and console presentation. Tests must prove that public
   catalog output omits private connection fields and that persisted references
@@ -214,11 +192,10 @@ Host-readable Skill paths without managed descriptors.
   `OMA_SUPABASE_ALLOWED_TENANTS`; listing, API acceptance, and runtime resolution
   all enforce the same fail-closed policy. A future multi-tenant deployment
   should replace this static allowlist with per-tenant credentials and policy.
-- Child Agent tool calls are summarized inside the parent `Agent` tool result;
-  end-to-end evidence must prove both repeated delegation and the resulting
-  Sandbox/remote artifacts.
-- Replace the version-pinned subagent source overlay when upstream exposes a
-  supported child `customTools` provider.
+- Child tool calls and model usage are recorded in their own Session history;
+  parent tool results reference the child Session and execution. Historical
+  plugin summaries remain readable, but their temporary child IDs do not become
+  persistent Sessions and the old usage bridge does not run.
 - Replace the temporary-file bridge if `pi-mcp-adapter` gains a supported
   in-memory configuration API. Replace its version-pinned source overlay only
   when that API also guarantees exclusive managed configuration and disables

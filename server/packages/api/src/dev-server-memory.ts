@@ -277,6 +277,7 @@ async function main() {
   const sandboxEnvPolicy = sandboxEnvPolicyFromHost(process.env);
 
   const sessionRouter = new SessionRouter({
+    delegationStore: stores.delegationStore,
     eventLogStore: stores.eventLogStore,
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
@@ -311,6 +312,7 @@ async function main() {
   loopScheduler.start();
 
   const app = createApp({
+    delegationStore: stores.delegationStore,
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,

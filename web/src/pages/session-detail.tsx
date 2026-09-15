@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router";
+import { useParams, useNavigate, useLocation } from "react-router";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
@@ -16,6 +16,8 @@ import { useSendMessage } from "@/lib/hooks/use-send-message";
 import { useInterrupt } from "@/lib/hooks/use-interrupt";
 import { useAgentSkills } from "@/lib/hooks/use-skills";
 import { useQueuedInput } from "@/lib/hooks/use-queued-input";
+import { DelegationUsage } from "@/components/delegation-usage";
+import { DelegationSources } from "@/components/delegation-sources";
 import { cn } from "@/lib/utils";
 
 /** Read the display text out of a `user.message` event payload. */
@@ -39,12 +41,14 @@ export default function SessionDetailPage() {
 
 function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
   const { data: session, isLoading: sessionLoading } = useSession(id);
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce } =
     useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
-  const { interrupt, isPending: isInterrupting } = useInterrupt(id);
+  const { interrupt, isPending: isInterrupting, requestAccepted: interruptRequested } = useInterrupt(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
 
   // Whether input is waiting to run is the Host's fact, re-read whenever a Turn
@@ -69,7 +73,7 @@ function SessionDetail({ id }: { id: string }) {
 
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
   const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
-  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" ? "running" : (session?.status ?? "idle");
+  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" || status === "waiting" ? status : (session?.status ?? "idle");
   const tokenUsage = useMemo(() => summarizeTokenUsage(events), [events]);
 
   if (sessionLoading) {
@@ -112,7 +116,7 @@ function SessionDetail({ id }: { id: string }) {
               </span>
             </>
           )}
-          <StatusBadge status={effectiveStatus as "idle" | "running" | "terminated"} />
+          <StatusBadge status={effectiveStatus as "idle" | "running" | "waiting" | "terminated"} />
           {isConnected && (
             <span className="flex items-center gap-1 text-xs text-green-600">
               <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
@@ -126,6 +130,10 @@ function SessionDetail({ id }: { id: string }) {
         </div>
       </div>
 
+      <DelegationUsage sessionId={id} />
+      <DelegationSources sessionId={id} origin />
+      <DelegationSources sessionId={id} />
+      {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
       <SplitWorkbench
         workspace={session && <WorkspacePanel workspaceId={session.workspaceId} refreshKey={fileChange.nonce} />}
         session={
@@ -136,7 +144,7 @@ function SessionDetail({ id }: { id: string }) {
             </div>
             <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ConversationView events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+                <ConversationView sessionId={id} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
               </div>
               <MessageInput
                 onSend={send}
@@ -146,7 +154,7 @@ function SessionDetail({ id }: { id: string }) {
                 skills={equippedSkills}
                 disabled={session?.status === "terminated"}
                 model={session?.agent?.model}
-                running={effectiveTurnStatus === "running"}
+                running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
                 onInterrupt={handleInterrupt}
               />
             </div>

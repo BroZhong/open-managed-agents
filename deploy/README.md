@@ -171,6 +171,46 @@ depends on a new migration.
 
 ## Cluster access and verification
 
+### Durable delegation release (#133–#141)
+
+Apply `migrations/0011_durable_delegations.sql` before the Host image. Verify
+the application role can read all six `delegation_*` tables and the new
+Session/pending-input columns. Update both the `server` container and
+`seed-pi-auth` init container to the same image: the latter supplies the Pi
+settings and extensions, and an old seed would reinstall the retired plugin.
+
+For the first cutover, stop ingress to the old Host and stop its scheduler;
+wait for its active Turns to drain before starting the new image. The release
+must not mix the plugin and Host-owned tools. The old implementation's in-memory
+child identifiers cannot be migrated. Existing tool summaries remain readable;
+queries using those expired identifiers explicitly fail.
+
+New deployments register only `Agent`, `get_subagent_result`, and
+`steer_subagent`. `run_in_background` defaults to false for both creation and
+resume. `SUBAGENT_MAX_CONCURRENT` defaults to 4 per parent Session and
+`SUBAGENT_MAX_MODEL_STEPS` defaults to 30 (maximum 1000). These count concurrent
+child Turns and model steps respectively; waiting parents consume no child slot.
+
+Monitor `delegation_executions.record` for `status`, `notificationStatus`,
+`pendingEventId`, and the effective model configuration. `queued` inputs use the
+ordinary pending-input recovery scan; `running` records are fenced by that
+input's owner and generation. An expired child lease becomes
+`recovery_required`, never successful partial commentary. Inspect its complete
+tool history and external task identifiers before an explicit resume. Saved
+Workspace files remain available independently of that status.
+
+`delegation_waits` identifies the original parent Turn and tool call. Its
+checkpoint plus complete events lets a replacement Host continue that same
+Turn; a non-wait tool with an uncertain outcome is reported and not replayed.
+`subagent.result` is a visible result notification. Only
+`subagent.result_claimed` enters the model's history. An accepted Interrupt is
+reported as `requested`; the canonical aborted Turn confirms actual stopping.
+
+After release, validate health and authenticated API reads, then exercise a
+synchronous child, an asynchronous child that finishes after its parent,
+result wakeup, cross-Host resume, steer, Interrupt, full execution traces and
+usage. Check failure and budget-exhaustion results separately from file saves.
+
 ### Shared native sandbox credentials
 
 The Host reads `sandbox-system/base-secret` at startup and supplies its valid

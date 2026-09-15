@@ -12,6 +12,7 @@ import { skillRoutes } from "./routes/skills.js";
 import { apiKeyRoutes } from "./routes/api-keys.js";
 import { authRoutes } from "./routes/auth.js";
 import { sessionRoutes } from "./routes/sessions.js";
+import { delegationRoutes, type DelegationRouteDeps } from "./routes/delegations.js";
 import { eventRoutes } from "./routes/events.js";
 import { workspaceFileRoutes } from "./routes/workspace-files.js";
 import { workspaceEntityRoutes } from "./routes/workspaces.js";
@@ -42,6 +43,7 @@ export interface AppDeps {
   pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
   loopStore?: LoopStore;
+  delegationStore?: DelegationRouteDeps["delegationStore"];
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
@@ -146,6 +148,10 @@ export function createApp(deps: AppDeps) {
       eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
     }));
+  }
+
+  if (deps.delegationStore && deps.sessionStore && deps.eventLogStore) {
+    app.route("/", delegationRoutes({ delegationStore: deps.delegationStore, sessionStore: deps.sessionStore, eventLogStore: deps.eventLogStore, turnStreamStore: deps.turnStreamStore }));
   }
 
   // Mount event routes

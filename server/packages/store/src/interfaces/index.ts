@@ -22,3 +22,4 @@ export type {
   ArtifactContent,
   ArtifactPutInput,
 } from "./artifact-store.js";
+export type * from "./delegation-store.js";

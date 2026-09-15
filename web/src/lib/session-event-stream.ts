@@ -11,6 +11,7 @@ export interface SessionEventStreamState {
 
 export type SessionEventStreamAction =
   | { type: "history.loaded"; events: SessionEvent[] }
+  | { type: "deltas.loaded"; deltas: SessionDelta[] }
   | { type: "event.received"; event: SessionEvent }
   | { type: "delta.received"; delta: SessionDelta };
 
@@ -136,6 +137,11 @@ export function sessionEventStreamReducer(
   action: SessionEventStreamAction,
 ): SessionEventStreamState {
   switch (action.type) {
+    case "deltas.loaded": {
+      let next = { ...state, activeDeltas: [], seenDeltaKeys: new Set<string>(), latestDeltaBlock: undefined } as SessionEventStreamState;
+      for (const delta of action.deltas) next = sessionEventStreamReducer(next, { type: "delta.received", delta });
+      return next;
+    }
     case "history.loaded":
       return {
         events: action.events,

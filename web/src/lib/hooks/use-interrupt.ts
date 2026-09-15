@@ -1,21 +1,15 @@
 import { useCallback, useState } from "react";
 import { apiFetch } from "@/lib/api";
 
-/**
- * Ask the Host to stop this Session's running Turn.
- *
- * The Host answers whether it actually stopped one: `false` means there was no
- * running Turn it could reach, which the caller may surface instead of pretending
- * the Stop worked (issue #113). An Interrupt only ends the current Turn — input
- * the user already queued still runs afterwards.
- */
+/** Accept an Interrupt command; durable Turn events determine when it stops. */
 export function useInterrupt(sessionId: string) {
+  const [requestAccepted, setRequestAccepted] = useState(false);
   const [isPending, setIsPending] = useState(false);
 
   const interrupt = useCallback(async (): Promise<boolean> => {
     setIsPending(true);
     try {
-      const body = await apiFetch<{ accepted?: boolean; interrupted?: boolean }>(
+      const body = await apiFetch<{ accepted?: boolean; interrupted?: boolean; requested?: boolean }>(
         `/v1/sessions/${sessionId}/events`,
         {
           method: "POST",
@@ -23,11 +17,12 @@ export function useInterrupt(sessionId: string) {
           body: JSON.stringify({ events: [{ type: "user.interrupt", data: {} }] }),
         },
       );
+      setRequestAccepted(body?.requested === true);
       return body?.interrupted === true;
     } finally {
       setIsPending(false);
     }
   }, [sessionId]);
 
-  return { interrupt, isPending };
+  return { interrupt, isPending, requestAccepted };
 }

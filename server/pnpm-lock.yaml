@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@earendil-works/pi-coding-agent@0.80.10':
-    hash: bce4f729f6d7b0a72001c2fe6f25a20e431e3269c611a7d441a7015abaf41d1e
+    hash: d647b192c67f8260555f975dd92ab38b0524b5d5334ae65e9465c3aa76af548d
     path: ../adapter/patches/@earendil-works__pi-coding-agent@0.80.10.patch
   e2b@2.24.0:
     hash: f2029501b71518fe31d3f9ef87ec63fcb58338c18558f6d315b23cbfa1e7a52e
@@ -2934,7 +2934,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.80.10(patch_hash=bce4f729f6d7b0a72001c2fe6f25a20e431e3269c611a7d441a7015abaf41d1e)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
+  '@earendil-works/pi-coding-agent@0.80.10(patch_hash=d647b192c67f8260555f975dd92ab38b0524b5d5334ae65e9465c3aa76af548d)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
@@ -3277,7 +3277,7 @@ snapshots:
   '@open-managed-agents/adapter-pi-agent@file:../adapter/packages/pi-agent(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@earendil-works/pi-ai': 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@earendil-works/pi-coding-agent': 0.80.10(patch_hash=bce4f729f6d7b0a72001c2fe6f25a20e431e3269c611a7d441a7015abaf41d1e)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-coding-agent': 0.80.10(patch_hash=d647b192c67f8260555f975dd92ab38b0524b5d5334ae65e9465c3aa76af548d)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@open-managed-agents/adapter-core': file:../adapter/packages/core
       typebox: 1.1.38
     transitivePeerDependencies:

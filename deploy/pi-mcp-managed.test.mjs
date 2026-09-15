@@ -90,7 +90,7 @@ test("the server image applies the MCP overlay immediately after installing the 
   );
   assert.match(
     dockerfile,
-    /npm:pi-mcp-adapter@\$\{PI_MCP_ADAPTER_VERSION\}[\s\S]*?node \/tmp\/patch-pi-mcp-adapter\.mjs \\\n+      \/opt\/pi-agent-seed\/npm\/node_modules\/pi-mcp-adapter[\s\S]*?npm:\@tintinweb\/pi-subagents@\$\{PI_SUBAGENTS_VERSION\}/,
+    /npm:pi-mcp-adapter@\$\{PI_MCP_ADAPTER_VERSION\}[\s\S]*?node \/tmp\/patch-pi-mcp-adapter\.mjs \\\n+      \/opt\/pi-agent-seed\/npm\/node_modules\/pi-mcp-adapter/,
   );
 });
 

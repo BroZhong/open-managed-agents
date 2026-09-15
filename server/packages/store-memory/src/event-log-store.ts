@@ -93,7 +93,7 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     const afterSeq = opts?.afterSeq ?? 0;
     const limit = opts?.limit ?? 50;
 
-    const filtered = allEvents.filter(({ event }) => event.seq > afterSeq);
+    const filtered = allEvents.filter(({ event }) => event.seq > afterSeq && (!opts?.turnId || (event.data as { turnId?: string } | undefined)?.turnId === opts.turnId));
     const data = filtered.slice(0, limit);
     const hasMore = filtered.length > limit;
 
@@ -112,10 +112,13 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
       ? this.events.get(scope.sessionId) ?? []
       : [...this.events.values()]
           .flat()
-          .filter((record) => record.apiKeyId === scope.apiKeyId);
+          .filter((record) => "callerSessionId" in scope
+            ? (record.event.data as { callerSessionId?: string } | undefined)?.callerSessionId === scope.callerSessionId
+            : record.apiKeyId === scope.apiKeyId);
 
     for (const { event } of records) {
       if (event.type !== "span.model_request_end") continue;
+      if ("sessionId" in scope && scope.turnId && (event.data as { turnId?: string } | undefined)?.turnId !== scope.turnId) continue;
       const data = event.data && typeof event.data === "object"
         ? event.data as { usage?: Record<string, unknown> }
         : undefined;
@@ -140,4 +143,8 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     }
     return result;
   }
+  /** Internal rollback boundary for the in-memory delegation transaction. */
+  snapshotState() { return structuredClone({ events: this.events, seqCounters: this.seqCounters, idempotentEvents: this.idempotentEvents }); }
+  restoreState(state: ReturnType<InMemoryEventLogStore["snapshotState"]>): void { this.events = state.events; this.seqCounters = state.seqCounters; this.idempotentEvents = state.idempotentEvents; }
+
 }

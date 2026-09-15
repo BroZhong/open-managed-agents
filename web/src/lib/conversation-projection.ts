@@ -13,12 +13,15 @@ export interface DisplayMessage {
     | "assistant"
     | "assistant_streaming"
     | "thinking"
+    | "notification"
+    | "instruction"
     | "tool_use"
     | "error";
   text: string;
   streaming?: boolean;
   name?: string;
   toolUseId?: string;
+  turnId?: string;
   input?: unknown;
   serverName?: string;
   result?: ToolResultData;
@@ -33,7 +36,7 @@ export interface DisplayMessage {
 
 export function shouldShowTypingIndicator(
   messages: DisplayMessage[],
-  sessionStatus: "idle" | "running",
+  sessionStatus: "idle" | "running" | "waiting",
 ): boolean {
   if (sessionStatus !== "running") return false;
   const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
@@ -63,7 +66,7 @@ export function processEventsToMessages(
         content: unknown;
         isError?: boolean;
       };
-      toolResultMap.set(data.toolUseId, {
+      toolResultMap.set(toolIdentity(event.data), {
         content: data.content,
         isError: data.isError ?? false,
         seq: event.seq,
@@ -78,20 +81,30 @@ export function processEventsToMessages(
   for (const event of projectionEvents) {
     const seq = "seq" in event ? event.seq : undefined;
     switch (event.type) {
+      case "delegation.input":
+      case "subagent.instruction":
       case "user.message": {
         const data = event.data as {
           content: Array<{ type: string; text: string }>;
+          source?: string;
         };
-        const text = data.content
+        const text = Array.isArray(data.content) ? data.content
           .filter((c) => c.type === "text")
           .map((c) => c.text)
-          .join("\n");
+          .join("\n") : String((event.data as { text?: string; prompt?: string }).text ?? (event.data as { prompt?: string }).prompt ?? "");
         messages.push({
           id: `user-${seq}`,
-          role: "user",
+          role: event.type === "subagent.instruction" ? "instruction" : data.source === "subagent_result" ? "notification" : "user",
           text,
           seq,
         });
+        break;
+      }
+      case "subagent.result":
+      case "session.subagent_result":
+      case "agent.subagent_result": {
+        const data = event.data as { output?: string; reason?: string; status?: string; result?: { output?: string; reason?: string; status?: string } };
+        messages.push({ id: `notification-${seq}`, role: "notification", text: [data.status ?? data.result?.status, data.reason ?? data.result?.reason, data.output ?? data.result?.output].filter(Boolean).join("\n"), seq });
         break;
       }
       case "agent.message": {
@@ -138,17 +151,18 @@ export function processEventsToMessages(
           name: string;
           input: unknown;
         };
-        const pairedResult = toolResultMap.get(data.toolUseId);
+        const pairedResult = toolResultMap.get(toolIdentity(event.data));
         if (pairedResult) {
           pairedToolResultSeqs.add(pairedResult.seq);
         }
 
         messages.push({
-          id: `tool-${data.toolUseId}`,
+          id: `tool-${toolIdentity(event.data)}`,
           role: "tool_use",
           text: "",
           name: data.name,
           toolUseId: data.toolUseId,
+          turnId: (event.data as { turnId?: string }).turnId,
           input: data.input,
           result: pairedResult
             ? { content: pairedResult.content, isError: pairedResult.isError }
@@ -164,17 +178,18 @@ export function processEventsToMessages(
           input: unknown;
           serverName: string;
         };
-        const pairedResult = toolResultMap.get(data.toolUseId);
+        const pairedResult = toolResultMap.get(toolIdentity(event.data));
         if (pairedResult) {
           pairedToolResultSeqs.add(pairedResult.seq);
         }
 
         messages.push({
-          id: `tool-${data.toolUseId}`,
+          id: `tool-${toolIdentity(event.data)}`,
           role: "tool_use",
           text: "",
           name: data.name,
           toolUseId: data.toolUseId,
+          turnId: (event.data as { turnId?: string }).turnId,
           input: data.input,
           serverName: data.serverName,
           result: pairedResult
@@ -198,6 +213,7 @@ export function processEventsToMessages(
             text: "",
             name: "Tool Result",
             toolUseId: data.toolUseId,
+          turnId: (event.data as { turnId?: string }).turnId,
             input: null,
             result: {
               content: data.content,
@@ -279,11 +295,12 @@ export function processEventsToMessages(
       });
     } else if (kind === "tool" && toolUseId) {
       messages.push({
-        id: `tool-${toolUseId}`,
+        id: `tool-${block.turnId}:${toolUseId}`,
         role: "tool_use",
         text: "",
         name: toolName,
         toolUseId,
+        turnId: block.turnId,
         input: text,
         streaming: true,
       });
@@ -332,4 +349,9 @@ function groupActiveDeltas(activeDeltas: SessionDelta[]): ActiveDeltaBlock[] {
   return [...groups.values()].sort(
     (a, b) => a.blockIndex - b.blockIndex || a.order - b.order,
   );
+}
+
+function toolIdentity(data: unknown): string {
+  const record = data as { toolUseId: string; turnId?: string };
+  return record.turnId ? `${record.turnId}:${record.toolUseId}` : record.toolUseId;
 }

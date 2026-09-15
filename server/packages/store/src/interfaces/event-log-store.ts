@@ -3,6 +3,7 @@ import type { PendingEventFence } from "./pending-event-store.js";
 
 export interface EventLogStoreGetEventsOpts {
   afterSeq?: number;
+  turnId?: string;
   limit?: number;
 }
 
@@ -26,7 +27,8 @@ export interface EventLogStoreAppendInput {
 }
 
 export type EventLogUsageScope =
-  | { sessionId: string }
+  | { sessionId: string; turnId?: string }
+  | { callerSessionId: string }
   | { apiKeyId: string };
 
 export interface EventLogStore {
