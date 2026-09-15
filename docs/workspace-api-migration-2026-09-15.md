@@ -53,7 +53,7 @@ Subsequent test/report commits do not change the released runtime code.
 
 ## Verification
 
-- API: **388 passed, 1 skipped**; TypeScript passed.
+- API from the isolated release checkout: **384 passed, 1 skipped**; TypeScript passed.
 - Web: **233 passed**; TypeScript and Vite production build passed.
 - Apifox synchronization scripts: **56 passed**.
 - Generated OpenAPI check passed (four existing lint warnings).
