@@ -80,7 +80,7 @@ try {
     sessions.push(session.id);
     assert.equal(session.workspaceId, id);
   }
-  await json("POST", `/v1/sessions/${sessions[0]}/events`, { events: [{ type: "user.message", data: { content: [{ type: "text", text: "Workspace migration test" }] } }] });
+  await json("POST", `/v1/sessions/${sessions[0]}/events`, { events: [{ type: "user.message", data: { content: [{ type: "text", text: "Workspace migration test" }] } }] }, 202);
   await json("PUT", `${root}/files/content`, { path: "during-turn.txt", content: "writable after dispatch" });
   let answered = false;
   for (let attempt = 0; attempt < 30; attempt++) {
@@ -99,17 +99,55 @@ try {
   await json("PUT", `${root}/files/content`, { path: "after-termination.txt", content: "persisted" });
   await read("after-termination.txt", "persisted");
   console.log("PASS shared/terminated Sessions, event dispatch, authentication and removed routes");
+  if (process.env.OMA_E2E_MODEL) {
+    await json("DELETE", `/v1/agents/${agent}`);
+    agent = undefined;
+    agent = (await json("POST", "/v1/agents", {
+      name: "Workspace real Sandbox E2E", runtime: "pi-agent", model: process.env.OMA_E2E_MODEL,
+      system: "Use the bash tool to execute the requested command exactly. Work only in /home/user/workspace. Then reply done.",
+      sandbox: { enabled: true },
+    }, 201)).id;
+    const session = await json("POST", "/v1/sessions", { agent, workspace_id: id }, 201);
+    sessions.push(session.id);
+    const marker = `workspace-e2e-${randomUUID()}`;
+    await json("PUT", `${root}/files/content`, { path: "host-input.txt", content: marker });
+    await json("POST", `/v1/sessions/${session.id}/events`, {
+      events: [{ type: "user.message", data: { content: [{ type: "text", text:
+        "Run this bash command exactly and then reply done:\ncd /home/user/workspace && mkdir -p outputs && sleep 8 && cat host-input.txt > outputs/agent-result.txt" }] } }],
+    }, 202);
+    let runningWrite = false;
+    let realAnswer = false;
+    for (let attempt = 0; attempt < 75; attempt++) {
+      const state = await json("GET", `/v1/sessions/${session.id}`);
+      if (state.status === "running" && !runningWrite) {
+        await json("PUT", `${root}/files/content`, { path: "while-running.txt", content: "Host writes remain available" });
+        runningWrite = true;
+      }
+      const history = await json("GET", `/v1/sessions/${session.id}/events`);
+      if (history.data.some((event) => event.type === "agent.message") && state.status === "idle") {
+        realAnswer = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+    }
+    assert(realAnswer, "Real Pi Agent must complete a Turn");
+    assert(runningWrite, "A Host file write must succeed while the Session is running");
+    const files = (await json("GET", `${root}/files?prefix=outputs/`)).data;
+    assert(files.some((file) => file.path === "outputs/agent-result.txt"));
+    await read("outputs/agent-result.txt", marker);
+    console.log("PASS real Pi Agent: Host input → mounted Sandbox bash → Workspace artifact list/read, including a write during execution");
+  }
 } finally {
   const failures = [];
+  for (const session of sessions) {
+    try { await json("DELETE", `/v1/sessions/${session}`); } catch (error) { failures.push(error); }
+  }
   if (created) {
     try {
       const files = (await json("GET", `${root}/files`)).data;
       for (const file of files) await json("DELETE", `${root}/files/content?path=${encodeURIComponent(file.path)}`);
       assert.deepEqual((await json("GET", `${root}/files`)).data, []);
     } catch (error) { failures.push(error); }
-  }
-  for (const session of sessions) {
-    try { await json("DELETE", `/v1/sessions/${session}`); } catch (error) { failures.push(error); }
   }
   if (agent) {
     try { await json("DELETE", `/v1/agents/${agent}`); } catch (error) { failures.push(error); }
