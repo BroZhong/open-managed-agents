@@ -175,9 +175,11 @@ depends on a new migration.
 
 Apply `migrations/0011_durable_delegations.sql` before the Host image. Verify
 the application role can read all six `delegation_*` tables and the new
-Session/pending-input columns. Update both the `server` container and
-`seed-pi-auth` init container to the same image: the latter supplies the Pi
+Session/pending-input columns. Update the `server` container and, when present,
+the `seed-pi-auth` init container to the same image: the latter supplies the Pi
 settings and extensions, and an old seed would reinstall the retired plugin.
+The release script also supports deployments that mount gateway configuration
+directly into the image seed without an init container.
 
 For the first cutover, stop ingress to the old Host and stop its scheduler;
 wait for its active Turns to drain before starting the new image. The release

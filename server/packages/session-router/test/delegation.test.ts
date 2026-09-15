@@ -257,4 +257,43 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(log.filter((e) => e.type === "session.turn_completed")).toHaveLength(1);
     expect(h.errors).toEqual([]);
   });
+  it.each(["idle", "recovery_required"])("does not restart a consumed-wait parent after durable %s but before its completion marker", async (boundary) => {
+    let parentRuns = 0;
+    const h = await harness({ async *run() { parentRuns++; yield text("unexpected extra model execution"); } });
+    const pending = await h.enqueue();
+    const claim = (await h.stores.pendingEventStore.claim(h.parent.id, "dead-host", 30000))!;
+    const fence = { eventId: pending.id, ownerId: claim.ownerId, generation: claim.generation };
+    const promoted = await h.stores.eventLogStore.append(h.parent.id, {
+      type: pending.type, data: pending.data, sessionThreadId: "sthr_primary",
+      idempotencyKey: `pending:${pending.id}`, pendingFence: fence,
+    });
+    const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
+    const call = tool("finished-call");
+    const caller = { tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "finished-call" };
+    const child = await h.stores.delegationStore.accept({ ...caller, prompt: "child", mode: "sync", maxSteps: 30,
+      sandboxSessionId: h.parent.id, checkpoint: { events: [call] } }, fence);
+    const childClaim = (await h.stores.pendingEventStore.claim(child.childId, "dead-host", 30000))!;
+    const childFence = { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation };
+    await h.stores.delegationStore.startExecution(child.id, childFence, "child-turn", {}, 4);
+    await h.stores.delegationStore.finishExecution(child.id, childFence, { status: "completed", output: "done", reason: "finished", trace: { sessionId: child.childId, turnId: "child-turn" } });
+    await h.stores.pendingEventStore.ack(child.childId, child.pendingEventId, childFence);
+    await h.stores.delegationStore.consumeResult(child.id, caller, fence, { type: "agent.tool_result",
+      data: { ...result("finished-call", "done"), turnId: originalTurn }, sessionThreadId: "sthr_primary" });
+    await h.stores.eventLogStore.append(h.parent.id, { type: "agent.message", data: { ...text("parent already finished"), turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
+    if (boundary === "idle") {
+      await h.stores.eventLogStore.append(h.parent.id, { type: "session.status_idle", data: {}, sessionThreadId: "sthr_primary",
+        idempotencyKey: `pending:${pending.id}:status_idle`, pendingFence: fence });
+    } else {
+      await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_use", data: { ...event("agent.tool_use", { toolUseId: "ordinary-tool", name: "bash", input: {} }), turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
+      await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_result", data: { ...result("ordinary-tool", "Execution interrupted; external effects are uncertain"), isError: true, turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
+      await h.stores.eventLogStore.append(h.parent.id, { type: "session.error", data: { turnId: originalTurn, error: { code: "recovery_required", message: "Inspect the uncertain external effects before a new Turn" } }, sessionThreadId: "sthr_primary", pendingFence: fence });
+    }
+    await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
+    await h.router.recoverPendingEvents();
+    expect(await h.router.waitForIdle(4000)).toBe(true);
+    expect(parentRuns).toBe(0);
+    expect((await h.log()).filter((entry) => entry.type === "session.turn_completed")).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  });
+
 });
