@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -126,6 +127,28 @@ it("refreshes a terminal execution's pending notification in both card metadata 
   await screen.findByText("Card notification: processed");
   expect(screen.getAllByText("Final child output")).toHaveLength(1);
   expect(requests.trace[1]).toContain("after_seq=7");
+});
+
+it("rechecks an initially absent execution when the Agent result arrives", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(json({ data: [], has_more: false }))
+    .mockResolvedValueOnce(json({ data: [{ ...execution, status: "running" }], has_more: false }));
+  vi.stubGlobal("fetch", fetcher);
+  function LiveCall() {
+    const [finished, setFinished] = useState(false);
+    return <><button onClick={() => setFinished(true)}>Receive Agent result</button><DelegationCard sessionId="parent" message={{
+      id: "live", role: "tool_use", name: "Agent", text: "", toolUseId: "call-1", turnId: "parent-turn",
+      result: finished ? { content: "Child accepted", isError: false } : undefined,
+    }} /></>;
+  }
+  mount(<LiveCall />);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*Expand/ }));
+  await screen.findByText(/No persisted execution/);
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*Collapse/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Receive Agent result" }));
+  await screen.findByText(/async · running/);
+  expect(screen.getByRole("link", { name: "Open child Session execution" }).getAttribute("href")).toBe("/sessions/child/executions/exec-1");
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it("shows a queued instruction that was never applied without claiming delivery", () => {
