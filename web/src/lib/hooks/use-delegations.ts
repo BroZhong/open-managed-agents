@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { executionActive, executionPath, type DelegationList, type ExecutionTrace } from "@/lib/delegations";
+import { executionActive, executionPath, type DelegationExecution, type DelegationList, type ExecutionTrace } from "@/lib/delegations";
 import { initialSessionEventStreamState, sessionEventStreamReducer } from "@/lib/session-event-stream";
+
+function needsExecutionRefresh(execution: DelegationExecution) {
+  // The child may finish before its parent claims and processes the result.
+  return executionActive(execution.status) || execution.notificationStatus === "pending" || execution.notificationStatus === "processing";
+}
 
 export function useToolDelegation(sessionId: string, toolUseId: string, turnId?: string, hasResult = false) {
   const query = new URLSearchParams({ tool_use_id: toolUseId, limit: "1" });
@@ -13,7 +18,7 @@ export function useToolDelegation(sessionId: string, toolUseId: string, turnId?:
     enabled: !!sessionId && !!toolUseId,
     refetchInterval: (query) => {
       const execution = query.state.data?.data[0];
-      return query.state.error ? false : execution ? executionActive(execution.status) ? 2000 : false : hasResult ? false : 2000;
+      return query.state.error ? false : execution ? needsExecutionRefresh(execution) ? 2000 : false : hasResult ? false : 2000;
     },
   });
 }
@@ -84,7 +89,7 @@ export function useExecutionTrace(sessionId: string, executionId: string) {
         if (!controller.signal.aborted) {
           setLoading(false);
           // Backlog is explicitly user-paged. Never drain an entire child history.
-          if (!current?.has_more && (!current || executionActive(current.execution.status))) {
+          if (!current?.has_more && (!current || needsExecutionRefresh(current.execution))) {
             timer = setTimeout(() => void read(), 2000);
           }
         }

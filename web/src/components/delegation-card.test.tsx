@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DelegationCard } from "@/components/delegation-card";
 import { ExecutionTraceView, ExecutionSummary } from "@/components/execution-trace";
 import type { DelegationExecution } from "@/lib/delegations";
+import { useToolDelegation } from "@/lib/hooks/use-delegations";
 
 const execution: DelegationExecution = { id: "exec-1", childId: "child", callerSessionId: "parent", callerTurnId: "parent-turn", callerToolUseId: "call-1", prompt: "Create output", mode: "async", status: "completed", maxSteps: 30, turnId: "child-turn", createdAt: "2026-09-16", updatedAt: "2026-09-16" };
 const usage = { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 15, cache_hit_rate: 0 };
@@ -99,6 +100,32 @@ it("preserves the plugin summary when no persisted child relation exists", async
   await screen.findByText(/No persisted execution/);
   expect(screen.getByText("Original plugin result")).toBeTruthy();
   expect(screen.queryByRole("link", { name: "Open child Session execution" })).toBeNull();
+});
+
+it("refreshes a terminal execution's pending notification in both card metadata and its open trace", async () => {
+  const requests: Record<string, string[]> = { metadata: [], trace: [] };
+  vi.stubGlobal("fetch", vi.fn(async (raw: string) => {
+    const url = new URL(raw);
+    const kind = url.pathname.endsWith("events") ? "trace" : "metadata";
+    requests[kind].push(url.search);
+    const result = { ...execution, notificationStatus: requests[kind].length === 1 ? "pending" : "processed" };
+    return json(kind === "metadata" ? { data: [result], has_more: false } : {
+      execution: result, workspaceId: "workspace", usage,
+      data: requests.trace.length === 1 ? [{ seq: 7, type: "agent.message", data: { content: [{ type: "text", text: "Final child output" }] } }] : [],
+      deltas: [], has_more: false, next_cursor: 7,
+    });
+  }));
+  function MetadataObserver() {
+    const query = useToolDelegation("parent", "call-1", "parent-turn", true);
+    return <span>Card notification: {query.data?.data[0]?.notificationStatus}</span>;
+  }
+  mount(<><MetadataObserver /><ExecutionTraceView sessionId="parent" executionId="exec-1" /></>);
+  await screen.findByText("Card notification: pending");
+  await screen.findByText("Notification: pending");
+  await screen.findByText("Notification: processed", {}, { timeout: 4000 });
+  await screen.findByText("Card notification: processed");
+  expect(screen.getAllByText("Final child output")).toHaveLength(1);
+  expect(requests.trace[1]).toContain("after_seq=7");
 });
 
 it("shows a queued instruction that was never applied without claiming delivery", () => {
