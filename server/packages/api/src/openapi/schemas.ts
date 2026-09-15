@@ -323,25 +323,6 @@ export const SessionListSchema = z
   })
   .openapi("SessionList");
 
-export const TextBlockSchema = z
-  .object({ type: z.literal("text"), text: z.string() })
-  .openapi("TextBlock");
-
-export const ImageBlockSchema = z
-  .object({
-    type: z.literal("image"),
-    source: z.object({
-      type: z.literal("base64"),
-      mediaType: z.string(),
-      data: z.string(),
-    }),
-  })
-  .openapi("ImageBlock");
-
-export const ContentBlockSchema = z
-  .discriminatedUnion("type", [TextBlockSchema, ImageBlockSchema])
-  .openapi("ContentBlock");
-
 export const UserEventTypeSchema = z
   .enum(
     [
@@ -360,7 +341,10 @@ export const UserEventTypeSchema = z
 export const UserEventSchema = z
   .object({
     type: UserEventTypeSchema,
-    data: z.unknown().openapi({ description: "Payload varies by event type." }),
+    data: z.unknown().openapi({
+      description: "For user.message, use { content: [{ type: 'text', text: 'Hello' }] }; the flat { text: 'Hello' } form is also accepted. user.interrupt may use {}. Payloads for the other accepted event types are stored as supplied; their structure is not validated here.",
+      example: { content: [{ type: "text", text: "Hello, agent!" }] },
+    }),
   })
   .openapi("UserEvent");
 

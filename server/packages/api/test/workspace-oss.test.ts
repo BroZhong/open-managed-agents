@@ -45,11 +45,34 @@ async function harness() {
 }
 
 describe("authenticated Host file management backed by OSS", () => {
+  it("manages an unbound Workspace and removes every old Session file route", async () => {
+    const h = await harness();
+    const token = await h.login("unbound");
+    const headers = { authorization: `Bearer ${token}` };
+    const created = await h.json("/v1/workspaces", { id: "unbound", name: "No Session" }, token);
+    expect(created.status).toBe(201);
+    expect((await h.app.request("/v1/workspaces/unbound/files/content", {
+      method: "PUT", headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ path: "standalone.txt", content: "persisted" }),
+    })).status).toBe(200);
+    expect(await (await h.app.request("/v1/workspaces/unbound/files/standalone.txt", { headers })).text()).toBe("persisted");
+    const session = await h.session(token, "unbound");
+    for (const [method, suffix] of [
+      ["GET", "files"], ["GET", "files/standalone.txt"],
+      ["PUT", "files/content"], ["DELETE", "files/content?path=standalone.txt"],
+      ["POST", "files/rename"], ["POST", "files/upload"],
+      ["GET", "preview-url?path=standalone.txt"],
+    ]) {
+      const response = await h.app.request(`/v1/sessions/${session.id}/workspace/${suffix}`, { method, headers });
+      expect(response.status, `${method} ${suffix}`).toBe(404);
+    }
+  });
+
   it("uploads, lists paginated Unicode/hidden/empty files, previews, downloads, overwrites, renames and deletes", async () => {
     const h = await harness();
     const token = await h.login("alice");
     const session = await h.session(token, "shared");
-    const base = `/v1/sessions/${session.id}/workspace`;
+    const base = `/v1/workspaces/${session.workspaceId}`;
     const headers = { authorization: `Bearer ${token}` };
     const bytes = new Uint8Array([0, 255, 137, 80, 78, 71]);
     for (const [path, body] of [["中文 图片.png", bytes], [".hidden", "secret"], ["empty.txt", ""]] as const) {
@@ -79,14 +102,15 @@ describe("authenticated Host file management backed by OSS", () => {
     expect((await h.app.request(`${base}/files/empty.txt`, { headers })).status).toBe(404);
   });
 
-  it("binds every API operation to the authenticated Tenant and Session Workspace", async () => {
+  it("binds every API operation to the authenticated Tenant and requested Workspace", async () => {
     const h = await harness();
     const alice = await h.login("alice");
     const bob = await h.login("bob");
     const owner = await h.session(alice, "shared");
     const sibling = await h.session(alice, "shared_other");
-    const foreign = await h.session(bob, "shared");
-    const base = `/v1/sessions/${owner.id}/workspace`;
+    const foreign = await h.session(bob, "bob-only");
+    await h.session(bob, "shared");
+    const base = `/v1/workspaces/${owner.workspaceId}`;
     const headers = { authorization: `Bearer ${alice}` };
     const write = (target: string, path: string) => h.app.request(`${target}/files/content`, {
       method: "PUT", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ path, content: "private" }),
@@ -96,21 +120,28 @@ describe("authenticated Host file management backed by OSS", () => {
       expect((await h.json("/v1/workspaces", { id }, alice)).status).toBe(400);
     }
     expect((await h.app.request(`${base}/files`)).status).toBe(401);
-    expect((await h.app.request(`${base}/files`, { headers: { authorization: `Bearer ${bob}` } })).status).toBe(404);
-    const other = await h.app.request(`/v1/sessions/${sibling.id}/workspace/files`, { headers });
+    const bobList = await h.app.request(`${base}/files`, { headers: { authorization: `Bearer ${bob}` } });
+    expect(bobList.status).toBe(200);
+    expect((await bobList.json()).data).toEqual([]);
+    expect((await h.app.request(`${base}/files/private.txt`, { headers: { authorization: `Bearer ${bob}` } })).status).toBe(404);
+    const other = await h.app.request(`/v1/workspaces/${sibling.workspaceId}/files`, { headers });
     expect((await other.json()).data).toEqual([]);
     for (const suffix of ["files", "files/private.txt", "preview-url?path=private.txt"]) {
-      expect((await h.app.request(`/v1/sessions/${foreign.id}/workspace/${suffix}`, { headers })).status).toBe(404);
+      expect((await h.app.request(`/v1/workspaces/${foreign.workspaceId}/${suffix}`, { headers })).status).toBe(404);
     }
-    expect((await write(`/v1/sessions/${foreign.id}/workspace`, "evil.txt")).status).toBe(404);
+    expect((await write(`/v1/workspaces/${foreign.workspaceId}`, "evil.txt")).status).toBe(404);
     for (const path of ["../shared_other/x", "/etc/passwd", "a\\b", ".oma-workspace-checks/probe"]) {
       expect((await write(base, path)).status).toBe(400);
     }
     expect((await h.app.request(`${base}/files?prefix=%2e%2e%2fshared_other`, { headers })).status).toBe(400);
     await h.turnStreamStore.setActiveTurn(owner.id, { turnId: "running", status: "running" });
-    expect((await write(base, "locked.txt")).status).toBe(423);
-    // A second Session of the same Workspace retains the existing per-Session gate.
+    expect((await write(base, "during-turn.txt")).status).toBe(200);
+    // Shared Workspace access is independent of either Session's Turn status.
     const concurrent = await h.session(alice, "shared");
-    expect((await write(`/v1/sessions/${concurrent.id}/workspace`, "parallel.txt")).status).toBe(200);
+    expect((await write(`/v1/workspaces/${concurrent.workspaceId}`, "parallel.txt")).status).toBe(200);
+    expect((await h.app.request(`/v1/sessions/${owner.id}`, { method: "DELETE", headers })).status).toBe(200);
+    expect((await h.app.request(`/v1/sessions/${concurrent.id}`, { method: "DELETE", headers })).status).toBe(200);
+    expect(await (await h.app.request(`${base}/files/parallel.txt`, { headers })).text()).toBe("private");
+    expect((await write(base, "after-termination.txt")).status).toBe(200);
   });
 });

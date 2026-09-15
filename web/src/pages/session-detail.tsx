@@ -192,7 +192,7 @@ function SessionDetail({ id }: { id: string }) {
               workspaceOpen ? "w-[28rem]" : "w-0",
             )}
           >
-            {workspaceOpen && (
+            {workspaceOpen && session && (
               <div className="flex h-full w-[28rem] flex-col">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5">
                   <FolderOpen className="h-4 w-4 text-[var(--color-fg-muted)]" />
@@ -202,9 +202,8 @@ function SessionDetail({ id }: { id: string }) {
                 </div>
                 <div className="min-h-0 flex-1">
                   <WorkspacePanel
-                    sessionId={id}
+                    workspaceId={session.workspaceId}
                     refreshKey={fileChange.nonce}
-                    turnStatus={effectiveTurnStatus}
                   />
                 </div>
               </div>
@@ -217,11 +216,10 @@ function SessionDetail({ id }: { id: string }) {
         </div>
       ) : (
         <div className="flex-1 overflow-hidden">
-          <WorkspacePanel
-            sessionId={id}
+          {session && <WorkspacePanel
+            workspaceId={session.workspaceId}
             refreshKey={fileChange.nonce}
-            turnStatus={effectiveTurnStatus}
-          />
+          />}
         </div>
       )}
     </div>

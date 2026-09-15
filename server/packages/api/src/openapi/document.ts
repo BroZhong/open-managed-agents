@@ -24,7 +24,8 @@ export function createOpenApiDocument(
     type: "http",
     scheme: "bearer",
     bearerFormat: "JWT",
-    description: "Tenant session token issued by POST /auth/login.",
+    description:
+      "Tenant session token issued by POST /auth/register or POST /auth/login, valid for 30 days. Authorization: Bearer takes precedence over x-api-key when both are supplied; an invalid or expired Bearer token returns 401 without falling back to the API key.",
   });
 
   for (const route of openApiRoutes) {
@@ -98,12 +99,9 @@ export function createOpenApiDocument(
           "Durable user input and Complete Events, with optional live Deltas.",
       },
       {
-        name: "Sessions/Messages",
-        description: "Legacy same-request streaming messages.",
-      },
-      {
-        name: "Sessions/Workspace Files",
-        description: "File operations within a Session's Workspace.",
+        name: "Workspaces/Files",
+        description:
+          "File operations address a persistent, Tenant-owned Workspace directly and do not require a Session. The Host verifies Workspace ownership. Multiple Sessions and API clients may write concurrently, including during a running Turn; writes to the same path may overwrite each other. There is no Workspace lock or transaction. Terminating a Session preserves saved files.",
       },
     ],
   });

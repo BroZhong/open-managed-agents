@@ -66,12 +66,9 @@ export interface FileSourceCapabilities {
   hierarchy: "flat" | "nested";
 
   /**
-   * True when writes are gated by the Session's turn-idle state (Workspace only;
-   * see CONTEXT.md "Write Gate", ADR-0006). When true, the component disables
-   * writes while the injected `turnStatus === "running"`. This Session UI guard
-   * does not lock a Workspace shared by other Sessions (ADR-0007). This
-   * flag describes the *structural* rule; the *runtime* turn status is passed to
-   * the component separately (it is not the FileSource's job to subscribe to it).
+   * Optional UI rule for sources that require an idle Turn. Current Skill,
+   * Agent and Workspace sources all set this to false. Workspace writes are
+   * independent of Session execution (ADR-0009).
    */
   idleGated: boolean;
 }
@@ -221,24 +218,23 @@ export function createSkillFileSource(skillId: string, onChanged?: () => void): 
 // ── Workspace ───────────────────────────────────────────────────────────────
 
 /**
- * Workspace (a Session's OSS-backed artifacts). Nested, writable but
- * **idle-gated** (ADR-0006), media-previewable (signed GET; #88/#99), uploads
- * media. Reads through the Host proxy (#100 write endpoints, #99 preview-url).
+ * Tenant-owned Workspace files. Nested, writable during Turns and accessible
+ * without a Session (ADR-0009). Reads and media previews use the Host proxy.
  * Same text/binary split + 512 KiB cap as `use-workspace-files.ts`.
  */
 export type WorkspaceFileSource = FileSource & {
-  capabilities: { hierarchy: "nested"; idleGated: true };
+  capabilities: { hierarchy: "nested"; idleGated: false };
 };
 
 const WS_TEXT_LIKE = /^(text\/|application\/(json|javascript|xml|x-yaml|yaml)|image\/svg)/;
 const WS_MAX_TEXT_PREVIEW = 512 * 1024; // 512 KiB — mirrors use-workspace-files.ts
 
-export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSource {
-  const filesBase = `${BASE_URL}/v1/sessions/${sessionId}/workspace/files`;
-  const apiPath = `/v1/sessions/${sessionId}/workspace`;
+export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
+  const filesBase = `${BASE_URL}/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
+  const apiPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}`;
 
   return {
-    capabilities: { hierarchy: "nested", idleGated: true },
+    capabilities: { hierarchy: "nested", idleGated: false },
 
     async list(): Promise<FileNode[]> {
       const res = await apiFetch<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
@@ -271,8 +267,6 @@ export function createWorkspaceFileSource(sessionId: string): WorkspaceFileSourc
     },
 
     async write(path: string, content: string): Promise<void> {
-      // Idle gate is enforced server-side (423 Locked); the component also
-      // disables the button up front via resolveFileActions.
       await apiFetch(`${apiPath}/files/content`, {
         method: "PUT",
         body: JSON.stringify({ path, content }),

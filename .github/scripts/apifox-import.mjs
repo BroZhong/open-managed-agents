@@ -72,12 +72,12 @@ export function validateImportResponse(document, response) {
   );
   const schemaFolderFailed = nonNegativeCounter(counters, "schemaFolderFailed");
 
-  if (endpointFailed !== 0 || endpointIgnored !== 0) {
+  if (endpointFailed !== 0) {
     throw new Error(
       `Apifox did not overwrite every endpoint (failed=${endpointFailed}, ignored=${endpointIgnored})`,
     );
   }
-  if (schemaFailed !== 0 || schemaIgnored !== 0) {
+  if (schemaFailed !== 0) {
     throw new Error(
       `Apifox did not overwrite every schema (failed=${schemaFailed}, ignored=${schemaIgnored})`,
     );
@@ -87,22 +87,32 @@ export function validateImportResponse(document, response) {
       `Apifox folder synchronization failed (endpoint=${endpointFolderFailed}, schema=${schemaFolderFailed})`,
     );
   }
-  if (endpointCreated + endpointUpdated !== expectedEndpoints) {
+  for (const name of Object.keys(counters).filter((name) => name.endsWith("Failed"))) {
+    if (nonNegativeCounter(counters, name) !== 0) {
+      throw new Error(`Apifox import reported ${name} failures`);
+    }
+  }
+  // Observed on 2026-09-15: unchanged schemas count as ignored, while unchanged
+  // endpoints can be absent from all counters. Counts detect reported failures
+  // and impossible totals; only the mandatory export/readback proves content.
+  if (endpointCreated + endpointUpdated + endpointIgnored > expectedEndpoints) {
     throw new Error(
-      `Apifox processed ${endpointCreated + endpointUpdated} endpoints instead of ${expectedEndpoints}`,
+      `Apifox processed ${endpointCreated + endpointUpdated + endpointIgnored} endpoints instead of ${expectedEndpoints}`,
     );
   }
-  if (schemaCreated + schemaUpdated !== expectedSchemas) {
+  if (schemaCreated + schemaUpdated + schemaIgnored > expectedSchemas) {
     throw new Error(
-      `Apifox processed ${schemaCreated + schemaUpdated} schemas instead of ${expectedSchemas}`,
+      `Apifox processed ${schemaCreated + schemaUpdated + schemaIgnored} schemas instead of ${expectedSchemas}`,
     );
   }
 
   return {
     endpointCreated,
     endpointUpdated,
+    endpointIgnored,
     schemaCreated,
     schemaUpdated,
+    schemaIgnored,
     expectedEndpoints,
     expectedSchemas,
   };
@@ -185,7 +195,7 @@ async function main() {
   const document = JSON.parse(readFileSync(resolve(specPath), "utf8"));
   const result = await importOpenApi(document, projectId, token);
   console.log(
-    `Apifox overwrote the generated contract: ${result.expectedEndpoints} endpoints (${result.endpointCreated} created, ${result.endpointUpdated} updated), ${result.expectedSchemas} schemas (${result.schemaCreated} created, ${result.schemaUpdated} updated).`,
+    `Apifox accepted the import: endpoints (${result.endpointCreated} created, ${result.endpointUpdated} updated, ${result.endpointIgnored} ignored), schemas (${result.schemaCreated} created, ${result.schemaUpdated} updated, ${result.schemaIgnored} ignored). Export/readback verification of all ${result.expectedEndpoints} endpoints and ${result.expectedSchemas} schemas is required before declaring synchronization successful.`,
   );
 }
 

@@ -157,8 +157,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
     // Snapshot a title from the FIRST user.message in this batch, but only if the
     // Session has no title yet — so later messages never overwrite it (#70). We
     // track it locally too, so a batch carrying multiple messages still titles
-    // from the first one. This is the path real clients take (the frontend sends
-    // messages via /events, not /messages).
+    // from the first one.
     let titleAlreadyHandled = Boolean(session.title);
 
     for (const event of events) {

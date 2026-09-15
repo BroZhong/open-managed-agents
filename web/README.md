@@ -18,7 +18,7 @@ online** backend without touching tracked files:
 ```bash
 cp .env.example .env.local          # .env.local is git-ignored
 # edit .env.local:
-#   VITE_API_URL=https://your-oma-host.example.com
+#   VITE_API_URL=https://agentry.welltop.tech/api
 pnpm dev                            # restart to pick up the change
 ```
 
@@ -26,6 +26,12 @@ Vite loads `.env.local` at a higher priority than the committed `.env`, so it
 overrides the default endpoint for your machine only. Restart the dev server
 after editing — Vite inlines env vars at startup. See `.env.example` for the
 full list of supported variables.
+
+For the current deployment, include `/api` in `VITE_API_URL`: the ingress sends
+other paths to the web console. Verify the backend with
+`https://agentry.welltop.tech/api/health` (JSON `{"status":"ok"}`) and inspect its
+contract at `https://agentry.welltop.tech/api/openapi.json`. A `200` HTML response
+from `/health` or `/openapi.json` without `/api` is the console fallback.
 
 ---
 

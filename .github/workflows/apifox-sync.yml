@@ -224,6 +224,19 @@ jobs:
             --public-api-url "$PUBLIC_API_URL" \
             --project "$APIFOX_PROJECT_ID" \
             --site "$APIFOX_DOCS_SITE_ID"
+      - name: Verify the exported contract content and authentication
+        env:
+          APIFOX_ACCESS_TOKEN: ${{ secrets.APIFOX_ACCESS_TOKEN }}
+          APIFOX_PROJECT_ID: ${{ secrets.APIFOX_PROJECT_ID }}
+          PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
+        run: |
+          verify_args=(--spec "$RUNNER_TEMP/openapi.json")
+          if [[ -n "$PUBLIC_API_URL" ]]; then
+            environment_id="$(jq -er '.data.environments.defaultEnvironmentId' \
+              "$RUNNER_TEMP/apifox-docs-site-after-environment.json")"
+            verify_args+=(--environment "$environment_id")
+          fi
+          node .github/scripts/apifox-verify-contract.mjs "${verify_args[@]}"
       - name: Ensure optional Runner synchronization from the remote OpenAPI endpoint
         if: ${{ vars.APIFOX_RUNNER_ID != '' }}
         env:

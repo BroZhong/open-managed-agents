@@ -238,9 +238,9 @@ describe("WorkspaceFileSource", () => {
     vi.unstubAllGlobals();
   });
 
-  const s = createWorkspaceFileSource("sess_123");
-  it("has nested, idle-gated capabilities", () => {
-    expect(s.capabilities).toEqual({ hierarchy: "nested", idleGated: true });
+  const s = createWorkspaceFileSource("ws_123");
+  it("has nested, independently writable capabilities", () => {
+    expect(s.capabilities).toEqual({ hierarchy: "nested", idleGated: false });
   });
   it("exposes the full method set including previewUrl", () => {
     expect(methodsOf(s)).toEqual({

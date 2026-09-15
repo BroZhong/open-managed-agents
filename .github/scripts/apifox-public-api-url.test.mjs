@@ -26,6 +26,17 @@ test("allows PUBLIC_API_URL to be omitted for documentation-only publishing", ()
   assert.equal(normalizePublicApiUrl("  "), null);
 });
 
+test("preserves API path prefixes while normalizing trailing slashes", () => {
+  for (const [input, expected] of [
+    ["https://agentry.welltop.tech/api", "https://agentry.welltop.tech/api"],
+    [" https://agentry.welltop.tech/api/ ", "https://agentry.welltop.tech/api"],
+    ["https://api.example.com/api/v1///", "https://api.example.com/api/v1"],
+    ["https://api.example.com:8443/api", "https://api.example.com:8443/api"],
+  ]) {
+    assert.equal(normalizePublicApiUrl(input), expected);
+  }
+});
+
 test("rejects non-HTTPS and embedded credentials", () => {
   assert.throws(
     () => normalizePublicApiUrl("http://api.example.com"),
@@ -37,17 +48,30 @@ test("rejects non-HTTPS and embedded credentials", () => {
   );
 });
 
-test("rejects paths, query strings, and fragments", () => {
+test("rejects OpenAPI document URLs as API bases", () => {
+  for (const path of [
+    "/openapi.json",
+    "/api/openapi.json/",
+    "/api/%6fpenapi.json",
+  ]) {
+    assert.throws(
+      () => normalizePublicApiUrl(`https://api.example.com${path}`),
+      /not an OpenAPI document URL/i,
+    );
+  }
+});
+
+test("rejects malformed paths, query strings, and fragments", () => {
   assert.throws(
-    () => normalizePublicApiUrl("https://api.example.com/openapi.json"),
-    /without a path/i,
+    () => normalizePublicApiUrl("https://api.example.com/api/%"),
+    /valid URL path/i,
   );
   assert.throws(
-    () => normalizePublicApiUrl("https://api.example.com?environment=test"),
+    () => normalizePublicApiUrl("https://api.example.com/api?environment=test"),
     /query string or fragment/i,
   );
   assert.throws(
-    () => normalizePublicApiUrl("https://api.example.com#docs"),
+    () => normalizePublicApiUrl("https://api.example.com/api#docs"),
     /query string or fragment/i,
   );
 });
@@ -70,5 +94,9 @@ test("rejects local and private network targets", () => {
     "https://[::ffff:127.0.0.1]",
   ]) {
     assert.throws(() => normalizePublicApiUrl(value), /public|private|reserved/i);
+    assert.throws(
+      () => normalizePublicApiUrl(`${value}/api`),
+      /public|private|reserved/i,
+    );
   }
 });

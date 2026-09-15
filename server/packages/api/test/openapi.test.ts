@@ -10,10 +10,9 @@ import { authRoutes } from "../src/routes/auth.js";
 import { eventRoutes } from "../src/routes/events.js";
 import { loopRoutes } from "../src/routes/loops.js";
 import { mcpCatalogRoutes } from "../src/routes/mcp-catalog.js";
-import { messageRoutes } from "../src/routes/messages.js";
 import { sessionRoutes } from "../src/routes/sessions.js";
 import { skillRoutes } from "../src/routes/skills.js";
-import { workspaceRoutes } from "../src/routes/workspace.js";
+import { workspaceFileRoutes } from "../src/routes/workspace-files.js";
 import { workspaceEntityRoutes } from "../src/routes/workspaces.js";
 import {
   createOpenApiDocument,
@@ -103,14 +102,7 @@ function runtimeOperations(): string[] {
       pendingEventStore: adapter,
       sessionStore: adapter,
     }),
-    messageRoutes({
-      eventLogStore: adapter,
-      pendingEventStore: adapter,
-      sessionStore: adapter,
-      eventStreamHub: adapter,
-      sessionRouter: adapter,
-    }),
-    workspaceRoutes({ sessionStore: adapter, artifactStore: adapter }),
+    workspaceFileRoutes({ workspaceStore: adapter, artifactStore: adapter }),
   ];
 
   const minimalApp = createApp({ apiKeyStore: adapter });
@@ -188,14 +180,7 @@ describe("OpenAPI contract", () => {
         pendingEventStore: adapter,
         sessionStore: adapter,
       }),
-      messageRoutes({
-        eventLogStore: adapter,
-        pendingEventStore: adapter,
-        sessionStore: adapter,
-        eventStreamHub: adapter,
-        sessionRouter: adapter,
-      }),
-      workspaceRoutes({ sessionStore: adapter, artifactStore: adapter }),
+      workspaceFileRoutes({ workspaceStore: adapter, artifactStore: adapter }),
     ];
 
     for (const router of routers) {
