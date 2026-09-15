@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const HTTP_METHODS = new Set([
@@ -241,32 +242,45 @@ function sanitize(value, token) {
   return (token ? text.split(token).join("***") : text).trim();
 }
 
-function runApifox(args, token) {
+export function runApifox(args, token, execute = execFileSync) {
+  // CLI 2.2.7 exits before flushing larger piped stdout on some platforms:
+  // observed 8192/11851 bytes despite a 16 MiB execFileSync maxBuffer.
+  // A regular file makes the CLI's stdout synchronous. Keep it private and
+  // remove it on success/failure; never interpolate credentials into a shell.
+  const directory = mkdtempSync(join(tmpdir(), "oma-apifox-cli-"));
+  const output = join(directory, "stdout.json");
+  let fd;
+  const readOutput = () => {
+    if (statSync(output).size > 16 * 1024 * 1024) {
+      throw new Error("Apifox CLI output exceeds the 16 MiB inventory limit");
+    }
+    return readFileSync(output, "utf8");
+  };
   try {
-    return execFileSync(
-      "npx",
-      ["--yes", "apifox-cli@2.2.7", ...args, "--access-token", token],
-      {
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-  } catch (error) {
-    const stderr = sanitize(error?.stderr, token);
-    const stdout = sanitize(error?.stdout, token);
-    throw new Error(
-      `Apifox CLI command failed${stderr ? `: ${stderr}` : stdout ? `: ${stdout}` : ""}`,
-    );
+    fd = openSync(output, "wx", 0o600);
+    try {
+      execute("npx", ["--yes", "apifox-cli@2.2.7", ...args, "--access-token", token], {
+        encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+        timeout: 120_000, stdio: ["ignore", fd, "pipe"],
+      });
+    } catch (error) {
+      const stderr = sanitize(error?.stderr, token);
+      const stdout = sanitize(readOutput(), token);
+      throw new Error(`Apifox CLI command failed${stderr ? `: ${stderr}` : stdout ? `: ${stdout}` : ""}`);
+    }
+    return readOutput();
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
-function parseListResponse(raw, projectId, page) {
+export function parseEndpointInventory(raw, projectId) {
   let payload;
   try {
     payload = JSON.parse(raw);
   } catch {
-    throw new Error(`Apifox endpoint list page ${page} did not return JSON`);
+    throw new Error("Apifox endpoint inventory did not return JSON");
   }
   if (
     payload?.success !== true ||
@@ -274,44 +288,43 @@ function parseListResponse(raw, projectId, page) {
     !payload.meta ||
     String(payload.context?.projectId) !== String(projectId)
   ) {
-    throw new Error(`Apifox endpoint list page ${page} has an invalid envelope`);
+    throw new Error("Apifox endpoint inventory has an invalid envelope");
   }
-  const nextPage = payload.meta.nextPage;
-  if (nextPage !== null && !Number.isSafeInteger(nextPage)) {
-    throw new Error(`Apifox endpoint list page ${page} has invalid pagination`);
+  const { total, returned, page, totalPages, prevPage, nextPage } = payload.meta;
+  // A partial or truncated inventory must never be used to plan deletions.
+  // The CLI's unpaginated mode returns the entire inventory in one envelope.
+  if (
+    !Number.isSafeInteger(total) || total < 0 ||
+    returned !== total || payload.data.length !== total ||
+    page !== 1 || prevPage !== null || nextPage !== null ||
+    !(totalPages === 1 || (total === 0 && totalPages === 0))
+  ) {
+    throw new Error("Apifox endpoint inventory is incomplete; expected one full response with data.length = returned = total");
   }
-  return { endpoints: payload.data, nextPage };
+  const ids = new Set();
+  const endpoints = payload.data.map((endpoint) => {
+    if (!Number.isSafeInteger(endpoint?.id) || endpoint.id <= 0) {
+      throw new Error("Every remote endpoint must have a positive integer id");
+    }
+    if (ids.has(endpoint.id)) {
+      throw new Error(`Duplicate remote endpoint ID: ${endpoint.id}; inventory is unreliable`);
+    }
+    ids.add(endpoint.id);
+    return normalizeOperation(endpoint);
+  });
+  // Different IDs sharing a method/path are a real conflict, not safe to dedupe.
+  assertUniqueOperations(endpoints, "remote");
+  return endpoints;
 }
 
-function listEndpoints(projectId, token) {
-  const endpoints = [];
-  const visitedPages = new Set();
-  let page = 1;
-  while (page !== null) {
-    if (visitedPages.has(page) || visitedPages.size >= 1_000) {
-      throw new Error("Apifox endpoint pagination did not terminate safely");
-    }
-    visitedPages.add(page);
-    const raw = runApifox(
-      [
-        "endpoint",
-        "list",
-        "--project",
-        projectId,
-        "--page",
-        String(page),
-        "--page-size",
-        // Keep each CLI JSON envelope comfortably below constrained child
-        // process output buffers while still following meta.nextPage exactly.
-        "20",
-      ],
-      token,
-    );
-    const result = parseListResponse(raw, projectId, page);
-    endpoints.push(...result.endpoints);
-    page = result.nextPage;
-  }
-  return endpoints;
+export function listEndpoints(projectId, token, run = runApifox) {
+  // Apifox CLI 2.2.7 documents full retrieval when pagination flags are omitted.
+  // Observed with 54 endpoints: page-size 20 repeated one ID across pages and
+  // omitted another. Concatenating/deduplicating those pages loses an endpoint.
+  // Keep one bounded CLI response (runApifox's 16 MiB limit), then fail closed
+  // unless counts, IDs and method/path pairs prove a complete unique inventory.
+  const raw = run(["endpoint", "list", "--project", projectId], token);
+  return parseEndpointInventory(raw, projectId);
 }
 
 function listSchemas(projectId, token) {

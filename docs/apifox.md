@@ -103,6 +103,7 @@ Apifox CLI 2.2.7 可以创建或更新文档站配置，但没有独立的发布
 - 手动运行时，也会重新执行生成一致性、Hono route inventory 和 Redocly 校验。
 - 配置了 `PUBLIC_API_URL` 时，使用临时 OpenAPI 文件替换 `servers[0].url`；未配置时删除临时文件中的 `servers`。两种情况都不修改仓库中的确定性产物。
 - 官方 Open API 导入显式使用 `OVERWRITE_EXISTING` 覆盖接口和数据模型，并启用 `deleteUnmatchedResources`。任何报告的失败、非法计数或超过本地总数的计数都会失败。实测未变化的模型会记为 `ignored`，未变化的接口可能完全不计数；因此导入返回成功只表示请求被接受，不能证明同步完成。
+- 接口清单使用 Apifox CLI 的无分页全量读取，并校验 `data.length = returned = total`、响应无后续页、接口 ID 和 method/path 均唯一。实测分页查询可能跨页重复同一 ID 并漏掉另一接口；不能通过简单去重修复。CLI 输出先写入权限为 `0600` 的临时文件，避免子进程管道中观察到的 8 KB 截断，读取后立即清理。响应不完整或超过 16 MiB 读取上限会使同步停止。
 - 安全 reconciler 会在导入前分别限制计划删除的 endpoint/schema 数，在导入后确认没有缺失或重复的 method/path，并验证远端集合与本地完全一致。
 - 配置了 `PUBLIC_API_URL` 时，工作流会在导入后读取环境列表，只接受 `baseUrls.default` 与规范化 URL 完全相等的唯一环境；然后先读取文档站的完整 `environments` 对象，只替换其中的 `environmentIds` 和 `defaultEnvironmentId`，同时更新默认文档版本的环境绑定并保留其他版本；经 Apifox CLI schema 校验后更新，再重新读取并验证两层精确绑定。零个或多个匹配都会让同步失败，避免把 Try-it 请求发往错误环境。
 - 配置了 Runner 时，`docs/apifox-auto-import.json` 会额外创建远端定时同步；同名配置漂移时会重建。未配置 Runner 时跳过这个周期保障，不影响官方 Open API 的即时精确同步。
