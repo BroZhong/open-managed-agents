@@ -53,6 +53,21 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.created).toHaveLength(1);
   });
 
+  it("prepares a shared environment with no Skills when its user cannot create /skills", async () => {
+    const { client, manager } = makeManager();
+    let storedId: string | null = null;
+    const binding: SandboxEnvironmentBinding = { withLock: async (work) => {
+      const result = await work(storedId); storedId = result.sandboxId; return result.value;
+    } };
+    const first = manager.open(specFor(), binding);
+    await first.writeFile("existing.txt", "kept");
+    vi.spyOn(client, "exec").mockImplementation(async function* () { throw new Error("Permission denied creating /skills"); });
+    const resumed = manager.open(specFor(), binding);
+    await resumed.prepare();
+    expect(await resumed.readFile("existing.txt")).toBe("kept");
+    expect(client.created).toHaveLength(1);
+  });
+
   it("checks resource users inside the environment lock before disposing a parent", async () => {
     const { client, manager } = makeManager();
     let storedId: string | null = null;

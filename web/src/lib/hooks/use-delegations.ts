@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { executionActive, executionPath, type DelegationList, type ExecutionTrace } from "@/lib/delegations";
 import { initialSessionEventStreamState, sessionEventStreamReducer } from "@/lib/session-event-stream";
@@ -33,6 +33,7 @@ export function useDelegations(sessionId: string, origin = false) {
  * Reconnect resumes at the last durable sequence. Delta snapshots never become history.
  */
 export function useExecutionTrace(sessionId: string, executionId: string) {
+  const queryClient = useQueryClient();
   const [projection, dispatch] = useReducer(sessionEventStreamReducer, initialSessionEventStreamState);
   const [trace, setTrace] = useState<ExecutionTrace>();
   const [loading, setLoading] = useState(true);
@@ -66,6 +67,12 @@ export function useExecutionTrace(sessionId: string, executionId: string) {
         // Replace the transient snapshot on every successful read, including after a reconnect.
         dispatch({ type: "deltas.loaded", deltas: page.deltas });
         cursor = page.next_cursor ?? cursor;
+        if (current?.execution.status !== page.execution.status) {
+          // An execution can finish after its parent. Re-read current Session
+          // status instead of deriving it from a historical execution (a later
+          // resume may already be running in the same child Session).
+          void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+        }
         current = page;
         setTrace(page);
         setError(undefined);
@@ -86,7 +93,7 @@ export function useExecutionTrace(sessionId: string, executionId: string) {
     refresh.current = () => void read();
     void read();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [sessionId, executionId]);
+  }, [sessionId, executionId, queryClient]);
   const retry = useCallback(() => refresh.current(), []);
   return { ...projection, trace, loading, error, retry, loadMore: retry };
 }

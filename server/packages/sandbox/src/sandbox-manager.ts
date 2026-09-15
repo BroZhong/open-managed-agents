@@ -213,8 +213,9 @@ class SandboxSessionImpl implements SandboxSession {
       if (this.binding) {
         // Only Host-managed Skill roots live under /skills. Discover old roots
         // after restart so renamed/unequipped projections can be removed.
-        for await (const _chunk of this.deps.sandboxClient.exec(id, ["mkdir", "-p", "/skills"])) { /* drain */ }
-        for (const entry of await this.deps.sandboxClient.list(id, "/skills")) {
+        // Agents without equipped Skills need no /skills directory. Probe it
+        // read-only: the ordinary Sandbox user cannot create paths under /.
+        for (const entry of await this.deps.sandboxClient.list(id, "/skills", { missingOk: true })) {
           const name = /^\/skills\/([^/]+)\//.exec(entry.path)?.[1];
           if (name && name !== "." && name !== "..") this.projectedPaths.add(`/skills/${name}`);
         }

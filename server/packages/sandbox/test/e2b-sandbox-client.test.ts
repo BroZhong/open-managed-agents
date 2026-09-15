@@ -647,6 +647,21 @@ describe("E2BSandboxClient", () => {
     expect(findCall!.cmd).toContain("-type f");
   });
 
+  it("lists an optional missing directory as empty without creating it", async () => {
+    const { client, sandboxes } = makeClient(() => ({ stdout: '\u001eoma-fs:{"ok":false,"error":{"code":"ENOENT","message":"directory missing"}}\n' }));
+    const { id } = await client.create();
+    expect(await client.list(id, "/skills", { missingOk: true })).toEqual([]);
+    expect(sandboxes[0].writes).toEqual([]);
+  });
+
+  it("preserves access and transport errors while probing optional directories", async () => {
+    const { client, sandboxes } = makeClient(() => ({ stdout: '\u001eoma-fs:{"ok":false,"error":{"code":"EACCES","message":"permission denied"}}\n' }));
+    const { id } = await client.create();
+    await expect(client.list(id, "/private/skills", { missingOk: true })).rejects.toMatchObject({ code: "EACCES" });
+    sandboxes[0].processWait = async () => { throw new Error("gateway disconnected"); };
+    await expect(client.list(id, "/skills", { missingOk: true })).rejects.toThrow("gateway disconnected");
+  });
+
   it("list reports filesystem failures instead of pretending the directory is empty", async () => {
     const { client } = makeClient(() => ({
       stdout: "",
