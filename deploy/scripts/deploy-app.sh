@@ -118,8 +118,16 @@ echo "Mode:    image-only rollout"
 # Fast releases should not make unrelated production configuration converge as
 # a side effect. The full manifest was already validated above; mutate only the
 # container image fields that identify this release.
+server_images=("server=${server_image}")
+# Some installations mount gateway configuration directly into the image seed;
+# others copy that seed through an init container into a writable emptyDir.
+init_containers="$(kubectl_agent_platform -n "${NAMESPACE}" get deployment/oma-server \
+  -o jsonpath='{.spec.template.spec.initContainers[*].name}')"
+if [[ " ${init_containers} " == *" seed-pi-auth "* ]]; then
+  server_images+=("seed-pi-auth=${server_image}")
+fi
 kubectl_agent_platform -n "${NAMESPACE}" set image \
-  deployment/oma-server "server=${server_image}" "seed-pi-auth=${server_image}"
+  deployment/oma-server "${server_images[@]}"
 kubectl_agent_platform -n "${NAMESPACE}" set image \
   deployment/oma-web "web=${web_image}"
 kubectl_agent_platform -n "${NAMESPACE}" rollout status deploy/oma-server --timeout="${ROLLOUT_TIMEOUT}"

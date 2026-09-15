@@ -1098,7 +1098,7 @@ export class SessionRouter {
       const partialDurableOutput = attemptEvents.some(
         (event) => event.type !== "session.status_running",
       );
-      if ((alreadyIdle || partialDurableOutput) && resumableWaits.length === 0) {
+      if (alreadyIdle || (partialDurableOutput && resumableWaits.length === 0)) {
         await this.repairDanglingToolUses(
           sessionId,
           pendingEvent.id,
