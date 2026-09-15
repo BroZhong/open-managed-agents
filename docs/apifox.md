@@ -1,5 +1,7 @@
 # OpenAPI 与 Apifox 同步
 
+业务接入请先看 [通过 API Key 调用 Agent 并获取产物](agent-api-key-integration.md)，包含 cURL 流程和可运行的 Python 示例。
+
 ## 线上核查与修订：2026-09-15
 
 - 正式 API 基址为 `https://agentry.welltop.tech/api`；[线上 OpenAPI JSON](https://agentry.welltop.tech/api/openapi.json) 反映已部署版本。`/api` 是代理前缀，接口路径仍为 `/v1/...`。缺少 `/api` 的 `/openapi.json` 返回 Web 页面。
