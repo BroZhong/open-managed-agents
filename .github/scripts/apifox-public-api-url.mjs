@@ -128,15 +128,25 @@ export function normalizePublicApiUrl(value) {
   if (url.username || url.password) {
     throw new Error("PUBLIC_API_URL must not contain embedded credentials");
   }
-  if (url.pathname !== "/") {
-    throw new Error("PUBLIC_API_URL must be an origin without a path");
-  }
   if (url.search || url.hash) {
     throw new Error("PUBLIC_API_URL must not contain a query string or fragment");
   }
 
+  const basePath = url.pathname.replace(/\/+$/, "");
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(basePath);
+  } catch {
+    throw new Error("PUBLIC_API_URL must contain a valid URL path");
+  }
+  if (/\/openapi\.json$/i.test(decodedPath)) {
+    throw new Error(
+      "PUBLIC_API_URL must be an API base URL, not an OpenAPI document URL",
+    );
+  }
+
   assertPublicHostname(url.hostname);
-  return url.origin;
+  return `${url.origin}${basePath}`;
 }
 
 function main() {

@@ -13,8 +13,7 @@ import { apiKeyRoutes } from "./routes/api-keys.js";
 import { authRoutes } from "./routes/auth.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { eventRoutes } from "./routes/events.js";
-import { messageRoutes } from "./routes/messages.js";
-import { workspaceRoutes } from "./routes/workspace.js";
+import { workspaceFileRoutes } from "./routes/workspace-files.js";
 import { workspaceEntityRoutes } from "./routes/workspaces.js";
 import { mcpCatalogRoutes } from "./routes/mcp-catalog.js";
 import { loopRoutes } from "./routes/loops.js";
@@ -163,22 +162,10 @@ export function createApp(deps: AppDeps) {
   }
 
   // Mount Workspace file proxy routes (list + preview/download through the Host)
-  if (deps.sessionStore && deps.artifactStore) {
-    app.route("/", workspaceRoutes({
-      sessionStore: deps.sessionStore,
+  if (deps.workspaceStore && deps.artifactStore) {
+    app.route("/", workspaceFileRoutes({
+      workspaceStore: deps.workspaceStore,
       artifactStore: deps.artifactStore,
-      turnStreamStore: deps.turnStreamStore,
-    }));
-  }
-
-  // Mount message routes
-  if (deps.eventLogStore && deps.pendingEventStore && deps.sessionStore && deps.eventStreamHub && deps.sessionRouter) {
-    app.route("/", messageRoutes({
-      eventLogStore: deps.eventLogStore,
-      pendingEventStore: deps.pendingEventStore,
-      sessionStore: deps.sessionStore,
-      eventStreamHub: deps.eventStreamHub,
-      sessionRouter: deps.sessionRouter,
     }));
   }
 

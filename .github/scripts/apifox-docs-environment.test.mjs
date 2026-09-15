@@ -72,6 +72,19 @@ test("rejects missing and ambiguous environment matches", () => {
   );
 });
 
+test("matches the full API base path instead of the same host's root environment", () => {
+  const selected = selectPublicApiEnvironment(
+    environments([
+      { id: 10, baseUrls: { default: "https://agentry.welltop.tech" } },
+      { id: 20, baseUrls: { default: "https://agentry.welltop.tech/api" } },
+      { id: 30, baseUrls: { default: "https://agentry.welltop.tech/api/api" } },
+    ]),
+    "https://agentry.welltop.tech/api/",
+  );
+
+  assert.equal(selected.id, 20);
+});
+
 test("preserves the complete docs-site environments object while replacing its binding", () => {
   const originalSettings = {
     environmentIds: [99],
@@ -143,5 +156,39 @@ test("verifies the exact single environment binding returned after update", () =
         }),
       /environment binding was not applied/i,
     );
+  }
+});
+
+test("updates and verifies the default version environment while preserving other versions", () => {
+  const old = { environmentIds: [99], defaultEnvironmentId: 99, region: "cn" };
+  const versions = [
+    { branchId: 1, name: "latest", isDefaultVersion: true, environments: old },
+    { branchId: 2, name: "v1", isDefaultVersion: false, environments: old },
+  ];
+  const envelope = docsSite(old, { versionSettings: versions });
+  const options = { projectId: "456", siteId: "123", environmentId: 20 };
+  const update = buildDocsSiteEnvironmentUpdate(envelope, options);
+  assert.deepEqual(update.versionSettings[0].environments, {
+    environmentIds: [20], defaultEnvironmentId: 20, region: "cn",
+  });
+  assert.deepEqual(update.versionSettings[1], versions[1]);
+  assert.deepEqual(envelope.data.versionSettings, versions);
+  assert.equal(verifyDocsSiteEnvironmentBinding(docsSite(update.environments, {
+    versionSettings: update.versionSettings,
+  }), options), 20);
+  assert.throws(() => verifyDocsSiteEnvironmentBinding(docsSite(update.environments, {
+    versionSettings: versions,
+  }), options), /default.*version environment binding/i);
+});
+
+test("rejects ambiguous or incomplete default version settings", () => {
+  const options = { projectId: "456", siteId: "123", environmentId: 20 };
+  for (const versionSettings of [
+    {},
+    [{ isDefaultVersion: false, environments: {} }],
+    [{ isDefaultVersion: true }],
+    [{ isDefaultVersion: true, environments: {} }, { isDefaultVersion: true, environments: {} }],
+  ]) {
+    assert.throws(() => buildDocsSiteEnvironmentUpdate(docsSite({}, { versionSettings }), options), /version/i);
   }
 });

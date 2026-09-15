@@ -10,11 +10,8 @@ const MAX_TITLE_LEN = 60;
  *
  * Accepts both message shapes the system uses on the wire:
  *   - `{ content: ContentBlock[] }` — the canonical shape the frontend sends on
- *     `POST /v1/sessions/:id/events` and `POST /v1/sessions/:id/messages`.
+ *     `POST /v1/sessions/:id/events`.
  *   - `{ text: string }` — a legacy/flat shape some callers still send.
- *
- * This is the single source of title-derivation truth shared by both the
- * `/events` and `/messages` routes so the two paths never diverge (issue #70).
  */
 export function deriveTitleFromEventData(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
@@ -32,14 +29,6 @@ export function deriveTitleFromEventData(data: unknown): string | null {
   }
 
   return normalizeTitle(text);
-}
-
-/**
- * Derive a title directly from a ContentBlock[] (the shape `/messages`
- * normalizes its body into). Thin wrapper over {@link deriveTitleFromEventData}.
- */
-export function deriveTitleFromContent(content: ContentBlock[]): string | null {
-  return deriveTitleFromEventData({ content });
 }
 
 function normalizeTitle(text: string | undefined): string | null {

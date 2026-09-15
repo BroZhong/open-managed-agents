@@ -75,13 +75,39 @@ export function buildDocsSiteEnvironmentUpdate(
   }
   const id = positiveIntegerId(environmentId, "Apifox environment ID");
 
-  return {
+  const update = {
     environments: {
       ...site.environments,
       environmentIds: [id],
       defaultEnvironmentId: id,
     },
   };
+  const version = defaultVersion(site);
+  if (version) {
+    update.versionSettings = site.versionSettings.map((entry) => entry === version ? {
+      ...entry,
+      environments: {
+        ...entry.environments,
+        environmentIds: [id],
+        defaultEnvironmentId: id,
+      },
+    } : entry);
+  }
+  return update;
+}
+
+function defaultVersion(site) {
+  if (site.versionSettings === undefined) return null;
+  if (!Array.isArray(site.versionSettings)) {
+    throw new Error("Apifox returned invalid documentation version settings");
+  }
+  if (site.versionSettings.length === 0) return null;
+  const defaults = site.versionSettings.filter((version) => version.isDefaultVersion === true);
+  if (defaults.length !== 1 || !defaults[0].environments ||
+      typeof defaults[0].environments !== "object" || Array.isArray(defaults[0].environments)) {
+    throw new Error("Apifox must return one default documentation version with its environments");
+  }
+  return defaults[0];
 }
 
 export function verifyDocsSiteEnvironmentBinding(
@@ -100,6 +126,13 @@ export function verifyDocsSiteEnvironmentBinding(
     throw new Error(
       "The Apifox documentation site environment binding was not applied exactly",
     );
+  }
+  const version = defaultVersion(site);
+  if (version && (!Array.isArray(version.environments.environmentIds) ||
+      version.environments.environmentIds.length !== 1 ||
+      !sameId(version.environments.environmentIds[0], id) ||
+      !sameId(version.environments.defaultEnvironmentId, id))) {
+    throw new Error("The default Apifox documentation version environment binding was not applied exactly");
   }
   return id;
 }

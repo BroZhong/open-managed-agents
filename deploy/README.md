@@ -16,6 +16,19 @@ original runs and must not be used as current runbooks.
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to `oma-server` and all other paths to `oma-web`. The Server therefore
 runs with `API_BASE_PATH=/api`, and its readiness endpoint is `/api/health`.
+Use `https://agentry.welltop.tech/api` as the API base URL; `/v1/*` examples are
+relative to it. The deployed OpenAPI document is available at
+`https://agentry.welltop.tech/api/openapi.json`.
+
+Check the health response body as well as the HTTP status:
+
+```bash
+curl -fsS https://agentry.welltop.tech/api/health | jq -e 'select(.status == "ok")'
+```
+
+Without `/api`, `/health` and `/openapi.json` are served by the console and may
+return `200` HTML. That response does not confirm API health or contain an API
+schema.
 
 The application images are stored in the Shanghai `welltop` ACR. Pods pull
 through the VPC endpoint with the `ali-shanghai` image-pull Secret. The active
@@ -145,8 +158,8 @@ rebuild or a new Session to pick up a changed image or template.
 
 `k8s.yaml` declares the application ConfigMap, Server/Web Deployments and
 Services, and the public Ingress. It intentionally does not create Redis,
-sing-box, RDS, Supabase Storage, the ALB controller, or the ACK sandbox-manager
-installation.
+sing-box, RDS, Workspace OSS, Skill Supabase Storage, the ALB controller, or the
+ACK sandbox-manager installation.
 
 `OMA_SERVER_IMAGE` and `OMA_WEB_IMAGE` in the manifest are release-time
 placeholders rendered by `deploy/scripts/deploy-app.sh`. Do not apply the raw

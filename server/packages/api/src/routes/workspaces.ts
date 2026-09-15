@@ -16,8 +16,8 @@ type Env = {
 
 /**
  * Workspace entity routes (create-named + list + get). Distinct from the
- * Workspace *file proxy* routes in `workspace.ts`, which list/preview a
- * Session's artifacts. Here a Workspace is a first-class, nameable, tenant-owned
+ * Workspace *file proxy* routes in `workspace-files.ts`, which list/preview a
+ * Workspace's files. Here a Workspace is a first-class, nameable, tenant-owned
  * file collection that a Session can mount at creation.
  */
 export function workspaceEntityRoutes(

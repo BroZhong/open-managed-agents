@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  deriveTitleFromEventData,
-  deriveTitleFromContent,
-} from "../src/lib/derive-title.js";
+import { deriveTitleFromEventData } from "../src/lib/derive-title.js";
 
 describe("deriveTitleFromEventData", () => {
   it("derives from the first text block of a content array", () => {
@@ -48,10 +45,5 @@ describe("deriveTitleFromEventData", () => {
     expect(deriveTitleFromEventData({})).toBeNull();
     expect(deriveTitleFromEventData(null)).toBeNull();
     expect(deriveTitleFromEventData("nope")).toBeNull();
-  });
-
-  it("deriveTitleFromContent is a thin wrapper over the content shape", () => {
-    expect(deriveTitleFromContent([{ type: "text", text: "Hi there" }])).toBe("Hi there");
-    expect(deriveTitleFromContent([])).toBeNull();
   });
 });

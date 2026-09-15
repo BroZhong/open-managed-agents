@@ -1,7 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { ArtifactStore, Session, SessionStore } from "@oma-server/store";
+import type { ArtifactStore, Workspace, WorkspaceMetadataStore } from "@oma-server/store";
 import { validateArtifactPath, resolveArtifactContentType } from "@oma-server/store";
-import type { TurnStreamStore } from "@oma-server/redis";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -15,15 +14,9 @@ type Env = {
   };
 };
 
-export interface WorkspaceRouteDeps {
-  sessionStore: SessionStore;
+export interface WorkspaceFileRouteDeps {
+  workspaceStore: WorkspaceMetadataStore;
   artifactStore: ArtifactStore;
-  /**
-   * Optional — drives the idle write gate (ADR-0006 §3). A write is rejected
-   * with 423 while the session's active turn is `running`. When absent (no
-   * Redis wired), the gate reads no active turn and every write is allowed.
-   */
-  turnStreamStore?: TurnStreamStore;
 }
 
 /**
@@ -60,11 +53,11 @@ function joinPath(dir: string, name: string): string {
 }
 
 /**
- * Host proxy over the session's Workspace Store. OSS is the source of truth,
+ * Host proxy over a Tenant-owned Workspace Store. OSS is the source of truth,
  * so files created by any means (including shell/bash) show up in the listing.
  * Contents are proxied through the Host, with short-lived signed GET for media.
  */
-export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
+export function workspaceFileRoutes(deps: WorkspaceFileRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
 
   // Do not turn a failed list into an empty Workspace or expose storage SDK
@@ -74,36 +67,19 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
     code: "workspace_storage_error",
   }, 503));
 
-  async function resolveSession(
-    sessionId: string,
+  async function resolveWorkspace(
+    workspaceId: string,
     tenant: TenantContext,
-  ): Promise<Session | null> {
-    const session = await deps.sessionStore.getById(sessionId);
-    if (!session || session.tenantId !== tenant.tenantId) return null;
-    return session;
+  ): Promise<Workspace | null> {
+    return deps.workspaceStore.getById(tenant.tenantId, workspaceId);
   }
 
-  /**
-   * Idle write gate (ADR-0006 §3). Returns true if the session's active turn is
-   * `running`; the caller must reject with 423. `idle`, no active-turn record, or no turnStreamStore
-   * wired → false (allow the write). Read active-turn STATUS, not sandbox
-   * liveness — a sandbox outlives its turn on its TTL.
-   */
-  async function isWriteLocked(sessionId: string): Promise<boolean> {
-    const turn = await deps.turnStreamStore?.getActiveTurn(sessionId);
-    return turn?.status === "running";
-  }
-
-  const lockedResponse = { error: "Agent 运行中，稍后可编辑", code: "workspace_locked" } as const;
-
-  // PUT /v1/sessions/:id/workspace/files/content — write (create or overwrite).
+  // PUT /v1/workspaces/:id/files/content — write (create or overwrite).
   //   body: { path: string, content: string }
   registerContractRoute(router, getOpenApiRoute("writeWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-
-    if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
     const body = await c.req.json().catch(() => null);
     const path = body?.path;
@@ -116,20 +92,18 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     await deps.artifactStore.put({
       tenantId: tenant.tenantId,
-      workspaceId: session.workspaceId,
+      workspaceId: workspace.id,
       path,
       body: body.content,
     });
     return c.json({ path });
   });
 
-  // DELETE /v1/sessions/:id/workspace/files/content?path=… — delete one file.
+  // DELETE /v1/workspaces/:id/files/content?path=… — delete one file.
   registerContractRoute(router, getOpenApiRoute("deleteWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-
-    if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
     const path = c.req.query("path");
     if (!path || !isSafePath(path)) {
@@ -138,23 +112,21 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     const existed = await deps.artifactStore.delete(
       tenant.tenantId,
-      session.workspaceId,
+      workspace.id,
       path,
     );
     if (!existed) return c.json({ error: "File not found" }, 404);
     return c.json({ type: "workspace_file_deleted", path });
   });
 
-  // POST /v1/sessions/:id/workspace/files/rename — rename/move one file.
+  // POST /v1/workspaces/:id/files/rename — rename/move one file.
   //   body: { from: string, to: string }
   //   ArtifactStore has no `move`, so this is get→put→delete, preserving
   //   contentType so a rename never drops the file's MIME.
   registerContractRoute(router, getOpenApiRoute("renameWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-
-    if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
     const body = await c.req.json().catch(() => null);
     const from = body?.from;
@@ -170,7 +142,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     const src = await deps.artifactStore.get(
       tenant.tenantId,
-      session.workspaceId,
+      workspace.id,
       from,
     );
     if (!src) return c.json({ error: "File not found" }, 404);
@@ -178,26 +150,24 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     await deps.artifactStore.put({
       tenantId: tenant.tenantId,
-      workspaceId: session.workspaceId,
+      workspaceId: workspace.id,
       path: to,
       body: src.body,
       contentType: src.contentType,
     });
-    await deps.artifactStore.delete(tenant.tenantId, session.workspaceId, from);
+    await deps.artifactStore.delete(tenant.tenantId, workspace.id, from);
     return c.json({ type: "workspace_file_renamed", from, to });
   });
 
-  // POST /v1/sessions/:id/workspace/files/upload — multipart upload (incl. media).
+  // POST /v1/workspaces/:id/files/upload — multipart upload (incl. media).
   //   multipart/form-data: file field(s) + a target path. Per-file `path`, or a
   //   `destDir` combined with the uploaded filename. Writes are proxied through
   //   the Host (never presigned PUT — ADR-0006 §2). Media contentType is taken
   //   from the upload so a later signed GET returns the right MIME.
   registerContractRoute(router, getOpenApiRoute("uploadWorkspaceFiles"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-
-    if (await isWriteLocked(session.id)) return c.json(lockedResponse, 423);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
     const form = await c.req.parseBody({ all: true }).catch(() => null);
     if (!form) return c.json({ error: "Invalid multipart body" }, 400);
@@ -231,7 +201,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await deps.artifactStore.put({
         tenantId: tenant.tenantId,
-        workspaceId: session.workspaceId,
+        workspaceId: workspace.id,
         path: target,
         body: bytes,
         contentType: file.type || undefined,
@@ -241,7 +211,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
     return c.json({ data: written });
   });
 
-  // GET /v1/sessions/:id/workspace/preview-url?path=…&expiresIn=… — sign a
+  // GET /v1/workspaces/:id/preview-url?path=…&expiresIn=… — sign a
   // short-lived, read-only GET URL for a media file (ADR-0006 §1). The path is a
   // query param (not a route segment) so it never collides with the `files/*`
   // wildcard, which would otherwise swallow `files/<x>/preview-url`. Only signs
@@ -252,8 +222,8 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
   const DEFAULT_EXPIRES = 600;
   registerContractRoute(router, getOpenApiRoute("createWorkspacePreviewUrl"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
     const path = c.req.query("path");
     if (!path || !isSafePath(path)) {
@@ -262,7 +232,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     const exists = await deps.artifactStore.exists(
       tenant.tenantId,
-      session.workspaceId,
+      workspace.id,
       path,
     );
     if (!exists) return c.json({ error: "File not found" }, 404);
@@ -281,19 +251,19 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     const url = await deps.artifactStore.createSignedReadUrl(
       tenant.tenantId,
-      session.workspaceId,
+      workspace.id,
       path,
       expiresIn,
     );
     return c.json({ url, expiresIn });
   });
 
-  // GET /v1/sessions/:id/workspace/files — list the Workspace file tree.
+  // GET /v1/workspaces/:id/files — list the Workspace file tree.
   registerContractRoute(router, getOpenApiRoute("listWorkspaceFiles"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) {
+      return c.json({ error: "Workspace not found" }, 404);
     }
 
     const prefix = c.req.query("prefix")?.replace(/\/$/, "") || undefined;
@@ -303,7 +273,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     const artifacts = await deps.artifactStore.list(
       tenant.tenantId,
-      session.workspaceId,
+      workspace.id,
       prefix,
     );
 
@@ -316,18 +286,18 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
     });
   });
 
-  // GET /v1/sessions/:id/workspace/files/* — preview / download a single file.
+  // GET /v1/workspaces/:id/files/* — preview / download a single file.
   // `?download=1` sets Content-Disposition: attachment.
   registerContractRoute(router, getOpenApiRoute("getWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
-    const session = await resolveSession(c.req.param("id")!, tenant);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
+    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
+    if (!workspace) {
+      return c.json({ error: "Workspace not found" }, 404);
     }
 
-    // Everything after `/workspace/files/` is the workspace-relative path.
+    // Extract after the resolved Workspace path, including when its ID is "files".
     const fullPath = c.req.path;
-    const marker = "/workspace/files/";
+    const marker = `/workspaces/${encodeURIComponent(workspace.id)}/files/`;
     const idx = fullPath.indexOf(marker);
     const raw = idx >= 0 ? fullPath.slice(idx + marker.length) : "";
     let path: string;
@@ -343,7 +313,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
 
     const artifact = await deps.artifactStore.get(
       tenant.tenantId,
-      session.workspaceId,
+      workspace.id,
       path,
     );
     if (!artifact) {
@@ -373,7 +343,7 @@ export function workspaceRoutes(deps: WorkspaceRouteDeps): OpenAPIHono<Env> {
     }
 
     return c.body(artifact.body as unknown as ArrayBuffer, 200, headers);
-  }, { runtimePath: "/v1/sessions/:id/workspace/files/:path{.+}" });
+  }, { runtimePath: "/v1/workspaces/:id/files/:path{.+}" });
 
   return router;
 }

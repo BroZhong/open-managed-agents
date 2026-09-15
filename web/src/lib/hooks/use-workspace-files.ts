@@ -10,8 +10,8 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-function filesBase(sessionId: string): string {
-  return `${BASE_URL}/v1/sessions/${sessionId}/workspace/files`;
+function filesBase(workspaceId: string): string {
+  return `${BASE_URL}/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
 }
 
 export interface FilePreview {
@@ -45,26 +45,26 @@ function isTextByExtension(path: string): boolean {
 }
 
 /**
- * Lists a session's Workspace files through the Host proxy and previews a
+ * Lists a Workspace's files through the Host proxy and previews a
  * selected file. The tree refetches whenever `refreshKey` changes (driven by
  * the file-change SSE event and turn end). S3 is the source of truth, so
  * shell-created files appear too.
  */
-export function useWorkspaceFiles(sessionId: string, refreshKey: number) {
+export function useWorkspaceFiles(workspaceId: string, refreshKey: number) {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!sessionId) return;
+    if (!workspaceId) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(filesBase(sessionId), {
+      const res = await fetch(filesBase(workspaceId), {
         headers: { ...authHeaders(), Accept: "application/json" },
         signal: controller.signal,
       });
@@ -79,7 +79,7 @@ export function useWorkspaceFiles(sessionId: string, refreshKey: number) {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [workspaceId]);
 
   useEffect(() => {
     void refresh();
@@ -89,7 +89,7 @@ export function useWorkspaceFiles(sessionId: string, refreshKey: number) {
 
   const preview = useCallback(
     async (path: string): Promise<FilePreview> => {
-      const res = await fetch(`${filesBase(sessionId)}/${encodePath(path)}`, {
+      const res = await fetch(`${filesBase(workspaceId)}/${encodePath(path)}`, {
         headers: authHeaders(),
       });
       if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
@@ -103,13 +103,13 @@ export function useWorkspaceFiles(sessionId: string, refreshKey: number) {
       await res.arrayBuffer().catch(() => undefined);
       return { path, text: null, contentType, size, isBinary: true };
     },
-    [sessionId],
+    [workspaceId],
   );
 
   const download = useCallback(
     async (path: string) => {
       const res = await fetch(
-        `${filesBase(sessionId)}/${encodePath(path)}?download=1`,
+        `${filesBase(workspaceId)}/${encodePath(path)}?download=1`,
         { headers: authHeaders() },
       );
       if (!res.ok) throw new Error(`Failed to download file: ${res.status}`);
@@ -123,7 +123,7 @@ export function useWorkspaceFiles(sessionId: string, refreshKey: number) {
       a.remove();
       URL.revokeObjectURL(url);
     },
-    [sessionId],
+    [workspaceId],
   );
 
   return { files, isLoading, error, refresh, preview, download };

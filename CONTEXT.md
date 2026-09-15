@@ -125,3 +125,10 @@ _Avoid_: loader, fetcher, downloader
 Developer: "Should this Agent run directly in the API service?"
 
 Domain expert: "No. For the online alpha, make it a Sandboxed Agent so its tools use a verified Sandbox and the Session shares its persistent Workspace across rebuilds."
+
+## Workspace file API
+
+Workspace files are accessed through `/v1/workspaces/{id}/files` and
+`/v1/workspaces/{id}/preview-url`, using the authenticated Tenant and Workspace
+metadata. A Session is not required. Running Sessions do not lock file writes;
+concurrent writes to the same path may overwrite each other. See ADR-0009.
