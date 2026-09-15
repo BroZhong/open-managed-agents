@@ -1,0 +1,2345 @@
+{
+  "date": "2026-09-16",
+  "status": "passed",
+  "runId": "release-1789499486782",
+  "model": "openai-codex/gpt-5.6-sol",
+  "agentId": "agent_BIIIGe_EPrORy93cOgr5p",
+  "deployment": {
+    "url": "https://agentry.welltop.tech",
+    "cluster": "agent-platform",
+    "namespace": "oma-infra",
+    "serverTag": "dd1d1d7f77a0",
+    "serverImageId": "sha256:aa6a85d45ba4648cc36f65f74e9837c458756e115554e4c51f18e052b10022bd",
+    "webTag": "28160f49506a",
+    "webImageId": "sha256:6dd42ea25c9cba2c649ade21de2ed9b651eaccff3433b2217e474aa5fe6f50b9",
+    "webAsset": "index-Bx6Tzefl.js",
+    "health": {
+      "status": "ok"
+    }
+  },
+  "automated": {
+    "serverPassed": 828,
+    "adapterPassed": 379,
+    "webPassed": 242,
+    "realPostgresPassed": 32
+  },
+  "phases": {
+    "sync": {
+      "sessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+      "workspaceId": "ws_q4Up-sDuLCMQXowTQq5AE",
+      "token": "SYNC_release-1789499486782",
+      "file": "sync.txt",
+      "childId": "sess_K_uedGS192I7TC6jN249W",
+      "executionId": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+      "status": "passed",
+      "execution": {
+        "id": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+        "childId": "sess_K_uedGS192I7TC6jN249W",
+        "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+        "callerTurnId": "turn_1_a1",
+        "callerToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598",
+        "mode": "sync",
+        "status": "completed",
+        "turnId": "turn_1_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_1_a1",
+            "sessionId": "sess_K_uedGS192I7TC6jN249W"
+          },
+          "output": "SYNC_release-1789499486782",
+          "reason": "Execution completed; saved artifacts have not been independently verified",
+          "status": "completed"
+        },
+        "notificationStatus": "consumed",
+        "createdAt": "2026-09-15T19:11:35.953Z",
+        "updatedAt": "2026-09-15T19:11:48.843Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 85025,
+          "output_tokens": 726,
+          "cache_read_tokens": 62592,
+          "cache_write_tokens": 0,
+          "total_tokens": 85751,
+          "cache_hit_rate": 0.7361599529550132
+        },
+        "delegated": {
+          "input_tokens": 69727,
+          "output_tokens": 1016,
+          "cache_read_tokens": 53376,
+          "cache_write_tokens": 0,
+          "total_tokens": 70743,
+          "cache_hit_rate": 0.7654997346795359
+        },
+        "total": {
+          "input_tokens": 154752,
+          "output_tokens": 1742,
+          "cache_read_tokens": 115968,
+          "cache_write_tokens": 0,
+          "total_tokens": 156494,
+          "cache_hit_rate": 0.749379652605459
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598"
+        },
+        "executions": [
+          {
+            "id": "deleg_3NveS_dNklZXGFITS2nSV",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_34_a1",
+            "callerToolUseId": "call_FSJZgEdwsNyejebBReyTzZGq|fc_00858f110c663ee1016aa998f4ed6487d08be551f8f2904a4f",
+            "turnId": "turn_29_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_2jJ16oek5oK36o2TGgzGf",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_16_a1",
+            "callerToolUseId": "call_wSfVe6EDsEWhmX2bYf6BqNyc|fc_00858f110c663ee1016aa9987dc06887d0a743fc3a1b560dfe",
+            "turnId": "turn_17_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598",
+            "turnId": "turn_1_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          }
+        ]
+      },
+      "traceEventCount": 13
+    },
+    "shared": {
+      "sessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+      "workspaceId": "ws_q4Up-sDuLCMQXowTQq5AE",
+      "childId": "sess_K_uedGS192I7TC6jN249W",
+      "markerPath": "/tmp/oma-release-release-1789499486782",
+      "marker": "SHARED_release-1789499486782",
+      "status": "passed",
+      "executionId": "deleg_2jJ16oek5oK36o2TGgzGf",
+      "proof": [
+        {
+          "seq": 23,
+          "toolUseId": "call_DTPDX6TQboRAVfeUowmxrHhY|fc_0dfb08d95a5221f6016aa99882422487d08ef712b0f5745a61",
+          "content": [
+            {
+              "text": "SHARED_release-1789499486782",
+              "type": "text"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "id": "deleg_2jJ16oek5oK36o2TGgzGf",
+        "childId": "sess_K_uedGS192I7TC6jN249W",
+        "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+        "callerTurnId": "turn_16_a1",
+        "callerToolUseId": "call_wSfVe6EDsEWhmX2bYf6BqNyc|fc_00858f110c663ee1016aa9987dc06887d0a743fc3a1b560dfe",
+        "mode": "sync",
+        "status": "completed",
+        "turnId": "turn_17_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_17_a1",
+            "sessionId": "sess_K_uedGS192I7TC6jN249W"
+          },
+          "output": "SHARED_release-1789499486782",
+          "reason": "Execution completed; saved artifacts have not been independently verified",
+          "status": "completed"
+        },
+        "notificationStatus": "consumed",
+        "createdAt": "2026-09-15T19:11:59.569Z",
+        "updatedAt": "2026-09-15T19:12:06.580Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 85025,
+          "output_tokens": 726,
+          "cache_read_tokens": 62592,
+          "cache_write_tokens": 0,
+          "total_tokens": 85751,
+          "cache_hit_rate": 0.7361599529550132
+        },
+        "delegated": {
+          "input_tokens": 69727,
+          "output_tokens": 1016,
+          "cache_read_tokens": 53376,
+          "cache_write_tokens": 0,
+          "total_tokens": 70743,
+          "cache_hit_rate": 0.7654997346795359
+        },
+        "total": {
+          "input_tokens": 154752,
+          "output_tokens": 1742,
+          "cache_read_tokens": 115968,
+          "cache_write_tokens": 0,
+          "total_tokens": 156494,
+          "cache_hit_rate": 0.749379652605459
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598"
+        },
+        "executions": [
+          {
+            "id": "deleg_3NveS_dNklZXGFITS2nSV",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_34_a1",
+            "callerToolUseId": "call_FSJZgEdwsNyejebBReyTzZGq|fc_00858f110c663ee1016aa998f4ed6487d08be551f8f2904a4f",
+            "turnId": "turn_29_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_2jJ16oek5oK36o2TGgzGf",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_16_a1",
+            "callerToolUseId": "call_wSfVe6EDsEWhmX2bYf6BqNyc|fc_00858f110c663ee1016aa9987dc06887d0a743fc3a1b560dfe",
+            "turnId": "turn_17_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598",
+            "turnId": "turn_1_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          }
+        ]
+      },
+      "traceEventCount": 9
+    },
+    "resume": {
+      "sessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+      "workspaceId": "ws_q4Up-sDuLCMQXowTQq5AE",
+      "childId": "sess_K_uedGS192I7TC6jN249W",
+      "executionId": "deleg_3NveS_dNklZXGFITS2nSV",
+      "originalExecutionId": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+      "originBefore": {
+        "origin": {
+          "parentSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598"
+        },
+        "executions": [
+          {
+            "id": "deleg_2jJ16oek5oK36o2TGgzGf",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_16_a1",
+            "callerToolUseId": "call_wSfVe6EDsEWhmX2bYf6BqNyc|fc_00858f110c663ee1016aa9987dc06887d0a743fc3a1b560dfe",
+            "turnId": "turn_17_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598",
+            "turnId": "turn_1_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          }
+        ]
+      },
+      "status": "passed",
+      "execution": {
+        "id": "deleg_3NveS_dNklZXGFITS2nSV",
+        "childId": "sess_K_uedGS192I7TC6jN249W",
+        "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+        "callerTurnId": "turn_34_a1",
+        "callerToolUseId": "call_FSJZgEdwsNyejebBReyTzZGq|fc_00858f110c663ee1016aa998f4ed6487d08be551f8f2904a4f",
+        "mode": "sync",
+        "status": "completed",
+        "turnId": "turn_29_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_29_a1",
+            "sessionId": "sess_K_uedGS192I7TC6jN249W"
+          },
+          "output": "RESUME_release-1789499486782",
+          "reason": "Execution completed; saved artifacts have not been independently verified",
+          "status": "completed"
+        },
+        "notificationStatus": "consumed",
+        "createdAt": "2026-09-15T19:14:00.642Z",
+        "updatedAt": "2026-09-15T19:14:24.655Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 85025,
+          "output_tokens": 726,
+          "cache_read_tokens": 62592,
+          "cache_write_tokens": 0,
+          "total_tokens": 85751,
+          "cache_hit_rate": 0.7361599529550132
+        },
+        "delegated": {
+          "input_tokens": 69727,
+          "output_tokens": 1016,
+          "cache_read_tokens": 53376,
+          "cache_write_tokens": 0,
+          "total_tokens": 70743,
+          "cache_hit_rate": 0.7654997346795359
+        },
+        "total": {
+          "input_tokens": 154752,
+          "output_tokens": 1742,
+          "cache_read_tokens": 115968,
+          "cache_write_tokens": 0,
+          "total_tokens": 156494,
+          "cache_hit_rate": 0.749379652605459
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598"
+        },
+        "executions": [
+          {
+            "id": "deleg_3NveS_dNklZXGFITS2nSV",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_34_a1",
+            "callerToolUseId": "call_FSJZgEdwsNyejebBReyTzZGq|fc_00858f110c663ee1016aa998f4ed6487d08be551f8f2904a4f",
+            "turnId": "turn_29_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_2jJ16oek5oK36o2TGgzGf",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_16_a1",
+            "callerToolUseId": "call_wSfVe6EDsEWhmX2bYf6BqNyc|fc_00858f110c663ee1016aa9987dc06887d0a743fc3a1b560dfe",
+            "turnId": "turn_17_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          },
+          {
+            "id": "deleg_qhzT5MRzqQTEIpjnIVsC3",
+            "childId": "sess_K_uedGS192I7TC6jN249W",
+            "callerSessionId": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_ELF5xT58dtjkPeN3Zel1vCJO|fc_00858f110c663ee1016aa99866764087d0b50cb34a57b60598",
+            "turnId": "turn_1_a1",
+            "mode": "sync",
+            "status": "completed",
+            "notificationStatus": "consumed"
+          }
+        ]
+      },
+      "traceEventCount": 24
+    },
+    "async": {
+      "sessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+      "workspaceId": "ws_jmhbWpSqLys4JsVBsrAvg",
+      "token": "ASYNC_release-1789499486782",
+      "file": "async.txt",
+      "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+      "executionId": "deleg_iIyHL21oLi7CYIrcYX_Sx",
+      "status": "passed",
+      "execution": {
+        "id": "deleg_iIyHL21oLi7CYIrcYX_Sx",
+        "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+        "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+        "callerTurnId": "turn_1_a1",
+        "callerToolUseId": "call_JM3Oszs5l8uegUJzlR3PngT1|fc_0b89bae7495e27d6016aa9992bdf1887d0919314d44b27241b",
+        "mode": "async",
+        "status": "completed",
+        "turnId": "turn_1_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_1_a1",
+            "sessionId": "sess_t_Yla31_ciqyUMJ-ll9D_"
+          },
+          "output": "ASYNC_release-1789499486782",
+          "reason": "Execution completed; saved artifacts have not been independently verified",
+          "status": "completed"
+        },
+        "notificationStatus": "processed",
+        "createdAt": "2026-09-15T19:14:53.077Z",
+        "updatedAt": "2026-09-15T19:15:52.239Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 82981,
+          "output_tokens": 510,
+          "cache_read_tokens": 67072,
+          "cache_write_tokens": 0,
+          "total_tokens": 83491,
+          "cache_hit_rate": 0.8082814138176209
+        },
+        "delegated": {
+          "input_tokens": 54965,
+          "output_tokens": 870,
+          "cache_read_tokens": 39424,
+          "cache_write_tokens": 0,
+          "total_tokens": 55835,
+          "cache_hit_rate": 0.7172564359137633
+        },
+        "total": {
+          "input_tokens": 137946,
+          "output_tokens": 1380,
+          "cache_read_tokens": 106496,
+          "cache_write_tokens": 0,
+          "total_tokens": 139326,
+          "cache_hit_rate": 0.7720122366723211
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_JM3Oszs5l8uegUJzlR3PngT1|fc_0b89bae7495e27d6016aa9992bdf1887d0919314d44b27241b"
+        },
+        "executions": [
+          {
+            "id": "deleg_vUf3fPiiNoFAEcK4i8cjs",
+            "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+            "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+            "callerTurnId": "turn_42_a1",
+            "callerToolUseId": "call_8JphckQJyEVbjNToO729KFv9|fc_0b89bae7495e27d6016aa99d652a5487d09c6f203b9f789e98",
+            "turnId": "turn_35_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          },
+          {
+            "id": "deleg_oedsUy2wj4fT60DHW32Zk",
+            "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+            "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+            "callerTurnId": "turn_22_a1",
+            "callerToolUseId": "call_siRT1SdGT8bHUU4FdDqzRxtC|fc_0b89bae7495e27d6016aa99c4af7f087d0ba904209631bb748",
+            "turnId": "turn_24_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          },
+          {
+            "id": "deleg_iIyHL21oLi7CYIrcYX_Sx",
+            "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+            "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_JM3Oszs5l8uegUJzlR3PngT1|fc_0b89bae7495e27d6016aa9992bdf1887d0919314d44b27241b",
+            "turnId": "turn_1_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          }
+        ]
+      },
+      "traceEventCount": 20
+    },
+    "steer": {
+      "sessionId": "sess_0ccx92rXEYWHmGz7tPtb9",
+      "workspaceId": "ws_px2HhLpkeHgaDFjomlZQB",
+      "token": "STEER_release-1789499486782",
+      "file": "steer.txt",
+      "childId": "sess_3DFSKpdmvdsQZEgetCmNc",
+      "executionId": "deleg_6wf4ksE2TDluGyfx7aAwk",
+      "status": "passed",
+      "execution": {
+        "id": "deleg_6wf4ksE2TDluGyfx7aAwk",
+        "childId": "sess_3DFSKpdmvdsQZEgetCmNc",
+        "callerSessionId": "sess_0ccx92rXEYWHmGz7tPtb9",
+        "callerTurnId": "turn_1_a1",
+        "callerToolUseId": "call_8jFZko5KLTxiJJo9NsSUKnRT|fc_01a85b81941d0481016aa9998c466c87d0b581d4337fadc0cd",
+        "mode": "async",
+        "status": "completed",
+        "turnId": "turn_1_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_1_a1",
+            "sessionId": "sess_3DFSKpdmvdsQZEgetCmNc"
+          },
+          "output": "STEERED_release-1789499486782",
+          "reason": "Execution completed; saved artifacts have not been independently verified",
+          "status": "completed"
+        },
+        "notificationStatus": "processed",
+        "createdAt": "2026-09-15T19:16:34.056Z",
+        "updatedAt": "2026-09-15T19:20:40.507Z",
+        "commands": [
+          {
+            "id": "dcmd_MRvi4dnxqPtW9mr-gqAY4",
+            "executionId": "deleg_6wf4ksE2TDluGyfx7aAwk",
+            "kind": "steer",
+            "message": "CHILD DIRECTIVE: Change your task. After the current sleep completes, write exact text STEERED_release-1789499486782 (no newline) to /home/user/workspace/oma-release/release-1789499486782/steer.txt, read it back, then finish. Do not write the previously requested token.",
+            "status": "applied",
+            "createdAt": "2026-09-15T19:18:45.418Z",
+            "appliedEventSeq": 8,
+            "callerSessionId": "sess_0ccx92rXEYWHmGz7tPtb9",
+            "callerTurnId": "turn_12_a1",
+            "callerToolUseId": "call_qC606D5RfqIfUvVjpsgFcerj|fc_01a85b81941d0481016aa99a131c7c87d0acef4da273f42e7a"
+          }
+        ]
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 45564,
+          "output_tokens": 368,
+          "cache_read_tokens": 25728,
+          "cache_write_tokens": 0,
+          "total_tokens": 45932,
+          "cache_hit_rate": 0.5646563076112721
+        },
+        "delegated": {
+          "input_tokens": 27425,
+          "output_tokens": 846,
+          "cache_read_tokens": 19584,
+          "cache_write_tokens": 0,
+          "total_tokens": 28271,
+          "cache_hit_rate": 0.7140929808568824
+        },
+        "total": {
+          "input_tokens": 72989,
+          "output_tokens": 1214,
+          "cache_read_tokens": 45312,
+          "cache_write_tokens": 0,
+          "total_tokens": 74203,
+          "cache_hit_rate": 0.6208058748578553
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_0ccx92rXEYWHmGz7tPtb9",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_8jFZko5KLTxiJJo9NsSUKnRT|fc_01a85b81941d0481016aa9998c466c87d0b581d4337fadc0cd"
+        },
+        "executions": [
+          {
+            "id": "deleg_6wf4ksE2TDluGyfx7aAwk",
+            "childId": "sess_3DFSKpdmvdsQZEgetCmNc",
+            "callerSessionId": "sess_0ccx92rXEYWHmGz7tPtb9",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_8jFZko5KLTxiJJo9NsSUKnRT|fc_01a85b81941d0481016aa9998c466c87d0b581d4337fadc0cd",
+            "turnId": "turn_1_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          }
+        ]
+      },
+      "traceEventCount": 21
+    },
+    "interrupt": {
+      "sessionId": "sess_e3oH7_fSNhkptj8BxAKk4",
+      "workspaceId": "ws_xVzrR8tsxaDwF0JyNNWDd",
+      "token": "INTERRUPT_release-1789499486782",
+      "file": "interrupt.txt",
+      "childId": "sess_1LywVabh9yjYAHTRtCwzf",
+      "executionId": "deleg_zu8jmrGtQxK0V-UnCK6Dd",
+      "status": "passed",
+      "interruptResponse": {
+        "accepted": true,
+        "requested": true,
+        "interrupted": false
+      },
+      "execution": {
+        "id": "deleg_zu8jmrGtQxK0V-UnCK6Dd",
+        "childId": "sess_1LywVabh9yjYAHTRtCwzf",
+        "callerSessionId": "sess_e3oH7_fSNhkptj8BxAKk4",
+        "callerTurnId": "turn_1_a1",
+        "callerToolUseId": "call_rjhHPbGtkufalDRpCTtadbMM|fc_0235660d284d6a7b016aa99aa7b52087d0a034ff277c79f9fe",
+        "mode": "async",
+        "status": "interrupted",
+        "turnId": "turn_1_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_1_a1",
+            "sessionId": "sess_1LywVabh9yjYAHTRtCwzf"
+          },
+          "output": "",
+          "reason": "Interrupted by request",
+          "status": "interrupted"
+        },
+        "notificationStatus": "processed",
+        "createdAt": "2026-09-15T19:21:14.452Z",
+        "updatedAt": "2026-09-15T19:21:20.697Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 26564,
+          "output_tokens": 250,
+          "cache_read_tokens": 16896,
+          "cache_write_tokens": 0,
+          "total_tokens": 26814,
+          "cache_hit_rate": 0.6360487878331577
+        },
+        "delegated": {
+          "input_tokens": 6480,
+          "output_tokens": 78,
+          "cache_read_tokens": 6272,
+          "cache_write_tokens": 0,
+          "total_tokens": 6558,
+          "cache_hit_rate": 0.9679012345679012
+        },
+        "total": {
+          "input_tokens": 33044,
+          "output_tokens": 328,
+          "cache_read_tokens": 23168,
+          "cache_write_tokens": 0,
+          "total_tokens": 33372,
+          "cache_hit_rate": 0.7011257716983416
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_e3oH7_fSNhkptj8BxAKk4",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_rjhHPbGtkufalDRpCTtadbMM|fc_0235660d284d6a7b016aa99aa7b52087d0a034ff277c79f9fe"
+        },
+        "executions": [
+          {
+            "id": "deleg_zu8jmrGtQxK0V-UnCK6Dd",
+            "childId": "sess_1LywVabh9yjYAHTRtCwzf",
+            "callerSessionId": "sess_e3oH7_fSNhkptj8BxAKk4",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_rjhHPbGtkufalDRpCTtadbMM|fc_0235660d284d6a7b016aa99aa7b52087d0a034ff277c79f9fe",
+            "turnId": "turn_1_a1",
+            "mode": "async",
+            "status": "interrupted",
+            "notificationStatus": "processed"
+          }
+        ]
+      },
+      "traceEventCount": 8
+    },
+    "budget": {
+      "sessionId": "sess_jE21QCKcl3IGmLksR0G04",
+      "workspaceId": "ws_JAJBb2VIukrtKv9qjvlYn",
+      "token": "BUDGET_release-1789499486782",
+      "file": "budget.txt",
+      "childId": "sess_a0UeLTcIvXX28IZBStOt1",
+      "executionId": "deleg_tl7rYzH2a0D-O1fb1RelU",
+      "status": "passed",
+      "execution": {
+        "id": "deleg_tl7rYzH2a0D-O1fb1RelU",
+        "childId": "sess_a0UeLTcIvXX28IZBStOt1",
+        "callerSessionId": "sess_jE21QCKcl3IGmLksR0G04",
+        "callerTurnId": "turn_1_a1",
+        "callerToolUseId": "call_bueUyLAc92B0FgFW3G5MABCp|fc_0ffc30eb9bac3c49016aa99abaab5c87d09aed21e3907ec077",
+        "mode": "sync",
+        "status": "budget_exhausted",
+        "turnId": "turn_1_a1",
+        "maxSteps": 1,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 1,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_1_a1",
+            "sessionId": "sess_a0UeLTcIvXX28IZBStOt1"
+          },
+          "output": "",
+          "reason": "Model step budget exhausted (1)",
+          "status": "budget_exhausted"
+        },
+        "notificationStatus": "consumed",
+        "createdAt": "2026-09-15T19:21:32.178Z",
+        "updatedAt": "2026-09-15T19:23:39.713Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 17530,
+          "output_tokens": 150,
+          "cache_read_tokens": 8448,
+          "cache_write_tokens": 0,
+          "total_tokens": 17680,
+          "cache_hit_rate": 0.48191671420422133
+        },
+        "delegated": {
+          "input_tokens": 6462,
+          "output_tokens": 292,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 6754,
+          "cache_hit_rate": 0
+        },
+        "total": {
+          "input_tokens": 23992,
+          "output_tokens": 442,
+          "cache_read_tokens": 8448,
+          "cache_write_tokens": 0,
+          "total_tokens": 24434,
+          "cache_hit_rate": 0.3521173724574858
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_jE21QCKcl3IGmLksR0G04",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_bueUyLAc92B0FgFW3G5MABCp|fc_0ffc30eb9bac3c49016aa99abaab5c87d09aed21e3907ec077"
+        },
+        "executions": [
+          {
+            "id": "deleg_tl7rYzH2a0D-O1fb1RelU",
+            "childId": "sess_a0UeLTcIvXX28IZBStOt1",
+            "callerSessionId": "sess_jE21QCKcl3IGmLksR0G04",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_bueUyLAc92B0FgFW3G5MABCp|fc_0ffc30eb9bac3c49016aa99abaab5c87d09aed21e3907ec077",
+            "turnId": "turn_1_a1",
+            "mode": "sync",
+            "status": "budget_exhausted",
+            "notificationStatus": "consumed"
+          }
+        ]
+      },
+      "traceEventCount": 10
+    },
+    "ui": {
+      "sessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+      "workspaceId": "ws_jmhbWpSqLys4JsVBsrAvg",
+      "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+      "executionId": "deleg_vUf3fPiiNoFAEcK4i8cjs",
+      "status": "passed",
+      "execution": {
+        "id": "deleg_vUf3fPiiNoFAEcK4i8cjs",
+        "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+        "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+        "callerTurnId": "turn_42_a1",
+        "callerToolUseId": "call_8JphckQJyEVbjNToO729KFv9|fc_0b89bae7495e27d6016aa99d652a5487d09c6f203b9f789e98",
+        "mode": "async",
+        "status": "completed",
+        "turnId": "turn_35_a1",
+        "maxSteps": 30,
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        },
+        "result": {
+          "trace": {
+            "turnId": "turn_35_a1",
+            "sessionId": "sess_t_Yla31_ciqyUMJ-ll9D_"
+          },
+          "output": "UI_REFRESH_OK",
+          "reason": "Execution completed; saved artifacts have not been independently verified",
+          "status": "completed"
+        },
+        "notificationStatus": "processed",
+        "createdAt": "2026-09-15T19:32:54.335Z",
+        "updatedAt": "2026-09-15T19:33:12.005Z",
+        "commands": []
+      },
+      "usage": {
+        "self": {
+          "input_tokens": 82981,
+          "output_tokens": 510,
+          "cache_read_tokens": 67072,
+          "cache_write_tokens": 0,
+          "total_tokens": 83491,
+          "cache_hit_rate": 0.8082814138176209
+        },
+        "delegated": {
+          "input_tokens": 54965,
+          "output_tokens": 870,
+          "cache_read_tokens": 39424,
+          "cache_write_tokens": 0,
+          "total_tokens": 55835,
+          "cache_hit_rate": 0.7172564359137633
+        },
+        "total": {
+          "input_tokens": 137946,
+          "output_tokens": 1380,
+          "cache_read_tokens": 106496,
+          "cache_write_tokens": 0,
+          "total_tokens": 139326,
+          "cache_hit_rate": 0.7720122366723211
+        },
+        "scope": "Session model requests plus directly delegated execution model requests; each durable request counted once"
+      },
+      "origin": {
+        "origin": {
+          "parentSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+          "parentTurnId": "turn_1_a1",
+          "parentToolUseId": "call_JM3Oszs5l8uegUJzlR3PngT1|fc_0b89bae7495e27d6016aa9992bdf1887d0919314d44b27241b"
+        },
+        "executions": [
+          {
+            "id": "deleg_vUf3fPiiNoFAEcK4i8cjs",
+            "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+            "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+            "callerTurnId": "turn_42_a1",
+            "callerToolUseId": "call_8JphckQJyEVbjNToO729KFv9|fc_0b89bae7495e27d6016aa99d652a5487d09c6f203b9f789e98",
+            "turnId": "turn_35_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          },
+          {
+            "id": "deleg_oedsUy2wj4fT60DHW32Zk",
+            "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+            "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+            "callerTurnId": "turn_22_a1",
+            "callerToolUseId": "call_siRT1SdGT8bHUU4FdDqzRxtC|fc_0b89bae7495e27d6016aa99c4af7f087d0ba904209631bb748",
+            "turnId": "turn_24_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          },
+          {
+            "id": "deleg_iIyHL21oLi7CYIrcYX_Sx",
+            "childId": "sess_t_Yla31_ciqyUMJ-ll9D_",
+            "callerSessionId": "sess_ecRiywKtaD7-L3sFXUid3",
+            "callerTurnId": "turn_1_a1",
+            "callerToolUseId": "call_JM3Oszs5l8uegUJzlR3PngT1|fc_0b89bae7495e27d6016aa9992bdf1887d0919314d44b27241b",
+            "turnId": "turn_1_a1",
+            "mode": "async",
+            "status": "completed",
+            "notificationStatus": "processed"
+          }
+        ]
+      },
+      "traceEventCount": 8
+    }
+  },
+  "checks": [
+    {
+      "phase": "init",
+      "name": "release Agent exists",
+      "ok": true,
+      "details": {
+        "agentId": "agent_BIIIGe_EPrORy93cOgr5p"
+      },
+      "time": "2026-09-15T19:11:26.867Z"
+    },
+    {
+      "phase": "init",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:11:26.867Z"
+    },
+    {
+      "phase": "sync",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:11:27.934Z"
+    },
+    {
+      "phase": "sync",
+      "name": "sync phase not already started",
+      "ok": true,
+      "time": "2026-09-15T19:11:27.935Z"
+    },
+    {
+      "phase": "sync",
+      "name": "default delegation is synchronous",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.140Z"
+    },
+    {
+      "phase": "sync",
+      "name": "sync completed",
+      "ok": true,
+      "details": {
+        "status": "completed"
+      },
+      "time": "2026-09-15T19:11:52.140Z"
+    },
+    {
+      "phase": "sync",
+      "name": "child shares Workspace",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.140Z"
+    },
+    {
+      "phase": "sync",
+      "name": "same Agent snapshot id",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.140Z"
+    },
+    {
+      "phase": "sync",
+      "name": "child tool trace visible",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.140Z"
+    },
+    {
+      "phase": "sync",
+      "name": "sync file bytes",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.165Z"
+    },
+    {
+      "phase": "sync",
+      "name": "sync notification not injected",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.165Z"
+    },
+    {
+      "phase": "sync",
+      "name": "effective model persisted",
+      "ok": true,
+      "details": {
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "max",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "model_default"
+        }
+      },
+      "time": "2026-09-15T19:11:52.165Z"
+    },
+    {
+      "phase": "sync",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:11:52.166Z"
+    },
+    {
+      "phase": "shared",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:11:53.269Z"
+    },
+    {
+      "phase": "shared",
+      "name": "sync prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:11:53.269Z"
+    },
+    {
+      "phase": "shared",
+      "name": "shared phase not already started",
+      "ok": true,
+      "time": "2026-09-15T19:11:53.269Z"
+    },
+    {
+      "phase": "shared",
+      "name": "parent wrote Sandbox temporary marker",
+      "ok": true,
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "shared child is stable",
+      "ok": true,
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "shared execution completed",
+      "ok": true,
+      "details": {
+        "status": "completed"
+      },
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "child bash output proves shared Sandbox",
+      "ok": true,
+      "details": {
+        "proof": [
+          {
+            "seq": 23,
+            "toolUseId": "call_DTPDX6TQboRAVfeUowmxrHhY|fc_0dfb08d95a5221f6016aa99882422487d08ef712b0f5745a61",
+            "content": [
+              {
+                "text": "SHARED_release-1789499486782",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 44965,
+        "delegated": 33486,
+        "total": 78451
+      },
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 283,
+        "delegated": 382,
+        "total": 665
+      },
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 34688,
+        "delegated": 25728,
+        "total": 60416
+      },
+      "time": "2026-09-15T19:12:09.418Z"
+    },
+    {
+      "phase": "shared",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:12:09.419Z"
+    },
+    {
+      "phase": "shared",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 45248,
+        "delegated": 33868,
+        "total": 79116
+      },
+      "time": "2026-09-15T19:12:09.419Z"
+    },
+    {
+      "phase": "shared",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:12:09.419Z"
+    },
+    {
+      "phase": "resume",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:13:49.176Z"
+    },
+    {
+      "phase": "resume",
+      "name": "sync prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:13:49.176Z"
+    },
+    {
+      "phase": "resume",
+      "name": "shared marker prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:13:49.176Z"
+    },
+    {
+      "phase": "resume",
+      "name": "resume retains stable child",
+      "ok": true,
+      "time": "2026-09-15T19:14:27.593Z"
+    },
+    {
+      "phase": "resume",
+      "name": "resume distinct execution",
+      "ok": true,
+      "time": "2026-09-15T19:14:27.593Z"
+    },
+    {
+      "phase": "resume",
+      "name": "resume completed",
+      "ok": true,
+      "details": {
+        "status": "completed"
+      },
+      "time": "2026-09-15T19:14:27.593Z"
+    },
+    {
+      "phase": "resume",
+      "name": "post-restart child bash reads original Sandbox tmp marker",
+      "ok": true,
+      "details": {
+        "proof": [
+          {
+            "seq": 35,
+            "toolUseId": "call_cIAzuLJjvoR0Ke314FWdiUmU|fc_0dfb08d95a5221f6016aa998fb4d4087d0a09169b99f80a324",
+            "content": [
+              {
+                "text": "SHARED_release-1789499486782",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:14:27.594Z"
+    },
+    {
+      "phase": "resume",
+      "name": "post-restart child bash reads saved Workspace file",
+      "ok": true,
+      "details": {
+        "proof": [
+          {
+            "seq": 40,
+            "toolUseId": "call_4ldSZeZTIfG45CWynUDMIk5N|fc_0dfb08d95a5221f6016aa998fdfc3087d087dc8056a10cb787",
+            "content": [
+              {
+                "text": "SYNC_release-1789499486782",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:14:27.594Z"
+    },
+    {
+      "phase": "resume",
+      "name": "prior child history retained",
+      "ok": true,
+      "time": "2026-09-15T19:14:27.600Z"
+    },
+    {
+      "phase": "resume",
+      "name": "resume original origin stable",
+      "ok": true,
+      "time": "2026-09-15T19:14:27.600Z"
+    },
+    {
+      "phase": "resume",
+      "name": "resume file bytes",
+      "ok": true,
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "resume",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 64612,
+        "delegated": 69727,
+        "total": 134339
+      },
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "resume",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 529,
+        "delegated": 1016,
+        "total": 1545
+      },
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "resume",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 53120,
+        "delegated": 53376,
+        "total": 106496
+      },
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "resume",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "resume",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 65141,
+        "delegated": 70743,
+        "total": 135884
+      },
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "resume",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:14:27.611Z"
+    },
+    {
+      "phase": "async-start",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:14:47.767Z"
+    },
+    {
+      "phase": "async-start",
+      "name": "async phase not already started",
+      "ok": true,
+      "time": "2026-09-15T19:14:47.767Z"
+    },
+    {
+      "phase": "async-start",
+      "name": "background parent completed before child",
+      "ok": true,
+      "details": {
+        "status": "running"
+      },
+      "time": "2026-09-15T19:14:57.883Z"
+    },
+    {
+      "phase": "async-start",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:14:57.911Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:14:59.062Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "async-start prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:14:59.062Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "exactly one durable result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "exactly one claimed result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "exactly one completed notification Turn",
+      "ok": true,
+      "details": {
+        "turns": [
+          "turn_14_a1"
+        ]
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "notification callback actually called model",
+      "ok": true,
+      "details": {
+        "spans": [
+          {
+            "seq": 19
+          }
+        ]
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "notification callback emitted acknowledgement",
+      "ok": true,
+      "details": {
+        "messages": [
+          {
+            "seq": 18,
+            "content": [
+              {
+                "text": "Acknowledged.",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "final notification status processed",
+      "ok": true,
+      "details": {
+        "status": "processed"
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 26585,
+        "delegated": 27167,
+        "total": 53752
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 240,
+        "delegated": 778,
+        "total": 1018
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 23808,
+        "delegated": 19456,
+        "total": 43264
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 26825,
+        "delegated": 27945,
+        "total": 54770
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "async completed",
+      "ok": true,
+      "details": {
+        "status": "completed"
+      },
+      "time": "2026-09-15T19:15:57.315Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "async file bytes",
+      "ok": true,
+      "time": "2026-09-15T19:15:57.333Z"
+    },
+    {
+      "phase": "async-finish",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:15:57.334Z"
+    },
+    {
+      "phase": "steer-start",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:16:24.570Z"
+    },
+    {
+      "phase": "steer-start",
+      "name": "steer phase not already started",
+      "ok": true,
+      "time": "2026-09-15T19:16:24.570Z"
+    },
+    {
+      "phase": "steer-start",
+      "name": "background parent completed before child",
+      "ok": true,
+      "details": {
+        "status": "running"
+      },
+      "time": "2026-09-15T19:16:36.685Z"
+    },
+    {
+      "phase": "steer-start",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:16:38.727Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:16:39.817Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "steer-start prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:16:39.818Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "exactly one durable result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "exactly one claimed result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "exactly one completed notification Turn",
+      "ok": true,
+      "details": {
+        "turns": [
+          "turn_24_a1"
+        ]
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "notification callback actually called model",
+      "ok": true,
+      "details": {
+        "spans": [
+          {
+            "seq": 29
+          }
+        ]
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "notification callback emitted acknowledgement",
+      "ok": true,
+      "details": {
+        "messages": [
+          {
+            "seq": 28,
+            "content": [
+              {
+                "text": "Acknowledged.",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "final notification status processed",
+      "ok": true,
+      "details": {
+        "status": "processed"
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 45564,
+        "delegated": 27425,
+        "total": 72989
+      },
+      "time": "2026-09-15T19:20:44.611Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 368,
+        "delegated": 846,
+        "total": 1214
+      },
+      "time": "2026-09-15T19:20:44.612Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 25728,
+        "delegated": 19584,
+        "total": 45312
+      },
+      "time": "2026-09-15T19:20:44.612Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:20:44.612Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 45932,
+        "delegated": 28271,
+        "total": 74203
+      },
+      "time": "2026-09-15T19:20:44.612Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "steer applied at boundary",
+      "ok": true,
+      "details": {
+        "commands": [
+          {
+            "id": "dcmd_MRvi4dnxqPtW9mr-gqAY4",
+            "executionId": "deleg_6wf4ksE2TDluGyfx7aAwk",
+            "kind": "steer",
+            "message": "CHILD DIRECTIVE: Change your task. After the current sleep completes, write exact text STEERED_release-1789499486782 (no newline) to /home/user/workspace/oma-release/release-1789499486782/steer.txt, read it back, then finish. Do not write the previously requested token.",
+            "status": "applied",
+            "createdAt": "2026-09-15T19:18:45.418Z",
+            "appliedEventSeq": 8,
+            "callerSessionId": "sess_0ccx92rXEYWHmGz7tPtb9",
+            "callerTurnId": "turn_12_a1",
+            "callerToolUseId": "call_qC606D5RfqIfUvVjpsgFcerj|fc_01a85b81941d0481016aa99a131c7c87d0acef4da273f42e7a"
+          }
+        ]
+      },
+      "time": "2026-09-15T19:20:44.612Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "steered execution completed",
+      "ok": true,
+      "time": "2026-09-15T19:20:44.612Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "steered file bytes",
+      "ok": true,
+      "time": "2026-09-15T19:20:44.623Z"
+    },
+    {
+      "phase": "steer-finish",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:20:44.624Z"
+    },
+    {
+      "phase": "interrupt-start",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:21:09.202Z"
+    },
+    {
+      "phase": "interrupt-start",
+      "name": "interrupt phase not already started",
+      "ok": true,
+      "time": "2026-09-15T19:21:09.203Z"
+    },
+    {
+      "phase": "interrupt-start",
+      "name": "background parent completed before child",
+      "ok": true,
+      "details": {
+        "status": "running"
+      },
+      "time": "2026-09-15T19:21:17.302Z"
+    },
+    {
+      "phase": "interrupt-start",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:21:19.342Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:21:20.462Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "interrupt-start prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:21:20.462Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "exactly one durable result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:21:26.568Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "exactly one claimed result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:21:26.568Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "exactly one completed notification Turn",
+      "ok": true,
+      "details": {
+        "turns": [
+          "turn_14_a1"
+        ]
+      },
+      "time": "2026-09-15T19:21:26.568Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "notification callback actually called model",
+      "ok": true,
+      "details": {
+        "spans": [
+          {
+            "seq": 19
+          }
+        ]
+      },
+      "time": "2026-09-15T19:21:26.568Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "notification callback emitted acknowledgement",
+      "ok": true,
+      "details": {
+        "messages": [
+          {
+            "seq": 18,
+            "content": [
+              {
+                "text": "Acknowledged: the background task was interrupted.",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:21:26.568Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "final notification status processed",
+      "ok": true,
+      "details": {
+        "status": "processed"
+      },
+      "time": "2026-09-15T19:21:26.568Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 26564,
+        "delegated": 6480,
+        "total": 33044
+      },
+      "time": "2026-09-15T19:21:26.569Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 250,
+        "delegated": 78,
+        "total": 328
+      },
+      "time": "2026-09-15T19:21:26.569Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 16896,
+        "delegated": 6272,
+        "total": 23168
+      },
+      "time": "2026-09-15T19:21:26.569Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:21:26.569Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 26814,
+        "delegated": 6558,
+        "total": 33372
+      },
+      "time": "2026-09-15T19:21:26.569Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "direct child interrupt terminal",
+      "ok": true,
+      "details": {
+        "status": "interrupted",
+        "response": {
+          "accepted": true,
+          "requested": true,
+          "interrupted": false
+        }
+      },
+      "time": "2026-09-15T19:21:26.569Z"
+    },
+    {
+      "phase": "interrupt-finish",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:21:26.570Z"
+    },
+    {
+      "phase": "budget",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:21:27.674Z"
+    },
+    {
+      "phase": "budget",
+      "name": "budget phase not already started",
+      "ok": true,
+      "time": "2026-09-15T19:21:27.674Z"
+    },
+    {
+      "phase": "budget",
+      "name": "budget terminal is truthful",
+      "ok": true,
+      "details": {
+        "status": "budget_exhausted",
+        "result": {
+          "trace": {
+            "turnId": "turn_1_a1",
+            "sessionId": "sess_a0UeLTcIvXX28IZBStOt1"
+          },
+          "output": "",
+          "reason": "Model step budget exhausted (1)",
+          "status": "budget_exhausted"
+        }
+      },
+      "time": "2026-09-15T19:23:44.169Z"
+    },
+    {
+      "phase": "budget",
+      "name": "budget preserves already-written file",
+      "ok": true,
+      "time": "2026-09-15T19:23:44.191Z"
+    },
+    {
+      "phase": "budget",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:23:44.194Z"
+    },
+    {
+      "phase": "query",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:23:45.341Z"
+    },
+    {
+      "phase": "query",
+      "name": "sync prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:23:45.341Z"
+    },
+    {
+      "phase": "query",
+      "name": "get result tool executed",
+      "ok": true,
+      "time": "2026-09-15T19:23:55.439Z"
+    },
+    {
+      "phase": "query",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:23:55.440Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:33:18.967Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 82981,
+        "delegated": 54965,
+        "total": 137946
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 510,
+        "delegated": 870,
+        "total": 1380
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 67072,
+        "delegated": 39424,
+        "total": 106496
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 83491,
+        "delegated": 55835,
+        "total": 139326
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "exactly one durable result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "exactly one claimed result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "exactly one completed notification Turn",
+      "ok": true,
+      "details": {
+        "turns": [
+          "turn_55_a1"
+        ]
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "notification callback actually called model",
+      "ok": true,
+      "details": {
+        "spans": [
+          {
+            "seq": 60
+          }
+        ]
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "notification callback emitted acknowledgement",
+      "ok": true,
+      "details": {
+        "messages": [
+          {
+            "seq": 59,
+            "content": [
+              {
+                "text": "Acknowledged.",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "final notification status processed",
+      "ok": true,
+      "details": {
+        "status": "processed"
+      },
+      "time": "2026-09-15T19:33:19.383Z"
+    },
+    {
+      "phase": "inspect",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:33:19.392Z"
+    },
+    {
+      "phase": "ui",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:32:49.503Z"
+    },
+    {
+      "phase": "ui",
+      "name": "async prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:32:49.503Z"
+    },
+    {
+      "phase": "ui",
+      "name": "exactly one durable result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:33:17.798Z"
+    },
+    {
+      "phase": "ui",
+      "name": "exactly one claimed result notification",
+      "ok": true,
+      "details": {
+        "count": 1
+      },
+      "time": "2026-09-15T19:33:17.798Z"
+    },
+    {
+      "phase": "ui",
+      "name": "exactly one completed notification Turn",
+      "ok": true,
+      "details": {
+        "turns": [
+          "turn_55_a1"
+        ]
+      },
+      "time": "2026-09-15T19:33:17.798Z"
+    },
+    {
+      "phase": "ui",
+      "name": "notification callback actually called model",
+      "ok": true,
+      "details": {
+        "spans": [
+          {
+            "seq": 60
+          }
+        ]
+      },
+      "time": "2026-09-15T19:33:17.798Z"
+    },
+    {
+      "phase": "ui",
+      "name": "notification callback emitted acknowledgement",
+      "ok": true,
+      "details": {
+        "messages": [
+          {
+            "seq": 59,
+            "content": [
+              {
+                "text": "Acknowledged.",
+                "type": "text"
+              }
+            ]
+          }
+        ]
+      },
+      "time": "2026-09-15T19:33:17.798Z"
+    },
+    {
+      "phase": "ui",
+      "name": "final notification status processed",
+      "ok": true,
+      "details": {
+        "status": "processed"
+      },
+      "time": "2026-09-15T19:33:17.798Z"
+    },
+    {
+      "phase": "ui",
+      "name": "usage input_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 82981,
+        "delegated": 54965,
+        "total": 137946
+      },
+      "time": "2026-09-15T19:33:17.799Z"
+    },
+    {
+      "phase": "ui",
+      "name": "usage output_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 510,
+        "delegated": 870,
+        "total": 1380
+      },
+      "time": "2026-09-15T19:33:17.799Z"
+    },
+    {
+      "phase": "ui",
+      "name": "usage cache_read_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 67072,
+        "delegated": 39424,
+        "total": 106496
+      },
+      "time": "2026-09-15T19:33:17.799Z"
+    },
+    {
+      "phase": "ui",
+      "name": "usage cache_write_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 0,
+        "delegated": 0,
+        "total": 0
+      },
+      "time": "2026-09-15T19:33:17.799Z"
+    },
+    {
+      "phase": "ui",
+      "name": "usage total_tokens adds up",
+      "ok": true,
+      "details": {
+        "self": 83491,
+        "delegated": 55835,
+        "total": 139326
+      },
+      "time": "2026-09-15T19:33:17.799Z"
+    },
+    {
+      "phase": "ui",
+      "name": "UI verification child completed",
+      "ok": true,
+      "time": "2026-09-15T19:33:17.799Z"
+    },
+    {
+      "phase": "ui",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:33:17.807Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "init prerequisite",
+      "ok": true,
+      "time": "2026-09-15T19:34:01.976Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "cleanup follows successful final inspect",
+      "ok": true,
+      "time": "2026-09-15T19:34:01.976Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "cleanup execution terminal",
+      "ok": true,
+      "details": {
+        "executionId": "deleg_tl7rYzH2a0D-O1fb1RelU",
+        "status": "budget_exhausted"
+      },
+      "time": "2026-09-15T19:34:02.012Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "cleanup Session has no active or queued work",
+      "ok": true,
+      "details": {
+        "sessionId": "sess_jE21QCKcl3IGmLksR0G04",
+        "status": "idle",
+        "pendingCount": 0
+      },
+      "time": "2026-09-15T19:34:02.056Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "cleanup Session terminated",
+      "ok": true,
+      "details": {
+        "sessionId": "sess_jE21QCKcl3IGmLksR0G04",
+        "status": "terminated"
+      },
+      "time": "2026-09-15T19:34:02.538Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "evidence contains no API key or database credential",
+      "ok": true,
+      "time": "2026-09-15T19:34:02.547Z"
+    }
+  ],
+  "failures": [],
+  "cleanup": [
+    {
+      "id": "sess_K_uedGS192I7TC6jN249W",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_K_uedGS192I7TC6jN249W"
+      },
+      "at": "2026-09-15T19:34:02.103Z"
+    },
+    {
+      "id": "sess_t_Yla31_ciqyUMJ-ll9D_",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_t_Yla31_ciqyUMJ-ll9D_"
+      },
+      "at": "2026-09-15T19:34:02.158Z"
+    },
+    {
+      "id": "sess_3DFSKpdmvdsQZEgetCmNc",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_3DFSKpdmvdsQZEgetCmNc"
+      },
+      "at": "2026-09-15T19:34:02.218Z"
+    },
+    {
+      "id": "sess_1LywVabh9yjYAHTRtCwzf",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_1LywVabh9yjYAHTRtCwzf"
+      },
+      "at": "2026-09-15T19:34:02.275Z"
+    },
+    {
+      "id": "sess_a0UeLTcIvXX28IZBStOt1",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_a0UeLTcIvXX28IZBStOt1"
+      },
+      "at": "2026-09-15T19:34:02.330Z"
+    },
+    {
+      "id": "sess_d0QwA0ilVkQxdOGZ_PvWC",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_d0QwA0ilVkQxdOGZ_PvWC"
+      },
+      "at": "2026-09-15T19:34:02.368Z"
+    },
+    {
+      "id": "sess_ecRiywKtaD7-L3sFXUid3",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_ecRiywKtaD7-L3sFXUid3"
+      },
+      "at": "2026-09-15T19:34:02.403Z"
+    },
+    {
+      "id": "sess_0ccx92rXEYWHmGz7tPtb9",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_0ccx92rXEYWHmGz7tPtb9"
+      },
+      "at": "2026-09-15T19:34:02.438Z"
+    },
+    {
+      "id": "sess_e3oH7_fSNhkptj8BxAKk4",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_e3oH7_fSNhkptj8BxAKk4"
+      },
+      "at": "2026-09-15T19:34:02.475Z"
+    },
+    {
+      "id": "sess_jE21QCKcl3IGmLksR0G04",
+      "result": {
+        "type": "session_terminated",
+        "id": "sess_jE21QCKcl3IGmLksR0G04"
+      },
+      "at": "2026-09-15T19:34:02.510Z"
+    }
+  ],
+  "postCleanup": {
+    "pendingInputs": 0,
+    "activeVerificationKeys": 0,
+    "existingIdleSessions": 43,
+    "terminatedSessions": 25
+  },
+  "browser": {
+    "status": "passed",
+    "executionId": "deleg_vUf3fPiiNoFAEcK4i8cjs",
+    "sameMountedCard": "running to completed and notification processed without reload",
+    "cardAssociation": "new execution associated after streamed tool result",
+    "actualParentReply": "Acknowledged.",
+    "errors": []
+  },
+  "assertionsPassed": 416
+}
