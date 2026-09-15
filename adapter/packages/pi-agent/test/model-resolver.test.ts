@@ -22,6 +22,8 @@ describe("configured Pi models", () => {
 
   it.each([
     ["K3", "kimi-coding-plan", "k3", "xhigh"],
+    ["bigmodel/glm-5.3", "bigmodel", "glm-5.3", "xhigh"],
+    ["deepseek/deepseek-flash", "deepseek", "deepseek-flash", "xhigh"],
     ["gpt-6-astra", "openai-codex", "gpt-6-astra", "max"],
     ["gpt-5.6-sol", "openai-codex", "gpt-5.6-sol", "max"],
   ])("resolves %s and selects its highest thinking level", (selection, provider, id, thinking) => {
