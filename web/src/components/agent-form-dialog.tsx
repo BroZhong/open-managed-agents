@@ -34,7 +34,6 @@ export function AgentFormDialog({
   const [description, setDescription] = useState("");
   const [system, setSystem] = useState("");
   const [model, setModel] = useState<string>(DEFAULT_MODEL);
-  const [sandboxImage, setSandboxImage] = useState("");
   const runtime = LOCKED_RUNTIME;
 
   const createMutation = useCreateAgent();
@@ -47,13 +46,11 @@ export function AgentFormDialog({
         setDescription(agent.description ?? "");
         setSystem(agent.system);
         setModel(agent.model);
-        setSandboxImage(agent.sandbox?.image ?? "");
       } else {
         setName("");
         setDescription("");
         setSystem("");
         setModel(DEFAULT_MODEL);
-        setSandboxImage("");
       }
     }
   }, [open, agent]);
@@ -76,13 +73,13 @@ export function AgentFormDialog({
       system: system.trim() || defaultSystem,
       runtime,
       // Sandbox is mandatory (issue #54): every Agent runs inside a sandbox.
-      // `image` is an E2B template id; an empty choice uses SANDBOX_TEMPLATE.
+      // New Agents inherit the Host's default Sandbox template.
       sandbox: {
-        // Editing must preserve deployment-specific image/env settings (for
-        // example sandbox VFS settings) that this form does not expose.
+        // Preserve deployment-specific settings that this form does not expose.
         ...agent?.sandbox,
         enabled: true,
-        image: sandboxImage || undefined,
+        // The retired auto-story choice follows the Host default when saved.
+        image: agent?.sandbox?.image === "auto-story" ? undefined : agent?.sandbox?.image,
       },
     };
 
@@ -179,18 +176,6 @@ export function AgentFormDialog({
           <p className="text-xs text-neutral-500">
             Thinking uses the highest level supported by the selected model.
           </p>
-          <Select
-            id="agent-sandbox"
-            label="Sandbox"
-            value={sandboxImage}
-            onChange={(e) => setSandboxImage(e.target.value)}
-          >
-            <option value="">Server default</option>
-            <option value="auto-story">auto-story</option>
-            {agent?.sandbox?.image && agent.sandbox.image !== "auto-story" && (
-              <option value={agent.sandbox.image}>{`${agent.sandbox.image} (current)`}</option>
-            )}
-          </Select>
           <Textarea
             id="agent-system"
             label="System Prompt"
