@@ -13,7 +13,9 @@ export function useToolDelegation(sessionId: string, toolUseId: string, turnId?:
   const query = new URLSearchParams({ tool_use_id: toolUseId, limit: "1" });
   if (turnId) query.set("turn_id", turnId);
   return useQuery({
-    queryKey: ["delegation-tool", sessionId, turnId, toolUseId],
+    // A streamed tool call can precede creation of its persisted execution.
+    // Once the result arrives, always perform a fresh authoritative lookup.
+    queryKey: ["delegation-tool", sessionId, turnId, toolUseId, hasResult],
     queryFn: ({ signal }) => apiFetch<DelegationList>(`/v1/sessions/${encodeURIComponent(sessionId)}/delegations?${query}`, { signal }),
     enabled: !!sessionId && !!toolUseId,
     refetchInterval: (query) => {
