@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   assertSafeTargetInventory,
+  listEndpoints,
+  parseEndpointInventory,
   createPreflightDeletionPlan,
   createReconciliationPlan,
   createSchemaDeletionPlan,
@@ -201,4 +203,67 @@ test("requires repository sentinel operations before any reconciliation", () => 
       ),
     /sentinel operation.*GET \/openapi\.json/i,
   );
+});
+
+function inventoryEnvelope(data, meta = {}, projectId = "8578928") {
+  return JSON.stringify({
+    success: true, context: { projectId }, data,
+    meta: { total: data.length, returned: data.length, page: 1,
+      pageSize: data.length, totalPages: 1, prevPage: null, nextPage: null, ...meta },
+  });
+}
+
+const inventoryRows = [
+  { id: 486704014, method: "get", path: "/v1/skills" },
+  { id: 515382553, method: "put", path: "/v1/workspaces/{id}/files/content" },
+];
+
+test("retrieves all endpoints in one CLI request without pagination flags", () => {
+  const calls = [];
+  const result = listEndpoints("8578928", "test-token", (args, token) => {
+    calls.push({ args, token });
+    return inventoryEnvelope(inventoryRows);
+  });
+  assert.deepEqual(calls, [{ args: ["endpoint", "list", "--project", "8578928"], token: "test-token" }]);
+  assert.deepEqual(result.map((row) => row.id), [486704014, 515382553]);
+  assert.equal(result[0].method, "GET");
+});
+
+test("rejects the observed repeated-ID/missing-endpoint response instead of deduplicating", () => {
+  assert.throws(() => parseEndpointInventory(inventoryEnvelope([
+    inventoryRows[0], inventoryRows[0],
+  ]), "8578928"), /Duplicate remote endpoint ID/);
+});
+
+test("rejects genuinely duplicate operations with different IDs", () => {
+  assert.throws(() => parseEndpointInventory(inventoryEnvelope([
+    inventoryRows[0], { ...inventoryRows[0], id: 99, method: "GET" },
+  ]), "8578928"), /Duplicate remote operation/);
+});
+
+test("rejects partial, truncated and contradictory full-response metadata", () => {
+  for (const meta of [
+    { total: 3 }, { returned: 1 }, { nextPage: 2 }, { prevPage: 1 },
+    { page: 2 }, { totalPages: 2 }, { total: -1 }, { total: "2" },
+    { total: undefined }, { returned: undefined }, { nextPage: undefined },
+  ]) {
+    assert.throws(() => parseEndpointInventory(inventoryEnvelope(inventoryRows, meta), "8578928"), /incomplete/);
+  }
+});
+
+test("accepts complete empty and greater-than-one-page inventories", () => {
+  for (const totalPages of [0, 1]) {
+    assert.deepEqual(parseEndpointInventory(inventoryEnvelope([], { totalPages }), "8578928"), []);
+  }
+  const rows = Array.from({ length: 501 }, (_, index) => ({ id: index + 1, method: "get", path: `/items/${index}` }));
+  assert.equal(parseEndpointInventory(inventoryEnvelope(rows), "8578928").length, 501);
+});
+
+test("rejects malformed envelopes, foreign projects and invalid endpoint IDs", () => {
+  for (const raw of ["not JSON", "null", JSON.stringify({ success: false }), inventoryEnvelope([], {}, "other")]) {
+    assert.throws(() => parseEndpointInventory(raw, "8578928"));
+  }
+  for (const id of [undefined, 0, -1, "1", 1.5]) {
+    assert.throws(() => parseEndpointInventory(inventoryEnvelope([{ ...inventoryRows[0], id }]), "8578928"), /positive integer id/);
+  }
 });
