@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const HTTP_METHODS = new Set([
@@ -241,23 +242,36 @@ function sanitize(value, token) {
   return (token ? text.split(token).join("***") : text).trim();
 }
 
-function runApifox(args, token) {
+export function runApifox(args, token, execute = execFileSync) {
+  // CLI 2.2.7 exits before flushing larger piped stdout on some platforms:
+  // observed 8192/11851 bytes despite a 16 MiB execFileSync maxBuffer.
+  // A regular file makes the CLI's stdout synchronous. Keep it private and
+  // remove it on success/failure; never interpolate credentials into a shell.
+  const directory = mkdtempSync(join(tmpdir(), "oma-apifox-cli-"));
+  const output = join(directory, "stdout.json");
+  let fd;
+  const readOutput = () => {
+    if (statSync(output).size > 16 * 1024 * 1024) {
+      throw new Error("Apifox CLI output exceeds the 16 MiB inventory limit");
+    }
+    return readFileSync(output, "utf8");
+  };
   try {
-    return execFileSync(
-      "npx",
-      ["--yes", "apifox-cli@2.2.7", ...args, "--access-token", token],
-      {
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-  } catch (error) {
-    const stderr = sanitize(error?.stderr, token);
-    const stdout = sanitize(error?.stdout, token);
-    throw new Error(
-      `Apifox CLI command failed${stderr ? `: ${stderr}` : stdout ? `: ${stdout}` : ""}`,
-    );
+    fd = openSync(output, "wx", 0o600);
+    try {
+      execute("npx", ["--yes", "apifox-cli@2.2.7", ...args, "--access-token", token], {
+        encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+        timeout: 120_000, stdio: ["ignore", fd, "pipe"],
+      });
+    } catch (error) {
+      const stderr = sanitize(error?.stderr, token);
+      const stdout = sanitize(readOutput(), token);
+      throw new Error(`Apifox CLI command failed${stderr ? `: ${stderr}` : stdout ? `: ${stdout}` : ""}`);
+    }
+    return readOutput();
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -307,7 +321,7 @@ export function listEndpoints(projectId, token, run = runApifox) {
   // Apifox CLI 2.2.7 documents full retrieval when pagination flags are omitted.
   // Observed with 54 endpoints: page-size 20 repeated one ID across pages and
   // omitted another. Concatenating/deduplicating those pages loses an endpoint.
-  // Keep one bounded CLI response (runApifox's 16 MiB buffer), then fail closed
+  // Keep one bounded CLI response (runApifox's 16 MiB limit), then fail closed
   // unless counts, IDs and method/path pairs prove a complete unique inventory.
   const raw = run(["endpoint", "list", "--project", projectId], token);
   return parseEndpointInventory(raw, projectId);

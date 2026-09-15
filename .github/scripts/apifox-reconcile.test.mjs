@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { fstatSync, readFileSync, writeSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import {
   assertSafeTargetInventory,
   listEndpoints,
+  runApifox,
   parseEndpointInventory,
   createPreflightDeletionPlan,
   createReconciliationPlan,
@@ -266,4 +268,31 @@ test("rejects malformed envelopes, foreign projects and invalid endpoint IDs", (
   for (const id of [undefined, 0, -1, "1", 1.5]) {
     assert.throws(() => parseEndpointInventory(inventoryEnvelope([{ ...inventoryRows[0], id }]), "8578928"), /positive integer id/);
   }
+});
+
+test("captures complete CLI JSON even when the child exits immediately after a large write", () => {
+  const output = runApifox(["endpoint", "list"], "test-token", (_command, _args, options) => {
+    assert.equal(fstatSync(options.stdio[1]).mode & 0o777, 0o600);
+    return execFileSync(process.execPath, ["-e", 'process.stdout.write(JSON.stringify({value:"x".repeat(100000)})); process.exit(0);'], options);
+  });
+  assert.equal(JSON.parse(output).value.length, 100000);
+});
+
+test("closes temporary output on command failure and redacts credentials", () => {
+  let fd;
+  assert.throws(() => runApifox([], "test-secret", (_command, _args, options) => {
+    fd = options.stdio[1];
+    writeSync(fd, 'failure: test-secret');
+    throw new Error("CLI exit 1");
+  }), (error) => error.message.includes("failure: ***") && !error.message.includes("test-secret"));
+  assert.throws(() => fstatSync(fd), /EBADF/);
+});
+
+test("fails closed on oversized CLI output and closes its output descriptor", () => {
+  let fd;
+  assert.throws(() => runApifox([], "test-token", (_command, _args, options) => {
+    fd = options.stdio[1];
+    writeSync(fd, Buffer.alloc(16 * 1024 * 1024 + 1));
+  }), /16 MiB/);
+  assert.throws(() => fstatSync(fd), /EBADF/);
 });
