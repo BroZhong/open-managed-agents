@@ -257,7 +257,7 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(log.filter((e) => e.type === "session.turn_completed")).toHaveLength(1);
     expect(h.errors).toEqual([]);
   });
-  it.each(["idle", "recovery_required"])("does not restart a consumed-wait parent after durable %s but before its completion marker", async (boundary) => {
+  it.each(["idle", "recovery_required", "adapter_error", "turn_aborted"])("does not restart a consumed-wait parent after durable %s but before its completion marker", async (boundary) => {
     let parentRuns = 0;
     const h = await harness({ async *run() { parentRuns++; yield text("unexpected extra model execution"); } });
     const pending = await h.enqueue();
@@ -286,7 +286,11 @@ describe("Host-owned delegation through the Session Router", () => {
     } else {
       await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_use", data: { ...event("agent.tool_use", { toolUseId: "ordinary-tool", name: "bash", input: {} }), turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
       await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_result", data: { ...result("ordinary-tool", "Execution interrupted; external effects are uncertain"), isError: true, turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
-      await h.stores.eventLogStore.append(h.parent.id, { type: "session.error", data: { turnId: originalTurn, error: { code: "recovery_required", message: "Inspect the uncertain external effects before a new Turn" } }, sessionThreadId: "sthr_primary", pendingFence: fence });
+      if (boundary === "turn_aborted") {
+        await h.stores.eventLogStore.append(h.parent.id, { type: "session.turn_aborted", data: { turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
+      } else {
+        await h.stores.eventLogStore.append(h.parent.id, { type: "session.error", data: { turnId: originalTurn, error: { code: boundary, message: "The original execution ended before its completion marker" } }, sessionThreadId: "sthr_primary", pendingFence: fence });
+      }
     }
     await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
     await h.router.recoverPendingEvents();

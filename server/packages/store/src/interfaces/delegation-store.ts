@@ -37,6 +37,7 @@ export interface DelegationExecution extends DelegationCaller {
   notificationStatus?: "pending" | "processing" | "processed" | "consumed" | "suppressed";
   notificationEventSeq?: number;
   notificationPendingEventId?: string;
+  parentTerminationRequested?: boolean;
   consumedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -87,6 +88,8 @@ export interface ResourceUseLease {
 }
 /** Coordination shares the pending-input lease: no second execution scheduler. */
 export interface DelegationStore {
+  /** Reconcile durable Session termination even when its input/lease was already removed. */
+  reconcileTerminatedExecutions(sessionId?: string, limit?: number): Promise<DelegationExecution[]>;
   accept(input: DelegationAcceptInput, fence: PendingEventFence): Promise<DelegationExecution>;
   getChild(tenantId: string, childId: string): Promise<Session | null>;
   getExecution(tenantId: string, executionId: string): Promise<DelegationExecution | null>;
