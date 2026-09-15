@@ -10,6 +10,24 @@ const tables: Record<DelegationTable, string> = { executions: "delegation_execut
 /** All writes use the same SQL transaction as existing Sessions and event queues. */
 export class PgDelegationStore extends TransactionalDelegationStore {
   constructor(private readonly pool: Pool) { super(); }
+  protected override async terminatedExecutionIds(sessionId: string | undefined, limit: number): Promise<string[]> {
+    const result = await this.pool.query<{ id: string }>(`SELECT execution.id FROM delegation_executions execution
+      JOIN sessions child ON child.id = execution.record->>'childId'
+      JOIN sessions parent ON parent.id = execution.record->>'callerSessionId'
+      WHERE execution.record->>'status' IN ('queued', 'running')
+        AND (child.status = 'terminated' OR (parent.status = 'terminated' AND execution.record->>'mode' = 'sync'
+          AND COALESCE(execution.record->>'parentTerminationRequested', 'false') <> 'true'))
+        ${sessionId ? "AND (child.id = $2 OR parent.id = $2)" : ""}
+      ORDER BY execution.id LIMIT $1`, [limit, ...(sessionId ? [sessionId] : [])]);
+    return result.rows.map((row) => row.id);
+  }
+  protected override async terminatedParentWaits(sessionId: string | undefined, limit: number): Promise<DelegationWait[]> {
+    const result = await this.pool.query<{ record: DelegationWait }>(`SELECT waiting.record FROM delegation_waits waiting
+      JOIN sessions parent ON parent.id = waiting.record->>'callerSessionId'
+      WHERE waiting.record->>'status' = 'waiting' AND parent.status = 'terminated'
+        ${sessionId ? "AND parent.id = $2" : ""} ORDER BY waiting.id LIMIT $1`, [limit, ...(sessionId ? [sessionId] : [])]);
+    return result.rows.map((row) => row.record);
+  }
   override async getChild(tenantId: string, childId: string) {
     const session = await new PgSessionStore(this.pool).getById(childId);
     return session?.tenantId === tenantId && session.delegation ? session : null;

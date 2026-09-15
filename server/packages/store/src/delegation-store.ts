@@ -34,6 +34,74 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
     const child = await tx.sessions.getById(childId);
     return Boolean(child && child.tenantId === tenantId && child.delegation && (child.delegation.parentSessionId === callerSessionId || childId === callerSessionId));
   }
+  protected terminatedExecutionIds(sessionId: string | undefined, limit: number): Promise<string[]> {
+    return this.transaction(async (tx) => {
+      const ids: string[] = [];
+      for (const status of ["queued", "running"]) {
+        for (const execution of await tx.read<DelegationExecution>("executions", { status })) {
+          if (sessionId && execution.childId !== sessionId && execution.callerSessionId !== sessionId) continue;
+          const child = await tx.sessions.getById(execution.childId);
+          const parent = await tx.sessions.getById(execution.callerSessionId);
+          if (child?.status === "terminated" || parent?.status === "terminated" && execution.mode === "sync" && !execution.parentTerminationRequested) ids.push(execution.id);
+          if (ids.length >= limit) return ids;
+        }
+      }
+      return ids;
+    });
+  }
+  protected terminatedParentWaits(sessionId: string | undefined, limit: number): Promise<DelegationWait[]> {
+    return this.transaction(async (tx) => {
+      const result: DelegationWait[] = [];
+      for (const wait of await tx.read<DelegationWait>("waits", { status: "waiting", ...(sessionId ? { callerSessionId: sessionId } : {}) })) {
+        if ((await tx.sessions.getById(wait.callerSessionId))?.status === "terminated") result.push(wait);
+        if (result.length >= limit) break;
+      }
+      return result;
+    });
+  }
+  async reconcileTerminatedExecutions(sessionId?: string, limit = 100): Promise<DelegationExecution[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid termination reconciliation batch size");
+    const [ids, waits] = await Promise.all([this.terminatedExecutionIds(sessionId, limit), this.terminatedParentWaits(sessionId, limit)]);
+    if (!ids.length && !waits.length) return [];
+    return this.transaction(async (tx) => {
+      for (const candidate of waits) {
+        const wait = (await tx.read<DelegationWait>("waits", callerFilter(candidate)))[0];
+        if (wait?.status === "waiting" && (await tx.sessions.getById(wait.callerSessionId))?.status === "terminated") {
+          wait.status = "cancelled"; await tx.put("waits", identity(wait), wait);
+        }
+      }
+      const reconciled: DelegationExecution[] = [];
+      for (const id of ids) {
+        const execution = await this.execution(tx, id);
+        if (terminal(execution)) continue;
+        const child = await tx.sessions.getById(execution.childId);
+        const parent = await tx.sessions.getById(execution.callerSessionId);
+        if (child?.status === "terminated") {
+          if (execution.turnId) await tx.append(execution.childId, { type: "session.turn_aborted",
+            data: { turnId: execution.turnId, executionId: execution.id, reason: "session_terminated" },
+            sessionThreadId: "sthr_primary", idempotencyKey: `delegation-termination:${execution.id}` });
+          await tx.removePending(execution.childId, execution.pendingEventId);
+          reconciled.push(await this.finish(tx, execution, { status: "interrupted", reason: "Child Session was terminated; recorded output and saved files are retained", output: "", trace: { sessionId: execution.childId, turnId: execution.turnId } }));
+        } else if (parent?.status === "terminated" && execution.mode === "sync" && !execution.parentTerminationRequested) {
+          execution.parentTerminationRequested = true;
+          if (execution.status === "queued") {
+            await tx.removePending(execution.childId, execution.pendingEventId);
+            reconciled.push(await this.finish(tx, execution, { status: "interrupted", reason: "Synchronous delegation withdrawn because its parent Session was terminated", output: "", trace: { sessionId: execution.childId } }));
+          } else {
+            const command: DelegationCommand = { ...callerFilter(execution), callerToolUseId: `terminate-parent:${execution.id}`,
+              id: `terminate-parent:${execution.id}`, executionId: execution.id, childId: execution.childId, kind: "interrupt",
+              message: "The parent Session owning this synchronous execution was terminated", status: "accepted",
+              targetTurnId: execution.turnId, targetGeneration: execution.generation, createdAt: new Date().toISOString() };
+            await tx.put("commands", command.id, command);
+            execution.updatedAt = new Date().toISOString();
+            await tx.put("executions", execution.id, execution);
+            reconciled.push(execution);
+          }
+        }
+      }
+      return reconciled;
+    });
+  }
   async accept(input: DelegationAcceptInput, fence: PendingEventFence): Promise<DelegationExecution> {
     if (!input.prompt.trim() || !Number.isInteger(input.maxSteps) || input.maxSteps < 1 || input.maxSteps > 1000) throw new Error("Invalid delegation prompt or step budget");
     if (input.mode !== "sync" && input.mode !== "async") throw new Error("Invalid delegation mode");

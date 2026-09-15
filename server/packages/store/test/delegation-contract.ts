@@ -110,6 +110,46 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       const recovered = await stores.delegationStore.startExecution(child.id, newFence, "new-turn-must-not-run", {}, 4);
       expect(recovered).toMatchObject({ status: "recovery_required", turnId: "child-turn", result: { output: "" } });
     });
+    it("reconciles terminated child executions after their pending inputs have been deleted", async () => {
+      const child = await stores.delegationStore.accept({ ...input, mode: "sync" }, parentFence);
+      const fence = await fenceFor(child);
+      await stores.delegationStore.startExecution(child.id, fence, "child-turn", {}, 4);
+      const queued = await stores.delegationStore.accept({ ...input, resume: child.childId, callerToolUseId: "queued-resume" }, parentFence);
+      await stores.sessionStore.terminate(child.childId);
+      await stores.pendingEventStore.clear(child.childId);
+      const reconciled = await stores.delegationStore.reconcileTerminatedExecutions();
+      expect(reconciled.map((entry) => entry.id).sort()).toEqual([child.id, queued.id].sort());
+      expect(reconciled.every((entry) => entry.status === "interrupted")).toBe(true);
+      expect((await stores.delegationStore.getExecution(input.tenantId, queued.id))?.result?.trace.turnId).toBeUndefined();
+      expect((await stores.eventLogStore.getEvents(child.childId)).data.filter((entry) => entry.type === "session.turn_aborted")).toHaveLength(1);
+      expect((await stores.eventLogStore.getEvents(input.callerSessionId)).data.filter((entry) => entry.type === "subagent.result")).toHaveLength(2);
+      expect(await stores.pendingEventStore.count(input.callerSessionId)).toBe(2);
+      expect(await stores.delegationStore.reconcileTerminatedExecutions(child.childId)).toEqual([]);
+      expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(false);
+    });
+    it("reconciles terminated parents by stopping sync children and cancelling independent async waits", async () => {
+      const running = await stores.delegationStore.accept({ ...input, mode: "sync" }, parentFence);
+      const runningFence = await fenceFor(running);
+      await stores.delegationStore.startExecution(running.id, runningFence, "child-turn", {}, 4);
+      const queued = await stores.delegationStore.accept({ ...input, mode: "sync", callerToolUseId: "queued-sync" }, parentFence);
+      const asynchronous = await stores.delegationStore.accept({ ...input, callerToolUseId: "independent-async" }, parentFence);
+      const asyncFence = await fenceFor(asynchronous);
+      await stores.delegationStore.startExecution(asynchronous.id, asyncFence, "async-turn", {}, 4);
+      await stores.delegationStore.saveWait({ ...input, callerToolUseId: "wait-async", executionId: asynchronous.id, parentPendingEventId: parentFence.eventId, checkpoint: {} }, parentFence);
+      await stores.sessionStore.terminate(input.callerSessionId);
+      await stores.pendingEventStore.clear(input.callerSessionId);
+      const reconciled = await stores.delegationStore.reconcileTerminatedExecutions(input.callerSessionId);
+      expect(reconciled.map((entry) => entry.id).sort()).toEqual([running.id, queued.id].sort());
+      expect((await stores.delegationStore.getExecution(input.tenantId, queued.id))?.status).toBe("interrupted");
+      expect((await stores.delegationStore.getExecution(input.tenantId, asynchronous.id))?.status).toBe("running");
+      expect((await stores.delegationStore.listWaits(input.callerSessionId, parentFence.eventId)).every((wait) => wait.status === "cancelled")).toBe(true);
+      const commands = await stores.delegationStore.listCommands(running.id);
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ kind: "interrupt", status: "accepted", targetTurnId: "child-turn" });
+      expect(await stores.delegationStore.reconcileTerminatedExecutions()).toEqual([]);
+      expect(await stores.delegationStore.listCommands(asynchronous.id)).toEqual([]);
+      expect(await stores.pendingEventStore.count(input.callerSessionId)).toBe(0);
+    });
     it("retains the shared environment for queued children after parent termination", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       await stores.sessionStore.terminate(input.callerSessionId);

@@ -602,6 +602,9 @@ export class SessionRouter {
       discarded: [],
       failed: [],
     };
+    // Session termination revokes its pending lease first. Reconcile durable
+    // child results even when a Host died before the local cleanup callback.
+    await this.delegationStore?.reconcileTerminatedExecutions();
     const sessionIds = new Set(await this.pendingEventStore.listPendingSessionIds());
 
     for (const sessionId of sessionIds) {
@@ -671,6 +674,13 @@ export class SessionRouter {
     this.clearClaimRetry(sessionId);
     this.notifyIdleIfSettled();
     await this.pendingEventStore.clear(sessionId);
+    const reconciled = await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? [];
+    for (const execution of reconciled) {
+      const parent = await this.sessionStore.getById(execution.callerSessionId);
+      if (parent && parent.status !== "terminated") {
+        void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
+      }
+    }
     const session = this.sessions.get(sessionId);
     if (session) await session.dispose();
     // Keep a failed disposal's closed handle so a later DELETE can retry cleanup.
@@ -1095,10 +1105,13 @@ export class SessionRouter {
 
       const attemptEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq && event.type !== "subagent.result");
       const alreadyIdle = attemptEvents.some((event) => event.type === "session.status_idle");
+      const alreadyTerminal = alreadyIdle || attemptEvents.some((event) =>
+        event.type === "session.error" || event.type === "session.turn_aborted");
       const partialDurableOutput = attemptEvents.some(
         (event) => event.type !== "session.status_running",
       );
-      if (alreadyIdle || (partialDurableOutput && resumableWaits.length === 0)) {
+      if (alreadyTerminal || (partialDurableOutput && resumableWaits.length === 0)) {
+        if (alreadyTerminal) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
         await this.repairDanglingToolUses(
           sessionId,
           pendingEvent.id,
@@ -1106,7 +1119,7 @@ export class SessionRouter {
           attemptEvents,
           pendingFence,
         );
-        if (!alreadyIdle) {
+        if (!alreadyTerminal) {
           const recoveryError = {
             message:
               "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
