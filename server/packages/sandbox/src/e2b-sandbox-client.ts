@@ -318,8 +318,17 @@ export class E2BSandboxClient implements SandboxClient {
     }
   }
 
-  async list(id: string, dir: string): Promise<SandboxFileEntry[]> {
+  async list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]> {
     const sandbox = this.require(id);
+    if (options?.missingOk) {
+      // Node stat preserves ENOENT/EACCES distinctions. A shell test -e would
+      // silently classify an inaccessible parent directory as a missing path.
+      try { await this.fileSystem(id).stat(dir); }
+      catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+        throw error;
+      }
+    }
     // `find` prints: <mtime-epoch-seconds> <size-bytes> <path>, one per file.
     // We use it (rather than the SDK's `files.list`) so size + mtime are always
     // present and the listing is fully recursive, the ToolExecutor listing contract.
