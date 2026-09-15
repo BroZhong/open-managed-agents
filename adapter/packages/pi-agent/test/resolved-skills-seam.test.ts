@@ -18,6 +18,8 @@ const sdkSeam = vi.hoisted(() => ({
       isPersisted(): boolean;
     };
     thinkingLevel?: string;
+    noTools?: string;
+    customTools?: Array<{ name: string }>;
     modelRuntime?: { getModel(provider: string, id: string): unknown };
   }>,
   mcpConfigPath: undefined as string | undefined,
@@ -70,8 +72,11 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
         sdkSeam.mcpConfigMode = statSync(configPath).mode & 0o777;
       }
       let listener: ((event: Record<string, unknown>) => void) | undefined;
+      const agent = { state: { messages: [] as unknown[] }, transformContext: undefined as ((messages: unknown[]) => Promise<unknown[]>) | undefined };
       return {
         session: {
+          agent,
+          async continue() {},
           async bindExtensions() {
             if (sdkSeam.failBindExtensions) {
               throw new Error("extension startup failed");
@@ -92,6 +97,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
             };
           },
           async prompt() {
+            await agent.transformContext?.(agent.state.messages);
             listener?.({ type: "agent_end", messages: [], willRetry: false });
           },
           abort() {},
@@ -169,7 +175,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     const options = sdkSeam.resourceLoaderOptions[0];
     expect(options.noSkills).toBe(true);
     expect(options.additionalSkillPaths).toBeUndefined();
-    expect(options.extensionFactories).toHaveLength(3);
+    expect(options.extensionFactories).toHaveLength(1);
     expect(options.appendSystemPrompt).toEqual([
       "BASE",
       expect.stringContaining("<available_skills>"),
@@ -185,7 +191,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       .toMatchObject({ id: "claude-sonnet-4-5", provider: "anthropic" });
   });
 
-  it("preserves native skillPaths and installs no managed child bridge without a ToolExecutor", async () => {
+  it("preserves native skillPaths without a managed ToolExecutor", async () => {
     const nativeInput = input(false);
     nativeInput.agent.skillDescriptors = [];
     const events = await collect(new PiAgentAdapter().run(nativeInput));
@@ -365,5 +371,24 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     expect(sdkSeam.lifecycle).toEqual(["dispose"]);
     expect(sdkSeam.mcpConfigPath).toBeDefined();
     expect(existsSync(sdkSeam.mcpConfigPath!)).toBe(false);
+  });
+});
+
+describe("managed child SDK capability boundary", () => {
+  it("loads only seven Sandbox tools and the local Skill bridge for a child", async () => {
+    sdkSeam.sessionOptions.length = 0; sdkSeam.resourceLoaderOptions.length = 0; sdkSeam.failBindExtensions = false;
+    const child = input(true); child.execution = { isChild: true };
+    const events = await collect(new PiAgentAdapter().run(child));
+    expect(events.filter(e => e.type === "session.error")).toEqual([]);
+    expect(sdkSeam.resourceLoaderOptions[0]).toMatchObject({ noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true });
+    expect(sdkSeam.sessionOptions[0].noTools).toBe("builtin");
+    expect(sdkSeam.sessionOptions[0].customTools?.map(t => t.name).sort()).toEqual(["bash", "edit", "find", "grep", "ls", "read", "write"]);
+  });
+  it("registers exactly the three Host tools alongside the parent Sandbox tools", async () => {
+    sdkSeam.sessionOptions.length = 0; sdkSeam.resourceLoaderOptions.length = 0; sdkSeam.failBindExtensions = false;
+    const parent = input(true); parent.subagents = { delegate: vi.fn(), getResult: vi.fn(), steer: vi.fn() };
+    const events = await collect(new PiAgentAdapter().run(parent));
+    expect(events.filter(e => e.type === "session.error")).toEqual([]);
+    expect(sdkSeam.sessionOptions[0].customTools?.map(t => t.name)).toEqual(["bash", "read", "write", "edit", "ls", "grep", "find", "Agent", "get_subagent_result", "steer_subagent"]);
   });
 });

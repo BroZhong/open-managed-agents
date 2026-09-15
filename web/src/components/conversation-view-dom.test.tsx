@@ -211,3 +211,13 @@ it("keeps the bubble's own prose overrides that the typography plugin would othe
   expect(classes).toContain("[&_code]:after:content-none");
   expect(classes).toContain("[&_code]:font-normal");
 });
+
+it("shows a persisted subagent notification once without presenting it as human input", () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  render(<ConversationView sessionStatus="waiting" events={[
+    { seq: 1, type: "subagent.result", ts: "2026-09-16", data: { source: "subagent_result", childId: "child", executionId: "exec", result: { status: "failed", reason: "Child provider error", output: "Partial child output" } } },
+    { seq: 2, type: "subagent.result_claimed", ts: "2026-09-16", data: { source: "subagent_result", notificationSeq: 1 } },
+  ]} />);
+  expect(screen.getAllByText("Subagent result")).toHaveLength(1);
+  expect(screen.getByText(/Child provider error/)).toBeTruthy();
+});

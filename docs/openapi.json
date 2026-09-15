@@ -642,6 +642,7 @@
         "enum": [
           "idle",
           "running",
+          "waiting",
           "terminated"
         ]
       },
@@ -1282,6 +1283,310 @@
           "path",
           "size",
           "updated_at"
+        ]
+      },
+      "DelegationList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DelegationExecution"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/DelegationOrigin"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ]
+      },
+      "DelegationExecution": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "childId": {
+            "type": "string"
+          },
+          "callerSessionId": {
+            "type": "string"
+          },
+          "callerTurnId": {
+            "type": "string"
+          },
+          "callerToolUseId": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "Execution state; clients preserve unknown future states."
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "maxSteps": {
+            "type": "integer"
+          },
+          "effectiveConfig": {
+            "type": "object",
+            "properties": {
+              "model": {},
+              "thinking": {},
+              "maxSteps": {},
+              "modelSource": {},
+              "thinkingSource": {}
+            }
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "output": {
+                "type": "string"
+              },
+              "trace": {
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "type": "string"
+                  },
+                  "afterSeq": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "sessionId"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "reason",
+              "output",
+              "trace"
+            ]
+          },
+          "notificationStatus": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "executionId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "ISO 8601 timestamp",
+                  "example": "2026-07-14T00:00:00.000Z"
+                },
+                "appliedEventSeq": {
+                  "type": "number"
+                },
+                "callerSessionId": {
+                  "type": "string"
+                },
+                "callerTurnId": {
+                  "type": "string"
+                },
+                "callerToolUseId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "executionId",
+                "kind",
+                "message",
+                "status",
+                "createdAt",
+                "callerSessionId",
+                "callerTurnId",
+                "callerToolUseId"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "childId",
+          "callerSessionId",
+          "callerTurnId",
+          "callerToolUseId",
+          "prompt",
+          "mode",
+          "status",
+          "maxSteps",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "DelegationOrigin": {
+        "type": "object",
+        "properties": {
+          "parentSessionId": {
+            "type": "string"
+          },
+          "parentTurnId": {
+            "type": "string"
+          },
+          "parentToolUseId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "parentSessionId",
+          "parentTurnId",
+          "parentToolUseId"
+        ]
+      },
+      "DelegationTrace": {
+        "type": "object",
+        "properties": {
+          "execution": {
+            "$ref": "#/components/schemas/DelegationExecution"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoredEvent"
+            }
+          },
+          "deltas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "data": {},
+                "turnId": {
+                  "type": "string"
+                },
+                "blockIndex": {
+                  "type": "number"
+                },
+                "deltaId": {
+                  "type": "string"
+                },
+                "ts": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "ISO 8601 timestamp",
+                  "example": "2026-07-14T00:00:00.000Z"
+                }
+              },
+              "required": [
+                "type",
+                "turnId",
+                "blockIndex",
+                "deltaId",
+                "ts"
+              ]
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "number"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage"
+          }
+        },
+        "required": [
+          "execution",
+          "workspaceId",
+          "data",
+          "deltas",
+          "has_more",
+          "next_cursor",
+          "usage"
+        ]
+      },
+      "DelegationUsage": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "delegated": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "total": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "self",
+          "delegated",
+          "total",
+          "scope"
         ]
       }
     },
@@ -4044,7 +4349,7 @@
       "post": {
         "operationId": "appendSessionEvents",
         "summary": "Append User events to a Session",
-        "description": "Send user.message to start or continue Agent execution. user.message, user.tool_confirmation, and user.custom_tool_result are queued durably; 202 acknowledges acceptance, not Turn completion. user.define_outcome is stored directly and must be submitted alone. Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch: it requests that the active Turn stop and leaves queued input eligible to run; interrupted reports whether a Turn was actually stopped. Receive output through GET /v1/sessions/{id}/events with Accept: text/event-stream.",
+        "description": "Send user.message to start or continue Agent execution. user.message, user.tool_confirmation, and user.custom_tool_result are queued durably; 202 acknowledges acceptance, not Turn completion. user.define_outcome is stored directly and must be submitted alone. Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch: it requests that the active Turn stop and leaves queued input eligible to run; requested reports whether a durable Interrupt command was accepted; interrupted remains false until an actual stop is observed through durable Turn events. Receive output through GET /v1/sessions/{id}/events with Accept: text/event-stream.",
         "tags": [
           "Sessions/Events"
         ],
@@ -4110,6 +4415,9 @@
                       ]
                     },
                     "interrupted": {
+                      "type": "boolean"
+                    },
+                    "requested": {
                       "type": "boolean"
                     }
                   },
@@ -5110,6 +5418,309 @@
           },
           "503": {
             "description": "Workspace storage is unavailable; saved files are retained",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/delegations": {
+      "get": {
+        "operationId": "listDelegations",
+        "summary": "List this Session's delegated executions",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "after_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "tool_use_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "turn_id",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Persisted execution references and creation source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/delegation-origin": {
+      "get": {
+        "operationId": "getDelegationOrigin",
+        "summary": "Read child Session creation source and execution history",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "after_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "tool_use_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "turn_id",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Persisted execution references and creation source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/delegations/{executionId}/events": {
+      "get": {
+        "operationId": "getDelegationTrace",
+        "summary": "Read one delegated execution's bounded trace and current Delta snapshot",
+        "description": "id must identify the execution's child or calling Session in the authenticated Tenant. Events and usage are scoped to this execution's Turn. Request subsequent pages with after_seq; the last page includes the active Turn's transient Delta snapshot. Poll from next_cursor to reconnect without loading any other execution's history.",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "executionId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "required": false,
+            "name": "after_seq",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution metadata, Complete Events, Delta projection and execution-only usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationTrace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or related execution not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/delegation-usage": {
+      "get": {
+        "operationId": "getDelegationUsage",
+        "summary": "Read Session and directly delegated usage separately",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Disjoint Session and child execution model usage, plus their sum",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationUsage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
             "content": {
               "application/json": {
                 "schema": {

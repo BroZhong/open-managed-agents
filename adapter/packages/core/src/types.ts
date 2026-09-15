@@ -47,6 +47,7 @@ export type McpServerConfig = HttpMcpServerConfig | StdioMcpServerConfig;
 
 export interface UserMessage {
   role: "user";
+  source?: "subagent_result" | "delegation";
   content: ContentBlock[];
 }
 
@@ -62,6 +63,53 @@ export interface SkillDescriptor {
 }
 
 // ─── Adapter input ───────────────────────────────────────────────────────────
+
+/** Host-bound authority; identity and persistence never come from model arguments. */
+export interface SubagentCallContext {
+  toolUseId: string;
+  signal?: AbortSignal;
+  /** Current Turn Complete events only (no history/prompt), including the waiting tool request. */
+  checkpoint: SessionEvent[];
+}
+
+export interface HostSubagentCapability {
+  delegate(input: {
+    prompt: string;
+    resume?: string;
+    runInBackground: boolean;
+    model?: string;
+    thinking?: string;
+    maxSteps?: number;
+  }, context: SubagentCallContext): Promise<unknown>;
+  getResult(input: { childId: string; executionId?: string; wait: boolean }, context: SubagentCallContext): Promise<unknown>;
+  steer(input: { childId: string; executionId?: string; message: string }, context: SubagentCallContext): Promise<unknown>;
+}
+
+export interface DelegationInstruction {
+  id: string;
+  message: string;
+}
+
+export interface AdapterExecution {
+  isChild?: boolean;
+  /** Model loop steps, not OMA Turns. Children default to 30; maximum 1000. */
+  maxModelSteps?: number;
+  thinking?: string;
+  /** Already persisted model requests in this same Turn during recovery. */
+  completedModelSteps?: number;
+  /** Persist the actual configuration under the execution lease before starting Pi. */
+  onResolved?(config: {
+    model: string;
+    thinking: string;
+    modelSource?: string;
+    thinkingSource: string;
+  }): Promise<void>;
+  steering?: {
+    /** Persist the instruction's canonical history before returning it here. */
+    takePending(): Promise<DelegationInstruction[]>;
+    applied(id: string): Promise<void>;
+  };
+}
 
 export interface AdapterInput {
   sessionId: string;
@@ -97,6 +145,10 @@ export interface AdapterInput {
     skillDescriptors?: SkillDescriptor[];
   };
   history: SessionEvent[];
+  subagents?: HostSubagentCapability;
+  execution?: AdapterExecution;
+  /** Resume the existing Turn from history, after Host persists these results. */
+  continuation?: { toolResults: AgentToolResultEvent[] };
   constraints?: {
     timeoutSeconds?: number;
     sandbox?: "none" | "read-only" | "workspace-write" | "full-access";
@@ -227,6 +279,11 @@ export interface AgentToolUseEvent extends BaseEvent {
   toolUseId: string;
   name: string;
   input: Record<string, unknown>;
+  inputIncomplete?: boolean;
+  rawInput?: string;
+  provider?: string;
+  api?: string;
+  model?: string;
 }
 
 export interface AgentToolResultEvent extends BaseEvent {

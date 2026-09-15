@@ -242,7 +242,7 @@ export const WorkspaceListSchema = z
   .openapi("WorkspaceList");
 
 export const SessionStatusSchema = z
-  .enum(["idle", "running", "terminated"])
+  .enum(["idle", "running", "waiting", "terminated"])
   .openapi("SessionStatus");
 
 const LoopNameSchema = z
@@ -434,3 +434,21 @@ export const DeletedSchema = z
 export const PathResultSchema = z
   .object({ path: z.string() })
   .openapi("PathResult");
+
+export const DelegationOriginSchema = z.object({ parentSessionId: z.string(), parentTurnId: z.string(), parentToolUseId: z.string() }).openapi("DelegationOrigin");
+export const DelegationExecutionSchema = z.object({
+  id: z.string(), childId: z.string(), callerSessionId: z.string(), callerTurnId: z.string(), callerToolUseId: z.string(),
+  prompt: z.string(), mode: z.string(), status: z.string().openapi({ description: "Execution state; clients preserve unknown future states." }),
+  turnId: z.string().optional(), model: z.string().optional(), thinking: z.string().optional(), maxSteps: z.number().int(),
+  effectiveConfig: z.object({ model: z.unknown().optional(), thinking: z.unknown().optional(), maxSteps: z.unknown().optional(), modelSource: z.unknown().optional(), thinkingSource: z.unknown().optional() }).optional(),
+  result: z.object({ status: z.string(), reason: z.string(), output: z.string(), trace: z.object({ sessionId: z.string(), turnId: z.string().optional(), afterSeq: z.number().optional() }) }).optional(),
+  notificationStatus: z.string().optional(), createdAt: DateTimeSchema, updatedAt: DateTimeSchema,
+  commands: z.array(z.object({ id: z.string(), executionId: z.string(), kind: z.string(), message: z.string(), status: z.string(), createdAt: DateTimeSchema, appliedEventSeq: z.number().optional(), callerSessionId: z.string(), callerTurnId: z.string(), callerToolUseId: z.string() })).optional(),
+}).openapi("DelegationExecution");
+export const DelegationListSchema = z.object({ data: z.array(DelegationExecutionSchema), has_more: z.boolean(), next_cursor: z.string().optional(), origin: DelegationOriginSchema.optional() }).openapi("DelegationList");
+export const DelegationTraceSchema = z.object({
+  execution: DelegationExecutionSchema, workspaceId: z.string(), data: z.array(StoredEventSchema),
+  deltas: z.array(z.object({ type: z.string(), data: z.unknown(), turnId: z.string(), blockIndex: z.number(), deltaId: z.string(), ts: DateTimeSchema })),
+  has_more: z.boolean(), next_cursor: z.number(), usage: TokenUsageSchema,
+}).openapi("DelegationTrace");
+export const DelegationUsageSchema = z.object({ self: TokenUsageSchema, delegated: TokenUsageSchema, total: TokenUsageSchema, scope: z.string() }).openapi("DelegationUsage");

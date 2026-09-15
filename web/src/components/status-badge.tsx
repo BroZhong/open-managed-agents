@@ -1,12 +1,13 @@
 import { cn } from "@/lib/utils";
 
 interface StatusBadgeProps {
-  status: "idle" | "running" | "terminated";
+  status: "idle" | "running" | "waiting" | "terminated";
 }
 
 const statusStyles: Record<StatusBadgeProps["status"], string> = {
   idle: "bg-neutral-100 text-neutral-600",
   running: "bg-green-100 text-green-700",
+  waiting: "bg-amber-100 text-amber-700",
   terminated: "bg-red-100 text-red-700",
 };
 

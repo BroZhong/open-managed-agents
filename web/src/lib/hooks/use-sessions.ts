@@ -9,7 +9,7 @@ import { apiFetch } from "@/lib/api";
 export interface Session {
   id: string;
   agentId: string;
-  status: "idle" | "running" | "terminated";
+  status: "idle" | "running" | "waiting" | "terminated";
   /** Snapshot of the user's first message; the console shows `title ?? id`. */
   title?: string;
   /** The Workspace this Session is bound to (used to group by workspace). */

@@ -24,6 +24,7 @@ export class PiEventTranslator {
   private textAccumulator = "";
   private thinkingAccumulator = "";
   private pendingProviderError: string | undefined;
+  private readonly partialToolCalls = new Map<string, { name: string; rawInput: string }>();
   /**
    * How many of the current assistant message's text blocks already became an
    * `agent.message`. Pi emits `text_end` per finished text block, but an
@@ -159,6 +160,7 @@ export class PiEventTranslator {
             // with args still filling in). Surface them so streamed input chunks
             // can be attributed to a specific call even when several run at once.
             const tc = toolCallAt(ame.partial, ame.contentIndex);
+            if (tc) this.partialToolCalls.set(tc.id, { name: tc.name, rawInput: "" });
             events.push({
               id: generateEventId(),
               timestamp: generateTimestamp(),
@@ -172,6 +174,8 @@ export class PiEventTranslator {
           case "toolcall_delta":
             if (ame.delta) {
               const tc = toolCallAt(ame.partial, ame.contentIndex);
+              const partialCall = tc && this.partialToolCalls.get(tc.id);
+              if (partialCall) partialCall.rawInput += ame.delta;
               events.push({
                 id: generateEventId(),
                 timestamp: generateTimestamp(),
@@ -192,6 +196,7 @@ export class PiEventTranslator {
             } as SessionEvent);
             const toolCall = ame.toolCall;
             if (toolCall) {
+              this.partialToolCalls.delete(toolCall.id);
               const input = asRecord(toolCall.arguments);
               const mcpInvocation = identifyMcpInvocation(
                 toolCall.name,
@@ -220,6 +225,7 @@ export class PiEventTranslator {
                   toolUseId: toolCall.id,
                   name: toolCall.name,
                   input,
+                  provider: this.currentProvider, api: this.currentApi, model: this.currentModel,
                 } as SessionEvent);
               }
             }
@@ -303,6 +309,13 @@ export class PiEventTranslator {
             );
             this.emittedTextBlocks++;
           }
+          if (message.stopReason === "aborted" || message.stopReason === "error") {
+            for (const [toolUseId, partial] of this.partialToolCalls) {
+              events.push({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.tool_use", toolUseId, name: partial.name, input: {}, inputIncomplete: true, rawInput: partial.rawInput, provider: this.currentProvider, api: this.currentApi, model: this.currentModel });
+              events.push({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.tool_result", toolUseId, isError: true, content: [{ type: "text", text: `Tool was not executed: argument stream ${message.stopReason === "aborted" ? "interrupted" : "failed"}.` }] });
+            }
+          }
+          this.partialToolCalls.clear();
           this.pendingProviderError =
             message.stopReason === "error"
               ? message.errorMessage?.trim() || "Pi provider request failed"

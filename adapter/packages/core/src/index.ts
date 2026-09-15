@@ -13,6 +13,10 @@ export type {
   SkillDescriptor,
   // Input
   AdapterInput,
+  AdapterExecution,
+  DelegationInstruction,
+  HostSubagentCapability,
+  SubagentCallContext,
   // Lifecycle events
   SessionStatusRunningEvent,
   SessionStatusIdleEvent,

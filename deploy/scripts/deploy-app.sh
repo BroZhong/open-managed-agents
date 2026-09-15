@@ -119,7 +119,7 @@ echo "Mode:    image-only rollout"
 # a side effect. The full manifest was already validated above; mutate only the
 # container image fields that identify this release.
 kubectl_agent_platform -n "${NAMESPACE}" set image \
-  deployment/oma-server "server=${server_image}"
+  deployment/oma-server "server=${server_image}" "seed-pi-auth=${server_image}"
 kubectl_agent_platform -n "${NAMESPACE}" set image \
   deployment/oma-web "web=${web_image}"
 kubectl_agent_platform -n "${NAMESPACE}" rollout status deploy/oma-server --timeout="${ROLLOUT_TIMEOUT}"

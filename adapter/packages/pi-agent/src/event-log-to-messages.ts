@@ -86,6 +86,17 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
     const record = event as unknown as EventRecord;
 
     switch (record.type) {
+      // A result notification is visible immediately in UI, but only a Host
+      // claim admits it to model history. Never inject subagent.result itself.
+      case "subagent.result_claimed":
+      case "subagent.instruction":
+      case "delegation.input": {
+        flushAssistant();
+        const source = record.type === "subagent.result_claimed" ? "subagent_result" : record.type === "subagent.instruction" ? "delegation_instruction" : "delegation";
+        const text = textFrom(pickContent(record)) || record.text || record.prompt || JSON.stringify(record.result ?? record.data?.result ?? {});
+        messages.push({ role: "user", content: [{ type: "text", text: `<${source}>\n${text}\n</${source}>` }], timestamp: 0 });
+        break;
+      }
       case "user.message": {
         flushAssistant();
         const content = normalizeUserContent(pickContent(record));
@@ -118,7 +129,14 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
       }
 
       case "agent.tool_use": {
+        if (record.inputIncomplete) {
+          if (record.toolUseId) discardedToolCallIds.add(record.toolUseId);
+          break;
+        }
         if (!pendingAssistant) pendingAssistant = { content: [] };
+        pendingAssistant.provider ??= record.provider;
+        pendingAssistant.api ??= record.api;
+        pendingAssistant.model ??= record.model;
         pendingAssistant.content.push({
           type: "toolCall",
           id: record.toolUseId ?? "",
@@ -192,11 +210,15 @@ export function eventLogToAgentMessages(history: SessionEvent[]): Message[] {
 interface EventRecord {
   type: string;
   content?: ContentBlock[];
-  data?: { content?: ContentBlock[] };
+  data?: { content?: ContentBlock[]; result?: unknown };
+  text?: string;
+  prompt?: string;
+  result?: unknown;
   toolUseId?: string;
   serverName?: string;
   name?: string;
   input?: Record<string, unknown>;
+  inputIncomplete?: boolean;
   isError?: boolean;
   provider?: string;
   api?: string;

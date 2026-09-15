@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, createContext, useContext } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, ChevronDown } from "lucide-react";
@@ -10,6 +10,9 @@ import {
 } from "@/lib/conversation-projection";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { ToolCard } from "@/components/tool-card";
+
+import { DelegationCard } from "@/components/delegation-card";
+const SessionContext = createContext("");
 
 interface Turn {
   id: string;
@@ -64,13 +67,17 @@ function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean
 }
 
 interface ConversationViewProps {
+  sessionId?: string;
+  focusToolUseId?: string;
   events: SessionEvent[];
   activeDeltas?: SessionDelta[];
-  sessionStatus: "idle" | "running";
+  sessionStatus: "idle" | "running" | "waiting";
 }
 
 export function ConversationView({
   events,
+  sessionId = "",
+  focusToolUseId,
   activeDeltas = [],
   sessionStatus,
 }: ConversationViewProps) {
@@ -123,10 +130,14 @@ export function ConversationView({
     setHasNewMessages(false);
   }
 
+  useEffect(() => {
+    if (focusToolUseId) document.getElementById(`tool-${focusToolUseId}`)?.scrollIntoView({ block: "center" });
+  }, [focusToolUseId, events.length]);
+
   const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
 
   return (
-    <div className="relative flex h-full flex-col">
+    <SessionContext.Provider value={sessionId}><div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto max-w-3xl space-y-6">
           {messages.length === 0 && (
@@ -138,6 +149,7 @@ export function ConversationView({
             <TurnBlock
               key={turn.id}
               turn={turn}
+              focusToolUseId={focusToolUseId}
               isLast={idx === turns.length - 1}
             />
           ))}
@@ -155,11 +167,11 @@ export function ConversationView({
           New messages
         </button>
       )}
-    </div>
+    </div></SessionContext.Provider>
   );
 }
 
-function TurnBlock({ turn, isLast }: { turn: Turn; isLast: boolean }) {
+function TurnBlock({ turn, isLast, focusToolUseId }: { turn: Turn; isLast: boolean; focusToolUseId?: string }) {
   const [expanded, setExpanded] = useState(false);
 
   // Find the last assistant/streaming message in the responses
@@ -168,7 +180,7 @@ function TurnBlock({ turn, isLast }: { turn: Turn; isLast: boolean }) {
     .find((m) => m.role === "assistant" || m.role === "assistant_streaming");
 
   // Should this turn be collapsible?
-  const shouldCollapse = turn.isComplete && !isLast && turn.responses.length > 1;
+  const shouldCollapse = turn.isComplete && !isLast && turn.responses.length > 1 && !turn.responses.some((message) => focusToolUseId && message.toolUseId === focusToolUseId);
   const showCollapsed = shouldCollapse && !expanded;
 
   // Count how many items are hidden
@@ -217,6 +229,7 @@ function TurnBlock({ turn, isLast }: { turn: Turn; isLast: boolean }) {
 }
 
 function MessageBubble({ message }: { message: DisplayMessage }) {
+  const sessionId = useContext(SessionContext);
   switch (message.role) {
     case "user":
       return <UserBubble text={message.text} />;
@@ -224,6 +237,10 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
       return <AssistantBubble text={message.text} aborted={message.aborted} />;
     case "assistant_streaming":
       return <AssistantBubble text={message.text} isStreaming />;
+    case "instruction":
+      return <div className="rounded-xl border border-blue-200 p-3 text-sm"><strong>Delegated instruction</strong><p className="whitespace-pre-wrap">{message.text}</p></div>;
+    case "notification":
+      return <div className="rounded-xl border border-blue-200 p-3 text-sm"><strong>Subagent result</strong><p className="whitespace-pre-wrap">{message.text}</p></div>;
     case "thinking":
       return (
         <ThinkingBlock
@@ -232,6 +249,7 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
         />
       );
     case "tool_use":
+      if (sessionId && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} />;
       return (
         <ToolCard
           name={message.name || "unknown"}

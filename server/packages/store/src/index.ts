@@ -141,3 +141,8 @@ export type {
   PoolClient,
   PgConnectionConfig,
 } from "./postgres/index.js";
+
+export type * from "./interfaces/delegation-store.js";
+export { TransactionalDelegationStore, delegationFenceLost } from "./delegation-store.js";
+export type { DelegationTransaction, DelegationRecord, DelegationTable } from "./delegation-store.js";
+export { PgDelegationStore } from "./postgres/delegation-store.js";

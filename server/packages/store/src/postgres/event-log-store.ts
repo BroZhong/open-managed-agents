@@ -260,6 +260,7 @@ export class PgEventLogStore implements EventLogIngressStore {
     const limit = opts?.limit ?? 50;
     const params: unknown[] = [sessionId];
     let where = `session_id = $1`;
+    if (opts?.turnId) { params.push(opts.turnId); where += ` AND data->>'turnId' = $${params.length}`; }
     if (opts?.afterSeq !== undefined) {
       params.push(opts.afterSeq);
       where += ` AND seq > $${params.length}`;
@@ -277,11 +278,12 @@ export class PgEventLogStore implements EventLogIngressStore {
 
   async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {
     const bySession = "sessionId" in scope;
+    const byCaller = "callerSessionId" in scope;
     const { rows } = await this.pool.query<UsageAggregateRow>(
       `SELECT ${USAGE_SUMS} FROM events
        WHERE type = 'span.model_request_end'
-         AND ${bySession ? "session_id" : "api_key_id"} = $1`,
-      [bySession ? scope.sessionId : scope.apiKeyId],
+         AND ${bySession ? "session_id" : byCaller ? "data->>'callerSessionId'" : "api_key_id"} = $1${bySession && scope.turnId ? " AND data->>'turnId' = $2" : ""}`,
+      [bySession ? scope.sessionId : byCaller ? scope.callerSessionId : scope.apiKeyId, ...(bySession && scope.turnId ? [scope.turnId] : [])],
     );
     return summarizeUsage(rows[0]);
   }

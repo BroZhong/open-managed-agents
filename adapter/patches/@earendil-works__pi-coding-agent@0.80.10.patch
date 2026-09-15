@@ -829,3 +829,37 @@ index 624a3da..4d975fc 100644
 +export { detectSupportedImageMimeType } from "./utils/mime.js";
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -747,10 +747,17 @@
+     // =========================================================================
+     // Prompting
+     // =========================================================================
++    /** Continue a Host-restored structured transcript with normal SDK recovery. */
++    async continue() {
++        if (!this.isIdle) throw new Error("Agent session is already processing");
++        if (!this.model) throw new Error("No model selected");
++        await this._runAgentPrompt(undefined);
++    }
+     async _runAgentPrompt(messages) {
+         this._isAgentRunActive = true;
+         try {
+-            await this.agent.prompt(messages);
++            if (messages === undefined) await this.agent.continue();
++            else await this.agent.prompt(messages);
+             while (await this._handlePostAgentRun()) {
+                 await this.agent.continue();
+             }
+diff --git a/dist/core/agent-session.d.ts b/dist/core/agent-session.d.ts
+--- a/dist/core/agent-session.d.ts
++++ b/dist/core/agent-session.d.ts
+@@ -340,6 +340,8 @@
+      * @throws Error if no model selected or no API key available (when not streaming)
+      */
+     prompt(text: string, options?: PromptOptions): Promise<void>;
++    /** Continue the current structured transcript, retaining SDK retries and compaction. */
++    continue(): Promise<void>;
+     private _tryExecuteExtensionCommand;
+     /**
+      * Expand skill commands (/skill:name args) to their full content.

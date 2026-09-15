@@ -21,7 +21,9 @@ import type {
   AdapterInput,
   SessionEvent,
   SkillDescriptor,
+  DelegationInstruction,
 } from "@open-managed-agents/adapter-core";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
@@ -33,11 +35,7 @@ import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { mcpGatewayToolName } from "./mcp-gateway.js";
 import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
-import {
-  createManagedSubagentToolsExtension,
-  createManagedSubagentUsageExtension,
-  type ManagedSubagentUsage,
-} from "./subagent-tool-bridge.js";
+import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 
 /**
@@ -49,6 +47,8 @@ import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 export interface PiSessionLike {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: PromptOptions): Promise<void>;
+  /** Continue the original Turn after its durable pending tool results are supplied. */
+  continue?(): Promise<void>;
   /**
    * Pi's native "Abort current operation and wait for agent to become idle"
    * (issue #84). We call it when `input.signal` fires so a user interrupt can
@@ -113,8 +113,8 @@ export interface SessionFactoryArgs {
    * the factory args so the adapter-seam test can assert them directly.
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
-  /** Receives each provider-reported child model request exactly once. */
-  onSubagentUsage(usage: ManagedSubagentUsage): void;
+  checkpoint(): SessionEvent[];
+  beforeModelStep(): Promise<DelegationInstruction[]>;
 }
 
 /**
@@ -226,24 +226,6 @@ function derivePiSessionId(omaSessionId: string): string {
   return `oma-${digest.slice(0, 60)}`;
 }
 
-type PiRunQueueItem =
-  | { source: "parent"; event: AgentSessionEvent }
-  | { source: "subagent"; usage: ManagedSubagentUsage };
-
-function subagentUsageEvent(usage: ManagedSubagentUsage): SessionEvent {
-  return {
-    id: generateEventId(),
-    timestamp: generateTimestamp(),
-    type: "span.model_request_end",
-    usage: {
-      inputTokens: usage.input + usage.cacheRead + usage.cacheWrite,
-      outputTokens: usage.output,
-      cacheReadTokens: usage.cacheRead,
-      cacheWriteTokens: usage.cacheWrite,
-    },
-  };
-}
-
 /**
  * Render the Agent-owned MCP list into the standard config shape consumed by
  * `pi-mcp-adapter`. The file is deliberately per Turn: two Agents may use the
@@ -294,57 +276,64 @@ export class PiAgentAdapter implements Adapter {
     // adapter now yields only real content/errors.
     let session: PiSessionLike | undefined;
     try {
-      const prompt = input.message.content
+      const promptText = input.message.content
         .filter((b) => b.type === "text")
         .map((b) => (b as { type: "text"; text: string }).text)
         .join("");
+      const prompt = input.message.source ? `<${input.message.source}>\n${promptText}\n</${input.message.source}>` : promptText;
 
       // Rebuild structured history from the event log (ADR-0003). Prior turns —
       // text, tool calls, and tool results — are replayed into the session so
       // they survive into the model's context via the Pi provider layer, rather
       // than being flattened into the prompt string. Empty on the first turn.
-      const historyMessages = eventLogToAgentMessages(input.history);
+      if (input.execution?.isChild && !input.toolExecutor) throw new Error("Child execution requires its own managed ToolExecutor");
+      if (input.execution?.isChild && (input.subagents || input.agent.mcpServers?.length)) throw new Error("Child executions cannot inherit delegation or MCP capabilities");
+      const history = continuationHistory(input);
+      const historyMessages = eventLogToAgentMessages(history);
 
       // Resolve custom models and auth through the same Pi runtime used by
       // this Turn. Catalog refresh belongs to deployment; avoid network
       // discovery on every managed Turn.
       const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
       const model = resolveModel(this.model ?? input.agent.model, modelRuntime);
-      const thinkingLevel = highestThinkingLevel(model);
+      const requestedThinking = input.execution?.thinking;
+      if (requestedThinking !== undefined && !getSupportedThinkingLevels(model).includes(requestedThinking as ModelThinkingLevel)) throw new Error(`Unsupported thinking level: ${requestedThinking}`);
+      const thinkingLevel = requestedThinking as ModelThinkingLevel | undefined ?? highestThinkingLevel(model);
+      await input.execution?.onResolved?.({
+        model: `${model.provider}/${model.id}`,
+        thinking: thinkingLevel,
+        thinkingSource: requestedThinking === undefined ? "model_default" : "override",
+      });
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
 
-      // The child extension reports usage while prompt() is running, outside
-      // the parent AgentSession subscription. Merge both push sources into one
-      // ordered queue so already-reported child usage drains before a later
-      // parent failure or abort closes the turn.
-      const queue = new EventQueue<PiRunQueueItem>();
-
+      const queue = new EventQueue<SessionEvent>();
+      const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
+      const checkpointEvents: SessionEvent[] = [];
+      const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 30 : undefined);
+      if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
+      let steps = input.execution?.completedModelSteps ?? 0;
+      if (!Number.isInteger(steps) || steps < 0) throw new Error("completedModelSteps must be a non-negative integer");
+      let budgetExceeded = false;
       session = await this.createSession({
-        input,
-        prompt,
-        historyMessages,
-        model,
-        thinkingLevel,
-        modelRuntime,
-        hasToolExecutor,
-        resourceLoaderOptions,
-        onSubagentUsage(usage) {
-          queue.push({ source: "subagent", usage });
+        input, prompt, historyMessages, model, thinkingLevel, modelRuntime, hasToolExecutor, resourceLoaderOptions,
+        checkpoint: () => structuredClone(checkpointEvents),
+        async beforeModelStep() {
+          if (maxSteps !== undefined && steps >= maxSteps) {
+            budgetExceeded = true;
+            throw new Error(`Model step budget exhausted (${maxSteps})`);
+          }
+          steps++;
+          return await input.execution?.steering?.takePending() ?? [];
         },
       });
-
-      const translator = new PiEventTranslator(
-        input.agent.mcpServers?.map(({ name }) => name) ?? [],
-      );
-
-      // Bridge the push-based subscribe() into a pull queue. The listener
-      // enqueues each SDK event; the async generator below drains it. Only the
-      // settlement of session.prompt() ends the queue: agent_end is an inner
-      // agent-loop boundary, and Pi may compact + continue even after an
-      // agent_end whose willRetry flag is false.
+      // Translate synchronously, before a following tool execute callback can
+      // register a durable wait. The snapshot and emitted events share IDs.
       const unsubscribe = session.subscribe((event) => {
-        queue.push({ source: "parent", event });
+        for (const translated of translator.processEvent(event)) {
+          if (!translated.type.includes("_stream_") && !translated.type.endsWith("_chunk")) checkpointEvents.push(translated);
+          queue.push(translated);
+        }
       });
 
       // Wire the router's per-turn abort signal to Pi's native cancel (issue
@@ -376,7 +365,10 @@ export class PiAgentAdapter implements Adapter {
         // continuation; output arrives via the subscription. A rejection here
         // (bad model, no auth, ...) is surfaced through the queue so it becomes
         // a single session.error rather than an uncaught throw.
-        session.prompt(prompt).then(
+        const operation = input.continuation
+          ? (session.continue ? session.continue() : Promise.reject(new Error("Pi session does not support structured continuation")))
+          : session.prompt(prompt);
+        operation.then(
           () => {
             // Close on the next tick so any events synchronously following the
             // prompt settlement are enqueued first. Buffered events still drain
@@ -388,17 +380,12 @@ export class PiAgentAdapter implements Adapter {
           },
         );
 
-        for await (const item of queue) {
-          if (item.source === "subagent") {
-            yield subagentUsageEvent(item.usage);
-            continue;
-          }
-          for (const e of translator.processEvent(item.event)) yield e;
+        for await (const event of queue) yield event;
+        if (budgetExceeded) {
+          yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.error", error: { message: `Model step budget exhausted (${maxSteps})`, code: "model_step_budget_exhausted" } };
+        } else {
+          for (const e of translator.finalize()) yield e;
         }
-        // A provider failure is final only now, after prompt() has settled and
-        // every retry/compaction continuation event has drained. A later
-        // successful assistant message clears any earlier pending failure.
-        for (const e of translator.finalize()) yield e;
       } finally {
         unsubscribe();
         if (signal) signal.removeEventListener("abort", onAbort);
@@ -409,7 +396,7 @@ export class PiAgentAdapter implements Adapter {
         id: generateEventId(),
         timestamp: generateTimestamp(),
         type: "session.error",
-        error: { message: msg, code: "pi_agent_error" },
+        error: { message: msg, code: msg.startsWith("Model step budget exhausted") ? "model_step_budget_exhausted" : "pi_agent_error" },
       } as SessionEvent;
     } finally {
       try {
@@ -429,13 +416,12 @@ export class PiAgentAdapter implements Adapter {
     // built-in fs/bash tools ("builtin") and register custom tools that proxy
     // into the executor (ADR-0002 §2). When absent, keep Pi's default tools.
     const customTools = args.input.toolExecutor
-      ? buildCustomTools(args.input.toolExecutor)
+      ? [...buildCustomTools(args.input.toolExecutor), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents, args.checkpoint) : [])]
       : undefined;
 
     const agentDir = getAgentDir();
     // A sandboxed Pi session must expose the same cwd as its seven custom
-    // tools and the SandboxManager. This cwd also flows into extension ctx and
-    // @tintinweb/pi-subagents' effectiveCwd. Unsandboxed Pi keeps the Host cwd.
+    // tools and the SandboxManager. Unsandboxed Pi keeps the Host cwd.
     const cwd = customTools ? SANDBOX_WORKSPACE_ROOT : process.cwd();
     const skillPaths = args.resourceLoaderOptions.additionalSkillPaths;
     const skillDescriptors = args.resourceLoaderOptions.skillDescriptors;
@@ -478,27 +464,19 @@ export class PiAgentAdapter implements Adapter {
       const resourceLoader = new DefaultResourceLoader({
         cwd,
         agentDir,
-        // Each managed Turn owns an EventBus. The subagent bridge passes tool
-        // definitions over this in-process bus, so concurrent parents have no
-        // shared capability registry.
         eventBus: createEventBus(),
         appendSystemPrompt,
-        // The pinned @tintinweb/pi-subagents child path requires this parent's
-        // exact managed tools and fails closed when they are absent. Install
-        // both its capability responder and its independent usage listener only
-        // on that managed path; a native Pi run gets neither EventBus surface.
-        ...(customTools
-          ? {
-              extensionFactories: [
-                createManagedSubagentUsageExtension(args.onSubagentUsage),
-                createManagedSubagentToolsExtension(customTools, args.modelRuntime),
-                createManagedSkillCommandExtension(skillDescriptors),
-              ],
-            }
-          : {}),
+        noExtensions: args.input.execution?.isChild === true,
+        noPromptTemplates: args.input.execution?.isChild === true,
+        noThemes: args.input.execution?.isChild === true,
+        // Exclude a stale deployment's legacy delegation registration. It must
+        // never compete with the Host-owned tools, including in local dev.
+        extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter(extension =>
+          !["Agent", "get_subagent_result", "steer_subagent"].some(name => extension.tools.has(name))) }),
+        ...(customTools ? { extensionFactories: [createManagedSkillCommandExtension(skillDescriptors)] } : {}),
         // When we inject the skills section ourselves (custom-tool path), skip
         // Pi's own skill loading so the section is not duplicated / re-gated.
-        ...(injectSkillsIntoPrompt
+        ...(injectSkillsIntoPrompt || args.input.execution?.isChild
           ? { noSkills: true }
           : { additionalSkillPaths: skillPaths }),
         noContextFiles: args.resourceLoaderOptions.noContextFiles,
@@ -541,6 +519,29 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
+      const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
+      const transformContext = session.agent.transformContext;
+      session.agent.transformContext = async (messages, signal) => {
+        const instructions = await args.beforeModelStep();
+        for (const instruction of instructions) {
+          if (appliedInstructions.has(instruction.id)) {
+            await args.input.execution?.steering?.applied(instruction.id);
+            continue;
+          }
+          const message = {
+            role: "custom" as const, customType: "subagent.instruction",
+            content: [{ type: "text" as const, text: `<delegation_instruction>\n${instruction.message}\n</delegation_instruction>` }],
+            display: true, details: { instructionId: instruction.id }, timestamp: Date.now(),
+          };
+          // The Host has already persisted this instruction with its stable ID.
+          // Keep both live transcript and this request's context in agreement.
+          session.agent.state.messages = [...session.agent.state.messages, message];
+          messages = [...messages, message];
+          appliedInstructions.add(instruction.id);
+          await args.input.execution?.steering?.applied(instruction.id);
+        }
+        return transformContext ? transformContext(messages, signal) : messages;
+      };
 
       // SDK consumers own extension lifecycle binding. CLI modes do this for
       // themselves, but a bare createAgentSession() does not emit
@@ -553,6 +554,7 @@ export class PiAgentAdapter implements Adapter {
       return {
         subscribe: active.subscribe.bind(active),
         prompt: active.prompt.bind(active),
+        continue: session.continue.bind(session),
         abort: active.abort.bind(active),
         async dispose() {
           if (disposed) return;
@@ -560,7 +562,7 @@ export class PiAgentAdapter implements Adapter {
           try {
             // AgentSession.dispose() invalidates extension contexts but does
             // not emit session_shutdown. Give extensions their documented
-            // cleanup event first so MCP connections, subagent watchers, and
+            // cleanup event first so MCP connections and
             // web-access state cannot leak beyond the managed Turn.
             await session.extensionRunner.emit({
               type: "session_shutdown",
@@ -662,4 +664,18 @@ class EventQueue<T> implements AsyncIterable<T> {
       },
     };
   }
+}
+
+function continuationHistory(input: AdapterInput): SessionEvent[] {
+  if (!input.continuation) return input.history;
+  const history = [...input.history];
+  const completed = new Set(history.filter(e => e.type === "agent.tool_result" || e.type === "agent.mcp_tool_result").map(e => (e as {toolUseId: string}).toolUseId));
+  const pending = new Set(history.filter(e => e.type === "agent.tool_use" || e.type === "agent.mcp_tool_use").map(e => (e as {toolUseId: string}).toolUseId).filter(id => !completed.has(id)));
+  for (const result of input.continuation.toolResults) {
+    if (completed.has(result.toolUseId)) continue;
+    if (!pending.has(result.toolUseId)) throw new Error(`Continuation result has no pending tool call: ${result.toolUseId}`);
+    history.push(result); pending.delete(result.toolUseId); completed.add(result.toolUseId);
+  }
+  if (pending.size) throw new Error(`Continuation requires durable results for pending tool calls: ${[...pending].join(", ")}`);
+  return history;
 }

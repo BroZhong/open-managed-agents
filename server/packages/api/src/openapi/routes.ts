@@ -1,5 +1,8 @@
 import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import {
+  DelegationListSchema,
+  DelegationTraceSchema,
+  DelegationUsageSchema,
   AgentFileListSchema,
   AgentFileNameSchema,
   AgentFileSchema,
@@ -875,7 +878,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "appendSessionEvents",
     summary: "Append User events to a Session",
     description:
-      "Send user.message to start or continue Agent execution. user.message, user.tool_confirmation, and user.custom_tool_result are queued durably; 202 acknowledges acceptance, not Turn completion. user.define_outcome is stored directly and must be submitted alone. Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch: it requests that the active Turn stop and leaves queued input eligible to run; interrupted reports whether a Turn was actually stopped. Receive output through GET /v1/sessions/{id}/events with Accept: text/event-stream.",
+      "Send user.message to start or continue Agent execution. user.message, user.tool_confirmation, and user.custom_tool_result are queued durably; 202 acknowledges acceptance, not Turn completion. user.define_outcome is stored directly and must be submitted alone. Queued and direct events cannot be mixed. user.interrupt must be the only event in its batch: it requests that the active Turn stop and leaves queued input eligible to run; requested reports whether a durable Interrupt command was accepted; interrupted remains false until an actual stop is observed through durable Turn events. Receive output through GET /v1/sessions/{id}/events with Accept: text/event-stream.",
     tags: ["Sessions/Events"],
     request: {
       params: idParams,
@@ -890,6 +893,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         z.object({
           accepted: z.literal(true),
           interrupted: z.boolean(),
+          requested: z.boolean().optional(),
         }),
         "Events accepted",
       ),
@@ -1190,6 +1194,27 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       400: errorResponse("Invalid file path"),
       404: errorResponse("Workspace or file not found"),
     },
+  }),
+  ...[false, true].map((origin) => protectedRoute({
+    method: "get",
+    path: origin ? "/v1/sessions/{id}/delegation-origin" : "/v1/sessions/{id}/delegations",
+    operationId: origin ? "getDelegationOrigin" : "listDelegations",
+    summary: origin ? "Read child Session creation source and execution history" : "List this Session's delegated executions",
+    tags: ["Sessions"],
+    request: { params: idParams, query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional(), after_id: z.string().optional(), tool_use_id: z.string().optional(), turn_id: z.string().optional() }) },
+    responses: { 200: jsonResponse(DelegationListSchema, "Persisted execution references and creation source"), 404: errorResponse("Session not found") },
+  })),
+  protectedRoute({
+    method: "get", path: "/v1/sessions/{id}/delegations/{executionId}/events", operationId: "getDelegationTrace",
+    summary: "Read one delegated execution's bounded trace and current Delta snapshot",
+    description: "id must identify the execution's child or calling Session in the authenticated Tenant. Events and usage are scoped to this execution's Turn. Request subsequent pages with after_seq; the last page includes the active Turn's transient Delta snapshot. Poll from next_cursor to reconnect without loading any other execution's history.",
+    tags: ["Sessions"],
+    request: { params: z.object({ id: z.string(), executionId: z.string() }), query: z.object({ after_seq: z.coerce.number().int().min(0).optional(), limit: z.coerce.number().int().min(1).max(100).optional() }) },
+    responses: { 200: jsonResponse(DelegationTraceSchema, "Execution metadata, Complete Events, Delta projection and execution-only usage"), 404: errorResponse("Session or related execution not found") },
+  }),
+  protectedRoute({
+    method: "get", path: "/v1/sessions/{id}/delegation-usage", operationId: "getDelegationUsage", summary: "Read Session and directly delegated usage separately", tags: ["Sessions"], request: { params: idParams },
+    responses: { 200: jsonResponse(DelegationUsageSchema, "Disjoint Session and child execution model usage, plus their sum"), 404: errorResponse("Session not found") },
   }),
 ] as const;
 

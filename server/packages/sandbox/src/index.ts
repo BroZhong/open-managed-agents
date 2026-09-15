@@ -52,4 +52,5 @@ export {
   type SandboxManagerDeps,
   type SandboxDescriptor,
   type EnvSpec,
+  type SandboxEnvironmentBinding,
 } from "./sandbox-manager.js";

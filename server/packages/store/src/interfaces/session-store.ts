@@ -22,6 +22,7 @@ export interface SessionStoreCreateInput {
    */
   workspaceId: string;
   loopId?: string;
+  delegation?: import("./delegation-store.js").DelegationOrigin;
 }
 
 export interface SessionStore {

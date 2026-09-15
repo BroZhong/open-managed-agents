@@ -675,11 +675,11 @@ describe("E2BSandboxClient", () => {
     expect(await client.isAlive(id)).toBe(false);
   });
 
-  it("isAlive treats an isRunning transport error as not alive", async () => {
+  it("does not reclaim a potentially live Sandbox on a transport error", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create();
     sandboxes[0].isRunningThrows = true;
-    expect(await client.isAlive(id)).toBe(false);
+    await expect(client.isAlive(id)).rejects.toThrow();
   });
 
   it("destroy kills the sandbox and is idempotent", async () => {

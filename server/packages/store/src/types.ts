@@ -78,7 +78,7 @@ export interface Workspace {
   createdAt: Date;
 }
 
-export type SessionStatus = "idle" | "running" | "terminated";
+export type SessionStatus = "idle" | "waiting" | "running" | "terminated";
 
 export interface Session {
   id: string;
@@ -97,6 +97,7 @@ export interface Session {
   workspaceId: string;
   /** Set only for Sessions automatically created by a Loop trigger. */
   loopId?: string;
+  delegation?: import("./interfaces/delegation-store.js").DelegationOrigin;
   createdAt: Date;
   updatedAt: Date;
   terminatedAt?: Date;

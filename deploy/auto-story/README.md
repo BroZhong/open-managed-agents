@@ -108,11 +108,11 @@ The [sandbox recipe](../sandbox/auto-story/README.md) builds and verifies the
 Secret. Existing Agents continue to use the existing default template.
 
 `deploy/Dockerfile.server` builds the full Host with the sanitized Pi catalog.
-For the current agentry installation, `Dockerfile.server` in this directory is
-an overlay on its verified existing Host digest, preserving its internal Sandbox
-Manager routing and egress fixes. It updates Pi to the locally verified version,
-refreshes the file-based server dependency, and reapplies the pinned subagent
-bridge against pristine extension source.
+`Dockerfile.server` in this directory accepts a required immutable `BASE_IMAGE`
+from a freshly built full Host release and layers the Pi model catalog onto it.
+Build the full Host first; the Adapter, durable delegation scheduler and database
+schema must come from the same release. Delegation uses the Host-owned tools and
+does not install a Pi subagent plugin.
 
 [Dockerfile.tools](Dockerfile.tools) updates the Pi tool source in an already
 verified Host image selected by its immutable `BASE_IMAGE`. Its preflight

@@ -125,6 +125,21 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   terminated_at  TIMESTAMPTZ
 );
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS delegation JSONB;
+
+-- One coordination lock orders quota admissions and multi-row transitions.
+CREATE TABLE IF NOT EXISTS ${s}.delegation_lock (id TEXT PRIMARY KEY);
+INSERT INTO ${s}.delegation_lock (id) VALUES ('coordination') ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS ${s}.delegation_executions (id TEXT PRIMARY KEY, record JSONB NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS delegation_caller_identity_idx ON ${s}.delegation_executions
+  ((record->>'tenantId'), (record->>'callerSessionId'), (record->>'callerTurnId'), (record->>'callerToolUseId'));
+CREATE UNIQUE INDEX IF NOT EXISTS delegation_pending_identity_idx ON ${s}.delegation_executions ((record->>'pendingEventId'));
+CREATE INDEX IF NOT EXISTS delegation_child_idx ON ${s}.delegation_executions ((record->>'tenantId'), (record->>'childId'));
+CREATE INDEX IF NOT EXISTS delegation_caller_idx ON ${s}.delegation_executions ((record->>'tenantId'), (record->>'callerSessionId'));
+CREATE TABLE IF NOT EXISTS ${s}.delegation_waits (id TEXT PRIMARY KEY, record JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS ${s}.delegation_commands (id TEXT PRIMARY KEY, record JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, record JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);
@@ -171,6 +186,8 @@ CREATE TABLE IF NOT EXISTS ${s}.pending_events (
   claim_expires_at   TIMESTAMPTZ,
   claim_generation   BIGINT NOT NULL DEFAULT 0
 );
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS interrupt_requested_at TIMESTAMPTZ;
+ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS interrupt_generation BIGINT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS api_key_id TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_owner TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ;

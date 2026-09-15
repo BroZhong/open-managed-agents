@@ -52,12 +52,19 @@ export class SandboxSessionClosed extends Error {
 
 /** Creates independent Session resources; their OSS Workspace may be shared. */
 export interface SandboxManager {
-  open(spec: EnvSpec): SandboxSession;
+  open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession;
   list(filter?: {
     tenantId?: string;
     workspaceId?: string;
   }): Promise<SandboxDescriptor[]>;
   reclaim(sandboxId: string): Promise<void>;
+}
+
+/** Infrastructure capability supplied separately from the serializable recipe. */
+export interface SandboxEnvironmentBinding {
+  withLock<T>(callback: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T>;
+  /** Evaluated inside withLock immediately before reclamation. */
+  canReclaim?(): Promise<boolean>;
 }
 
 export interface SandboxSession {
@@ -76,8 +83,8 @@ export interface SandboxSession {
 
 export class DefaultSandboxManager implements SandboxManager {
   constructor(private readonly deps: SandboxManagerDeps) {}
-  open(spec: EnvSpec): SandboxSession {
-    return new SandboxSessionImpl(this.deps, spec);
+  open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession {
+    return new SandboxSessionImpl(this.deps, spec, binding);
   }
   async list(_filter?: {
     tenantId?: string;
@@ -106,6 +113,7 @@ class SandboxSessionImpl implements SandboxSession {
   constructor(
     private readonly deps: SandboxManagerDeps,
     private readonly spec: EnvSpec,
+    private readonly binding?: SandboxEnvironmentBinding,
   ) {
     const legacyRoot = (spec as EnvSpec & { workspaceDir?: unknown })
       .workspaceDir;
@@ -193,16 +201,33 @@ class SandboxSessionImpl implements SandboxSession {
     this.projections = projections;
     if (this.ensuring) await this.ensuring;
     this.assertOpen();
-    const id = this.sandboxId;
-    if (!id || !(await this.deps.sandboxClient.isAlive(id))) return;
-    await this.verify(id);
-    for (const path of new Set(
-      [...this.projectedPaths, ...projections.map((projection) => projection.targetPath)],
-    )) {
-      await this.deps.sandboxClient.remove(id, path);
-      this.projectedPaths.delete(path);
-    }
-    await this.projectAll(id);
+    const refresh = async (id: string | null) => {
+      this.sandboxId = id ?? undefined;
+      if (!id) return { sandboxId: null, value: undefined };
+      if (await this.deps.sandboxClient.reconnect?.(id, this.metadata()) === false ||
+        !(await this.deps.sandboxClient.isAlive(id))) {
+        this.sandboxId = undefined;
+        return { sandboxId: null, value: undefined };
+      }
+      await this.verify(id);
+      if (this.binding) {
+        // Only Host-managed Skill roots live under /skills. Discover old roots
+        // after restart so renamed/unequipped projections can be removed.
+        for await (const _chunk of this.deps.sandboxClient.exec(id, ["mkdir", "-p", "/skills"])) { /* drain */ }
+        for (const entry of await this.deps.sandboxClient.list(id, "/skills")) {
+          const name = /^\/skills\/([^/]+)\//.exec(entry.path)?.[1];
+          if (name && name !== "." && name !== "..") this.projectedPaths.add(`/skills/${name}`);
+        }
+      }
+      for (const path of new Set([...this.projectedPaths, ...projections.map((projection) => projection.targetPath)])) {
+        await this.deps.sandboxClient.remove(id, path);
+        this.projectedPaths.delete(path);
+      }
+      await this.projectAll(id);
+      return { sandboxId: id, value: undefined };
+    };
+    if (this.binding) await this.binding.withLock(refresh);
+    else await refresh(this.sandboxId ?? null);
   }
 
   async checkWorkspace(): Promise<void> {
@@ -225,8 +250,16 @@ class SandboxSessionImpl implements SandboxSession {
       } catch {
         /* Failed create cleans up its resource. */
       }
-      const id = this.sandboxId;
-      if (id) await this.deps.sandboxClient.destroy(id);
+      const destroy = async (id: string | null) => {
+        if (this.binding?.canReclaim && !await this.binding.canReclaim()) return { sandboxId: id, value: undefined };
+        if (id) {
+          await this.deps.sandboxClient.reconnect?.(id, this.metadata());
+          await this.deps.sandboxClient.destroy(id);
+        }
+        return { sandboxId: null, value: undefined };
+      };
+      if (this.binding) await this.binding.withLock(destroy);
+      else await destroy(this.sandboxId ?? null);
       this.sandboxId = undefined;
       if (this.pendingCleanupId) {
         await this.deps.sandboxClient.destroy(this.pendingCleanupId);
@@ -259,7 +292,15 @@ class SandboxSessionImpl implements SandboxSession {
   private async ensure(): Promise<string> {
     this.assertOpen();
     if (!this.ensuring) {
-      this.ensuring = this.ensureLive().finally(() => {
+      const ensure = this.binding
+        ? this.binding.withLock(async (storedId) => {
+            this.sandboxId = storedId ?? undefined;
+            if (storedId && await this.deps.sandboxClient.reconnect?.(storedId, this.metadata()) === false) this.sandboxId = undefined;
+            const id = await this.ensureLive();
+            return { sandboxId: id, value: id };
+          })
+        : this.ensureLive();
+      this.ensuring = ensure.finally(() => {
         this.ensuring = undefined;
       });
     }
@@ -285,14 +326,7 @@ class SandboxSessionImpl implements SandboxSession {
       image: this.spec.image,
       env: this.spec.env,
       timeoutSeconds: this.deps.defaults?.lifetimeSeconds ?? 3600,
-      metadata: {
-        "oma.dev/tenant": this.spec.tenantId,
-        "oma.dev/workspace": this.spec.workspaceId,
-        ...workspaceMountMetadata(
-          this.spec.workspaceMount,
-          SANDBOX_WORKSPACE_ROOT,
-        ),
-      },
+      metadata: this.metadata(),
     });
     try {
       await this.verify(handle.id);
@@ -309,6 +343,13 @@ class SandboxSessionImpl implements SandboxSession {
       }
       throw error;
     }
+  }
+  private metadata(): Record<string, string> {
+    return {
+      "oma.dev/tenant": this.spec.tenantId,
+      "oma.dev/workspace": this.spec.workspaceId,
+      ...workspaceMountMetadata(this.spec.workspaceMount, SANDBOX_WORKSPACE_ROOT),
+    };
   }
   private async projectAll(id: string): Promise<void> {
     for (const projection of this.projections) {
