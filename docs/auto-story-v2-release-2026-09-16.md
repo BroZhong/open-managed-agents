@@ -26,3 +26,15 @@
 - 临时 Workspace 文件和测试沙箱已清理，原有运行会话保持。
 
 验收脚本维护在 `deploy/sandbox/auto-story-v2/verify-live.mjs`。CLI 失败 JSON 位于 stderr；该脚本合并输出后校验 error envelope。
+
+## ImageCache 启用与复测
+
+为主镜像的相同 digest 创建上海 ACS ImageCache `imc-uf6fba9qbhsjywolg2pj`，名称 `oma-auto-story-v2-90167310`，状态 Ready，平台报告 4 GiB。使用当前集群交换机及安全组，通过 VPC 拉取，不创建 EIP。生产模板已开启 `image.alibabacloud.com/enable-image-cache: "true"`，预热数量仍为 1；镜像未重新构建。
+
+用相同镜像、2 CPU / 4 GiB、相同 CSI Workspace 配置、预热数为 0 的临时模板测试三次。从 Sandbox.create 开始到首条命令完成分别为 26.250、28.313、27.795 秒，平均 27.453 秒；Workspace 写读删除完成分别为 26.887、28.741、28.191 秒。此前无缓存的三次冷启动平均 77.946 秒，此次缩短约 64.8%。每次均有 `ImageCacheHit` 事件，主镜像显示 already present on machine；测试模板及沙箱已删除。
+
+启用后的实际生产测试沙箱 `auto-story-v2-rv47k` 同样记录 ImageCacheHit，完整工具与 Workspace 验收、普通/once 的 DurationOutOfRange 结果重放均通过。文件和测试沙箱已清理，生产热池 1/1，API health 为 ok。
+
+当前只缓存主镜像，三个 runtime/CSI 辅助镜像仍按原路径拉取。缓存成本按 4 GiB 和使用该缓存的 Pod 全生命周期计费：按 2026-09-16 官方单价，4 × 0.00231 元/小时，单个 Pod 持续运行 30 天约 6.65 元；地域前 20 个缓存的存储免费。后续发布新 digest 时需先制作对应缓存，旧缓存清理前需确认是否仍有保留镜像或回滚需求。
+
+参考：[ACS ImageCache 使用与计费](https://help.aliyun.com/zh/cs/user-guide/accelerate-acs-pod-startup-using-image-caching)。

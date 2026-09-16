@@ -48,3 +48,11 @@ PUSH=1 bash deploy/sandbox/auto-story-v2/build.sh
 ## 线上验收
 
 从 `oma-server` 容器内用 stdin 运行 `verify-live.mjs`：创建独立 Workspace 前缀的临时沙箱，检查 CSI 挂载、读写与重连、镜像工具以及 launcher 已移除，最后清理文件并回收沙箱。设置 `VFS_DIAGNOSTIC_TASK_ID` 可额外重放一个已知 `DurationOutOfRange` 任务，验证普通与 `--once` 查询；不提交生成任务。
+
+## ACS ImageCache
+
+生产模板启用 `image.alibabacloud.com/enable-image-cache: "true"`，预热副本数保持 1。当前主镜像的上海缓存为 `imc-uf6fba9qbhsjywolg2pj`（4 GiB），匹配已发布的完整镜像地址和 digest。
+
+镜像升级时必须先为新 digest 制作缓存并等待 Ready，再切换 SandboxSet；开启注解本身不会制作缓存。使用 `aliyun acc get-image-cache --biz-region-id cn-shanghai --image-cache-id <id>` 检查状态。Pod 缓存命中可通过 `ImageCacheHit` 事件确认；Sandbox CR 不一定透传 Pod 的 matched-image-caches 注解。
+
+缓存启用后冷启动三次平均 27.45 秒，无缓存三次平均 77.95 秒。已就绪预热实例的分配仍是约 0.77 秒。当前仅缓存主镜像，运行时和 CSI 辅助镜像仍有拉取成本。缓存加速按使用它的 Pod 全生命周期收费，4 GiB × 0.00231 元/GiB/小时，单个持续运行 30 天约 6.65 元；缓存存储在每地域前 20 个免费额度内。定价核对日期为 2026-09-16，详见阿里云 ACS ImageCache 文档。
