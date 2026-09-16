@@ -25,6 +25,26 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     return fence;
   }
   const outcome = (child: DelegationExecution) => ({ status: "completed" as const, reason: "finished", output: "done", trace: { sessionId: child.childId, turnId: "child-turn" } });
+  it("orders new child admission after a concurrent Workspace soft deletion commits", async () => {
+    await stores.workspaceStore.create({ tenantId: caller.tenantId, id: "workspace" });
+    const deletion = await harness.pool.connect();
+    try {
+      await deletion.query("BEGIN");
+      await deletion.query("UPDATE workspaces SET deleted_at = clock_timestamp() WHERE tenant_id = $1 AND id = $2", [caller.tenantId, "workspace"]);
+      let settled = false;
+      const admission = stores.delegationStore.accept(caller, parentFence).then(
+        () => { settled = true; return "accepted"; },
+        (error: Error) => { settled = true; return error.message; },
+      );
+      try {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        expect(settled).toBe(false);
+      } finally { await deletion.query("COMMIT"); }
+      expect(await admission).toBe("Workspace has been deleted");
+      expect((await stores.sessionStore.list(caller.tenantId)).data).toHaveLength(1);
+      expect(await stores.delegationStore.list(caller.tenantId, caller.callerSessionId)).toEqual([]);
+    } finally { await deletion.query("ROLLBACK"); deletion.release(); }
+  });
   it("serializes acceptance across independent store instances and admits only quota slots", async () => {
     const other = new PgDelegationStore(harness.pool);
     const accepted = await Promise.all([stores.delegationStore.accept(caller, parentFence), other.accept(caller, parentFence), other.accept(caller, parentFence)]);

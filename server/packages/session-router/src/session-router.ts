@@ -148,7 +148,7 @@ export interface SessionRouterDeps {
   skillArtifactStore?: SkillArtifactStore;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
-   * token-level deltas are written to `stream:turn:{turnId}` for server-side
+   * token-level deltas are written to `stream:session:{sessionId}:turn:{turnId}` for server-side
    * reconnect backfill and reclaimed (DEL) at turn end; the active-turn map is
    * kept in Redis so multi-instance reconnect stays correct. Deltas are never
    * persisted to PostgreSQL. When absent, deltas are live-only (hub chunks).

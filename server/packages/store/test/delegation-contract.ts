@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import type { AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution } from "../src/index.js";
-export interface DelegationFixture { agentStore: AgentStore; sessionStore: SessionStore; pendingEventStore: PendingEventStore; eventLogStore: EventLogStore; delegationStore: DelegationStore }
+import type { WorkspaceMetadataStore, AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution } from "../src/index.js";
+export interface DelegationFixture { workspaceStore: WorkspaceMetadataStore; agentStore: AgentStore; sessionStore: SessionStore; pendingEventStore: PendingEventStore; eventLogStore: EventLogStore; delegationStore: DelegationStore }
 export function delegationContract(name: string, create: () => Promise<DelegationFixture>, close?: () => Promise<void>) {
   describe(name, () => {
     let stores: DelegationFixture;
@@ -33,6 +33,29 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(resumed.id).not.toBe(child.id);
       expect((await stores.sessionStore.getById(child.childId))?.delegation).toEqual(session?.delegation);
       expect(await stores.pendingEventStore.count(child.childId)).toBe(2);
+    });
+    it("rejects new children in a deleted Workspace while accepted input and resume remain usable", async () => {
+      await stores.workspaceStore.create({ tenantId: input.tenantId, id: "shared-workspace" });
+      const accepted = await stores.delegationStore.accept(input, parentFence);
+      await stores.workspaceStore.softDelete(input.tenantId, "shared-workspace");
+      await expect(stores.delegationStore.accept({ ...input, callerToolUseId: "new-child" }, parentFence))
+        .rejects.toThrow("Workspace has been deleted");
+      expect((await stores.sessionStore.list(input.tenantId)).data).toHaveLength(2);
+      expect(await stores.delegationStore.list(input.tenantId, input.callerSessionId)).toHaveLength(1);
+      expect(await stores.delegationStore.accept(input, parentFence)).toEqual(accepted);
+      expect(await stores.pendingEventStore.count(accepted.childId)).toBe(1);
+      const firstFence = await fenceFor(accepted);
+      await stores.delegationStore.startExecution(accepted.id, firstFence, "first-turn", {}, 4);
+      expect((await finish(accepted, firstFence)).status).toBe("completed");
+      await stores.pendingEventStore.ack(accepted.childId, accepted.pendingEventId, firstFence);
+      // Session soft deletion is also presentation state, never a Turn interruption.
+      await stores.sessionStore.softDelete(input.callerSessionId);
+      await stores.sessionStore.softDelete(accepted.childId);
+      const resumed = await stores.delegationStore.accept({ ...input, resume: accepted.childId, callerToolUseId: "resume" }, parentFence);
+      expect(resumed.childId).toBe(accepted.childId);
+      const resumedFence = await fenceFor(resumed);
+      await stores.delegationStore.startExecution(resumed.id, resumedFence, "resumed-turn", {}, 4);
+      expect((await finish(resumed, resumedFence)).status).toBe("completed");
     });
     it("persists the trusted parent model per input and preserves it across idempotent retries", async () => {
       const first = await stores.delegationStore.accept(input, parentFence);

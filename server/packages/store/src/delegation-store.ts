@@ -18,6 +18,7 @@ export interface DelegationTransaction {
   removePending(sessionId: string, eventId: string, onlyUnclaimed?: boolean): Promise<boolean>;
   append(sessionId: string, input: EventLogStoreAppendInput): Promise<StoredEvent>;
   assertFence(sessionId: string, fence: PendingEventFence): Promise<void>;
+  assertWorkspaceNotDeleted(tenantId: string, workspaceId: string): Promise<void>;
 }
 const terminal = (execution: DelegationExecution) => execution.status !== "queued" && execution.status !== "running";
 const identity = (caller: DelegationCaller) => JSON.stringify([caller.tenantId, caller.callerSessionId, caller.callerTurnId, caller.callerToolUseId]);
@@ -119,6 +120,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         child = await tx.sessions.getById(input.resume);
         if (!child || child.status === "terminated") throw new Error("Child Session terminated; cannot resume");
       } else {
+        await tx.assertWorkspaceNotDeleted(parent.tenantId, parent.workspaceId);
         child = await tx.sessions.create({ tenantId: parent.tenantId, agentId: parent.agentId, agent: { ...parent.agent, model: input.parentModel }, workspaceId: parent.workspaceId,
           delegation: { parentSessionId: parent.id, parentTurnId: input.callerTurnId, parentToolUseId: input.callerToolUseId, sandboxSessionId: input.sandboxSessionId } });
       }

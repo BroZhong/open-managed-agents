@@ -48,11 +48,14 @@ it("paginates only the selected execution and displays complete tool inputs/resu
     ], deltas: [], has_more: !second, next_cursor: second ? 3 : 2 });
   }));
   mount(<ExecutionTraceView sessionId="parent" executionId="exec-1" />);
-  await screen.findByText("write");
+  const tool = await screen.findByRole("button", { name: /Edit file.*output.txt/ });
+  expect(tool.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(tool);
+  expect(screen.getByText(/file text/).closest("[hidden]")).toBeNull();
   expect(calls).toHaveLength(1);
   expect(screen.queryByText("private reasoning")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Load more execution events" }));
-  await waitFor(() => expect(screen.getByText(completeText.trim())).toBeTruthy());
+  await waitFor(() => expect(screen.getByText(completeText.trim()).closest("[hidden]")).toBeNull());
   expect(calls[1]).toContain("after_seq=2");
   expect(screen.getByText(/file text/)).toBeTruthy();
 });
@@ -88,7 +91,9 @@ it("preserves the plugin summary when no persisted child relation exists", async
   vi.stubGlobal("fetch", vi.fn(async () => json({ data: [], has_more: false })));
   mount(<DelegationCard onOpenExecution={() => {}} sessionId="legacy" message={{ id: "old", role: "tool_use", name: "Agent", text: "", toolUseId: "old-call", input: { prompt: "Old task" }, result: { content: "Original plugin result", isError: false } }} />);
   await screen.findByText(/No persisted execution/);
-  expect(screen.getByText("Original plugin result")).toBeTruthy();
+  const summary = screen.getByRole("button", { name: /^Agent.*Completed$/ });
+  fireEvent.click(summary);
+  expect(screen.getByText("Original plugin result").closest("[hidden]")).toBeNull();
   expect(screen.queryByRole("link", { name: "Open child Session execution" })).toBeNull();
 });
 

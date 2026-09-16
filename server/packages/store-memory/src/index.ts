@@ -78,6 +78,6 @@ export function createMemoryStores(): MemoryStores {
     userStore: new InMemoryUserStore(),
     workspaceStore,
     loopStore,
-    delegationStore: new InMemoryDelegationStore(sessionStore, pendingEventStore, eventLogStore),
+    delegationStore: new InMemoryDelegationStore(sessionStore, pendingEventStore, eventLogStore, workspaceStore),
   };
 }

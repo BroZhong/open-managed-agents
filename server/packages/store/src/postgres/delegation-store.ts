@@ -104,6 +104,15 @@ export class PgDelegationStore extends TransactionalDelegationStore {
           return Boolean(rows.rowCount);
         },
         append: (sessionId, input) => this.append(client, sessionId, input),
+        assertWorkspaceNotDeleted: async (tenantId, workspaceId) => {
+          // Order new child creation against softDelete's UPDATE. Existing inputs
+          // and resumes never take this gate: soft deletion does not end execution.
+          const result = await client.query<{ deleted_at: Date | null }>(
+            "SELECT deleted_at FROM workspaces WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+            [tenantId, workspaceId],
+          );
+          if (result.rows[0]?.deleted_at) throw new Error("Workspace has been deleted");
+        },
         assertFence: async (sessionId, fence) => {
           await client.query("SELECT id FROM sessions WHERE id = $1 FOR UPDATE", [sessionId]);
           await client.query("SELECT id FROM pending_events WHERE session_id = $1 AND id = $2 FOR UPDATE", [sessionId, fence.eventId]);

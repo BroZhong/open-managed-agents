@@ -1,4 +1,4 @@
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable } from "@oma-server/store";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { InMemorySessionStore } from "./session-store.js";
 import type { InMemoryPendingEventStore } from "./pending-event-store.js";
 import type { InMemoryEventLogStore } from "./event-log-store.js";
@@ -8,7 +8,7 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private queue: Promise<void> = Promise.resolve();
   private environments = new Map<string, string | null>();
   private environmentQueue: Promise<void> = Promise.resolve();
-  constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore) { super(); }
+  constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">) { super(); }
   protected transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const perform = async () => {
       const snapshot = { records: structuredClone(this.records), sessions: this.sessions.snapshotState(), pending: this.pending.snapshotState(), events: this.events.snapshotState() };
@@ -20,6 +20,9 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
         remove: async (table, id) => { this.records.get(table)?.delete(id); },
         removePending: (sessionId, eventId, onlyUnclaimed) => this.pending.removeById(sessionId, eventId, onlyUnclaimed),
         append: (sessionId, event) => this.events.append(sessionId, event),
+        assertWorkspaceNotDeleted: async (tenantId, workspaceId) => {
+          if ((await this.workspaces.getById(tenantId, workspaceId))?.deletedAt) throw new Error("Workspace has been deleted");
+        },
         assertFence: async (sessionId, fence) => { const session = await this.sessions.getById(sessionId); if (!session || session.status === "terminated" || !await this.pending.ownsClaim(sessionId, fence.eventId, fence)) delegationFenceLost(sessionId, fence); },
       };
       try { return await work(tx); }

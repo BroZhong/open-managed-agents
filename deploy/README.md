@@ -175,7 +175,7 @@ depends on a new migration.
 
 See [the production verification report](../docs/verification/durable-delegation-release-2026-09-16.md) and `scripts/verify-durable-delegations.mjs` for the real Pi/Sandbox release checks.
 
-Apply `migrations/0011_durable_delegations.sql` before the Host image. Verify
+Apply `migrations/0012_durable_delegations.sql` before the Host image. Verify
 the application role can read all six `delegation_*` tables and the new
 Session/pending-input columns. Update the `server` container and, when present,
 the `seed-pi-auth` init container to the same image: the latter supplies the Pi

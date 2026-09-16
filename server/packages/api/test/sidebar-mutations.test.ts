@@ -47,6 +47,26 @@ describe("Sidebar mutations", () => {
     expect((await app.request("/v1/sessions", jsonPost({ agent: agent.id, workspace_id: workspace.id }))).status).toBe(409);
   });
 
+  it("combines soft deletion and child exclusion before paginating visible Sessions", async () => {
+    const { app, stores, agent, workspace, session } = await setup();
+    const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: workspace.id };
+    await stores.sessionStore.softDelete(session.id);
+    await stores.sessionStore.create({ ...input, delegation: {
+      parentSessionId: session.id, parentTurnId: "turn", parentToolUseId: "tool", sandboxSessionId: session.id,
+    } });
+    const hiddenWorkspace = await stores.workspaceStore.create({ tenantId: "dev" });
+    await stores.sessionStore.create({ ...input, workspaceId: hiddenWorkspace.id });
+    await stores.workspaceStore.softDelete("dev", hiddenWorkspace.id);
+    const visible = [await stores.sessionStore.create(input), await stores.sessionStore.create(input)];
+    const query = `/v1/sessions?agent_id=${agent.id}&exclude_loop=true&exclude_delegated=true&limit=1`;
+    const first = await app.request(query);
+    expect(first.status).toBe(200);
+    const page = await first.json();
+    expect(page).toMatchObject({ data: [{ id: visible[0].id }], has_more: true, next_cursor: visible[0].id });
+    const second = await app.request(`${query}&cursor=${page.next_cursor}`);
+    expect(await second.json()).toMatchObject({ data: [{ id: visible[1].id }], has_more: false });
+  });
+
   it("rejects cross-tenant rename and soft-delete requests", async () => {
     const { app, stores, agent } = await setup();
     const workspace = await stores.workspaceStore.create({ tenantId: "other", name: "Secret" });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import SessionDetailPage from "@/pages/session-detail";
@@ -37,6 +37,9 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
   }));
   const router = createMemoryRouter([{ path: "/sessions/:id", element: <SessionDetailPage /> }], { initialEntries: ["/sessions/parent"] });
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={router} /></QueryClientProvider>);
+  const process = await screen.findByRole("button", { name: /Incomplete · 3 tool calls/ });
+  expect(process.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(process);
   await screen.findByRole("button", { name: /Agent · First child task.*Open session/ });
   const draft = screen.getByRole("textbox", { name: "Message" });
   fireEvent.change(draft, { target: { value: "Unsent parent draft" } });
@@ -59,10 +62,28 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
   expect(scroll.scrollTop).toBe(120);
   await waitFor(() => expect(streams.has("same-child")).toBe(true));
   await act(async () => {
-    streams.get("same-child")!.enqueue(new TextEncoder().encode('event: session.status_running\nid: 7\ndata: {}\n\nevent: agent.message\nid: 8\ndata: {"content":[{"type":"text","text":"Live child update"}]}\n\n'));
+    // Session-scoped subscribers can receive identical Turn, block and Delta IDs.
+    for (const [id, text] of [["parent", "Parent partial"], ["same-child", "Child partial"]]) {
+      streams.get(id)!.enqueue(new TextEncoder().encode(`event: agent.message_chunk\ndata: ${JSON.stringify({ turnId: "turn_1_a1", blockIndex: 0, deltaId: "1-0", text })}\n\n`));
+    }
+    streams.get("same-child")!.enqueue(new TextEncoder().encode('event: session.status_running\nid: 7\ndata: {}\n\n'));
+  });
+  const childPane = screen.getByLabelText("Agent 1 conversation");
+  expect(await within(childPane).findByText("Child partial")).toBeTruthy();
+  expect(within(childPane).queryByText("Parent partial")).toBeNull();
+  expect(screen.getByText("Parent partial").closest("[hidden]")).not.toBeNull();
+  await act(async () => {
+    streams.get("same-child")!.enqueue(new TextEncoder().encode('event: agent.message\nid: 8\ndata: {"turnId":"turn_1_a1","blockIndex":0,"content":[{"type":"text","text":"Live child update"}]}\n\n'));
   });
   expect(await screen.findByText("Live child update")).toBeTruthy();
+  expect(screen.queryByText("Child partial")).toBeNull();
+  expect(screen.getByText("Parent partial")).toBeTruthy();
   expect(screen.getByRole("img", { name: "Session running" })).toBeTruthy();
+  await act(async () => {
+    streams.get("same-child")!.enqueue(new TextEncoder().encode('event: session.status_idle\nid: 9\ndata: {}\n\n'));
+  });
+  expect(screen.queryByRole("img", { name: "Session running" })).toBeNull();
+  expect(screen.queryByText("idle")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
   expect(screen.getByRole("textbox", { name: "Message" })).toBe(draft);
   expect((draft as HTMLTextAreaElement).value).toBe("Unsent parent draft");
