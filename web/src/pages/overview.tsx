@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
-import { Bot, Activity } from "lucide-react";
+import { Bot, Activity, ArrowUpRight, Plus } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgents } from "@/lib/hooks/use-agents";
@@ -43,11 +43,17 @@ export default function OverviewPage() {
 
   return (
     <div>
-      <PageHeader title="Dashboard" />
+      <PageHeader title="Dashboard" description="Your Agents and their activity, in one place.">
+        <Link to="/agents" className="section-link">Manage Agents <ArrowUpRight className="h-4 w-4" /></Link>
+      </PageHeader>
 
-      <div className="space-y-8 p-6">
+      <div className="page-body space-y-8">
+        <div className="overview-intro">
+          <h2>A place for your Agents to work.</h2>
+          <p>Continue a Session, review progress, or configure an Agent.</p>
+        </div>
         {/* Summary cards */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="summary-grid">
           <SummaryCard
             icon={<Bot className="h-5 w-5" />}
             label="Agents"
@@ -64,9 +70,10 @@ export default function OverviewPage() {
 
         {/* Agent list */}
         <section>
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-            Agents
-          </h2>
+          <div className="section-heading">
+            <h2>Your Agents</h2>
+            <Link to="/agents" className="section-link">View all <ArrowUpRight className="h-3.5 w-3.5" /></Link>
+          </div>
 
           {isLoading ? (
             <div className="space-y-3">
@@ -75,21 +82,23 @@ export default function OverviewPage() {
               ))}
             </div>
           ) : !agents || agents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--color-border)] py-24 text-neutral-500">
+            <div className="empty-state">
               <Bot className="mb-3 h-6 w-6 text-neutral-300" />
-              <p>No agents yet. Create your first agent to get started.</p>
+              <h2>Start with your first Agent</h2>
+              <p>Give it instructions and Skills, then start a Session.</p>
+              <Link to="/agents" className="section-link mt-5"><Plus className="h-4 w-4" />Set up an Agent</Link>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="agent-list">
               {agents.map((agent) => {
                 const stats = perAgent.get(agent.id) ?? { running: 0, total: 0 };
                 return (
                   <Link
                     key={agent.id}
                     to={`/agents/${agent.id}`}
-                    className="flex items-center gap-4 rounded-xl border border-[var(--color-border)] bg-white p-4 transition-colors hover:border-[var(--color-accent)]"
+                    className="agent-list-row"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+                    <span className="agent-identity">
                       <Bot className="h-5 w-5" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -124,18 +133,18 @@ function SummaryCard({
   loading: boolean;
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-[var(--color-border)] bg-white p-5">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+    <div className="summary-card">
+      <span className="summary-icon">
         {icon}
       </span>
       <div className="min-w-0">
-        <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+        <p className="summary-label">
           {label}
         </p>
         {loading ? (
           <Skeleton className="mt-1 h-7 w-12" />
         ) : (
-          <p className="text-2xl font-semibold text-[var(--color-fg)]">{value}</p>
+          <p className="summary-value">{value}</p>
         )}
       </div>
     </div>

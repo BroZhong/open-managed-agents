@@ -81,7 +81,7 @@ function ApiKeysList({
     <div className="overflow-x-auto px-6 py-4">
       <table className="w-full min-w-[70rem]">
         <thead>
-          <tr className="border-b border-neutral-200 text-left text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <tr className="border-b border-neutral-200 text-left text-xs font-medium text-neutral-500">
             <th className="pb-3 pr-4">Name</th>
             <th className="pb-3 pr-4">Key</th>
             <th className="pb-3 pr-4">Created</th>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pencil, X } from "lucide-react";
+import { Pencil, X, Info } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -22,6 +22,7 @@ export function EquipPicker({ agent }: { agent: Agent }) {
   const equip = useEquipSkill(agent.id);
   const unequip = useUnequipSkill(agent.id);
   const pendingWrites = usePendingAgentSkillWrites(agent.id);
+  const [detailsOpen, setDetailsOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pendingUnequip, setPendingUnequip] = useState<EquippedSkill | null>(null);
 
@@ -72,7 +73,7 @@ export function EquipPicker({ agent }: { agent: Agent }) {
   }
 
   return (
-    <div className="min-w-0 space-y-3">
+    <div className="skill-picker min-w-0 space-y-1">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-[var(--color-fg)]">Skills</h2>
         {busy && <span role="status" className="text-xs text-neutral-400">Saving…</span>}
@@ -108,67 +109,46 @@ export function EquipPicker({ agent }: { agent: Agent }) {
         const isOpen = expanded === skill.id;
         const editorId = `skill-editor-${skill.id}`;
         return (
-          <div
-            key={skill.id}
-            className={cn(
-              "min-w-0 rounded-lg border transition-colors",
-              enabled
-                ? "border-[var(--color-accent,#c2410c)] bg-[var(--color-bg-muted)]"
-                : "border-[var(--color-border)] bg-white",
-            )}
-          >
-            <div className="space-y-3 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <h3 className="min-w-0 flex-1 break-words text-sm font-semibold text-[var(--color-fg)] [overflow-wrap:anywhere]">
-                  {skill.name}
-                </h3>
-                <div className="flex shrink-0 items-center gap-3">
-                  <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-600">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      disabled={busy}
-                      aria-label={`Enable ${skill.name}`}
-                      onChange={() => toggle(fork, libraryId)}
-                      className="h-4 w-4 accent-[var(--color-accent,#c2410c)] disabled:cursor-wait"
-                    />
-                    {enabled ? "Enabled" : "Disabled"}
-                  </label>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!fork || !enabled || busy}
-                    aria-label={isOpen ? `Close editor for ${skill.name}` : `Update ${skill.name}`}
-                    aria-expanded={isOpen}
-                    aria-controls={isOpen ? editorId : undefined}
-                    title={enabled ? "Edit this Agent's Skill" : "Enable this Skill to edit its Agent copy"}
-                    onClick={() => setExpanded(isOpen ? null : skill.id)}
-                  >
-                    {isOpen ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-                    {isOpen ? "Close editor" : "Update"}
-                  </Button>
-                </div>
+          <div key={skill.id} data-skill-id={skill.id} className={cn("skill-compact-item", enabled && "skill-enabled")}>
+            <div className="skill-compact-row">
+              <label className="skill-enable-control" title={enabled ? "Enabled" : "Disabled"}>
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  disabled={busy}
+                  aria-label={`Enable ${skill.name}`}
+                  onChange={() => toggle(fork, libraryId)}
+                />
+                <span className="sr-only">{enabled ? "Enabled" : "Disabled"}</span>
+              </label>
+              <div className="skill-compact-copy">
+                <h3 title={skill.name}>{skill.name}</h3>
+                <p title={skill.description || "No description."}>{skill.description || "No description."}</p>
               </div>
-
-              <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-neutral-500 [overflow-wrap:anywhere]">
-                {skill.description || "No description."}
-              </p>
-
-              <dl className="grid min-w-0 grid-cols-1 gap-3 text-xs sm:grid-cols-2 xl:grid-cols-3">
-                <div className="min-w-0">
-                  <dt className="text-neutral-400">ID</dt>
-                  <dd className="mt-1 break-all font-mono text-neutral-600">{skill.id}</dd>
-                </div>
-                <div>
-                  <dt className="text-neutral-400">Uploaded</dt>
-                  <dd className="mt-1 text-neutral-600"><SkillTimestamp value={skill.createdAt} /></dd>
-                </div>
-                <div>
-                  <dt className="text-neutral-400">Updated</dt>
-                  <dd className="mt-1 text-neutral-600"><SkillTimestamp value={skill.updatedAt} /></dd>
-                </div>
-              </dl>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Details for ${skill.name}`}
+                aria-expanded={detailsOpen === skill.id}
+                aria-controls={`skill-details-${skill.id}`}
+                onClick={() => setDetailsOpen(detailsOpen === skill.id ? null : skill.id)}
+              ><Info className="h-3.5 w-3.5" /></Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!fork || !enabled || busy}
+                aria-label={isOpen ? `Close editor for ${skill.name}` : `Update ${skill.name}`}
+                aria-expanded={isOpen}
+                aria-controls={isOpen ? editorId : undefined}
+                title={enabled ? "Edit this Agent's Skill" : "Enable this Skill to edit its Agent copy"}
+                onClick={() => setExpanded(isOpen ? null : skill.id)}
+              >{isOpen ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}</Button>
             </div>
+            <dl id={`skill-details-${skill.id}`} hidden={detailsOpen !== skill.id} className="skill-compact-details">
+              <div><dt>ID</dt><dd className="break-all font-mono">{skill.id}</dd></div>
+              <div><dt>Uploaded</dt><dd><SkillTimestamp value={skill.createdAt} /></dd></div>
+              <div><dt>Updated</dt><dd><SkillTimestamp value={skill.updatedAt} /></dd></div>
+            </dl>
 
             {fork && enabled && isOpen && (
               <div id={editorId} className="min-w-0 rounded-b-lg border-t border-[var(--color-border)] bg-white p-3">

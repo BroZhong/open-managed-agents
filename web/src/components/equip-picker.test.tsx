@@ -159,7 +159,7 @@ function renderPicker() {
 }
 
 function cardContent(name: string): HTMLElement {
-  return screen.getByRole("heading", { name }).parentElement!.parentElement!;
+  return screen.getByRole("heading", { name }).closest<HTMLElement>("[data-skill-id]")!;
 }
 
 function metadata(card: HTMLElement, label: string): HTMLElement {

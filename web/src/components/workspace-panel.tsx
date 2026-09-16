@@ -15,6 +15,7 @@ export function WorkspacePanel({ workspaceId, refreshKey }: WorkspacePanelProps)
     <FileManager
       key={workspaceId}
       source={source}
+      presentation="workbench"
       turnStatus="idle"
       refreshKey={refreshKey}
       emptyHint="No files yet. Files created by the agent appear here."

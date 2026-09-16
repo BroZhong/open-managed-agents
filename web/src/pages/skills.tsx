@@ -10,7 +10,7 @@ export default function SkillsPage() {
   return (
     <div>
       <PageHeader title="Skills" />
-      <div className="p-6">
+      <div className="page-body">
         <div className="max-w-2xl">
           <SkillLibrary />
         </div>

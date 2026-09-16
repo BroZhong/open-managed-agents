@@ -17,7 +17,11 @@ import {
   Pencil,
   Trash2,
   FilePlus,
+  Search,
+  PanelLeft,
+  ArrowLeft,
 } from "lucide-react";
+import { useCompactPanel } from "@/lib/hooks/use-compact-panel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TextFileEditor } from "@/components/text-file-editor";
@@ -59,6 +63,7 @@ export interface FileManagerProps {
   refreshKey?: number;
   /** Copy shown above the tree when it is empty. */
   emptyHint?: string;
+  presentation?: "default" | "workbench";
 }
 
 // ─── Tree rendering (mirrors workspace-panel's TreeRow visual language) ────────
@@ -129,9 +134,10 @@ function TreeRow({
         onClick={() => (node.isDir ? onToggle(node.path) : onSelect(node.path))}
         {...drop.handlers}
         aria-expanded={node.isDir ? isOpen : undefined}
+        aria-current={!node.isDir && isSelected ? "true" : undefined}
         title={onDropFiles ? `Drop files into /${destDir}` : undefined}
         className={cn(
-          "flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors",
+          "file-tree-row flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors",
           isSelected
             ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
             : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]",
@@ -158,7 +164,7 @@ function TreeRow({
             <TreeKindIcon kind={kind!} />
           </>
         )}
-        <span className="flex-1 truncate font-mono text-xs">{node.name}</span>
+        <span className="file-tree-name flex-1 truncate font-mono text-xs">{node.name}</span>
         {!node.isDir && node.size !== undefined && (
           <span className="flex-shrink-0 text-[10px] text-[var(--color-fg-subtle)]">
             {formatSize(node.size)}
@@ -458,6 +464,7 @@ function VideoPreview({
 // ─── Selected-file pane: dispatch text → editor, media → preview ───────────────
 
 function FilePane({
+  workbench = false,
   content,
   contentRevision,
   loading,
@@ -470,6 +477,7 @@ function FilePane({
   getPreviewUrl,
   onDownload,
 }: {
+  workbench?: boolean;
   content: FileContent | null;
   contentRevision: number;
   loading: boolean;
@@ -499,8 +507,10 @@ function FilePane({
   }
   if (!content) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-[var(--color-fg-subtle)]">
-        Select a file
+      <div className={workbench ? "workspace-preview-empty" : "flex h-full items-center justify-center text-sm text-[var(--color-fg-subtle)]"}>
+        {workbench && <FileIcon />}
+        <span>Select a file</span>
+        {workbench && <p>Browse your Workspace to preview or edit a file alongside the Session.</p>}
       </div>
     );
   }
@@ -511,7 +521,7 @@ function FilePane({
   if (presentation === "text" && content.text !== null) {
     if (actions.canSave) {
       return (
-        <div className="h-full overflow-auto p-4">
+        <div className="file-text-surface h-full overflow-auto p-4">
           {actions.writeDisabledReason && (
             <div className="mb-3 rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
               {actions.writeDisabledReason}
@@ -527,7 +537,8 @@ function FilePane({
             saving={saving}
             error={writeError}
             saved={saved}
-            heading={content.path}
+            heading={workbench ? undefined : content.path}
+            previewMarkdown={workbench && /\.md(?:own)?$/i.test(content.path)}
             onSave={onSave}
           />
         </div>
@@ -657,7 +668,13 @@ function writeErrorMessage(err: unknown): string {
   return isLockedError(err) ? WRITE_LOCKED_RETRY : (err as Error).message;
 }
 
-export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: FileManagerProps) {
+export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, presentation = "default" }: FileManagerProps) {
+  const workbench = presentation === "workbench";
+  const managerRef = useRef<HTMLDivElement>(null);
+  const compact = useCompactPanel(managerRef, 520);
+  const [search, setSearch] = useState("");
+  const [directoryOpen, setDirectoryOpen] = useState(true);
+  const [detailOpen, setDetailOpen] = useState(false);
   const methods = useMemo(() => methodsOf(source), [source]);
   const actions = useMemo(
     () => resolveFileActions(source.capabilities, methods, turnStatus),
@@ -709,6 +726,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
   const openFile = useCallback(
     async (path: string, selectUploadDir = true) => {
       setSelectedPath(path);
+      setDetailOpen(true);
       if (selectUploadDir) setUploadDir(currentDir(path) ?? "");
       setContentLoading(true);
       setContentError(null);
@@ -916,10 +934,23 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
     }
   }, [source, selectedPath, refresh]);
 
+  const visibleNodes = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return query ? nodes.filter((node) => node.path.toLowerCase().includes(query)) : nodes;
+  }, [nodes, search]);
   const tree = useMemo(
-    () => (nested ? buildTree(nodes.map((n) => ({ path: n.path, size: n.size ?? 0, updated_at: n.updatedAt ?? null }))) : null),
-    [nested, nodes],
+    () => (nested ? buildTree(visibleNodes.map((n) => ({ path: n.path, size: n.size ?? 0, updated_at: n.updatedAt ?? null }))) : null),
+    [nested, visibleNodes],
   );
+  const visibleExpanded = useMemo(() => {
+    if (!search.trim()) return expanded;
+    const paths = new Set(expanded);
+    for (const node of visibleNodes) {
+      const parts = node.path.split("/");
+      for (let i = 1; i < parts.length; i++) paths.add(parts.slice(0, i).join("/"));
+    }
+    return paths;
+  }, [expanded, search, visibleNodes]);
 
   // Write actions are disabled up front while idle-gated mid-turn.
   const writeGated = actions.writeDisabledReason !== null;
@@ -930,7 +961,10 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
 
   return (
     <div
-      className="flex h-full flex-col"
+      ref={managerRef}
+      className={cn("file-manager flex h-full flex-col", workbench && "file-manager-workbench")}
+      data-compact={workbench && compact}
+      data-directory-open={directoryOpen}
       onDragOver={(event) => {
         if (!Array.from(event.dataTransfer.types).includes("Files")) return;
         event.preventDefault();
@@ -941,11 +975,12 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       }}
     >
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
+      <div className="file-manager-toolbar flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
+        {workbench && <span className="workspace-heading"><FolderOpen />Workspace</span>}
         <span className="min-w-0 truncate text-xs font-medium text-[var(--color-fg-muted)]">
           {nodes.filter((n) => !n.isDir).length} file
           {nodes.filter((n) => !n.isDir).length === 1 ? "" : "s"}
-          {selectedPath && (
+          {!workbench && selectedPath && (
             <>
               <span className="mx-2 text-[var(--color-border)]">|</span>
               <span className="font-mono text-[var(--color-fg)]">{selectedPath}</span>
@@ -999,8 +1034,24 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
       </div>
 
       {/* Body: tree + selected-file pane */}
-      <div className="flex min-h-0 flex-1">
-        <div className="flex w-64 flex-shrink-0 flex-col border-r border-[var(--color-border)]">
+      <div className="file-manager-body flex min-h-0 flex-1">
+        <div
+          className="file-directory flex w-64 flex-shrink-0 flex-col border-r border-[var(--color-border)]"
+          hidden={workbench && (compact ? detailOpen : !directoryOpen)}
+          inert={workbench && (compact ? detailOpen : !directoryOpen)}
+        >
+          {workbench && (
+            <div className="file-directory-heading">
+              <span>Files</span>
+              <button type="button" className="file-directory-collapse" aria-label="Hide file directory" onClick={() => setDirectoryOpen(false)}><PanelLeft /></button>
+            </div>
+          )}
+          {workbench && (
+            <label className="file-search">
+              <Search />
+              <input aria-label="Search files" placeholder="Search files…" value={search} onChange={(event) => setSearch(event.target.value)} />
+            </label>
+          )}
           {nested && actions.canUpload && (
             <button
               type="button"
@@ -1030,6 +1081,8 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
               !listError && <div className="px-2 py-4 text-xs text-[var(--color-fg-subtle)]">
                 {emptyHint ?? "No files yet."}
               </div>
+            ) : visibleNodes.length === 0 ? (
+              <p className="px-2 py-4 text-xs text-[var(--color-fg-muted)]">No matching files.</p>
             ) : nested && tree ? (
               tree.children.map((node) => (
                 <TreeRow
@@ -1038,7 +1091,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
                   depth={0}
                   selectedPath={selectedPath}
                   uploadDir={uploadDir}
-                  expanded={expanded}
+                  expanded={visibleExpanded}
                   onToggle={toggle}
                   onSelect={openFile}
                   onDropFiles={actions.canUpload && !uploadDisabled ? handleUpload : undefined}
@@ -1046,7 +1099,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
               ))
             ) : (
               // Flat source: list files directly, no folder hierarchy.
-              nodes
+              visibleNodes
                 .filter((n) => !n.isDir)
                 .map((n) => (
                   <TreeRow
@@ -1055,7 +1108,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
                     depth={0}
                     selectedPath={selectedPath}
                     uploadDir={uploadDir}
-                    expanded={expanded}
+                    expanded={visibleExpanded}
                     onToggle={toggle}
                     onSelect={openFile}
                   />
@@ -1078,8 +1131,20 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
         </div>
 
         {/* Selected-file pane */}
-        <div className="min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-surface)]">
+        <div
+          className="file-preview min-w-0 flex-1 overflow-hidden bg-[var(--color-bg-surface)]"
+          hidden={workbench && compact && !detailOpen}
+          inert={workbench && compact && !detailOpen}
+        >
+          {workbench && (
+            <div className="file-preview-bar">
+              {(compact || !directoryOpen) && <button type="button" className="file-directory-reopen" onClick={() => { setDetailOpen(false); setDirectoryOpen(true); }}><ArrowLeft />Files</button>}
+              <span className="file-preview-name" title={selectedPath ?? undefined}><FileIcon />{selectedPath ?? "Preview"}</span>
+            </div>
+          )}
+          <div className="file-preview-content">
           <FilePane
+            workbench={workbench}
             content={content}
             contentRevision={contentRevision}
             loading={contentLoading}
@@ -1092,6 +1157,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint }: F
             getPreviewUrl={getPreviewUrl}
             onDownload={(readyUrl) => void handleDownload(readyUrl)}
           />
+          </div>
         </div>
       </div>
     </div>

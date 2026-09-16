@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, Link } from "react-router";
-import { KeyRound } from "lucide-react";
+import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/lib/auth";
 import { authLogin, AuthError } from "@/lib/auth-api";
 
@@ -33,10 +33,10 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)] p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-8 shadow-sm">
+    <div className="auth-page">
+      <div className="auth-card">
         <div className="mb-6 flex flex-col items-center gap-2">
-          <KeyRound className="h-8 w-8 text-[var(--color-fg)]" />
+          <BrandMark className="auth-brand" />
           <h1 className="text-xl font-semibold text-[var(--color-fg)]">
             Open Managed Agents
           </h1>
@@ -89,7 +89,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading || !username || !password}
-            className="rounded-lg bg-[var(--color-fg)] px-4 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded-lg bg-[var(--color-brand)] px-4 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? "Signing in..." : "Sign in"}
           </button>

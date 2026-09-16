@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react"
 import { Outlet } from "react-router"
 import { Sidebar } from "@/components/sidebar"
-import { cn } from "@/lib/utils"
 
 const STORAGE_KEY = "oma_sidebar_collapsed"
 
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY) === "true"
+    return localStorage.getItem(STORAGE_KEY) === "true" || (localStorage.getItem(STORAGE_KEY) === null && window.innerWidth < 768)
   })
 
   useEffect(() => {
@@ -20,15 +19,11 @@ export function AppLayout() {
   }, [])
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="app-shell" data-collapsed={collapsed}>
+      <a href="#main-content" className="skip-link">Skip to content</a>
       <Sidebar />
-      <main
-        className={cn(
-          "flex flex-1 flex-col h-screen overflow-hidden transition-all duration-200",
-          collapsed ? "ml-[52px]" : "ml-[224px]"
-        )}
-      >
-        <div className="flex-1 min-h-0 overflow-auto">
+      <main id="main-content" tabIndex={-1} className="app-main">
+        <div className="app-content">
           <Outlet />
         </div>
       </main>
