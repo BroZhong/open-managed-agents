@@ -59,6 +59,7 @@ import {
  */
 export interface FileManagerProps {
   source: FileSource;
+  rootLabel?: string;
   /** A new request reveals and selects a file, including repeated clicks. */
   fileSelection?: { path: string; nonce: number };
   /** Injected by the host page (from its existing SSE). Not subscribed here. */
@@ -672,7 +673,7 @@ function writeErrorMessage(err: unknown): string {
   return isLockedError(err) ? WRITE_LOCKED_RETRY : (err as Error).message;
 }
 
-export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, presentation = "default", fileSelection }: FileManagerProps) {
+export function FileManager({ source, rootLabel = "Workspace", turnStatus, refreshKey = 0, emptyHint, presentation = "default", fileSelection }: FileManagerProps) {
   const workbench = presentation === "workbench";
   const managerRef = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(managerRef, 520);
@@ -1042,7 +1043,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
     >
       {/* Toolbar for embedded Skill and Agent file editors. */}
       {!workbench && <div className="file-manager-toolbar flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
-        {workbench && <span className="workspace-heading"><FolderOpen />Workspace</span>}
+        {workbench && <span className="workspace-heading" title={rootLabel}><FolderOpen /><span className="truncate">{rootLabel}</span></span>}
         <span className="min-w-0 truncate text-xs font-medium text-[var(--color-fg-muted)]">
           {nodes.filter((n) => !n.isDir).length} file
           {nodes.filter((n) => !n.isDir).length === 1 ? "" : "s"}
@@ -1117,7 +1118,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
           {workbench && (
             <div className="file-directory-heading">
               <button type="button" className="file-directory-collapse" aria-label="Hide file directory" title="Hide file directory" onClick={() => setDirectoryOpen(false)}><PanelLeft /></button>
-              <button type="button" className="workspace-heading" title="Workspace root" onClick={() => setUploadDir("")}>Workspace</button>
+              <button type="button" className="workspace-heading" title={rootLabel} onClick={() => setUploadDir("")}><span className="truncate">{rootLabel}</span></button>
               <div className="workspace-tools">
                 {actions.canUpload && <details className="workspace-import-menu">
                   <summary className="workspace-tool" aria-label="Import files" title="Import files"><UploadCloud /></summary>

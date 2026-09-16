@@ -31,6 +31,7 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
     if (url.pathname.endsWith("/delegations")) return json({ data: executions.filter((execution) => execution.callerToolUseId === url.searchParams.get("tool_use_id")), has_more: false });
     if (url.pathname.endsWith("/pending")) return json({ data: [], has_more: false });
     if (url.pathname.endsWith("/skills")) return json({ data: [] });
+    if (url.pathname.endsWith("/workspaces")) return json({ data: [] });
     if (url.pathname.endsWith("/events")) {
       if (headers?.Accept !== "text/event-stream") return json({ data: sessionId === "parent" ? parentEvents : sessionId === "same-child" ? childEvents : [message(1, "agent.message", "Other child output")], has_more: false });
       subscriptions.push(sessionId);

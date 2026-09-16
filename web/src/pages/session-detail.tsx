@@ -13,6 +13,7 @@ import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
 import type { DelegationExecution } from "@/lib/delegations";
 import { useSession } from "@/lib/hooks/use-sessions";
+import { useWorkspaces } from "@/lib/hooks/use-workspaces";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
 import { useInterrupt } from "@/lib/hooks/use-interrupt";
@@ -42,6 +43,7 @@ function SessionDetail({ id }: { id: string }) {
   const location = useLocation();
   const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
   const { data: session, isLoading: sessionLoading } = useSession(id);
+  const { data: workspaces = [] } = useWorkspaces();
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, fileChange, turnLifecycleNonce } =
     useSessionEvents(id);
@@ -136,7 +138,7 @@ function SessionDetail({ id }: { id: string }) {
       {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
       <SplitWorkbench
         revealWorkspaceKey={fileSelection?.nonce}
-        workspace={session && <WorkspacePanel workspaceId={session.workspaceId} refreshKey={fileChange.nonce} fileSelection={fileSelection} />}
+        workspace={session && <WorkspacePanel workspaceId={session.workspaceId} workspaceName={workspaces.find((workspace) => workspace.id === session.workspaceId)?.name} refreshKey={fileChange.nonce} fileSelection={fileSelection} />}
         session={
           <>
             <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
