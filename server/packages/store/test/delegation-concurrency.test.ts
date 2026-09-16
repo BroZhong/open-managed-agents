@@ -15,7 +15,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
     const claim = (await stores.pendingEventStore.claim(parent.id, "parent", 60000))!;
     parentFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
-    caller = { tenantId: "tenant", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool", mode: "async", prompt: "task", maxSteps: 30, sandboxSessionId: parent.id };
+    caller = { tenantId: "tenant", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool", mode: "async", prompt: "task", parentModel: "provider/parent-model", maxSteps: 30, sandboxSessionId: parent.id };
   });
   afterAll(async () => { await harness?.close(); });
   async function start(child: DelegationExecution) {

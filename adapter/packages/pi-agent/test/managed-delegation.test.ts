@@ -12,13 +12,21 @@ describe("Host delegation tool boundary", () => {
     await tools[0].execute("tool-id", { prompt: "write a file" }, undefined, undefined, {} as never);
     expect(host.delegate).toHaveBeenCalledWith({ prompt: "write a file", runInBackground: false }, { toolUseId: "tool-id", signal: undefined, checkpoint: [] });
     expect(JSON.stringify(tools[0].parameters)).not.toContain("worktree");
+    expect(tools[0].parameters).not.toHaveProperty("properties.model");
+    expect(tools[0].description).toContain("same model as the calling parent Turn");
   });
 });
 
 describe("delegation validation", () => {
-  it.each(["worktree", "isolated", "tenantId", "parentSessionId"])("rejects unsupported %s before calling the Host", async (key) => {
+  it.each(["worktree", "isolated", "tenantId", "parentSessionId", "model"])("rejects unsupported %s before calling the Host", async (key) => {
     const host = capability();
     await expect(buildSubagentTools(host, () => [])[0].execute("id", { prompt: "task", [key]: true }, undefined, undefined, {} as never)).rejects.toThrow("Unsupported delegation parameter");
+    expect(host.delegate).not.toHaveBeenCalled();
+  });
+  it.each([undefined, "child"])("rejects a model override for create/resume (%s)", async (resume) => {
+    const host = capability();
+    await expect(buildSubagentTools(host, () => [])[0].execute("id", { prompt: "task", resume, model: "other-provider/other-model" }, undefined, undefined, {} as never))
+      .rejects.toThrow("Unsupported delegation parameter: model");
     expect(host.delegate).not.toHaveBeenCalled();
   });
   it("uses identical explicit background mode for create and resume", async () => {

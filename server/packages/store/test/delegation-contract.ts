@@ -19,7 +19,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: { content: [{ type: "text", text: "parent" }] }, sessionThreadId: "sthr_primary" });
       const claim = await stores.pendingEventStore.claim!(parent.id, "parent-owner", 60_000);
       parentFence = { eventId: claim!.event.id, ownerId: claim!.ownerId, generation: claim!.generation };
-      input = { tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool-1", prompt: "Do task", mode: "async", maxSteps: 30, sandboxSessionId: parent.id };
+      input = { tenantId: "tenant-a", callerSessionId: parent.id, callerTurnId: "parent-turn", callerToolUseId: "tool-1", prompt: "Do task", mode: "async", parentModel: "provider/parent-model", maxSteps: 30, sandboxSessionId: parent.id };
     });
     afterAll(async () => { await close?.(); });
     it("atomically accepts once per parent tool and keeps immutable child origin", async () => {
@@ -33,6 +33,17 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(resumed.id).not.toBe(child.id);
       expect((await stores.sessionStore.getById(child.childId))?.delegation).toEqual(session?.delegation);
       expect(await stores.pendingEventStore.count(child.childId)).toBe(2);
+    });
+    it("persists the trusted parent model per input and preserves it across idempotent retries", async () => {
+      const first = await stores.delegationStore.accept(input, parentFence);
+      expect(first).toMatchObject({ model: "provider/parent-model", modelSource: "parent" });
+      expect((await stores.sessionStore.getById(first.childId))?.agent.model).toBe("provider/parent-model");
+      const later = { ...input, parentModel: "other-provider/new-parent-model" };
+      expect(await stores.delegationStore.accept(later, parentFence)).toEqual(first);
+      const resumed = await stores.delegationStore.accept({ ...later, resume: first.childId, callerToolUseId: "resume" }, parentFence);
+      expect(resumed).toMatchObject({ childId: first.childId, model: "other-provider/new-parent-model", modelSource: "parent" });
+      expect((await stores.delegationStore.getExecution(input.tenantId, first.id))?.model).toBe("provider/parent-model");
+      await expect(stores.delegationStore.accept({ ...input, parentModel: "", callerToolUseId: "unresolved" }, parentFence)).rejects.toThrow("Resolved parent model is required");
     });
     it("denies another tenant, unrelated parent, and expired creation owner", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);

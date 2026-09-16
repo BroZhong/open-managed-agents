@@ -59,6 +59,9 @@ export class DelegationCoordinator {
       delegate: async (input, context) => {
         await this.assertOwner(run);
         if (run.session.delegation) throw new Error("Nested delegation is not supported");
+        if ("model" in input) throw new Error("Delegated model overrides are not supported; children inherit the calling parent Turn model");
+        const parentModel = run.effectiveConfig?.model;
+        if (typeof parentModel !== "string" || !parentModel.trim()) throw new Error("Parent Turn model has not been resolved");
         if (run.session.agent.sandbox?.enabled === false) throw new Error("Delegation requires a managed Sandbox");
         const maxSteps = input.maxSteps ?? Math.min(30, this.deps.maxSteps);
         if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > this.deps.maxSteps) {
@@ -69,7 +72,7 @@ export class DelegationCoordinator {
           prompt: input.prompt,
           mode: input.runInBackground ? "async" : "sync",
           resume: input.resume,
-          model: input.model,
+          parentModel,
           thinking: input.thinking,
           maxSteps,
           apiKeyId: run.apiKeyId,

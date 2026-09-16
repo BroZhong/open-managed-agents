@@ -79,7 +79,6 @@ export interface HostSubagentCapability {
     prompt: string;
     resume?: string;
     runInBackground: boolean;
-    model?: string;
     thinking?: string;
     maxSteps?: number;
   }, context: SubagentCallContext): Promise<unknown>;

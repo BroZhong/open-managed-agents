@@ -46,9 +46,13 @@ by the Session Router. A Child Session executes one Turn at a time. Parent child
 concurrency defaults to four; excess inputs remain durable and queued. A parent
 waiting for a result does not occupy a child execution slot.
 
-Each child Turn resolves the configured Agent's current model and constructs
-its own Pi session, ModelRuntime and per-Turn ToolExecutor. Explicit model and
-thinking overrides are validated and the effective configuration is recorded;
+Each accepted Delegation Input snapshots the calling parent Turn's resolved
+provider/model, including on resume, and pins it through queueing and recovery.
+The child constructs its own Pi session, ModelRuntime and per-Turn ToolExecutor
+using that model. The model cannot override it through tool arguments. No
+predefined subagent configuration exists yet; a future explicitly configured
+subagent model would require a separate Host-owned policy. Thinking overrides
+are validated and the effective configuration is recorded;
 credentials and capability objects are not persisted. The default child budget
 is 30 model requests, with a Host-configured bounded maximum. Pi retains its
 normal retry and compaction behavior. Promise settlement alone is not success:

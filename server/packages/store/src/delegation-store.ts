@@ -105,6 +105,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
   async accept(input: DelegationAcceptInput, fence: PendingEventFence): Promise<DelegationExecution> {
     if (!input.prompt.trim() || !Number.isInteger(input.maxSteps) || input.maxSteps < 1 || input.maxSteps > 1000) throw new Error("Invalid delegation prompt or step budget");
     if (input.mode !== "sync" && input.mode !== "async") throw new Error("Invalid delegation mode");
+    if (typeof input.parentModel !== "string" || !input.parentModel.trim()) throw new Error("Resolved parent model is required");
     return this.transaction(async (tx) => {
       await tx.assertFence(input.callerSessionId, fence);
       const parent = await tx.sessions.getById(input.callerSessionId);
@@ -118,7 +119,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
         child = await tx.sessions.getById(input.resume);
         if (!child || child.status === "terminated") throw new Error("Child Session terminated; cannot resume");
       } else {
-        child = await tx.sessions.create({ tenantId: parent.tenantId, agentId: parent.agentId, agent: parent.agent, workspaceId: parent.workspaceId,
+        child = await tx.sessions.create({ tenantId: parent.tenantId, agentId: parent.agentId, agent: { ...parent.agent, model: input.parentModel }, workspaceId: parent.workspaceId,
           delegation: { parentSessionId: parent.id, parentTurnId: input.callerTurnId, parentToolUseId: input.callerToolUseId, sandboxSessionId: input.sandboxSessionId } });
       }
       const previous = await tx.read<DelegationExecution>("executions", { childId: child.id });
@@ -126,7 +127,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       const id = `deleg_${nanoid()}`;
       const pending = await tx.pending.enqueue(child.id, { type: "delegation.input", data: { content: [{ type: "text", text: input.prompt }], source: "delegation", executionId: id }, sessionThreadId: "sthr_primary", apiKeyId: input.apiKeyId });
       const now = new Date().toISOString();
-      const execution: DelegationExecution = { ...callerFilter(input), id, sequence, childId: child.id, pendingEventId: pending.id, mode: input.mode, status: "queued", prompt: input.prompt, apiKeyId: input.apiKeyId, model: input.model, thinking: input.thinking, maxSteps: input.maxSteps, createdAt: now, updatedAt: now };
+      const execution: DelegationExecution = { ...callerFilter(input), id, sequence, childId: child.id, pendingEventId: pending.id, mode: input.mode, status: "queued", prompt: input.prompt, apiKeyId: input.apiKeyId, model: input.parentModel, modelSource: "parent", thinking: input.thinking, maxSteps: input.maxSteps, createdAt: now, updatedAt: now };
       await tx.put("executions", id, execution);
       if (input.mode === "sync") {
         const wait: DelegationWait = { ...callerFilter(input), executionId: id, parentPendingEventId: fence.eventId, checkpoint: input.checkpoint ?? {}, status: "waiting" };

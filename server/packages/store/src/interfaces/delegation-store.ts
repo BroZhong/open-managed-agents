@@ -27,6 +27,8 @@ export interface DelegationExecution extends DelegationCaller {
   prompt: string;
   apiKeyId?: string;
   model?: string;
+  /** Present on executions accepted under parent-model inheritance; absent on legacy records. */
+  modelSource?: "parent";
   thinking?: string;
   maxSteps: number;
   turnId?: string;
@@ -54,7 +56,8 @@ export interface DelegationAcceptInput extends DelegationCaller {
   mode: DelegationMode;
   resume?: string;
   apiKeyId?: string;
-  model?: string;
+  /** Trusted Host snapshot of the calling parent Turn model, including its provider. */
+  parentModel: string;
   thinking?: string;
   maxSteps: number;
   sandboxSessionId: string;

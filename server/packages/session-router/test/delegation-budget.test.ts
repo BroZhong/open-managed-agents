@@ -15,8 +15,12 @@ describe("Host delegation budget", () => {
       sessions: stores.sessionStore, events: stores.eventLogStore,
       wake() {}, publish() {}, maxSteps: maximum,
     });
-    const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal });
+    const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal, effectiveConfig: { model: "provider/parent" } });
     expect(capability.maxModelSteps).toBe(maximum);
+    const override = { prompt: "task", runInBackground: true, model: "untrusted/different-model" };
+    await expect(capability.delegate(override, { toolUseId: "model-override", checkpoint: [] }))
+      .rejects.toThrow("Delegated model overrides are not supported");
+
     // Bypass Pi validation: the Host must still reject rather than clamp.
     await expect(capability.delegate({ prompt: "task", runInBackground: true, maxSteps: maximum + 1 }, { toolUseId: "over-budget", checkpoint: [] }))
       .rejects.toThrow(`max_steps must be between 1 and ${maximum}`);

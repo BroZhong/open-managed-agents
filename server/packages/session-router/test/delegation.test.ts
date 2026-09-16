@@ -44,6 +44,39 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
 }
 
 describe("Host-owned delegation through the Session Router", () => {
+  it("pins create and resume to the calling parent's resolved provider/model despite Agent changes", async () => {
+    let parentTurns = 0;
+    let childId: string | undefined;
+    const childModels: string[] = [];
+    const actualModels = ["openai-codex/gpt-5.6-sol", "anthropic/claude-sonnet-4-5"];
+    const h = await harness({ async *run(input) {
+      if (input.execution?.isChild) {
+        childModels.push(input.agent.model!);
+        await input.execution.onResolved?.({ model: input.agent.model!, thinking: "high", thinkingSource: "model_default" });
+        yield text("child done"); return;
+      }
+      const actualModel = actualModels[parentTurns++];
+      await input.execution?.onResolved?.({ model: actualModel, thinking: "high", thinkingSource: "model_default" });
+      // Another request edits the Agent after this parent Turn has resolved its model.
+      await h.stores.agentStore.update(h.agent.id, { model: "unrelated/new-configuration" });
+      const toolId = `delegate-${parentTurns}`;
+      const call = tool(toolId); yield call;
+      const output = await input.subagents!.delegate({ prompt: "child", resume: childId, runInBackground: false }, { toolUseId: toolId, checkpoint: [call] }) as { childId: string };
+      childId = output.childId;
+      yield result(toolId, output);
+    } });
+    for (let turn = 0; turn < 2; turn++) {
+      await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    }
+    expect(childModels).toEqual(actualModels);
+    const executions = (await h.stores.delegationStore.list("tenant", h.parent.id)).sort((a, b) => a.sequence - b.sequence);
+    expect(executions).toHaveLength(2);
+    expect(executions.map(execution => execution.childId)).toEqual([childId, childId]);
+    expect(executions.map(execution => execution.model)).toEqual(actualModels);
+    expect(executions.map(execution => execution.effectiveConfig)).toEqual(actualModels.map(model => expect.objectContaining({ model, modelSource: "parent" })));
+    expect(h.errors).toEqual([]);
+  });
+
   it("keeps child capabilities restricted for direct user input after its delegated Turn", async () => {
     const inputs: AdapterInput[] = [];
     let childId = "";
@@ -278,7 +311,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const promoted = await h.stores.eventLogStore.append(h.parent.id, { type: pending.type, data: pending.data, sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pending.id}`, pendingFence: fence });
     const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
     const call = tool("restored-call");
-    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [call] } }, fence);
+    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [call] } }, fence);
     await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
     await h.router.recoverPendingEvents();
     expect(await h.router.waitForIdle(4000)).toBe(true);
@@ -302,7 +335,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
     const call = tool("finished-call");
     const caller = { tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "finished-call" };
-    const child = await h.stores.delegationStore.accept({ ...caller, prompt: "child", mode: "sync", maxSteps: 30,
+    const child = await h.stores.delegationStore.accept({ ...caller, prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30,
       sandboxSessionId: h.parent.id, checkpoint: { events: [call] } }, fence);
     const childClaim = (await h.stores.pendingEventStore.claim(child.childId, "dead-host", 30000))!;
     const childFence = { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation };

@@ -1083,7 +1083,7 @@ export class SessionRouter {
           delegationExecution.id, pendingFence, turnId,
           { model: currentAgent.model, thinking: delegationExecution.thinking,
             runtime: currentAgent.runtime, maxModelSteps: delegationExecution.maxSteps,
-            modelSource: delegationExecution.model ? "override" : "agent" },
+            modelSource: delegationExecution.modelSource ?? (delegationExecution.model ? "override" : "agent") },
           this.maxConcurrentSubagents,
         );
         if (!started) {
@@ -1281,7 +1281,8 @@ export class SessionRouter {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
       const delegationRun: DelegationRun = { session, turnId, fence: pendingFence,
-        signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId };
+        signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId,
+        effectiveConfig: { model: currentAgent.model } };
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
       let sandbox: SandboxSession | undefined;
