@@ -39,13 +39,13 @@ Implementation commits: `ccaf39aa155a` (stream/budget fixes), `738c128bf426` (mo
 - Adapter: **389 passed**.
 - Server and Adapter typechecks passed.
 - A separate real PostgreSQL regression verified parent-model persistence; its isolated schema was removed and the local test container stopped.
-- Existing Web verification remains **255 passed**; there were no additional Web source changes. An additional focused 22-test UI review passed.
+- Web: **256 passed**, with production build passing. A supplemental hook regression mounts parent and child concurrently with identical event/Turn/block/delta IDs, completes and closes one without affecting the other, then reopens the child from its own history cursor. An earlier focused 22-test UI review also passed.
 - New regressions cover concurrent Sessions with identical Turn/block IDs, cross-tenant Session isolation, reclaim/resume isolation, SSE reconnect, delegation traces, Host bounds 7/30/250, and model inheritance on create/resume during an Agent configuration change.
 - Independent code review found no blocking issues.
 
 ## Final release and repeated live scenario
 
-Server and Web both run `738c128bf426` in `agent-platform/oma-infra`; rollout and external health checks passed. The latest remote `main` remained `cf47dc83ada9`, which is an ancestor of the release.
+Server and Web both run `738c128bf426` in `agent-platform/oma-infra`; rollout and external health checks passed. At release time, remote `main` was `cf47dc83ada9`, which is an ancestor of the release.
 
 The repeated real scenario used parent [sess_QRZ0rqEAJHpiVJphEDhHy](https://agentry.welltop.tech/sessions/sess_QRZ0rqEAJHpiVJphEDhHy), Workspace `ws_5CPCFTbUdNgl0ByOwtQmG`:
 

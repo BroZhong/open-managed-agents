@@ -86,6 +86,85 @@ function stubHistoryOnly(history: SessionEvent[], hasMore = false) {
 }
 
 describe("useSessionEvents history replay", () => {
+  it("isolates concurrent Sessions with identical event, Turn, block and delta IDs through close and reopen", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const histories = new Map<string, SessionEvent[]>([
+      ["parent", [{ ...historicalEvent(1), data: { content: [{ type: "text", text: "parent history" }] } }]],
+      ["child", [{ ...historicalEvent(1), data: { content: [{ type: "text", text: "child history" }] } }]],
+    ]);
+    const connections = new Map<string, Array<{
+      controller: ReadableStreamDefaultController<Uint8Array>;
+      signal: AbortSignal;
+      anchor: string;
+    }>>();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const sessionId = new URL(String(input)).pathname.split("/").at(-2)!;
+      const headers = init?.headers as Record<string, string>;
+      if (headers.Accept === "application/json") {
+        return Promise.resolve({ ok: true, json: async () => ({ data: histories.get(sessionId), has_more: false }) } as Response);
+      }
+      if (!init?.signal) throw new Error("Session subscriptions must be cancellable");
+      const signal = init.signal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const list = connections.get(sessionId) ?? [];
+          list.push({ controller, signal, anchor: headers["Last-Event-ID"] });
+          connections.set(sessionId, list);
+          signal.addEventListener("abort", () => controller.close(), { once: true });
+        },
+      });
+      return Promise.resolve({ ok: true, body } as Response);
+    }));
+    const wrapper = queryWrapper(queryClient);
+    const parent = renderHook(() => useSessionEvents("parent"), { wrapper });
+    const child = renderHook(() => useSessionEvents("child"), { wrapper });
+    await waitFor(() => expect(parent.result.current.isConnected && child.result.current.isConnected).toBe(true));
+    const emit = (sessionId: string, type: string, data: object, seq?: number) => {
+      const frame = `event: ${type}\n${seq === undefined ? "" : `id: ${seq}\n`}data: ${JSON.stringify(data)}\n\n`;
+      connections.get(sessionId)!.at(-1)!.controller.enqueue(new TextEncoder().encode(frame));
+    };
+    const delta = (text: string, deltaId = "0-0", blockIndex = 0) => ({ turnId: "turn_1_a1", blockIndex, deltaId, text });
+    await act(async () => {
+      emit("parent", "agent.message_chunk", delta("parent-only"));
+      emit("child", "agent.message_chunk", delta("child-only"));
+    });
+    expect(parent.result.current.activeDeltas.map(d => d.data)).toEqual([delta("parent-only")]);
+    expect(child.result.current.activeDeltas.map(d => d.data)).toEqual([delta("child-only")]);
+    expect(parent.result.current.events).toEqual(histories.get("parent"));
+    expect(child.result.current.events).toEqual(histories.get("child"));
+
+    const complete = { turnId: "turn_1_a1", blockIndex: 0, content: [{ type: "text", text: "parent complete" }] };
+    await act(async () => {
+      emit("parent", "agent.message", complete, 2);
+      emit("parent", "session.status_idle", {}, 3);
+    });
+    expect(parent.result.current.activeDeltas).toEqual([]);
+    expect(child.result.current.activeDeltas.map(d => d.data)).toEqual([delta("child-only")]);
+    expect(child.result.current.events).toHaveLength(1);
+    parent.unmount();
+    expect(connections.get("parent")![0].signal.aborted).toBe(true);
+    expect(connections.get("child")![0].signal.aborted).toBe(false);
+    await act(async () => emit("child", "agent.message_chunk", delta("child continues", "0-1")));
+    expect(child.result.current.activeDeltas.map(d => d.data)).toEqual([delta("child-only"), delta("child continues", "0-1")]);
+
+    child.unmount();
+    expect(connections.get("child")![0].signal.aborted).toBe(true);
+    histories.set("child", [{ ...historicalEvent(2), type: "agent.message", data: { ...complete, content: [{ type: "text", text: "child complete" }] } }]);
+    const reopened = renderHook(() => useSessionEvents("child"), { wrapper });
+    await waitFor(() => expect(reopened.result.current.isConnected).toBe(true));
+    expect(connections.get("child")).toHaveLength(2);
+    expect(connections.get("child")![1].anchor).toBe("2");
+    expect(reopened.result.current.events).toEqual(histories.get("child"));
+    expect(reopened.result.current.activeDeltas).toEqual([]);
+    await act(async () => {
+      emit("child", "agent.message_chunk", delta("stale completed block"));
+      emit("child", "agent.message_chunk", delta("next child block", "0-1", 1));
+    });
+    expect(reopened.result.current.activeDeltas.map(d => d.data)).toEqual([delta("next child block", "0-1", 1)]);
+  });
+
   it("counts durable usage once across history replay and SSE reconnect", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
