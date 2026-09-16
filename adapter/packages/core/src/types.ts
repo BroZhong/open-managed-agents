@@ -80,7 +80,6 @@ export interface HostSubagentCapability {
     resume?: string;
     runInBackground: boolean;
     thinking?: string;
-    maxSteps?: number;
   }, context: SubagentCallContext): Promise<unknown>;
   getResult(input: { childId: string; executionId?: string; wait: boolean }, context: SubagentCallContext): Promise<unknown>;
   steer(input: { childId: string; executionId?: string; message: string }, context: SubagentCallContext): Promise<unknown>;

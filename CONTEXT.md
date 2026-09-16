@@ -39,7 +39,7 @@ A durable task prompt accepted by `Agent`, either for a new Child Session or for
 _Avoid_: new Agent configuration, user message (its origin is delegation)
 
 **Delegation Execution**:
-The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; children default to 30 steps.
+The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; the Host assigns 500 steps by default to each execution, including resume. The parent cannot override the budget; budget exhaustion returns a status for the parent to decide whether to resume.
 _Avoid_: childId (the Child Session can contain multiple executions)
 
 **Delegation Result**:

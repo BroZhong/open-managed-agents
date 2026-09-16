@@ -367,7 +367,7 @@ async function main() {
   const sessionRouter = new SessionRouter({
     delegationStore: stores.delegationStore,
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
-    maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 30),
+    maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 500),
     eventLogStore: stores.eventLogStore,
     pendingEventStore,
     sessionStore: stores.sessionStore,

@@ -3,7 +3,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
 
 describe("Host delegation budget", () => {
-  it.each([7, 30, 250])("advertises and independently enforces its configured maximum of %i", async (maximum) => {
+  it.each([7, 500, 1000])("assigns the Host budget of %i to create and resume", async (maximum) => {
     const stores = createMemoryStores();
     const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Agent", model: "test", system: "test", runtime: "pi-agent", sandbox: { enabled: true } });
     const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
@@ -21,14 +21,18 @@ describe("Host delegation budget", () => {
     await expect(capability.delegate(override, { toolUseId: "model-override", checkpoint: [] }))
       .rejects.toThrow("Delegated model overrides are not supported");
 
-    // Bypass Pi validation: the Host must still reject rather than clamp.
-    await expect(capability.delegate({ prompt: "task", runInBackground: true, maxSteps: maximum + 1 }, { toolUseId: "over-budget", checkpoint: [] }))
-      .rejects.toThrow(`max_steps must be between 1 and ${maximum}`);
+    // Bypass Pi validation: the Host must independently reject budget overrides.
+    for (const key of ["maxSteps", "max_steps"]) {
+      const override = { prompt: "task", runInBackground: true, [key]: 6 };
+      await expect(capability.delegate(override, { toolUseId: key, checkpoint: [] }))
+        .rejects.toThrow("Delegated budget overrides are not supported");
+    }
     expect(await stores.delegationStore.list("tenant", parent.id)).toEqual([]);
-    await capability.delegate({ prompt: "task", runInBackground: true, maxSteps: maximum }, { toolUseId: "explicit", checkpoint: [] });
     await capability.delegate({ prompt: "task", runInBackground: true }, { toolUseId: "default", checkpoint: [] });
+    const initial = (await stores.delegationStore.list("tenant", parent.id))[0];
+    await capability.delegate({ prompt: "continue", runInBackground: true, resume: initial.childId }, { toolUseId: "resume", checkpoint: [] });
     const executions = await stores.delegationStore.list("tenant", parent.id);
-    expect(executions.find(execution => execution.callerToolUseId === "explicit")?.maxSteps).toBe(maximum);
-    expect(executions.find(execution => execution.callerToolUseId === "default")?.maxSteps).toBe(Math.min(30, maximum));
+    expect(executions).toHaveLength(2);
+    expect(executions.every(execution => execution.maxSteps === maximum && execution.childId === initial.childId)).toBe(true);
   });
 });

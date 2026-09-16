@@ -101,7 +101,7 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(childInputs).toHaveLength(2);
     for (const input of childInputs) {
       expect(input.subagents).toBeUndefined();
-      expect(input.execution).toMatchObject({ isChild: true, maxModelSteps: 30 });
+      expect(input.execution).toMatchObject({ isChild: true, maxModelSteps: 500 });
       expect(input.agent.mcpServers).toBeUndefined();
       expect(input.toolExecutor).toBeDefined();
     }
@@ -247,16 +247,19 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(h.errors).toEqual([]);
   });
 
-  it("resume rebuilds a child in a later parent Turn and retains its creation origin and completed tools", async () => {
+  it.each([false, true])("resume retains origin and tools with a fresh budget after exhaustion=%s", async (exhausted) => {
     let childId = "";
     let childTurns = 0;
     let parentTurns = 0;
     const h = await harness({ async *run(input) {
       if (input.execution?.isChild) {
         childTurns++;
+        expect(input.execution).toMatchObject({ maxModelSteps: 500 });
+        expect(input.execution.completedModelSteps ?? 0).toBe(0);
         if (childTurns === 1) {
           const call = event("agent.tool_use", { toolUseId: "write", name: "write", input: { path: "one.txt", content: "one" } });
           yield call; await input.toolExecutor!.writeFile("one.txt", "one"); yield result("write", "saved");
+          if (exhausted) { yield event("session.error", { error: { code: "model_step_budget_exhausted", message: "Model step budget exhausted (500)" } }); return; }
         } else {
           expect(input.history.some((event) => event.type === "agent.tool_result" && event.toolUseId === "write")).toBe(true);
           expect(await input.toolExecutor!.readFile("one.txt")).toBe("one");
@@ -269,12 +272,18 @@ describe("Host-owned delegation through the Session Router", () => {
       childId = output.childId; yield result(id, output); yield text("done");
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    const initial = await h.stores.delegationStore.list("tenant", h.parent.id);
+    expect(initial).toHaveLength(1);
+    expect(initial[0].status).toBe(exhausted ? "budget_exhausted" : "completed");
+    if (exhausted) expect(initial[0].result).toMatchObject({ output: "", reason: "Model step budget exhausted (500)" });
     const origin = (await h.stores.sessionStore.getById(childId))!.delegation;
     await h.enqueue("resume"); await h.makeRouter().handleNewEvent(h.parent.id, h.agent);
     expect(childTurns).toBe(2);
     const executions = await h.stores.delegationStore.list("tenant", h.parent.id);
     expect(executions).toHaveLength(2);
     expect(new Set(executions.map((e) => e.childId)).size).toBe(1);
+    expect(executions.every(e => e.maxSteps === 500)).toBe(true);
+    expect(executions.find(e => e.id !== initial[0].id)?.status).toBe("completed");
     expect((await h.stores.sessionStore.getById(childId))!.delegation).toEqual(origin);
     expect(h.errors).toEqual([]);
   });
