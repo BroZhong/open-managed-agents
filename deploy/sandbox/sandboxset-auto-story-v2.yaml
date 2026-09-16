@@ -32,16 +32,19 @@ spec:
             secretKeyRef:
               key: OSS_READ_ACCESS_KEY_SECRET
               name: base-secret
+        # Optional aliases; GOOGLE_API_KEY and GEMINI_VIDEO_MODEL are the deployed defaults.
         - name: GEMINI_API_KEY
           valueFrom:
             secretKeyRef:
               key: GEMINI_API_KEY
               name: base-secret
+              optional: true
         - name: GEMINI_AUDIO_MODEL
           valueFrom:
             secretKeyRef:
               key: GEMINI_AUDIO_MODEL
               name: base-secret
+              optional: true
         - name: GEMINI_VIDEO_MODEL
           valueFrom:
             secretKeyRef:
@@ -112,7 +115,7 @@ spec:
             secretKeyRef:
               key: OPENGROVE_WW_ACCESS_TOKEN
               name: base-secret
-        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:254c2618e695504a673665d2dc261a8799d51492f40e9aeff7d98fc6f8f9f5c1
+        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:90167310fe9a2d426dbaa89d97e845245456337fdd4fca0476c8cdbfaa407e2d
         imagePullPolicy: IfNotPresent
         name: sandbox
         resources:

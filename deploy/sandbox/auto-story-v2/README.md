@@ -44,3 +44,7 @@ PUSH=1 bash deploy/sandbox/auto-story-v2/build.sh
 - HOME、缓存、临时文件及用户依赖在沙箱本地，媒体输出写 Workspace。
 - 凭证由运行时 Secret 注入，不进入构建上下文。
 - `../sandboxset-auto-story-v2.yaml` 保留当前线上 digest。新镜像通过验收后才另行发布并更新 digest；修改构建源码不会切换线上镜像。
+
+## 线上验收
+
+从 `oma-server` 容器内用 stdin 运行 `verify-live.mjs`：创建独立 Workspace 前缀的临时沙箱，检查 CSI 挂载、读写与重连、镜像工具以及 launcher 已移除，最后清理文件并回收沙箱。设置 `VFS_DIAGNOSTIC_TASK_ID` 可额外重放一个已知 `DurationOutOfRange` 任务，验证普通与 `--once` 查询；不提交生成任务。
