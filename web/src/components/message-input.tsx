@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type KeyboardEvent } from "react";
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
 import { ArrowUp, Clock, Square, Sparkles, CornerDownRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EquippedSkill } from "@/lib/hooks/use-skills";
@@ -51,6 +51,8 @@ export function MessageInput({
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const submittingRef = useRef(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerButtonRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const skillQuery =
@@ -65,6 +67,22 @@ export function MessageInput({
     selectedSkillIndex,
     Math.max(skillSuggestions.length - 1, 0),
   );
+
+  useEffect(() => {
+    if (!skillSuggestions.length) return;
+    const dismiss = () => { setSkillPickerOpen(false); setSuggestionsDismissed(true); };
+    const outside = (event: Event) => {
+      const target = event.target as Node;
+      if (!pickerRef.current?.contains(target) && !pickerButtonRef.current?.contains(target)) dismiss();
+    };
+    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [skillSuggestions.length]);
 
   const adjustHeight = useCallback(() => {
     const textarea = textareaRef.current;
@@ -184,6 +202,7 @@ export function MessageInput({
         <div className="message-composer">
           {skillSuggestions.length > 0 && (
             <div
+              ref={pickerRef}
               id="equipped-skill-suggestions"
               role="listbox"
               aria-label="Equipped Skills"
@@ -244,7 +263,7 @@ export function MessageInput({
             )}
           />
           <div className="session-composer-toolbar">
-            {skills.length > 0 && <button type="button" className="session-skill-picker" aria-label="Choose a Skill" aria-expanded={skillSuggestions.length > 0} disabled={disabled || sending} onClick={() => {
+            {skills.length > 0 && <button ref={pickerButtonRef} type="button" className="session-skill-picker" aria-label="Choose a Skill" aria-expanded={skillSuggestions.length > 0} disabled={disabled || sending} onClick={() => {
               setSkillPickerOpen(!skillPickerOpen);
               setSuggestionsDismissed(skillPickerOpen);
               setSelectedSkillIndex(0);

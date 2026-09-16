@@ -59,6 +59,8 @@ import {
  */
 export interface FileManagerProps {
   source: FileSource;
+  /** A new request reveals and selects a file, including repeated clicks. */
+  fileSelection?: { path: string; nonce: number };
   /** Injected by the host page (from its existing SSE). Not subscribed here. */
   turnStatus: TurnStatus;
   /** Bumped by the host on a file-change SSE event / turn end to force a refetch. */
@@ -670,7 +672,7 @@ function writeErrorMessage(err: unknown): string {
   return isLockedError(err) ? WRITE_LOCKED_RETRY : (err as Error).message;
 }
 
-export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, presentation = "default" }: FileManagerProps) {
+export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, presentation = "default", fileSelection }: FileManagerProps) {
   const workbench = presentation === "workbench";
   const managerRef = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(managerRef, 520);
@@ -752,6 +754,22 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
     },
     [source],
   );
+
+  useEffect(() => {
+    if (!fileSelection) return;
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      const { path } = fileSelection;
+      setSearch("");
+      setDirectoryOpen(true);
+      const parts = path.split("/");
+      setExpanded((previous) => new Set([...previous, ...parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"))]));
+      void refresh();
+      void openFile(path);
+    });
+    return () => { active = false; };
+  }, [fileSelection, openFile, refresh]);
 
   /** Refresh the tree and reload/drop the selected file from the same snapshot. */
   const refreshSelected = useCallback(

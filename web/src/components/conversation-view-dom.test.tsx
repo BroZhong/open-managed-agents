@@ -239,6 +239,8 @@ it("keeps process expansion across new output and exposes failures", () => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const view = render(<ConversationView events={activityEvents.slice(0, 3)} sessionStatus="running" />);
   const summary = screen.getByRole("button", { name: /Working · reasoning/ });
+  expect(summary.getAttribute("aria-expanded")).toBe("true");
+  fireEvent.click(summary);
   fireEvent.click(summary);
   view.rerender(<ConversationView events={activityEvents} sessionStatus="idle" />);
   expect(screen.getByRole("button", { name: /Explored · reasoning/ }).getAttribute("aria-expanded")).toBe("true");
@@ -290,4 +292,40 @@ it("reveals the process group targeted by a delegated tool deep link", () => {
   render(<ConversationView events={activityEvents} sessionStatus="idle" focusToolUseId="read-1" />);
   expect(screen.getByRole("button", { name: /Explored · reasoning/ }).getAttribute("aria-expanded")).toBe("true");
   expect(screen.getByRole("button", { name: /Read file/ }).closest("[hidden]")).toBeNull();
+});
+
+it("keeps successive process groups between the text messages that separate them", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const later: SessionEvent[] = [
+    { seq: 15, type: "agent.thinking", data: { text: "Now verify" }, ts: userMessage.ts },
+    { seq: 16, type: "agent.tool_use", data: { toolUseId: "read-2", name: "read", input: { path: "result.md" } }, ts: userMessage.ts },
+    { seq: 17, type: "agent.tool_result", data: { toolUseId: "read-2", content: "Verified" }, ts: userMessage.ts },
+  ];
+  const view = render(<ConversationView events={[...activityEvents, ...later]} sessionStatus="running" />);
+  const groups = view.container.querySelectorAll(".session-process");
+  expect(groups).toHaveLength(2);
+  expect(groups[0].querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+  expect(groups[1].querySelector("button")?.getAttribute("aria-expanded")).toBe("true");
+  const firstAnswer = screen.getByText("Here is the answer");
+  expect(groups[0].compareDocumentPosition(firstAnswer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(firstAnswer.compareDocumentPosition(groups[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  view.rerender(<ConversationView events={[...activityEvents, ...later]} activeDeltas={deltas} sessionStatus="running" />);
+  expect(groups[1].querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.getByText("Stable bubble").closest("[hidden]")).toBeNull();
+  view.rerender(<ConversationView events={[...activityEvents, ...later, { seq: 18, type: "agent.message", data: { content: [{ type: "text", text: "All verified" }] }, ts: userMessage.ts }]} sessionStatus="idle" />);
+  expect(view.container.querySelectorAll(".session-process")[1]).toBe(groups[1]);
+  expect(groups[1].compareDocumentPosition(screen.getByText("All verified")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("opens absolute and relative file links in Workspace while preserving external links", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const open = vi.fn();
+  render(<ConversationView onOpenWorkspaceFile={open} sessionStatus="idle" events={[{
+    seq: 1, type: "agent.message", ts: userMessage.ts,
+    data: { content: [{ type: "text", text: "[旁白稿](/home/user/workspace/novel/narration.txt) [场面草案](novel/scenes.md) [文件](file:///home/user/workspace/novel/production.json) [文档](https://example.com/docs) [技能](/skills/story/SKILL.md)" }] },
+  }]} />);
+  for (const name of ["旁白稿", "场面草案", "文件"]) fireEvent.click(screen.getByRole("link", { name }));
+  expect(open.mock.calls).toEqual([["novel/narration.txt"], ["novel/scenes.md"], ["novel/production.json"]]);
+  expect(screen.getByRole("link", { name: "文档" }).getAttribute("href")).toBe("https://example.com/docs");
+  expect(screen.getByRole("link", { name: "技能" }).getAttribute("title")).toBeNull();
 });

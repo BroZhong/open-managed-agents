@@ -26,7 +26,7 @@ it("opens the selected execution without nesting a trace or navigating away", as
   });
   vi.stubGlobal("fetch", fetcher);
   mount(<><DelegationCard onOpenExecution={open} sessionId="parent" message={{ id: "1", role: "tool_use", text: "", name: "Agent", toolUseId: "call-1", turnId: "parent-turn" }} /><DelegationCard onOpenExecution={open} sessionId="parent" message={{ id: "2", role: "tool_use", text: "", name: "Agent", toolUseId: "call-2", turnId: "next-parent-turn" }} /></>);
-  await screen.findAllByText(/Open session/);
+  await waitFor(() => expect(screen.getAllByTitle("Open child Session")).toHaveLength(2));
   const buttons = screen.getAllByRole("button", { name: /Agent/ });
   fireEvent.click(buttons[0]);
   fireEvent.click(buttons[1]);
@@ -138,8 +138,8 @@ it("rechecks an initially absent execution when the Agent result arrives", async
   mount(<LiveCall />);
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   fireEvent.click(screen.getByRole("button", { name: "Receive Agent result" }));
-  await screen.findByText(/async · running/);
-  fireEvent.click(screen.getByRole("button", { name: /Agent.*Open session/ }));
+  await screen.findByLabelText("running");
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*Create output/ }));
   expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: "exec-1" }));
   expect(fetcher).toHaveBeenCalledTimes(2);
 });

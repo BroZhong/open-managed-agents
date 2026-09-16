@@ -4,17 +4,19 @@ import { createWorkspaceFileSource } from "@/lib/file-source";
 
 interface WorkspacePanelProps {
   workspaceId: string;
+  fileSelection?: { path: string; nonce: number };
   /** Bumped by Turn end to trigger an OSS file-list refetch. */
   refreshKey: number;
 }
 
 /** Files are scoped to the Workspace, independently of a Session's Turn. */
-export function WorkspacePanel({ workspaceId, refreshKey }: WorkspacePanelProps) {
+export function WorkspacePanel({ workspaceId, refreshKey, fileSelection }: WorkspacePanelProps) {
   const source = useMemo(() => createWorkspaceFileSource(workspaceId), [workspaceId]);
   return (
     <FileManager
       key={workspaceId}
       source={source}
+      fileSelection={fileSelection}
       presentation="workbench"
       turnStatus="idle"
       refreshKey={refreshKey}

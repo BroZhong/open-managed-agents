@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo, createContext, useContext } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, ChevronDown, Circle, Check, Layers } from "lucide-react";
 import type { SessionDelta, SessionEvent } from "@/lib/types";
@@ -14,8 +14,10 @@ import { ToolCard } from "@/components/tool-card";
 
 import { DelegationCard } from "@/components/delegation-card";
 import type { DelegationExecution } from "@/lib/delegations";
+import { workspaceLinkPath } from "@/lib/workspace-link";
 const SessionContext = createContext("");
 const OpenExecutionContext = createContext<((execution: DelegationExecution) => void) | undefined>(undefined);
+const OpenWorkspaceFileContext = createContext<((path: string) => void) | undefined>(undefined);
 
 interface Turn {
   id: string;
@@ -57,6 +59,7 @@ function groupMessagesIntoTurns(messages: DisplayMessage[]): Turn[] {
 }
 
 interface ConversationViewProps {
+  onOpenWorkspaceFile?: (path: string) => void;
   onOpenExecution?: (execution: DelegationExecution) => void;
   sessionId?: string;
   focusToolUseId?: string;
@@ -66,6 +69,7 @@ interface ConversationViewProps {
 }
 
 export function ConversationView({
+  onOpenWorkspaceFile,
   onOpenExecution,
   events,
   sessionId = "",
@@ -132,7 +136,7 @@ export function ConversationView({
   const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
 
   return (
-    <SessionContext.Provider value={sessionId}><OpenExecutionContext.Provider value={onOpenExecution}><div className="relative flex h-full flex-col">
+    <SessionContext.Provider value={sessionId}><OpenExecutionContext.Provider value={onOpenExecution}><OpenWorkspaceFileContext.Provider value={onOpenWorkspaceFile}><div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
         <div ref={contentRef} className="session-thread">
           {messages.length === 0 && (
@@ -160,19 +164,27 @@ export function ConversationView({
           Jump to latest
         </button>
       )}
-    </div></OpenExecutionContext.Provider></SessionContext.Provider>
+    </div></OpenWorkspaceFileContext.Provider></OpenExecutionContext.Provider></SessionContext.Provider>
   );
 }
 
 function TurnBlock({ turn, running, focusToolUseId }: { turn: Turn; running: boolean; focusToolUseId?: string }) {
-  const activity = turn.responses.filter((message) => message.role === "thinking" || message.role === "tool_use");
-  const answers = turn.responses.filter((message) => message.role !== "thinking" && message.role !== "tool_use");
-  const focused = activity.some((message) => !!focusToolUseId && message.toolUseId === focusToolUseId);
+  const segments: { activity: boolean; messages: DisplayMessage[] }[] = [];
+  for (const message of turn.responses) {
+    const activity = message.role === "thinking" || message.role === "tool_use";
+    const previous = segments.at(-1);
+    if (activity && previous?.activity) previous.messages.push(message);
+    else segments.push({ activity, messages: [message] });
+  }
   return (
     <div className="session-turn">
       {turn.userMessage && <UserBubble text={turn.userMessage.text} />}
-      {activity.length > 0 && <ProcessGroup key={`process:${focused ? focusToolUseId : ""}`} messages={activity} running={running} focused={focused} />}
-      {answers.map((message) => <MessageBubble key={message.id} message={message} />)}
+      {segments.map((segment, index) => {
+        const focused = segment.messages.some((message) => !!focusToolUseId && message.toolUseId === focusToolUseId);
+        return segment.activity
+          ? <ProcessGroup key={`process:${segment.messages[0].id}:${focused ? focusToolUseId : ""}`} messages={segment.messages} running={running && index === segments.length - 1} focused={focused} />
+          : <MessageBubble key={segment.messages[0].id} message={segment.messages[0]} />;
+      })}
     </div>
   );
 }
@@ -182,11 +194,11 @@ function ProcessGroup({ messages, running, focused }: { messages: DisplayMessage
   const thinking = messages.some((message) => message.role === "thinking");
   const failed = tools.filter((message) => message.result?.isError).length;
   const incomplete = tools.some((message) => !message.result);
-  const active = running && (incomplete || messages.some((message) => message.streaming));
+  const active = running;
   const status = active ? "Working" : failed ? "Needs attention" : incomplete ? "Incomplete" : "Explored";
   const description = [thinking ? "reasoning" : "", tools.length ? `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}` : ""].filter(Boolean).join(" · ");
   return (
-    <SessionDisclosure className="session-process" active={active} defaultOpen={failed > 0 || focused} summary={<>
+    <SessionDisclosure className="session-process" active={active} defaultOpen={active || failed > 0 || focused} summary={<>
       {active ? <Circle size={12} className="animate-pulse" /> : failed || incomplete ? <Layers size={14} /> : <Check size={14} />}
       <span>{status} · {description}{failed ? ` · ${failed} failed` : ""}</span>
     </>}>
@@ -217,7 +229,7 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
         />
       );
     case "tool_use":
-      if (sessionId && onOpenExecution && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} onOpenExecution={onOpenExecution} />;
+      if (sessionId && onOpenExecution && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} running={running} onOpenExecution={onOpenExecution} />;
       return (
         <ToolCard
           name={message.name || "unknown"}
@@ -255,6 +267,7 @@ function AssistantBubble({
   isStreaming?: boolean;
   aborted?: boolean;
 }) {
+  const onOpenWorkspaceFile = useContext(OpenWorkspaceFileContext);
   return (
     <div className="flex justify-start">
       <div className="session-answer min-w-0 w-full max-w-full py-3 text-sm text-[var(--color-fg)] break-words">
@@ -280,7 +293,16 @@ function AssistantBubble({
             border-conflict resolution against the plugin's thead/tr borders,
             which is why those need no separate override. */}
         <div className="prose prose-sm prose-neutral max-w-none text-[var(--color-fg)]! [&_p]:my-1.5 [&_pre]:rounded-lg [&_pre]:bg-[var(--color-bg-muted)] [&_pre]:text-[var(--color-fg)] [&_code]:text-[13px] [&_code]:font-normal [&_code]:before:content-none [&_code]:after:content-none [&_table]:my-2 [&_table]:block [&_table]:w-max [&_table]:max-w-full [&_table]:table-auto [&_table]:overflow-x-auto [&_table]:border-collapse [&_th]:border [&_th]:border-[var(--color-border)] [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold [&_td]:border [&_td]:border-[var(--color-border)] [&_td]:px-2 [&_td]:py-1">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            urlTransform={(url, key) => key === "href" && onOpenWorkspaceFile && workspaceLinkPath(url) ? url : defaultUrlTransform(url)}
+            components={{ a: ({ href, children, title }) => {
+              const path = href && workspaceLinkPath(href);
+              return path && onOpenWorkspaceFile
+                ? <a href={href} title={title ?? `Open ${path} in Workspace`} onClick={(event) => { event.preventDefault(); onOpenWorkspaceFile(path); }}>{children}</a>
+                : <a href={href} title={title}>{children}</a>;
+            } }}
+          >{text}</ReactMarkdown>
         </div>
         {isStreaming && (
           <span className="inline-block h-4 w-0.5 animate-pulse bg-[var(--color-fg-subtle)]" />

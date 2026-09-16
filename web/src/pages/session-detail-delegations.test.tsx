@@ -40,7 +40,7 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
   const process = await screen.findByRole("button", { name: /Incomplete · 3 tool calls/ });
   expect(process.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(process);
-  await screen.findByRole("button", { name: /Agent · First child task.*Open session/ });
+  await screen.findByRole("button", { name: /Agent.*First child task/ });
   const draft = screen.getByRole("textbox", { name: "Message" });
   fireEvent.change(draft, { target: { value: "Unsent parent draft" } });
   const scroll = document.querySelector(".conversation-scroll")!;
@@ -50,7 +50,7 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
   expect(screen.queryByRole("region", { name: "Delegated executions" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Child Session origin" })).toBeNull();
   expect(screen.getByRole("region", { name: "Workspace panel" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: /Agent · First child task.*Open session/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*First child task/ }));
   await screen.findByText("First Turn output");
   expect(screen.getByText("Resumed Turn output")).toBeTruthy();
   expect(screen.getByText("Direct user input")).toBeTruthy();
@@ -87,13 +87,13 @@ it("reuses a full child Session tab across resumes and preserves parent state wh
   fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
   expect(screen.getByRole("textbox", { name: "Message" })).toBe(draft);
   expect((draft as HTMLTextAreaElement).value).toBe("Unsent parent draft");
-  fireEvent.click(screen.getByRole("button", { name: /Agent · Resumed child task.*Open session/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*Resumed child task/ }));
   expect(screen.getAllByRole("button", { name: "Agent 1" })).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Agent 2" })).toBeNull();
   expect(subscriptions.filter((id) => id === "same-child")).toHaveLength(1);
   expect(screen.getByText("Live child update").closest("[hidden]")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
-  fireEvent.click(screen.getByRole("button", { name: /Agent · Other child task.*Open session/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*Other child task/ }));
   await screen.findByText("Other child output");
   await waitFor(() => expect(streams.has("different-child")).toBe(true));
   expect(screen.getByRole("button", { name: "Agent 2" })).toBeTruthy();
