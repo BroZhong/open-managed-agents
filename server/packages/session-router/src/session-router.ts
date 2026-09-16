@@ -936,6 +936,21 @@ export class SessionRouter {
       const interrupted = turnEvents.some((event) => event.type === "session.turn_aborted");
       const finished = await this.delegationStore.finishExecution(execution.id, pendingFence,
         outcomeFromEvents({ ...execution, turnId }, turnEvents, interrupted));
+      // finishExecution commits the parent notification in its transaction,
+      // outside the normal Router append/publish path. Publish that durable
+      // event before waking the parent so connected clients see arrival even
+      // while another parent Turn is still running or waiting synchronously.
+      if (finished.notificationEventSeq !== undefined) {
+        const notifications = await this.eventLogStore.getEvents(finished.callerSessionId, {
+          afterSeq: finished.notificationEventSeq - 1, limit: 1,
+        });
+        const notification = notifications.data[0];
+        if (notification?.seq === finished.notificationEventSeq) {
+          this.eventStreamHub.publish(finished.callerSessionId, {
+            type: notification.type, seq: notification.seq, data: notification.data,
+          });
+        }
+      }
       const parent = await this.sessionStore.getById(finished.callerSessionId);
       if (parent && parent.status !== "terminated") {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
