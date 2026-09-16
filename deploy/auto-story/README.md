@@ -1,6 +1,6 @@
 # auto-story
 
-`auto-story` is a Pi Agent using the `auto-story` sandbox template. It uses the
+`auto-story` is a Pi Agent using the `auto-story-v2` sandbox template. It uses the
 existing local Skills directly; neither the repository nor the image embeds
 new copies of those Skills. The default model follows local Pi configuration:
 `openai-codex/gpt-5.6-sol`. K3 and GPT-6 Astra are also selectable, with each
@@ -102,34 +102,13 @@ build arguments, Skill text, or verification output.
 
 ## Build and deploy
 
-The [sandbox recipe](../sandbox/auto-story/README.md) builds and verifies the
-`auto-story` image. Publish it to the installation's registry and apply only
-`sandboxset-auto-story.yaml` with the verified image digest and appropriate pull
+The [sandbox recipe](../sandbox/auto-story-v2/README.md) builds and verifies the
+`auto-story-v2` image. Publish it to the installation's registry and apply only
+`sandboxset-auto-story-v2.yaml` with the verified image digest and appropriate pull
 Secret. Existing Agents continue to use the existing default template.
 
 `deploy/Dockerfile.server` builds the full Host with the sanitized Pi catalog.
-`Dockerfile.server` in this directory accepts a required immutable `BASE_IMAGE`
-from a freshly built full Host release and layers the Pi model catalog onto it.
-Build the full Host first; the Adapter, durable delegation scheduler and database
-schema must come from the same release. Delegation uses the Host-owned tools and
-does not install a Pi subagent plugin.
-
-[Dockerfile.tools](Dockerfile.tools) updates the Pi tool source in an already
-verified Host image selected by its immutable `BASE_IMAGE`. Its preflight
-requires the patched Pi filesystem, edit-preview, filesystem-scoped mutation
-queues, MIME detection export and Bash output sink, plus backend native
-filesystem operations and E2B raw-byte callbacks. An older base must first be rebuilt with
-`deploy/Dockerfile.server`; this source overlay cannot supply missing backend
-or dependency changes.
-The API's pnpm `file:` dependency is a snapshot: copying updated files only to
-`/app/adapter` leaves the API importing old code. The recipe also resolves
-`@open-managed-agents/adapter-pi-agent` from `/app/server/packages/api` and copies
-`custom-tools.ts`, `native-files.ts`, `mutation-path.ts`, `sandbox-search.ts` and
-`translator.ts` into that actual dependency directory.
-Keep this snapshot refresh when extending the overlay; it does not require
-reinstalling or changing pinned dependencies. Verify the resolved import path,
-all five file hashes against the source files, and successful module import from
-the API working directory in the built image and deployed Pod.
+Build the full Host release with `deploy/scripts/build-images.sh server`; the old model-catalog and tools overlays have been retired.
 
 Update both Host containers (`server` and `seed-pi-auth`) to the same new image.
 Build the web console with `VITE_API_URL=https://agentry.welltop.tech/api`, then

@@ -10,3 +10,5 @@
 !bin/mediakit-cli
 !bin/rg
 !bin/fd
+!bin/SHA256SUMS
+!install-python.sh

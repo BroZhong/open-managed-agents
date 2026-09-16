@@ -15,11 +15,9 @@ PNPM_VERSION="${PNPM_VERSION:-10.12.4}"
 
 NODE_UPSTREAM="${NODE_UPSTREAM:-${REGISTRY}/node-base:22-slim}"
 NGINX_UPSTREAM="${NGINX_UPSTREAM:-nginx:1.27-alpine}"
-SANDBOX_UPSTREAM="${SANDBOX_UPSTREAM:-registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter:v1.6}"
 
 NODE_BASE_IMAGE="${NODE_BASE_IMAGE:-${REGISTRY}/node-base:22-slim-pnpm-${PNPM_VERSION}}"
 NGINX_BASE_IMAGE="${NGINX_BASE_IMAGE:-${REGISTRY}/nginx-base:1.27-alpine}"
-SANDBOX_BASE_IMAGE="${SANDBOX_BASE_IMAGE:-${REGISTRY}/sandbox-base:code-interpreter-v1.6}"
 
 push=false
 force=false
@@ -28,7 +26,7 @@ components=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/build-base-images.sh [options] [node] [nginx] [sandbox]
+Usage: deploy/scripts/build-base-images.sh [options] [node] [nginx]
 
 Build the pinned base images used by OMA application builds.
 
@@ -38,7 +36,7 @@ Options:
   --dry-run    Print commands without running Docker.
   -h, --help   Show this help.
 
-With no component arguments, all three bases are processed. Existing remote
+With no component arguments, both bases are processed. Existing remote
 tags are skipped during --push unless --force is supplied.
 EOF
 }
@@ -49,14 +47,14 @@ while (($# > 0)); do
     --force) force=true ;;
     --dry-run) dry_run=true ;;
     -h|--help) usage; exit 0 ;;
-    node|nginx|sandbox) components+=("$1") ;;
+    node|nginx) components+=("$1") ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
 if ((${#components[@]} == 0)); then
-  components=(node nginx sandbox)
+  components=(node nginx)
 fi
 
 run() {
@@ -118,15 +116,9 @@ for component in "${components[@]}"; do
         "${REPO_ROOT}/deploy/base-images/Dockerfile.nginx" \
         "${NGINX_UPSTREAM}" "${NGINX_BASE_IMAGE}"
       ;;
-    sandbox)
-      build_base sandbox \
-        "${REPO_ROOT}/deploy/base-images/Dockerfile.sandbox" \
-        "${SANDBOX_UPSTREAM}" "${SANDBOX_BASE_IMAGE}"
-      ;;
   esac
 done
 
 printf '\nBase image references:\n'
 printf 'NODE_BASE_IMAGE=%s\n' "${NODE_BASE_IMAGE}"
 printf 'NGINX_BASE_IMAGE=%s\n' "${NGINX_BASE_IMAGE}"
-printf 'SANDBOX_BASE_IMAGE=%s\n' "${SANDBOX_BASE_IMAGE}"

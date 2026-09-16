@@ -1,0 +1,148 @@
+# Current deployed digest. Update only after building and verifying a release.
+apiVersion: agents.kruise.io/v1alpha1
+kind: SandboxSet
+metadata:
+  name: auto-story-v2
+  namespace: sandbox-system
+spec:
+  persistentContents:
+  - filesystem
+  replicas: 1
+  runtimes:
+  - name: csi
+  - name: agent-runtime
+  scaleStrategy: {}
+  template:
+    metadata:
+      labels:
+        alibabacloud.com/acs: 'true'
+        alibabacloud.com/compute-class: agent-sandbox
+        alibabacloud.com/compute-qos: default
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: OSS_READ_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              key: OSS_READ_ACCESS_KEY_ID
+              name: base-secret
+        - name: OSS_READ_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: OSS_READ_ACCESS_KEY_SECRET
+              name: base-secret
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              key: GEMINI_API_KEY
+              name: base-secret
+        - name: GEMINI_AUDIO_MODEL
+          valueFrom:
+            secretKeyRef:
+              key: GEMINI_AUDIO_MODEL
+              name: base-secret
+        - name: GEMINI_VIDEO_MODEL
+          valueFrom:
+            secretKeyRef:
+              key: GEMINI_VIDEO_MODEL
+              name: base-secret
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              key: GOOGLE_API_KEY
+              name: base-secret
+        - name: MEDIAKIT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              key: MEDIAKIT_API_KEY
+              name: base-secret
+        - name: MEDIAKIT_RUNTIME
+          valueFrom:
+            secretKeyRef:
+              key: MEDIAKIT_RUNTIME
+              name: base-secret
+        - name: MEDIAKIT_SURFACE
+          valueFrom:
+            secretKeyRef:
+              key: MEDIAKIT_SURFACE
+              name: base-secret
+        - name: OPENGROVE_WW_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: OPENGROVE_WW_BASE_URL
+              name: base-secret
+        - name: OSSUTIL_BIN
+          valueFrom:
+            secretKeyRef:
+              key: OSSUTIL_BIN
+              name: base-secret
+        - name: OSS_READ_BUCKET
+          valueFrom:
+            secretKeyRef:
+              key: OSS_READ_BUCKET
+              name: base-secret
+        - name: OSS_READ_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              key: OSS_READ_ENDPOINT
+              name: base-secret
+        - name: OSS_READ_REGION
+          valueFrom:
+            secretKeyRef:
+              key: OSS_READ_REGION
+              name: base-secret
+        - name: OSS_READ_TABLE_ID
+          valueFrom:
+            secretKeyRef:
+              key: OSS_READ_TABLE_ID
+              name: base-secret
+        - name: RUNTIME_ENV
+          valueFrom:
+            secretKeyRef:
+              key: RUNTIME_ENV
+              name: base-secret
+        - name: VFS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: VFS_TOKEN
+              name: base-secret
+        - name: OPENGROVE_WW_ACCESS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: OPENGROVE_WW_ACCESS_TOKEN
+              name: base-secret
+        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:254c2618e695504a673665d2dc261a8799d51492f40e9aeff7d98fc6f8f9f5c1
+        imagePullPolicy: IfNotPresent
+        name: sandbox
+        resources:
+          limits:
+            cpu: '2'
+            memory: 4Gi
+          requests:
+            cpu: '2'
+            ephemeral-storage: 50Gi
+            memory: 4Gi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /run/auto-story-source
+          name: auto-story-source-readonly
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      imagePullSecrets:
+      - name: ali-shanghai
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: auto-story-source-readonly
+        secret:
+          defaultMode: 292
+          items:
+          - key: source.env
+            path: source.env
+          secretName: base-secret
+  updateStrategy:
+    maxUnavailable: 20%

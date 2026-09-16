@@ -118,7 +118,7 @@ async function main() {
     }
   }
   const client = new ObservedClient({
-    domain: DOMAIN, apiKey: credential.apiKey, defaultTemplate: 'code-interpreter-vfscli',
+    domain: DOMAIN, apiKey: credential.apiKey, defaultTemplate: 'auto-story-v2',
     verifyWorkspaceProbe: async (target, name, content) => {
       assert.equal(target.bucket, BUCKET);
       await artifactStore.verifyWorkspaceProbe(target.prefix, name, content);
@@ -250,7 +250,7 @@ async function main() {
     record('starting', { reportPath });
     const alice = await login(`alice_${testId.slice(0, 12)}`);
     const bob = await login(`bob_${testId.slice(0, 12)}`);
-    const agentResponse = await json('/v1/agents', { name: 'Isolated OSS acceptance', runtime: 'mock', model: 'deterministic-probe', system: 'Deterministic test Adapter', sandbox: { enabled: true, image: 'code-interpreter-vfscli' } }, alice);
+    const agentResponse = await json('/v1/agents', { name: 'Isolated OSS acceptance', runtime: 'mock', model: 'deterministic-probe', system: 'Deterministic test Adapter', sandbox: { enabled: true, image: 'auto-story-v2' } }, alice);
     assert.equal(agentResponse.status, 201);
     const agent = await agentResponse.json();
     const a = await createSession(alice, agent.id);

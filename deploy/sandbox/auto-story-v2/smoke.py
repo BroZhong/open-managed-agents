@@ -15,7 +15,7 @@ import wave
 
 
 EXPECTED = {
-    "vfs-cli": "0.3.15",
+    "vfs-cli": "0.3.16",
     "mediakit-cli": "0.2.1",
     "ffmpeg": "9.0.1",
     "ffprobe": "9.0.1",

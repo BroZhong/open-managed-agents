@@ -1,3 +1,5 @@
+> 当前维护模板为 `auto-story-v2`；下方历史验收记录中的旧模板名保留。workspace 镜像层已合并到 [主构建](../auto-story-v2/README.md)。
+
 # OSS Workspace deployment inventory
 
 Production was subsequently deployed with `auto-story-v2` as its only template.
@@ -40,7 +42,7 @@ data migration, dual write, or authorization to delete old storage.
 
 The 50 GiB PV capacity is a Kubernetes declaration, not an OSS quota. The live
 SandboxSet image digest is captured in
-[`../sandboxset-code-interpreter-vfscli.yaml`](../sandboxset-code-interpreter-vfscli.yaml).
+[`../sandboxset-auto-story-v2.yaml`](../sandboxset-auto-story-v2.yaml).
 That image predates the application changes in these issues: rebuild and pin a
 new digest before cutover when launcher or dependency settings change.
 
@@ -65,7 +67,7 @@ aliyun cs GET /k8s/c4d4dbd36064d4341835496ed01023600/user_config \
   --profile welltop | jq -r .config > "$OMA_SHANGHAI_KUBECONFIG"
 
 kubectl --kubeconfig "$OMA_SHANGHAI_KUBECONFIG" -n sandbox-system \
-  get sbs code-interpreter-vfscli
+  get sbs auto-story-v2
 kubectl --kubeconfig "$OMA_SHANGHAI_KUBECONFIG" -n sandbox-system \
   get agentidentity agentry-workspace
 kubectl --kubeconfig "$OMA_SHANGHAI_KUBECONFIG" -n sandbox-system \

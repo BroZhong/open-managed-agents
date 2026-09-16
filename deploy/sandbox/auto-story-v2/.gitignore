@@ -3,5 +3,4 @@ bin/
 build-metadata.json
 verification.json
 live-verification.json
-story-seed-launcher
 __pycache__/

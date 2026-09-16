@@ -1,13 +1,13 @@
 {
-  "imageVersion": "0.2.1",
-  "verifiedAt": "2026-09-09",
+  "imageVersion": "0.3.0",
+  "verifiedAt": "2026-09-16",
   "platform": "linux/amd64",
   "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
   "vfs-cli": {
-    "version": "v0.3.15",
-    "url": "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.15/vfs-cli_v0.3.15_linux_amd64.tar.gz",
-    "sha256": "4a8e640d33d83c73d2cf8832c5d678ae3d4f972cfd462e3aa99855e2cfa1ae07",
-    "binarySha256": "fb9b291e8940a4cfaf7812fc897ee85d0e679b08c6c12b4f44adb63aa4b9ec63"
+    "version": "v0.3.16",
+    "url": "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.16/vfs-cli_v0.3.16_linux_amd64.tar.gz",
+    "sha256": "1646efd4f056450edcb62a65fe3a73bfbc703819d098e22df25657e7e6b75787",
+    "binarySha256": "5dca100d2d6499e5d6200d4a5de39bde27c5db8724482c7b0906a40f875b6729"
   },
   "ffmpeg": {
     "version": "9.0.1",

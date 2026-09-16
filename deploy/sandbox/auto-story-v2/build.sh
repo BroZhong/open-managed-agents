@@ -24,7 +24,7 @@ done
 image_version="${VERSION:-$(python3 -c 'import json; print(json.load(open("versions.json"))["imageVersion"])')}"
 base_image="${BASE_IMAGE:-$(python3 -c 'import json; print(json.load(open("versions.json"))["baseImage"])')}"
 registry="${REGISTRY:-registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox}"
-tag="${TAG:-auto-story-${image_version}}"
+tag="${TAG:-auto-story-v2-${image_version}}"
 image="${registry}:${tag}"
 python3 ./fetch-sources.py
 if [[ "$prepare_only" == 1 ]]; then

@@ -32,7 +32,7 @@ for name in ("ffmpeg", "vfs-cli", "mediakit-cli"):
         partial = archive.with_suffix(archive.suffix + ".partial")
         subprocess.run([
             "curl", "--fail", "--location", "--retry", "3", "--connect-timeout", "20",
-            "--max-time", "300", "--output", str(partial), spec["url"],
+            "--max-time", "1800", "--output", str(partial), spec["url"],
         ], check=True)
         if hashlib.sha256(partial.read_bytes()).hexdigest() != spec["sha256"]:
             partial.unlink()
@@ -51,3 +51,10 @@ for name in ("ffmpeg", "vfs-cli", "mediakit-cli"):
             raise SystemExit(f"Binary SHA-256 mismatch: {name}")
 
 subprocess.run(["python3", str(ROOT.parent / "prepare-search-binaries.py"), str(BIN)], check=True)
+
+# Recheck staged executables inside the image; their expected hashes come from
+# the same verified inputs rather than a second hard-coded Dockerfile lock.
+(BIN / "SHA256SUMS").write_text("".join(
+    f"{hashlib.sha256((BIN / name).read_bytes()).hexdigest()}  {name}\n"
+    for name in ("vfs-cli", "mediakit-cli", "rg", "fd")
+))
