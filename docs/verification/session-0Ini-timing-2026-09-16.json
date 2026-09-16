@@ -1,0 +1,130 @@
+{
+  "session_id": "sess_0Ini7977Ru3XAWnnNyphb",
+  "total_seconds": 8523.54,
+  "method": "Wall-clock event ts. Tool intervals unioned; model/tool overlap isolated. Uncovered time is not attributed to a specific subsystem. Model span starts at SDK message_start, after provider HTTP response headers, not at HTTP request dispatch.",
+  "totals_seconds": {
+    "uncovered": 3179.49,
+    "model": 2327.817,
+    "overlap": 1.192,
+    "tool": 3015.041
+  },
+  "stages": [
+    {
+      "stage": "启动、取材与环境检查",
+      "start_seq": 1,
+      "end_seq": 191,
+      "duration_seconds": 574.022,
+      "share_percent": 6.7,
+      "intervals_seconds": {
+        "uncovered": 380.078,
+        "model": 152.828,
+        "overlap": 0.204,
+        "tool": 40.912
+      }
+    },
+    {
+      "stage": "选段",
+      "start_seq": 191,
+      "end_seq": 243,
+      "duration_seconds": 253.191,
+      "share_percent": 3.0,
+      "intervals_seconds": {
+        "uncovered": 137.257,
+        "model": 108.081,
+        "overlap": 0.046,
+        "tool": 7.807
+      }
+    },
+    {
+      "stage": "旁白改编",
+      "start_seq": 243,
+      "end_seq": 282,
+      "duration_seconds": 212.982,
+      "share_percent": 2.5,
+      "intervals_seconds": {
+        "uncovered": 47.945,
+        "model": 159.687,
+        "overlap": 0.051,
+        "tool": 5.299
+      }
+    },
+    {
+      "stage": "声音生成与听审",
+      "start_seq": 282,
+      "end_seq": 566,
+      "duration_seconds": 1880.003,
+      "share_percent": 22.1,
+      "intervals_seconds": {
+        "uncovered": 448.236,
+        "model": 782.543,
+        "overlap": 0.273,
+        "tool": 648.951
+      }
+    },
+    {
+      "stage": "导演",
+      "start_seq": 566,
+      "end_seq": 578,
+      "duration_seconds": 150.276,
+      "share_percent": 1.8,
+      "intervals_seconds": {
+        "uncovered": 16.979,
+        "model": 132.168,
+        "overlap": 0.009,
+        "tool": 1.12
+      }
+    },
+    {
+      "stage": "美术资产",
+      "start_seq": 578,
+      "end_seq": 720,
+      "duration_seconds": 1126.747,
+      "share_percent": 13.2,
+      "intervals_seconds": {
+        "uncovered": 436.399,
+        "model": 238.586,
+        "overlap": 0.199,
+        "tool": 451.563
+      }
+    },
+    {
+      "stage": "视频生成与检查",
+      "start_seq": 720,
+      "end_seq": 782,
+      "duration_seconds": 920.46,
+      "share_percent": 10.8,
+      "intervals_seconds": {
+        "uncovered": 242.676,
+        "model": 187.173,
+        "overlap": 0.086,
+        "tool": 490.525
+      }
+    },
+    {
+      "stage": "剪辑、字幕、首次导出",
+      "start_seq": 782,
+      "end_seq": 925,
+      "duration_seconds": 1336.98,
+      "share_percent": 15.7,
+      "intervals_seconds": {
+        "uncovered": 626.693,
+        "model": 273.954,
+        "overlap": 0.175,
+        "tool": 436.158
+      }
+    },
+    {
+      "stage": "审查、返修、复审、交付",
+      "start_seq": 925,
+      "end_seq": 1073,
+      "duration_seconds": 2068.879,
+      "share_percent": 24.3,
+      "intervals_seconds": {
+        "uncovered": 843.227,
+        "model": 292.797,
+        "overlap": 0.149,
+        "tool": 932.706
+      }
+    }
+  ]
+}
