@@ -28,13 +28,20 @@ export function processTimings(messages: DisplayMessage[], events: SessionEvent[
     const index = message.seq === undefined ? undefined : indices.get(message.seq);
     return index === undefined ? deltaTimes.get(message.id) : timestamp(events[index].ts);
   };
-  const activity = (message: DisplayMessage | undefined) => message?.role === "thinking" || message?.role === "tool_use";
+  const activity = (message: DisplayMessage | undefined) => message?.role === "thinking" || message?.role === "tool_use" || message?.role === "notification";
+  const sameTurn = (left: DisplayMessage, right: DisplayMessage) => {
+    if (left.turnId && right.turnId && left.turnId !== right.turnId) return false;
+    const from = left.seq === undefined ? events.length : indices.get(left.seq) ?? events.length;
+    const to = right.seq === undefined ? events.length : indices.get(right.seq) ?? events.length;
+    return !events.slice(from + 1, to + 1).some((event) =>
+      /^(session\.(status_idle|turn_completed|turn_aborted|error)|user\.message|delegation\.input|subagent\.result_claimed)$/.test(event.type));
+  };
   const result = new Map<string, ProcessTiming>();
   for (let i = 0; i < messages.length; i++) {
     if (!activity(messages[i])) continue;
     const first = messages[i];
     const previous = messages[i - 1];
-    while (activity(messages[i + 1])) i++;
+    while (activity(messages[i + 1]) && sameTurn(messages[i], messages[i + 1])) i++;
     const last = messages[i];
     const next = messages[i + 1];
     const firstIndex = first.seq === undefined ? events.length : indices.get(first.seq) ?? events.length;

@@ -224,10 +224,11 @@ const activityEvents: SessionEvent[] = [
 it("folds process details for the latest completed turn while keeping the answer visible", () => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   render(<ConversationView events={activityEvents} sessionStatus="idle" />);
-  const summary = screen.getByRole("button", { name: /Explored · reasoning · 1 tool call/ });
+  const summary = screen.getByRole("button", { name: /Worked for/ });
   expect(summary.getAttribute("aria-expanded")).toBe("false");
   expect(screen.getByText("Here is the answer").closest("[hidden]")).toBeNull();
   fireEvent.click(summary);
+  fireEvent.click(screen.getByRole("button", { name: /Explored · reasoning · 1 tool call/ }));
   const tool = screen.getByRole("button", { name: /Read file/ });
   fireEvent.click(tool);
   expect(screen.getByText("File content").closest("[hidden]")).toBeNull();
@@ -243,6 +244,9 @@ it("keeps process expansion across new output and exposes failures", () => {
   fireEvent.click(summary);
   fireEvent.click(summary);
   view.rerender(<ConversationView events={activityEvents} sessionStatus="idle" />);
+  const turnSummary = screen.getByRole("button", { name: /Worked for/ });
+  expect(turnSummary.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(turnSummary);
   expect(screen.getByRole("button", { name: /Explored · reasoning/ }).getAttribute("aria-expanded")).toBe("true");
   const failed = activityEvents.map((event) => event.type === "agent.tool_result" ? { ...event, data: { toolUseId: "read-1", content: "Access denied", isError: true } } : event);
   view.rerender(<ConversationView events={failed} sessionStatus="idle" />);
@@ -348,6 +352,45 @@ it("updates live process elapsed time and freezes it when the next answer arrive
       { seq: 4, type: "agent.message", data: { content: [{ type: "text", text: "Finished" }] }, ts: "2026-09-16T00:02:18Z" },
     ]} sessionStatus="idle" />);
     act(() => vi.advanceTimersByTime(60000));
-    expect(screen.getByRole("button", { name: /Explored.*2m 18s/ }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByRole("button", { name: /Worked for 2m 18s/ }).getAttribute("aria-expanded")).toBe("false");
   } finally { vi.useRealTimers(); }
+});
+
+it("folds every earlier message only once the final output finishes, preserving expansion on updates", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const events: SessionEvent[] = [
+    { seq: 1, type: "user.message", ts: "2026-09-16T00:00:00Z", data: { content: [{ type: "text", text: "Check everything" }] } },
+    { seq: 2, type: "session.status_running", ts: "2026-09-16T00:00:01Z", data: {} },
+    { seq: 3, type: "agent.message", ts: "2026-09-16T00:00:02Z", data: { turnId: "turn", content: [{ type: "text", text: "I will inspect the files" }] } },
+    { seq: 4, type: "agent.thinking", ts: "2026-09-16T00:00:03Z", data: { turnId: "turn", text: "Inspect" } },
+    { seq: 5, type: "subagent.result", ts: "2026-09-16T00:01:00Z", data: { mode: "sync", result: { status: "completed", output: "**Verified** [report](report.md)" } } },
+  ];
+  const live: SessionDelta[] = [{ turnId: "turn", blockIndex: 5, type: "agent.message_chunk", data: { text: "All checks passed" }, ts: "2026-09-16T00:09:09Z" }];
+  const view = render(<ConversationView events={events} activeDeltas={live} sessionStatus="running" />);
+  expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull();
+  const final = screen.getByText("All checks passed");
+  expect(screen.getByText("I will inspect the files").closest("[hidden]")).toBeNull();
+  const completed = [...events,
+    { seq: 6, type: "agent.message", ts: "2026-09-16T00:09:09Z", data: { turnId: "turn", blockIndex: 5, content: [{ type: "text", text: "All checks passed" }] } },
+    { seq: 7, type: "session.turn_completed", ts: "2026-09-16T00:09:10Z", data: { turnId: "turn" } },
+  ];
+  view.rerender(<ConversationView events={completed.slice(0, -1)} sessionStatus="running" />);
+  expect(screen.queryByRole("button", { name: /Worked for/ })).toBeNull();
+  view.rerender(<ConversationView events={completed} sessionStatus="idle" />);
+  const summary = screen.getByRole("button", { name: "Worked for 9m 9s" });
+  expect(summary.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.getByText("All checks passed")).toBe(final);
+  expect(final.closest("[hidden]")).toBeNull();
+  expect(screen.getByText("I will inspect the files").closest("[hidden]")).not.toBeNull();
+  expect(screen.getByText("Check everything").closest("[hidden]")).toBeNull();
+  fireEvent.click(summary);
+  expect(screen.getByText("I will inspect the files").closest("[hidden]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Explored.*subagent result/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Subagent result.*completed/ }));
+  expect(screen.getByText("Verified").tagName).toBe("STRONG");
+  expect(screen.getByRole("link", { name: "report" })).toBeTruthy();
+  view.rerender(<ConversationView events={[...completed]} sessionStatus="idle" />);
+  expect(summary.getAttribute("aria-expanded")).toBe("true");
+  fireEvent.click(summary);
+  expect(screen.getByText("Verified").closest("[hidden]")).not.toBeNull();
 });

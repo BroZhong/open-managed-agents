@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, useMemo, createContext, useContext } from "react";
+import { useEffect, useRef, useState, useMemo, useId, createContext, useContext } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertCircle, ChevronDown, Circle, Check, Layers } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, Circle, Check, Layers, Users } from "lucide-react";
 import type { SessionDelta, SessionEvent } from "@/lib/types";
 import {
   processEventsToMessages,
@@ -15,49 +15,11 @@ import { ToolCard } from "@/components/tool-card";
 import { DelegationCard } from "@/components/delegation-card";
 import type { DelegationExecution } from "@/lib/delegations";
 import { workspaceLinkPath } from "@/lib/workspace-link";
+import { groupMessagesIntoTurns, type ConversationTurn } from "@/lib/conversation-turns";
 import { processTimings, formatElapsedTime, type ProcessTiming } from "@/lib/process-timing";
 const SessionContext = createContext("");
 const OpenExecutionContext = createContext<((execution: DelegationExecution) => void) | undefined>(undefined);
 const OpenWorkspaceFileContext = createContext<((path: string) => void) | undefined>(undefined);
-
-interface Turn {
-  id: string;
-  userMessage: DisplayMessage | null;
-  responses: DisplayMessage[];
-}
-
-function groupMessagesIntoTurns(messages: DisplayMessage[]): Turn[] {
-  const turns: Turn[] = [];
-  let currentTurn: Turn | null = null;
-
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      if (currentTurn) {
-        turns.push(currentTurn);
-      }
-      currentTurn = {
-        id: msg.id,
-        userMessage: msg,
-        responses: [],
-      };
-    } else {
-      if (!currentTurn) {
-        currentTurn = {
-          id: `turn-orphan-${msg.id}`,
-          userMessage: null,
-          responses: [],
-          };
-      }
-      currentTurn.responses.push(msg);
-    }
-  }
-
-  if (currentTurn) {
-    turns.push(currentTurn);
-  }
-
-  return turns;
-}
 
 interface ConversationViewProps {
   onOpenWorkspaceFile?: (path: string) => void;
@@ -90,8 +52,8 @@ export function ConversationView({
   );
 
   const turns = useMemo(
-    () => groupMessagesIntoTurns(messages),
-    [messages],
+    () => groupMessagesIntoTurns(messages, events, sessionStatus),
+    [messages, events, sessionStatus],
   );
   const timings = useMemo(() => processTimings(messages, events, activeDeltas), [messages, events, activeDeltas]);
 
@@ -144,11 +106,11 @@ export function ConversationView({
           {messages.length === 0 && (
             <div className="session-welcome"><h2>What would you like to work on?</h2><p>Send a message to start the conversation.</p></div>
           )}
-          {turns.map((turn, idx) => (
+          {turns.map((turn) => (
             <TurnBlock
               key={turn.id}
               turn={turn}
-              running={idx === turns.length - 1 && (sessionStatus === "running" || sessionStatus === "waiting")}
+              running={turn.running}
               focusToolUseId={focusToolUseId}
               timings={timings}
             />
@@ -171,22 +133,39 @@ export function ConversationView({
   );
 }
 
-function TurnBlock({ turn, running, focusToolUseId, timings }: { turn: Turn; running: boolean; focusToolUseId?: string; timings: Map<string, ProcessTiming> }) {
+function TurnBlock({ turn, running, focusToolUseId, timings }: { turn: ConversationTurn; running: boolean; focusToolUseId?: string; timings: Map<string, ProcessTiming> }) {
+  const contentId = useId();
+  const [expanded, setExpanded] = useState<boolean | null>(null);
   const segments: { activity: boolean; messages: DisplayMessage[] }[] = [];
   for (const message of turn.responses) {
-    const activity = message.role === "thinking" || message.role === "tool_use";
+    const activity = message.role === "thinking" || message.role === "tool_use" || message.role === "notification";
     const previous = segments.at(-1);
     if (activity && previous?.activity) previous.messages.push(message);
     else segments.push({ activity, messages: [message] });
   }
+  const lastMessage = turn.responses.at(-1);
+  const collapsible = turn.completed && lastMessage?.role === "assistant" && !lastMessage.aborted && segments.length > 1;
+  const focusedTurn = turn.responses.some((message) => !!focusToolUseId && message.toolUseId === focusToolUseId);
+  const open = expanded ?? focusedTurn;
   return (
     <div className="session-turn">
       {turn.userMessage && <UserBubble text={turn.userMessage.text} />}
+      {collapsible && <div className="session-turn-summary session-disclosure">
+        <button type="button" className="session-disclosure-toggle" aria-expanded={open}
+          aria-controls={segments.slice(0, -1).map((_, index) => `${contentId}-${index}`).join(" ")}
+          onClick={() => setExpanded(!open)}>
+          <span>{turn.timing ? `Worked for ${formatElapsedTime(turn.timing.endedAt - turn.timing.startedAt)}` : "View activity"}</span>
+          <ChevronRight size={14} className={open ? "rotate-90" : ""} aria-hidden="true" />
+        </button>
+      </div>}
       {segments.map((segment, index) => {
         const focused = segment.messages.some((message) => !!focusToolUseId && message.toolUseId === focusToolUseId);
-        return segment.activity
-          ? <ProcessGroup key={`process:${segment.messages[0].id}:${focused ? focusToolUseId : ""}`} messages={segment.messages} running={running && index === segments.length - 1} focused={focused} timing={timings.get(segment.messages[0].id)} />
-          : <MessageBubble key={segment.messages[0].id} message={segment.messages[0]} />;
+        return <div key={segment.messages[0].id} id={`${contentId}-${index}`} className="session-turn-segment"
+          hidden={collapsible && !open && index < segments.length - 1}>
+          {segment.activity
+          ? <ProcessGroup key={focused ? focusToolUseId : "process"} messages={segment.messages} running={running && index === segments.length - 1} focused={focused} timing={timings.get(segment.messages[0].id)} />
+          : <MessageBubble message={segment.messages[0]} />}
+        </div>;
       })}
     </div>
   );
@@ -195,11 +174,12 @@ function TurnBlock({ turn, running, focusToolUseId, timings }: { turn: Turn; run
 function ProcessGroup({ messages, running, focused, timing }: { messages: DisplayMessage[]; running: boolean; focused: boolean; timing?: ProcessTiming }) {
   const tools = messages.filter((message) => message.role === "tool_use");
   const thinking = messages.some((message) => message.role === "thinking");
-  const failed = tools.filter((message) => message.result?.isError).length;
+  const notifications = messages.filter((message) => message.role === "notification");
+  const failed = messages.filter((message) => message.result?.isError).length;
   const incomplete = tools.some((message) => !message.result);
   const active = running;
   const status = active ? "Working" : failed ? "Needs attention" : incomplete ? "Incomplete" : "Explored";
-  const description = [thinking ? "reasoning" : "", tools.length ? `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}` : ""].filter(Boolean).join(" · ");
+  const description = [thinking ? "reasoning" : "", tools.length ? `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}` : "", notifications.length ? `${notifications.length} subagent ${notifications.length === 1 ? "result" : "results"}` : ""].filter(Boolean).join(" · ");
   return (
     <SessionDisclosure className="session-process" active={active} defaultOpen={active || failed > 0 || focused} summary={<>
       {active ? <Circle size={12} className="animate-pulse" /> : failed || incomplete ? <Layers size={14} /> : <Check size={14} />}
@@ -235,7 +215,14 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
     case "instruction":
       return <div className="rounded-xl border border-blue-200 p-3 text-sm"><strong>Delegated instruction</strong><p className="whitespace-pre-wrap">{message.text}</p></div>;
     case "notification":
-      return <div className="rounded-xl border border-blue-200 p-3 text-sm"><strong>Subagent result</strong><p className="whitespace-pre-wrap">{message.text}</p></div>;
+      return <SessionDisclosure className={`session-tool ${message.result?.isError ? "session-tool-error" : ""}`}
+        defaultOpen={message.result?.isError} summary={<>
+          <Users size={14} /><span className="session-tool-label">Subagent result</span>
+          {message.status && <span className="session-tool-detail"> · {message.status}</span>}
+          <span className="session-tool-status">{message.result?.isError ? <AlertCircle size={13} /> : <Check size={13} />}</span>
+        </>}>
+        <AssistantBubble text={message.text} />
+      </SessionDisclosure>;
     case "thinking":
       return (
         <ThinkingBlock
