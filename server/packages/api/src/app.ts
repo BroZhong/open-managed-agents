@@ -5,6 +5,7 @@ import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "./types.js";
 import { authMiddleware } from "./middleware/auth.js";
+import { agentForkRoutes } from "./routes/agent-fork.js";
 import { agentRoutes } from "./routes/agents.js";
 import { agentFileRoutes } from "./routes/agent-files.js";
 import { agentSkillRoutes } from "./routes/agent-skills.js";
@@ -122,6 +123,10 @@ export function createApp(deps: AppDeps) {
   // Mount Skill Library routes (tenant-scoped reusable Skills)
   if (deps.skillStore && deps.skillArtifactStore) {
     app.route("/", skillRoutes(deps.skillStore, deps.skillArtifactStore));
+  }
+
+  if (deps.agentStore && deps.agentFileStore && deps.skillStore && deps.skillArtifactStore) {
+    app.route("/", agentForkRoutes(deps.agentStore, deps.agentFileStore, deps.skillStore, deps.skillArtifactStore));
   }
 
   // Mount per-Agent Skill routes (equip = fork; unequip = delete fork; ADR-0004)

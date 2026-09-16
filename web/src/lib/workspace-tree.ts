@@ -10,7 +10,7 @@ export interface TreeNode {
 }
 
 /** Build a nested tree from a flat list of workspace-relative file paths. */
-export function buildTree(files: (WorkspaceFile & { isDir?: boolean })[]): TreeNode {
+export function buildTree(files: (Omit<WorkspaceFile, "size"> & { size?: number; isDir?: boolean })[]): TreeNode {
   const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
   for (const file of files) {
     const segments = file.path.split("/").filter(Boolean);
@@ -50,4 +50,12 @@ export function formatSize(bytes: number): string {
 /** Encode each path segment so slashes remain separators. */
 export function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Includes implicit folders represented only by their descendants. */
+export function isDirectoryPath(path: string, nodes: { path: string; isDir?: boolean }[]): boolean {
+  const directory = path.replace(/\/+$/, "");
+  return !directory || path.endsWith("/") || nodes.some((node) =>
+    (node.isDir && node.path.replace(/\/+$/, "") === directory) || node.path.startsWith(`${directory}/`),
+  );
 }

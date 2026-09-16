@@ -26,10 +26,35 @@ export interface DroppedFile {
   file: File;
 }
 
-export function useSkills() {
+export interface SkillDetail extends Skill {
+  ownerType: "library" | "agent";
+  ownerId: string;
+  sourceSkillId: string | null;
+  files: string[];
+}
+
+export function useSkill(id: string) {
+  return useQuery({
+    queryKey: ["skills", id],
+    queryFn: () => apiFetch<SkillDetail>(`/v1/skills/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useSkills(enabled = true) {
   return useQuery({
     queryKey: ["skills"],
-    queryFn: () => apiFetch<SkillListResponse>("/v1/skills").then((r) => r.data),
+    enabled,
+    queryFn: async ({ signal }) => {
+      const skills: Skill[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await apiFetch<SkillListResponse>(cursor ? `/v1/skills?cursor=${encodeURIComponent(cursor)}` : "/v1/skills", { signal });
+        skills.push(...page.data);
+        cursor = page.has_more ? page.next_cursor : undefined;
+      } while (cursor);
+      return skills;
+    },
   });
 }
 

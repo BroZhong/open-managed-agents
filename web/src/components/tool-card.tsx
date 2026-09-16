@@ -1,4 +1,5 @@
 import { Wrench, FileText, Pencil, Search, Terminal, Check, Circle, XCircle } from "lucide-react";
+import { ConversationResourceLink } from "@/components/conversation-resource-link";
 import { SessionDisclosure } from "@/components/session-disclosure";
 
 interface ToolResult { content: unknown; isError: boolean }
@@ -44,7 +45,7 @@ export function ToolCard({ name, toolUseId, input, serverName, result, streaming
     <SessionDisclosure id={`tool-${toolUseId}`} title={title} onActivate={onActivate} defaultOpen={result?.isError} className={`session-tool ${failed ? "session-tool-error" : ""}`} summary={<>
       <Icon size={14} />
       <span className="session-tool-label" title={[serverName, name].filter(Boolean).join(" / ")}>{label}</span>
-      {detail && <span className="session-tool-detail" title={detail}>{detail}</span>}
+      {detail && <span className="session-tool-detail" title={detail}><ConversationResourceLink inlineCode href={detail}>{detail}</ConversationResourceLink></span>}
       <span className="session-tool-status" aria-label={status} title={status}>
         {failed ? <XCircle size={13} /> : completed ? <Check size={13} /> : <Circle size={11} className={pending || /running|queued|waiting/.test(status) ? "animate-pulse" : ""} />}
       </span>

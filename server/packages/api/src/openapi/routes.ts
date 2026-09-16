@@ -251,6 +251,21 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: { 200: jsonResponse(AgentListSchema, "Paginated Agent list") },
   }),
   protectedRoute({
+    method: "post",
+    path: "/v1/agents/{id}/fork",
+    operationId: "forkAgent",
+    summary: "Fork an Agent with independent Agent Files and Skills",
+    description: "Copies configuration, Agent Files and the current contents of every Agent Skill into a new Agent. Sessions, Loops and Workspaces are not copied. Skill IDs and ownership are new; the original Library provenance is retained.",
+    tags: ["Agents"],
+    request: { params: idParams, body: jsonBody(z.object({ name: z.string().trim().min(1) })) },
+    responses: {
+      201: jsonResponse(AgentSchema, "Agent fork created"),
+      400: errorResponse("Invalid fork name"),
+      404: errorResponse("Agent not found"),
+      500: errorResponse("Fork failed; cleanup of newly created resources was attempted"),
+    },
+  }),
+  protectedRoute({
     method: "get",
     path: "/v1/agents/{id}",
     operationId: "getAgent",

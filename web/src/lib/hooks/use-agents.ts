@@ -107,3 +107,15 @@ export function useDeleteAgent() {
     },
   });
 }
+
+export function useForkAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      apiFetch<Agent>(`/v1/agents/${id}/fork`, { method: "POST", body: JSON.stringify({ name }) }),
+    onSuccess: (agent) => {
+      queryClient.setQueryData(["agents", agent.id], agent);
+      void queryClient.invalidateQueries({ queryKey: ["agents"], exact: true });
+    },
+  });
+}

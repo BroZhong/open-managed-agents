@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { agentFileRoutes } from "../src/routes/agent-files.js";
 import { agentSkillRoutes } from "../src/routes/agent-skills.js";
+import { agentForkRoutes } from "../src/routes/agent-fork.js";
 import { agentRoutes } from "../src/routes/agents.js";
 import { apiKeyRoutes } from "../src/routes/api-keys.js";
 import { authRoutes } from "../src/routes/auth.js";
@@ -86,6 +87,7 @@ function runtimeOperations(): string[] {
   const routers = [
     authRoutes(adapter),
     agentRoutes(adapter),
+    agentForkRoutes(adapter, adapter, adapter, adapter),
     agentFileRoutes(adapter, adapter),
     agentSkillRoutes(adapter, adapter, adapter),
     skillRoutes(adapter, adapter),
@@ -165,6 +167,7 @@ describe("OpenAPI contract", () => {
       createApp({ apiKeyStore: adapter }),
       authRoutes(adapter),
       agentRoutes(adapter),
+      agentForkRoutes(adapter, adapter, adapter, adapter),
       agentFileRoutes(adapter, adapter),
       agentSkillRoutes(adapter, adapter, adapter),
       skillRoutes(adapter, adapter),

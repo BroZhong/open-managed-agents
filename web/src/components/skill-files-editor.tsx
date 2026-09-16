@@ -15,7 +15,7 @@ import { createSkillFileSource } from "@/lib/file-source";
  * receives never gates its writes — we pass the constant `"idle"`. Skills are
  * text-only (no `previewUrl`), so binary files fall back to download.
  */
-export function SkillFilesEditor({ skillId, agentId }: { skillId: string; agentId?: string }) {
+export function SkillFilesEditor({ skillId, agentId, presentation = "default" }: { skillId: string; agentId?: string; presentation?: "default" | "workbench" }) {
   const queryClient = useQueryClient();
   const source = useMemo(() => createSkillFileSource(skillId, () => {
     void queryClient.invalidateQueries({ queryKey: ["skills"] });
@@ -27,6 +27,9 @@ export function SkillFilesEditor({ skillId, agentId }: { skillId: string; agentI
     <FileManager
       key={skillId}
       source={source}
+      presentation={presentation}
+      rootLabel="Skill"
+      selectionHint="Browse this Skill to preview or edit its files."
       turnStatus="idle"
       emptyHint="No files."
     />

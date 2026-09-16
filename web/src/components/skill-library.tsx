@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
-import { Trash2, Upload, BookOpen, ChevronDown, ChevronRight } from "lucide-react";
+import { Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { SkillFilesEditor } from "@/components/skill-files-editor";
+import { SkillCard } from "@/components/skill-card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import type { Skill } from "@/lib/hooks/use-skills";
 import {
   collectDroppedEntries,
   collectInputFiles,
@@ -16,16 +18,15 @@ import {
 /**
  * The tenant Skill Library: drag a folder (or pick one) to upload reusable,
  * instruction-only Skills, then browse, preview/edit their files, and delete
- * them. Skills are equipped (forked) onto Agents elsewhere. Self-contained so
- * it can sit on the entry page alongside the Agents list.
+ * them. Cards open the dedicated file workbench; Agents equip private copies.
  */
 export function SkillLibrary() {
-  const { data: skills, isLoading } = useSkills();
+  const { data: skills, isLoading, error: loadError, refetch } = useSkills();
   const upload = useUploadSkills();
   const del = useDeleteSkill();
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Skill | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function submit(files: DroppedFile[]) {
@@ -40,17 +41,22 @@ export function SkillLibrary() {
       setError(clientError);
       return;
     }
-    upload.mutate(files, { onSuccess: () => setExpanded(null), onError: (e) => setError((e as Error).message) });
+    upload.mutate(files, { onError: (e) => setError((e as Error).message) });
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <BookOpen className="h-4 w-4 text-[var(--color-accent,#c2410c)]" />
-        <h2 className="text-sm font-semibold text-[var(--color-fg)]">Skill Library</h2>
-      </div>
-
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="Upload Skill folder"
+        aria-disabled={upload.isPending}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (!upload.isPending) inputRef.current?.click();
+          }
+        }}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -83,6 +89,7 @@ export function SkillLibrary() {
           directory=""
           multiple
           hidden
+          aria-label="Skill folder files"
           onChange={(e) => {
             if (e.target.files) void submit(collectInputFiles(e.target.files));
             e.target.value = "";
@@ -90,61 +97,30 @@ export function SkillLibrary() {
         />
       </div>
 
-      {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
+      {error && <p role="alert" className="text-xs text-[var(--color-danger)]">{error}</p>}
 
-      <div className="space-y-2">
-        {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
-        {skills?.length === 0 && !isLoading && (
-          <p className="text-sm text-neutral-400">No Skills yet.</p>
-        )}
-        {skills?.map((skill) => {
-          const isOpen = expanded === skill.id;
-          return (
-            <div
-              key={skill.id}
-              className="rounded-lg border border-[var(--color-border)] bg-white"
-            >
-              <div className="flex items-start justify-between gap-3 p-3">
-                <button
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                  onClick={() => setExpanded(isOpen ? null : skill.id)}
-                >
-                  <span className="mt-0.5 shrink-0 text-neutral-400">
-                    {isOpen ? (
-                      <ChevronDown className="h-4 w-4" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4" />
-                    )}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-[var(--color-fg)]">
-                      {skill.name}
-                    </span>
-                    {skill.description && (
-                      <span className="block truncate text-xs text-neutral-500">
-                        {skill.description}
-                      </span>
-                    )}
-                  </span>
-                </button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Delete ${skill.name}`}
-                  onClick={() => del.mutate(skill.id)}
-                >
-                  <Trash2 className="h-4 w-4 text-neutral-400" />
-                </Button>
-              </div>
-              {isOpen && (
-                <div className="border-t border-[var(--color-border)] p-3">
-                  <SkillFilesEditor skillId={skill.id} />
-                </div>
-              )}
-            </div>
-          );
-        })}
+      {loadError && <div role="alert" className="text-sm text-[var(--color-danger)]">{loadError.message}<Button variant="ghost" onClick={() => void refetch()}>Retry</Button></div>}
+      {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
+      {skills?.length === 0 && !isLoading && <p className="text-sm text-neutral-400">No Skills yet. Upload a Skill folder to get started.</p>}
+      <div className="agent-directory">
+        {skills?.map((skill) => (
+          <SkillCard key={skill.id} skill={skill} to={`/skills/${skill.id}`} actions={
+            <Button variant="ghost" size="icon" title={`Delete ${skill.name}`} aria-label={`Delete ${skill.name}`} disabled={del.isPending} onClick={() => setDeleting(skill)}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          } />
+        ))}
       </div>
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => { if (!open) setDeleting(null); }}
+        title="Delete Skill"
+        description={`Delete "${deleting?.name ?? ""}" from the Library? Existing Agent copies stay unchanged.`}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (deleting) del.mutate(deleting.id, { onError: (err) => setError(err.message) });
+        }}
+      />
     </div>
   );
 }
