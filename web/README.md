@@ -2,6 +2,14 @@
 
 The web console for Open Managed Agents (React + TypeScript + Vite).
 
+## Product logo
+
+The approved product logo is the waving cloud mascot in
+`public/brand/cloud-logo.png`. This file preserves the selected original artwork.
+`BrandMark` displays it in the sidebar and authentication pages, and `index.html`
+uses the same image as the browser icon. The component trims the canvas margins
+with CSS and blends its white background into the console's light surfaces.
+
 ## Local development
 
 ```bash
