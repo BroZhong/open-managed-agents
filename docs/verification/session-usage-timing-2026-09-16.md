@@ -35,3 +35,13 @@ Authenticated Chrome verification used the supplied Session:
 6. Parent process groups show `59s`, `45s`, `5m 17s`, `1m 49s`, `7m 26s`, `28s`, and `2m 43s` in chronological order. Child groups show their own elapsed times, including `1m 23s`, `1m 32s`, `1s`, `16s`, and `1m 17s`.
 
 No prompts were sent or Workspace files edited during production verification. Live ticking and stream reconnection were exercised by automated tests; the historical production sessions remained idle.
+
+## Follow-up: compact footer and Workspace name
+
+Released `353f76f813dc` with Web image `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web:353f76f813dc` (also includes `2a9548b`). The Server image is unchanged. Both Deployments rolled out successfully and health returned `{"status":"ok"}`. Public HTML serves `index-Vg10Z7XG.js`.
+
+- Removed the Enter / Shift+Enter instruction below the composer. Keyboard behavior is unchanged.
+- Parent and child Conversation footers now show only Total tokens and KV cache hit, in two columns.
+- Workspace file-panel headings show the current Workspace name, with a fallback for unnamed Workspaces and truncation for long names.
+- Relevant existing suites passed: composer, usage metrics, child Session navigation, Workspace panel and file manager (48 distinct tests across two targeted runs). Build, TypeScript, modified-source ESLint and diff checks passed.
+- Authenticated production verification confirmed the actual heading is `W1`, the keyboard hint is absent, parent footer contains only `3,268,165` / `96.4%`, and child footer contains only `287,905` / `75.7%`. The screenshot confirmed the two-column layout. Reloaded with a release query parameter to bypass the previously cached HTML.
