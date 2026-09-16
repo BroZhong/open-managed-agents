@@ -263,7 +263,7 @@ export class SessionRouter {
     if (!Number.isInteger(this.maxConcurrentSubagents) || this.maxConcurrentSubagents < 1 || this.maxConcurrentSubagents > 64) {
       throw new RangeError("maxConcurrentSubagents must be between 1 and 64");
     }
-    const maxSteps = deps.maxSubagentModelSteps ?? 30;
+    const maxSteps = deps.maxSubagentModelSteps ?? 500;
     if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000) throw new RangeError("maxSubagentModelSteps must be between 1 and 1000");
     if (deps.delegationStore) this.delegations = new DelegationCoordinator({
       store: deps.delegationStore, pending: deps.pendingEventStore,
@@ -1380,7 +1380,7 @@ export class SessionRouter {
         }
         if (session.delegation) {
           adapterInput.execution = {
-            isChild: true, maxModelSteps: delegationExecution?.maxSteps ?? 30,
+            isChild: true, maxModelSteps: delegationExecution?.maxSteps ?? 500,
             thinking: delegationExecution?.thinking,
             ...(delegationExecution && this.delegations
               ? { steering: this.delegations.steering(delegationRun, delegationExecution) }

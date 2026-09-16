@@ -187,8 +187,13 @@ queries using those expired identifiers explicitly fail.
 New deployments register only `Agent`, `get_subagent_result`, and
 `steer_subagent`. `run_in_background` defaults to false for both creation and
 resume. `SUBAGENT_MAX_CONCURRENT` defaults to 4 per parent Session and
-`SUBAGENT_MAX_MODEL_STEPS` defaults to 30 (maximum 1000). These count concurrent
+`SUBAGENT_MAX_MODEL_STEPS` defaults to 500 (maximum 1000). These count concurrent
 child Turns and model steps respectively; waiting parents consume no child slot.
+The Host assigns its configured budget to each new or resumed execution; the
+Agent tool accepts no budget override. Exhaustion returns `budget_exhausted`;
+only an explicit resume starts a fresh budget. The live verification script’s
+`budget` phase requires a dedicated verification Host configured with
+`SUBAGENT_MAX_MODEL_STEPS=1`, also set in the script environment.
 
 Monitor `delegation_executions.record` for `status`, `notificationStatus`,
 `pendingEventId`, and the effective model configuration. `queued` inputs use the

@@ -6,6 +6,7 @@ const phase = process.argv[2] ?? 'help';
 const evidencePath = process.argv[3] ?? '/tmp/oma-live-delegation-evidence.json';
 const phases = ['init','sync','async-start','async-finish','shared','resume','query','steer-start','steer-finish','interrupt-start','interrupt-finish','budget','inspect','ui','cleanup'];
 if (!phases.includes(phase)) { console.log(JSON.stringify({usage:'cd /app/server/packages/api && pnpm exec tsx /tmp/oma-live-delegation.mjs <phase> [evidence.json]', phases, note:'Copy evidence JSON out before replacing pod, and back before resume. Each run creates and revokes a temporary API key; no credentials are written.'})); process.exit(phase === 'help' ? 0 : 2); }
+if (phase === 'budget' && process.env.SUBAGENT_MAX_MODEL_STEPS !== '1') throw new Error('Run the budget phase only against a dedicated verification Host configured with SUBAGENT_MAX_MODEL_STEPS=1');
 const root = process.env.OMA_LIVE_APP_ROOT ?? '/app';
 const apiPrefix = (process.env.API_BASE_PATH ?? '').replace(/^\/*/, '/').replace(/\/+$/, '');
 const base = (process.env.OMA_LIVE_BASE_URL ?? `http://127.0.0.1:3000${apiPrefix}`).replace(/\/+$/, '');
@@ -141,7 +142,7 @@ try {
     } else if(phase==='interrupt-finish') {
       const s=evidence.phases.interrupt; check('interrupt-start prerequisite',Boolean(s?.executionId)); s.interruptResponse=await api(`/v1/sessions/${s.childId}/events`,{events:[{type:'user.interrupt',data:{}}]}); await save(); const x=await finalExecution(s,s.executionId); await assertNotification(s); check('direct child interrupt terminal',x.status==='interrupted',{status:x.status,response:s.interruptResponse}); s.status='passed';
     } else if(phase==='budget') {
-      check('budget phase not already started',!evidence.phases.budget); const s=await createSession('budget'); s.token=`BUDGET_${evidence.runId}`; s.file='budget.txt'; const after=await send(s,parent({prompt:directive(s.file,s.token),max_steps:1})); const x=await latestExecution(s); s.childId=x.childId;s.executionId=x.id;await save(); const done=await finalExecution(s,x.id); await completedTurn(s,after); await capture(s,x.id); check('budget terminal is truthful',done.status==='budget_exhausted',{status:done.status,result:done.result}); check('budget preserves already-written file',await file(s,`oma-release/${evidence.runId}/${s.file}`)===s.token); s.status='passed';
+      check('budget phase not already started',!evidence.phases.budget); const s=await createSession('budget'); s.token=`BUDGET_${evidence.runId}`; s.file='budget.txt'; const after=await send(s,parent({prompt:directive(s.file,s.token)})); const x=await latestExecution(s); s.childId=x.childId;s.executionId=x.id;await save(); const done=await finalExecution(s,x.id); await completedTurn(s,after); await capture(s,x.id); check('budget terminal is truthful',done.status==='budget_exhausted',{status:done.status,result:done.result}); check('budget preserves already-written file',await file(s,`oma-release/${evidence.runId}/${s.file}`)===s.token); s.status='passed';
     } else if(phase==='inspect') {
       for(const s of Object.values(evidence.phases)) if(s.sessionId&&s.childId&&s.executionId) {const snap=await capture(s,s.executionId);assertUsage(snap);if(snap.trace.execution.mode==='async'&&terminal.has(snap.trace.execution.status)) await assertNotification(s);}
     } else if(phase==='cleanup') {

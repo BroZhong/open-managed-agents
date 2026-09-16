@@ -311,7 +311,7 @@ export class PiAgentAdapter implements Adapter {
       const queue = new EventQueue<SessionEvent>();
       const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
       const checkpointEvents: SessionEvent[] = [];
-      const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 30 : undefined);
+      const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 500 : undefined);
       if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
       let steps = input.execution?.completedModelSteps ?? 0;
       if (!Number.isInteger(steps) || steps < 0) throw new Error("completedModelSteps must be a non-negative integer");

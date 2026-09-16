@@ -43,17 +43,17 @@ describe("durable Pi execution seam", () => {
     expect(await collect(adapter, value)).toMatchObject([{ type: "session.error", error: { message: expect.stringContaining("pending tool calls") } }]);
     expect(resume).not.toHaveBeenCalled();
   });
-  it("counts model requests instead of OMA Turns and fails after the default 30 child steps", async () => {
+  it("counts model requests instead of OMA Turns and fails after the default 500 child steps", async () => {
     let requests = 0;
     const adapter = new PiAgentAdapter({ _sessionFactory: factory(async args => { for (;;) { await args.beforeModelStep(); requests++; } }) });
     const value = input(); value.execution = { isChild: true }; value.toolExecutor = {} as ToolExecutor;
     expect(await collect(adapter, value)).toMatchObject([{ type: "session.error", error: { code: "model_step_budget_exhausted" } }]);
-    expect(requests).toBe(30);
+    expect(requests).toBe(500);
   });
   it("retains the same Turn's consumed budget after recovery", async () => {
     let requests = 0;
     const adapter = new PiAgentAdapter({ _sessionFactory: factory(async args => { for (;;) { await args.beforeModelStep(); requests++; } }) });
-    const value = input(); value.execution = { isChild: true, completedModelSteps: 29 }; value.toolExecutor = {} as ToolExecutor;
+    const value = input(); value.execution = { isChild: true, completedModelSteps: 499 }; value.toolExecutor = {} as ToolExecutor;
     await collect(adapter, value); expect(requests).toBe(1);
   });
   it.each(["executor", "mcp", "nested"])("fails closed when a child receives invalid %s capabilities", async mode => {
