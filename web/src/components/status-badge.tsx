@@ -1,30 +1,16 @@
-import { cn } from "@/lib/utils";
+import { LoaderCircle } from "lucide-react";
 
 interface StatusBadgeProps {
-  status: "idle" | "running" | "terminated";
+  status: "idle" | "running" | "waiting" | "terminated";
 }
 
-const statusStyles: Record<StatusBadgeProps["status"], string> = {
-  idle: "bg-neutral-100 text-neutral-600",
-  running: "bg-green-100 text-green-700",
-  terminated: "bg-red-100 text-red-700",
-};
-
+/** A waiting Turn is still active while its delegated execution runs. */
 export function StatusBadge({ status }: StatusBadgeProps) {
+  if (status !== "running" && status !== "waiting") return null;
+
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-        statusStyles[status]
-      )}
-    >
-      {status === "running" && (
-        <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-        </span>
-      )}
-      {status}
+    <span role="img" aria-label="Session running" title="Session running" className="inline-flex shrink-0 text-[var(--color-fg-muted)]">
+      <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
     </span>
   );
 }

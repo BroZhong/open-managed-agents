@@ -30,12 +30,28 @@ _Avoid_: sandbox agent, isolated agent, Kubernetes agent
 A conversation and work history for a single **Agent**. A Session contains one or more **Turns** and keeps the Agent's working state between turns when the Agent is sandboxed. An Agent owns many Sessions; a Session belongs to exactly one Agent. A Session may also be created by one **Loop**, in which case it is listed under that Loop and still belongs to the Loop's Agent. The console is entered through an Agent, and its Sessions are listed within it.
 _Avoid_: chat, thread, run
 
+**Child Session**:
+A durable Session created by a parent's `Agent` tool. It belongs to the same configured Agent and Tenant, retains its creation parent Session/Turn/tool-use identity, and shares the Workspace and Sandbox binding by default. It does not copy the parent conversation. `childId` is the Session ID; `resume` submits a new Delegation Input to that same Child Session.
+_Avoid_: plugin child, business subtype, temporary agent
+
+**Delegation Input**:
+A durable task prompt accepted by `Agent`, either for a new Child Session or for `resume`. Every input has its own **Delegation Execution**, calling Session/Turn/tool-use identity, execution mode and budget. Inputs for the same Child Session execute serially.
+_Avoid_: new Agent configuration, user message (its origin is delegation)
+
+**Delegation Execution**:
+The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; children default to 30 steps.
+_Avoid_: childId (the Child Session can contain multiple executions)
+
+**Delegation Result**:
+A durable outcome for one Delegation Execution, with terminal reason, output and child trace reference. Asynchronous results appear in parent history immediately and become model input only when claimed. Synchronous results finish the waiting tool in the original Turn. A result reports execution facts and does not certify that generated artifacts satisfy the task.
+_Avoid_: user message, completed artifact, callback Promise
+
 **Loop**:
 An Agent-owned recurring instruction. On each due interval the Host creates a fresh **Workspace** and **Session**, links the Session to the Loop, durably records the Loop's prompt as the Session's first pending input, and then starts its first **Turn**. Every scheduled occurrence creates a new Session; a Loop does not reuse a previous Session or Workspace. Missed intervals coalesce into one occurrence when scheduling resumes, and a manual run does not move the recurring cadence. The console nests the Sessions created by a Loop beneath that Loop on the Agent page.
 _Avoid_: cron job, scheduled Session (the Loop is the schedule; each occurrence creates a Session)
 
 **Turn**:
-One user message and the Agent execution that responds to it within a **Session**.
+One accepted input and the Agent execution that responds to it within a **Session**. The input can be a user message, a **Delegation Input**, or a claimed **Delegation Result**. A synchronous delegation waits within the original Turn; an asynchronous result may start a later Turn.
 _Avoid_: request, job, invocation
 
 **Interrupt**:
@@ -43,7 +59,7 @@ A user's demand that the **Session**'s currently running **Turn** stop now. An I
 _Avoid_: cancel, stop the session, kill (an Interrupt ends a Turn, not a Session)
 
 **Queued Input**:
-Input a user has sent that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history as a user message; so a given input is either queued or executing, never both.
+A user message, Delegation Input, or Delegation Result that the Host has accepted but is not yet executing. It is durable server state, not a client's optimistic guess: it survives a reload, and it outlives the **Turn** that was running when it arrived — which is why an **Interrupt** ends one Turn while the Queued Input behind it still runs. Input stops being queued the moment a Turn claims it, because claiming promotes it into the Session's history with its actual input source; so a given input is either queued or executing, never both.
 _Avoid_: pending message, optimistic message, draft, backlog
 
 **Interrupted Turn**:

@@ -10,6 +10,8 @@ export interface SessionStoreListOpts {
   /** Exclude Loop-created Sessions so loose Agent navigation is not crowded out. */
   withoutLoop?: boolean;
   excludedWorkspaceIds?: string[];
+  /** Exclude delegated child Sessions before applying pagination. */
+  excludeDelegated?: boolean;
 }
 
 export interface SessionStoreCreateInput {
@@ -23,6 +25,7 @@ export interface SessionStoreCreateInput {
    */
   workspaceId: string;
   loopId?: string;
+  delegation?: import("./delegation-store.js").DelegationOrigin;
 }
 
 export interface SessionStore {

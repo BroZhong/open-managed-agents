@@ -1257,6 +1257,21 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     expect(heartbeatTimerCleared).toBe(true);
   });
 
+  it("replays only the requested Session's deltas when concurrent Turns share the same ID", async () => {
+    const { app, agentStore, sessionStore, turnStreamStore } = createMergeApp();
+    const sessions = await Promise.all([createTestSession(agentStore, sessionStore), createTestSession(agentStore, sessionStore)]);
+    await Promise.all(sessions.map(async ({ session }, index) => {
+      await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1_a1", status: "running" });
+      await turnStreamStore.appendDelta(session.id, { turnId: "turn_1_a1", blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: index === 0 ? "parent-private" : "child-private" } });
+    }));
+    const frames = await Promise.all(sessions.map(async ({ session }) => {
+      const response = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, { headers: { accept: "text/event-stream" } });
+      return readSSEFrames(response, 1, 250);
+    }));
+    expect(frames[0].map(frame => frame.data)).toEqual([expect.objectContaining({ text: "parent-private", turnId: "turn_1_a1" })]);
+    expect(frames[1].map(frame => frame.data)).toEqual([expect.objectContaining({ text: "child-private", turnId: "turn_1_a1" })]);
+  });
+
   it("reconnect mid-turn: backfills PG completed events, then the half-emitted deltas, then continues live", async () => {
     const { app, agentStore, sessionStore, eventLogStore, eventStreamHub, turnStreamStore } =
       createMergeApp();
@@ -1276,13 +1291,13 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
 
     // The turn is still running: Redis holds half-emitted deltas + active turn.
     await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
-    await turnStreamStore.appendDelta({
+    await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
       type: "agent.message_chunk",
       data: { type: "agent.message_chunk", text: "Hel" },
     });
-    await turnStreamStore.appendDelta({
+    await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
       type: "agent.message_chunk",
@@ -1334,13 +1349,13 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
 
     await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
     // Two deltas buffered in Redis: ids 0-0, 0-1.
-    const id0 = await turnStreamStore.appendDelta({
+    const id0 = await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
       type: "agent.message_chunk",
       data: { type: "agent.message_chunk", text: "Hel" },
     });
-    const id1 = await turnStreamStore.appendDelta({
+    const id1 = await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
       type: "agent.message_chunk",
@@ -1399,7 +1414,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
       sessionThreadId: "sthr_primary",
     });
     // No active turn (cleared) and stream reclaimed.
-    await turnStreamStore.reclaim("turn_1");
+    await turnStreamStore.reclaim(session.id, "turn_1");
 
     const res = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, {
       headers: { accept: "text/event-stream" },
@@ -1432,7 +1447,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
       data: {},
       sessionThreadId: "sthr_primary",
     });
-    await turnStreamStore.reclaim("turn_1");
+    await turnStreamStore.reclaim(session.id, "turn_1");
 
     // Client reconnects from the last replayed seq (2) — no active turn.
     const res = await app.request(
@@ -1491,7 +1506,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     });
     // Active turn marked idle (turn ended); any lingering deltas must be ignored.
     await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "idle" });
-    await turnStreamStore.appendDelta({
+    await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
       type: "agent.message_chunk",

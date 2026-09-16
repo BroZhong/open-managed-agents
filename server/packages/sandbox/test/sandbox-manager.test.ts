@@ -4,6 +4,7 @@ import {
   DefaultSandboxManager,
   SandboxSessionClosed,
   type EnvSpec,
+  type SandboxEnvironmentBinding,
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { FakeProvisionSource } from "../src/provision-source.js";
@@ -34,6 +35,58 @@ function makeManager() {
 }
 
 describe("mounted Workspace Sandbox Manager", () => {
+  it("refreshes renamed Skills after a new Host attaches to a shared environment", async () => {
+    const { client, provision, manager } = makeManager();
+    let storedId: string | null = null;
+    const binding: SandboxEnvironmentBinding = { withLock: async (work) => {
+      const result = await work(storedId); storedId = result.sandboxId; return result.value;
+    } };
+    const source = { kind: "s3", ref: { skillId: "one" } };
+    provision.seed(source, { "SKILL.md": "old body" });
+    const first = manager.open(specFor({ projections: [{ targetPath: "/skills/old-name", source }] }), binding);
+    expect(await first.readFile("/skills/old-name/SKILL.md")).toBe("old body");
+    provision.seed(source, { "SKILL.md": "new body" });
+    const resumed = manager.open(specFor(), binding);
+    await resumed.prepare([{ targetPath: "/skills/new-name", source }]);
+    expect(await resumed.readFile("/skills/new-name/SKILL.md")).toBe("new body");
+    await expect(resumed.readFile("/skills/old-name/SKILL.md")).rejects.toThrow();
+    expect(client.created).toHaveLength(1);
+  });
+
+  it("prepares a shared environment with no Skills when its user cannot create /skills", async () => {
+    const { client, manager } = makeManager();
+    let storedId: string | null = null;
+    const binding: SandboxEnvironmentBinding = { withLock: async (work) => {
+      const result = await work(storedId); storedId = result.sandboxId; return result.value;
+    } };
+    const first = manager.open(specFor(), binding);
+    await first.writeFile("existing.txt", "kept");
+    vi.spyOn(client, "exec").mockImplementation(async function* () { throw new Error("Permission denied creating /skills"); });
+    const resumed = manager.open(specFor(), binding);
+    await resumed.prepare();
+    expect(await resumed.readFile("existing.txt")).toBe("kept");
+    expect(client.created).toHaveLength(1);
+  });
+
+  it("checks resource users inside the environment lock before disposing a parent", async () => {
+    const { client, manager } = makeManager();
+    let storedId: string | null = null;
+    let insideLock = false;
+    const binding: SandboxEnvironmentBinding = {
+      withLock: async (work) => {
+        insideLock = true;
+        try { const result = await work(storedId); storedId = result.sandboxId; return result.value; }
+        finally { insideLock = false; }
+      },
+      canReclaim: async () => { expect(insideLock).toBe(true); return false; },
+    };
+    const parent = manager.open(specFor(), binding);
+    await parent.writeFile("/tmp/shared", "still needed");
+    await parent.dispose();
+    const child = manager.open(specFor(), binding);
+    expect(await child.readFile("/tmp/shared")).toBe("still needed");
+    expect(client.destroyed).toHaveLength(0);
+  });
   it("checks the mount before native filesystem operations and keeps the capability stable after rebuild", async () => {
     const { client, manager } = makeManager();
     const unavailable = () => { throw new Error("Unexpected filesystem operation"); };

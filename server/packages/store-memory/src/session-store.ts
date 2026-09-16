@@ -29,6 +29,7 @@ export class InMemorySessionStore implements SessionStore {
       agent: structuredClone(input.agent),
       workspaceId: input.workspaceId,
       loopId: input.loopId,
+      delegation: input.delegation,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -56,6 +57,7 @@ export class InMemorySessionStore implements SessionStore {
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
     if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
+    if (opts?.excludeDelegated) filtered = filtered.filter((s) => !s.delegation);
 
     if (loopId) {
       filtered = filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
@@ -128,4 +130,8 @@ export class InMemorySessionStore implements SessionStore {
     this.sessions.splice(index, 1);
     return true;
   }
+  /** Internal rollback boundary for the in-memory delegation transaction. */
+  snapshotState() { return structuredClone({ sessions: this.sessions, nextId: this.nextId }); }
+  restoreState(state: ReturnType<InMemorySessionStore["snapshotState"]>): void { this.sessions = state.sessions; this.nextId = state.nextId; }
+
 }

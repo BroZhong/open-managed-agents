@@ -1,0 +1,653 @@
+{
+  "date": "2026-09-16",
+  "implementationCommit": "738c128bf42628bfcc5201b1d17d784e29f034bd",
+  "firstRun": {
+    "deployedCommit": "e4860c5bc43dce87273079ea8033c49866833760",
+    "parentSessionId": "sess_QGponXvNIwxx-p79BDRj_",
+    "workspaceId": "ws_MkifaKFLdmw6_HGemNWEz",
+    "parallelObserved": true,
+    "children": [
+      {
+        "sessionId": "sess_Q71hRJkCl654_w9bwicaM",
+        "executionId": "deleg_buplUdoY6AOPaq3s-tjyH",
+        "status": "completed",
+        "config": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "high",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "override"
+        },
+        "toolCalls": 41,
+        "toolNames": [
+          "bash",
+          "edit",
+          "read",
+          "write"
+        ],
+        "modelRequests": 15
+      },
+      {
+        "sessionId": "sess_JqtDIq9XQgjEOKHSE2YxS",
+        "executionId": "deleg_CxZ4_FUgHhz7RzeTWW4lh",
+        "status": "completed",
+        "config": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "high",
+          "maxSteps": 30,
+          "modelSource": "agent",
+          "thinkingSource": "override"
+        },
+        "toolCalls": 61,
+        "toolNames": [
+          "bash",
+          "edit",
+          "read",
+          "write"
+        ],
+        "modelRequests": 22
+      }
+    ],
+    "artifacts": {
+      "code-exploration.md": {
+        "bytes": 33060,
+        "sha256": "8c4b9255a821b458e4c998edd763fa16d9d3bd28d30a7b9dfe115f7904777037"
+      },
+      "official-research.md": {
+        "bytes": 19631,
+        "sha256": "18ffd1d4858a1972bf319a3b2536653b59422fbf25b8781b16690a77f21598c1"
+      },
+      "assessment.md": {
+        "bytes": 21010,
+        "sha256": "1459ff187693f1ff4f83029026898484da482cb9225f78d668cb0388a8aaf40a"
+      }
+    },
+    "checks": [
+      {
+        "phase": "start",
+        "name": "fresh scenario",
+        "ok": true,
+        "time": "2026-09-16T02:59:51.953Z"
+      },
+      {
+        "phase": "observe",
+        "name": "at least two independently delegated Sessions",
+        "ok": true,
+        "time": "2026-09-16T03:19:43.759Z"
+      },
+      {
+        "phase": "observe",
+        "name": "observed simultaneous running children",
+        "ok": true,
+        "time": "2026-09-16T03:19:43.759Z"
+      },
+      {
+        "phase": "observe",
+        "name": "all research executions completed",
+        "ok": true,
+        "details": [
+          {
+            "id": "deleg_buplUdoY6AOPaq3s-tjyH",
+            "status": "completed",
+            "reason": "Execution completed; saved artifacts have not been independently verified"
+          },
+          {
+            "id": "deleg_CxZ4_FUgHhz7RzeTWW4lh",
+            "status": "completed",
+            "reason": "Execution completed; saved artifacts have not been independently verified"
+          }
+        ],
+        "time": "2026-09-16T03:19:43.759Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child used real Sandbox tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_Q71hRJkCl654_w9bwicaM"
+        },
+        "time": "2026-09-16T03:19:43.775Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child did not call nested delegation tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_Q71hRJkCl654_w9bwicaM"
+        },
+        "time": "2026-09-16T03:19:43.775Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child owns no nested executions",
+        "ok": true,
+        "details": {
+          "childId": "sess_Q71hRJkCl654_w9bwicaM"
+        },
+        "time": "2026-09-16T03:19:43.779Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child used real Sandbox tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_JqtDIq9XQgjEOKHSE2YxS"
+        },
+        "time": "2026-09-16T03:19:43.809Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child did not call nested delegation tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_JqtDIq9XQgjEOKHSE2YxS"
+        },
+        "time": "2026-09-16T03:19:43.809Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child owns no nested executions",
+        "ok": true,
+        "details": {
+          "childId": "sess_JqtDIq9XQgjEOKHSE2YxS"
+        },
+        "time": "2026-09-16T03:19:43.813Z"
+      },
+      {
+        "phase": "observe",
+        "name": "nonempty research artifact",
+        "ok": true,
+        "details": {
+          "name": "code-exploration.md",
+          "bytes": 33060
+        },
+        "time": "2026-09-16T03:19:43.839Z"
+      },
+      {
+        "phase": "observe",
+        "name": "nonempty research artifact",
+        "ok": true,
+        "details": {
+          "name": "official-research.md",
+          "bytes": 19631
+        },
+        "time": "2026-09-16T03:19:43.852Z"
+      },
+      {
+        "phase": "observe",
+        "name": "nonempty research artifact",
+        "ok": true,
+        "details": {
+          "name": "assessment.md",
+          "bytes": 21010
+        },
+        "time": "2026-09-16T03:19:43.872Z"
+      },
+      {
+        "phase": "observe",
+        "name": "main read subagent reports before synthesis",
+        "ok": true,
+        "time": "2026-09-16T03:19:43.872Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "scenario verified",
+        "ok": true,
+        "time": "2026-09-16T03:20:49.425Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "no active work before cleanup",
+        "ok": true,
+        "details": {
+          "id": "sess_Q71hRJkCl654_w9bwicaM",
+          "status": "idle",
+          "pending": 0
+        },
+        "time": "2026-09-16T03:20:49.444Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "no active work before cleanup",
+        "ok": true,
+        "details": {
+          "id": "sess_JqtDIq9XQgjEOKHSE2YxS",
+          "status": "idle",
+          "pending": 0
+        },
+        "time": "2026-09-16T03:20:49.448Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "no active work before cleanup",
+        "ok": true,
+        "details": {
+          "id": "sess_QGponXvNIwxx-p79BDRj_",
+          "status": "idle",
+          "pending": 0
+        },
+        "time": "2026-09-16T03:20:49.453Z"
+      }
+    ],
+    "cleanedUp": true,
+    "monitorNotes": [
+      {
+        "at": "2026-09-16T03:15:20.552Z",
+        "phase": "observe",
+        "error": "Timeout: parallel research and synthesis"
+      }
+    ]
+  },
+  "release": {
+    "tag": "738c128bf426",
+    "context": "agent-platform",
+    "namespace": "oma-infra",
+    "health": "ok",
+    "pods": [
+      {
+        "name": "oma-server-68cf474467-v5slf",
+        "images": [
+          {
+            "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:738c128bf426",
+            "imageID": "sha256:abbf3db3dd7f112c2d379000a818453baee535ea6330f3020e482fde2e42cfab",
+            "ready": true
+          }
+        ]
+      },
+      {
+        "name": "oma-web-5c7d6d9c5c-75z7j",
+        "images": [
+          {
+            "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web:738c128bf426",
+            "imageID": "sha256:fc3711843d125722e1a43130503f3125e344168713b55f4c11b0347fd5176ddc",
+            "ready": true
+          }
+        ]
+      }
+    ]
+  },
+  "finalRun": {
+    "parentSessionId": "sess_QRZ0rqEAJHpiVJphEDhHy",
+    "workspaceId": "ws_5CPCFTbUdNgl0ByOwtQmG",
+    "parallelObserved": true,
+    "status": "passed",
+    "executions": [
+      {
+        "id": "deleg_yLSQFc2vgE2LNyMytzZCL",
+        "childId": "sess_JHsZTceog3g8xbAaewTQq",
+        "status": "completed",
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "high",
+          "maxSteps": 30,
+          "modelSource": "parent",
+          "thinkingSource": "override"
+        },
+        "reason": "Execution completed; saved artifacts have not been independently verified"
+      },
+      {
+        "id": "deleg_-cy0_tQKf-WQeuAdBV5JD",
+        "childId": "sess_LKvHJDLO7IXJq5CgVX_mt",
+        "status": "completed",
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "high",
+          "maxSteps": 30,
+          "modelSource": "parent",
+          "thinkingSource": "override"
+        },
+        "reason": "Execution completed; saved artifacts have not been independently verified"
+      },
+      {
+        "id": "deleg_zyfMudvCve3Znt6xWinne",
+        "childId": "sess_JHsZTceog3g8xbAaewTQq",
+        "status": "failed",
+        "effectiveConfig": {
+          "model": "openai-codex/gpt-5.6-sol",
+          "thinking": "high",
+          "maxSteps": 30,
+          "modelSource": "parent",
+          "thinkingSource": "override"
+        },
+        "reason": "stream_read_error"
+      }
+    ],
+    "liveReplayAudit": {
+      "sampleCount": 112,
+      "results": [
+        {
+          "childId": "sess_LKvHJDLO7IXJq5CgVX_mt",
+          "ownToolCalls": 35,
+          "observedToolCalls": 35,
+          "unmatched": [],
+          "noNestedCalls": true
+        },
+        {
+          "childId": "sess_JHsZTceog3g8xbAaewTQq",
+          "ownToolCalls": 78,
+          "observedToolCalls": 78,
+          "unmatched": [],
+          "noNestedCalls": true
+        }
+      ]
+    },
+    "recoveredExecutions": [
+      {
+        "id": "deleg_zyfMudvCve3Znt6xWinne",
+        "childId": "sess_JHsZTceog3g8xbAaewTQq",
+        "status": "failed",
+        "reason": "stream_read_error"
+      }
+    ],
+    "artifacts": {
+      "code-exploration.md": {
+        "bytes": 6676,
+        "sha256": "a9e585f97e94898612cfff3dc46914f71f113ab0af0dd7c7dfcd81fb50ae2707"
+      },
+      "official-research.md": {
+        "bytes": 3686,
+        "sha256": "49f02d6a6e34504939edc19afeb25affcba64354fc0159fa5cd1444bc0729058"
+      },
+      "assessment.md": {
+        "bytes": 1535,
+        "sha256": "2b2d4e6dff95a733558f57275b913e3fc0a8b140b9da8d67afef53ac488cadad"
+      }
+    },
+    "finalChecks": [
+      {
+        "phase": "observe",
+        "name": "at least two independently delegated Sessions",
+        "ok": true,
+        "time": "2026-09-16T03:39:19.456Z"
+      },
+      {
+        "phase": "observe",
+        "name": "observed simultaneous running children",
+        "ok": true,
+        "time": "2026-09-16T03:39:19.456Z"
+      },
+      {
+        "phase": "observe",
+        "name": "latest research execution for each child completed",
+        "ok": true,
+        "details": [
+          {
+            "id": "deleg_yLSQFc2vgE2LNyMytzZCL",
+            "status": "completed",
+            "reason": "Execution completed; saved artifacts have not been independently verified"
+          },
+          {
+            "id": "deleg_-cy0_tQKf-WQeuAdBV5JD",
+            "status": "completed",
+            "reason": "Execution completed; saved artifacts have not been independently verified"
+          }
+        ],
+        "time": "2026-09-16T03:39:19.466Z"
+      },
+      {
+        "phase": "observe",
+        "name": "children inherit the parent resolved model",
+        "ok": true,
+        "details": [
+          {
+            "childId": "sess_JHsZTceog3g8xbAaewTQq",
+            "config": {
+              "model": "openai-codex/gpt-5.6-sol",
+              "thinking": "high",
+              "maxSteps": 30,
+              "modelSource": "parent",
+              "thinkingSource": "override"
+            }
+          },
+          {
+            "childId": "sess_LKvHJDLO7IXJq5CgVX_mt",
+            "config": {
+              "model": "openai-codex/gpt-5.6-sol",
+              "thinking": "high",
+              "maxSteps": 30,
+              "modelSource": "parent",
+              "thinkingSource": "override"
+            }
+          },
+          {
+            "childId": "sess_JHsZTceog3g8xbAaewTQq",
+            "config": {
+              "model": "openai-codex/gpt-5.6-sol",
+              "thinking": "high",
+              "maxSteps": 30,
+              "modelSource": "parent",
+              "thinkingSource": "override"
+            }
+          }
+        ],
+        "time": "2026-09-16T03:39:19.466Z"
+      },
+      {
+        "phase": "observe",
+        "name": "parent cannot choose a model through Agent arguments",
+        "ok": true,
+        "time": "2026-09-16T03:39:19.466Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child used real Sandbox tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_JHsZTceog3g8xbAaewTQq"
+        },
+        "time": "2026-09-16T03:39:19.494Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child did not call nested delegation tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_JHsZTceog3g8xbAaewTQq"
+        },
+        "time": "2026-09-16T03:39:19.494Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child owns no nested executions",
+        "ok": true,
+        "details": {
+          "childId": "sess_JHsZTceog3g8xbAaewTQq"
+        },
+        "time": "2026-09-16T03:39:19.499Z"
+      },
+      {
+        "phase": "observe",
+        "name": "live replay tool IDs belong only to their Child Session",
+        "ok": true,
+        "details": {
+          "childId": "sess_JHsZTceog3g8xbAaewTQq",
+          "observedToolIds": 78,
+          "ownTools": 78,
+          "foreign": []
+        },
+        "time": "2026-09-16T03:39:19.500Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child used real Sandbox tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_LKvHJDLO7IXJq5CgVX_mt"
+        },
+        "time": "2026-09-16T03:39:19.519Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child did not call nested delegation tools",
+        "ok": true,
+        "details": {
+          "childId": "sess_LKvHJDLO7IXJq5CgVX_mt"
+        },
+        "time": "2026-09-16T03:39:19.519Z"
+      },
+      {
+        "phase": "observe",
+        "name": "child owns no nested executions",
+        "ok": true,
+        "details": {
+          "childId": "sess_LKvHJDLO7IXJq5CgVX_mt"
+        },
+        "time": "2026-09-16T03:39:19.525Z"
+      },
+      {
+        "phase": "observe",
+        "name": "live replay tool IDs belong only to their Child Session",
+        "ok": true,
+        "details": {
+          "childId": "sess_LKvHJDLO7IXJq5CgVX_mt",
+          "observedToolIds": 35,
+          "ownTools": 35,
+          "foreign": []
+        },
+        "time": "2026-09-16T03:39:19.525Z"
+      },
+      {
+        "phase": "observe",
+        "name": "nonempty research artifact",
+        "ok": true,
+        "details": {
+          "name": "code-exploration.md",
+          "bytes": 6676
+        },
+        "time": "2026-09-16T03:39:19.645Z"
+      },
+      {
+        "phase": "observe",
+        "name": "nonempty research artifact",
+        "ok": true,
+        "details": {
+          "name": "official-research.md",
+          "bytes": 3686
+        },
+        "time": "2026-09-16T03:39:19.667Z"
+      },
+      {
+        "phase": "observe",
+        "name": "nonempty research artifact",
+        "ok": true,
+        "details": {
+          "name": "assessment.md",
+          "bytes": 1535
+        },
+        "time": "2026-09-16T03:39:19.690Z"
+      },
+      {
+        "phase": "observe",
+        "name": "main read subagent reports before synthesis",
+        "ok": true,
+        "time": "2026-09-16T03:39:19.691Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "scenario verified",
+        "ok": true,
+        "time": "2026-09-16T03:39:59.792Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "no active work before cleanup",
+        "ok": true,
+        "details": {
+          "id": "sess_JHsZTceog3g8xbAaewTQq",
+          "status": "idle",
+          "pending": 0
+        },
+        "time": "2026-09-16T03:39:59.821Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "no active work before cleanup",
+        "ok": true,
+        "details": {
+          "id": "sess_LKvHJDLO7IXJq5CgVX_mt",
+          "status": "idle",
+          "pending": 0
+        },
+        "time": "2026-09-16T03:39:59.826Z"
+      },
+      {
+        "phase": "cleanup",
+        "name": "no active work before cleanup",
+        "ok": true,
+        "details": {
+          "id": "sess_QRZ0rqEAJHpiVJphEDhHy",
+          "status": "idle",
+          "pending": 0
+        },
+        "time": "2026-09-16T03:39:59.832Z"
+      }
+    ],
+    "earlierValidationChecks": [
+      {
+        "phase": "start",
+        "name": "fresh scenario",
+        "ok": true,
+        "time": "2026-09-16T03:24:21.782Z"
+      },
+      {
+        "phase": "observe",
+        "name": "at least two independently delegated Sessions",
+        "ok": true,
+        "time": "2026-09-16T03:37:38.337Z"
+      },
+      {
+        "phase": "observe",
+        "name": "observed simultaneous running children",
+        "ok": true,
+        "time": "2026-09-16T03:37:38.337Z"
+      },
+      {
+        "phase": "observe",
+        "name": "all research executions completed",
+        "ok": false,
+        "details": [
+          {
+            "id": "deleg_yLSQFc2vgE2LNyMytzZCL",
+            "status": "completed",
+            "reason": "Execution completed; saved artifacts have not been independently verified"
+          },
+          {
+            "id": "deleg_-cy0_tQKf-WQeuAdBV5JD",
+            "status": "completed",
+            "reason": "Execution completed; saved artifacts have not been independently verified"
+          },
+          {
+            "id": "deleg_zyfMudvCve3Znt6xWinne",
+            "status": "failed",
+            "reason": "stream_read_error"
+          }
+        ],
+        "time": "2026-09-16T03:37:38.337Z"
+      }
+    ],
+    "validationNotes": [
+      "Initial validator required every execution to complete, but a stream_read_error execution was truthfully failed and autonomously resumed. Final acceptance requires latest execution per Child Session to complete, retaining failed attempt evidence.",
+      "Delegation trace intentionally exposes deltas only after the last durable-history page. Live sampler requested the delta-only page and collected 112 nonempty snapshots, subsequently matched to canonical child tool IDs."
+    ],
+    "cleanedUp": true,
+    "ui": {
+      "sidebarSessionIds": [
+        "sess_QRZ0rqEAJHpiVJphEDhHy"
+      ],
+      "finalRunningIndicators": 0,
+      "terminatedLabels": 0,
+      "delegationHeaders": 0,
+      "childTabsOpened": 2,
+      "repeatOpenDeduplicated": true,
+      "resumeReusedChildTab": true,
+      "parentDraftPreserved": true,
+      "closeAndReopenReconnected": true
+    }
+  },
+  "finalMain": "cf47dc83ada97d25bb577e82fc8a23bd1e5318db",
+  "cleanup": {
+    "activeVerificationApiKeys": 0,
+    "verificationSessionsTerminated": true,
+    "localPostgresTestContainerStopped": true
+  }
+}

@@ -92,6 +92,7 @@ class InMemorySessionStore implements SessionStore {
       agent: structuredClone(input.agent),
       workspaceId: input.workspaceId,
       loopId: input.loopId,
+      delegation: input.delegation,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -119,6 +120,7 @@ class InMemorySessionStore implements SessionStore {
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
     if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
+    if (opts?.excludeDelegated) filtered = filtered.filter((s) => !s.delegation);
 
     if (cursor) {
       const idx = filtered.findIndex((s) => s.id === cursor);
@@ -567,6 +569,29 @@ describe("GET /v1/sessions", () => {
     const body = await res.json();
     expect(body.data).toHaveLength(1);
     expect(body.data[0].agentId).toBe(agent1.id);
+  });
+
+  it("excludes delegated children before pagination only when requested", async () => {
+    const { app, agentStore, sessionStore } = createTestApp();
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" };
+    const child = await sessionStore.create({ ...input, delegation: {
+      parentSessionId: "sess_parent", parentTurnId: "turn_parent", parentToolUseId: "tool_child", sandboxSessionId: "sess_parent",
+    } });
+    const roots = [await sessionStore.create(input), await sessionStore.create(input)];
+    for (const query of ["", "?exclude_delegated=false"]) {
+      const response = await app.request(`/v1/sessions${query}`);
+      expect((await response.json()).data).toHaveLength(3);
+    }
+    const first = await app.request(`/v1/sessions?agent_id=${agent.id}&exclude_loop=true&exclude_delegated=true&limit=1`);
+    expect(first.status).toBe(200);
+    const page1 = await first.json();
+    expect(page1).toMatchObject({ data: [{ id: roots[0].id }], has_more: true, next_cursor: roots[0].id });
+    const second = await app.request(`/v1/sessions?exclude_delegated=true&limit=1&cursor=${page1.next_cursor}`);
+    expect(await second.json()).toMatchObject({ data: [{ id: roots[1].id }], has_more: false });
+    // The opt-in list filter does not remove access to the child detail.
+    expect((await app.request(`/v1/sessions/${child.id}`)).status).toBe(200);
+    expect((await app.request("/v1/sessions?exclude_delegated=invalid")).status).toBe(400);
   });
 
   it("excludes Loop-owned Sessions before pagination when requested", async () => {

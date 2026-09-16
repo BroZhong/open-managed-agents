@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo } from "react";
-import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, ChevronDown } from "lucide-react";
+import { useState, useCallback } from "react";
+import { useParams, useNavigate, useLocation } from "react-router";
+import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,7 +9,8 @@ import { TimelineView } from "@/components/timeline-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
-import { TokenUsageMetrics } from "@/components/token-usage-metrics";
+import { ChildSessionConversation } from "@/components/child-session-conversation";
+import type { DelegationExecution } from "@/lib/delegations";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
@@ -26,9 +27,7 @@ function messageText(data: unknown): string {
   const first = content[0] as { text?: unknown } | undefined;
   return typeof first?.text === "string" ? first.text : "";
 }
-import { summarizeTokenUsage } from "@/lib/token-usage";
-
-type Tab = "conversation" | "timeline";
+type ChildTab = { execution: DelegationExecution; label: string };
 
 export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -39,13 +38,27 @@ export default function SessionDetailPage() {
 
 function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
   const { data: session, isLoading: sessionLoading } = useSession(id);
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
-  const { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce } =
+  const { events, activeDeltas, status, fileChange, turnLifecycleNonce } =
     useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
-  const { interrupt, isPending: isInterrupting } = useInterrupt(id);
-  const [activeTab, setActiveTab] = useState<Tab>("conversation");
+  const { interrupt, isPending: isInterrupting, requestAccepted: interruptRequested } = useInterrupt(id);
+  const [activeTab, setActiveTab] = useState("conversation");
+  const [childTabState, setChildTabState] = useState<{ tabs: ChildTab[]; next: number }>({ tabs: [], next: 1 });
+  const childTabs = childTabState.tabs;
+  const openExecution = useCallback((execution: DelegationExecution) => {
+    setChildTabState((state) => state.tabs.some((tab) => tab.execution.childId === execution.childId) ? state : {
+      tabs: [...state.tabs, { execution, label: `Agent ${state.next}` }], next: state.next + 1,
+    });
+    setActiveTab(execution.childId);
+  }, []);
+  const closeChildSession = (childId: string) => {
+    setChildTabState((state) => ({ ...state, tabs: state.tabs.filter((tab) => tab.execution.childId !== childId) }));
+    if (activeTab === childId) setActiveTab("conversation");
+  };
 
   // Whether input is waiting to run is the Host's fact, re-read whenever a Turn
   // starts or ends. This is what keeps the `queued` strip visible through the gap
@@ -69,8 +82,7 @@ function SessionDetail({ id }: { id: string }) {
 
   const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
   const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
-  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" ? "running" : (session?.status ?? "idle");
-  const tokenUsage = useMemo(() => summarizeTokenUsage(events), [events]);
+  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" || status === "waiting" ? status : (session?.status ?? "idle");
 
   if (sessionLoading) {
     return (
@@ -112,31 +124,26 @@ function SessionDetail({ id }: { id: string }) {
               </span>
             </>
           )}
-          <StatusBadge status={effectiveStatus as "idle" | "running" | "terminated"} />
-          {isConnected && (
-            <span className="flex items-center gap-1 text-xs text-green-600">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-              Live
-            </span>
-          )}
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <details className="session-token-details"><summary>Usage <ChevronDown size={13} /></summary><TokenUsageMetrics usage={tokenUsage} /></details>
-
+          <StatusBadge status={effectiveStatus as "idle" | "running" | "waiting" | "terminated"} />
         </div>
       </div>
 
+      {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
       <SplitWorkbench
         workspace={session && <WorkspacePanel workspaceId={session.workspaceId} refreshKey={fileChange.nonce} />}
         session={
           <>
-            <div className="session-tabs">
+            <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
               <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
               <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Timeline{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
+              {childTabs.map(({ execution, label }) => <div key={execution.childId} className="flex shrink-0 items-center" title={execution.prompt}>
+                <TabButton active={activeTab === execution.childId} onClick={() => setActiveTab(execution.childId)}>{label}</TabButton>
+                <button aria-label={`Close ${label}`} className="mr-2 rounded p-1 text-[var(--color-fg-subtle)] hover:bg-[var(--color-bg-muted)]" onClick={() => closeChildSession(execution.childId)}><X className="h-3 w-3" /></button>
+              </div>)}
             </div>
             <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ConversationView events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+                <ConversationView sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
               </div>
               <MessageInput
                 onSend={send}
@@ -146,13 +153,16 @@ function SessionDetail({ id }: { id: string }) {
                 skills={equippedSkills}
                 disabled={session?.status === "terminated"}
                 model={session?.agent?.model}
-                running={effectiveTurnStatus === "running"}
+                running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
                 onInterrupt={handleInterrupt}
               />
             </div>
             <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
               <TimelineView events={events} />
             </div>
+            {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
+              <ChildSessionConversation sessionId={execution.childId} />
+            </div>)}
           </>
         }
       />
@@ -172,8 +182,9 @@ function TabButton({
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
-        "relative px-4 py-2.5 text-sm font-medium transition-colors",
+        "relative shrink-0 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors",
         active ? "text-[var(--color-fg)]" : "text-[var(--color-fg-subtle)] hover:text-[var(--color-fg-muted)]",
       )}
     >

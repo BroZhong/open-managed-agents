@@ -1,4 +1,4 @@
-import { Sandbox } from "e2b";
+import { Sandbox, SandboxNotFoundError } from "e2b";
 import {
   WORKSPACE_MOUNT_PROBE,
   WORKSPACE_MOUNT_PROBE_CLEANUP,
@@ -99,6 +99,7 @@ export interface E2BSandboxClientOptions {
    * pass a fake so the client can be exercised with no network.
    */
   createSandbox?: CreateSandboxFn;
+  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number }) => Promise<E2BSandbox>;
   /** Slightly exceeds ALB 180s so its timeout response can reach the SDK. */
   requestTimeoutMs?: number;
   /** Host OSS readback proves the mount writes into the exact trusted prefix. */
@@ -127,6 +128,7 @@ export class E2BSandboxClient implements SandboxClient {
   private readonly apiKey: string;
   private readonly defaultTemplate: string;
   private readonly createSandbox: CreateSandboxFn;
+  private readonly connectSandbox: NonNullable<E2BSandboxClientOptions["connectSandbox"]>;
   private readonly requestTimeoutMs: number;
   private readonly verifyWorkspaceProbe: E2BSandboxClientOptions["verifyWorkspaceProbe"];
   private readonly creationMetadata = new Map<string, Record<string, string>>();
@@ -155,6 +157,7 @@ export class E2BSandboxClient implements SandboxClient {
     this.apiKey = opts.apiKey;
     this.defaultTemplate = opts.defaultTemplate ?? DEFAULT_TEMPLATE;
     this.createSandbox = opts.createSandbox ?? defaultCreateSandbox;
+    this.connectSandbox = opts.connectSandbox ?? ((id, options) => Sandbox.connect(id, options));
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 185_000;
     this.verifyWorkspaceProbe = opts.verifyWorkspaceProbe;
   }
@@ -315,8 +318,17 @@ export class E2BSandboxClient implements SandboxClient {
     }
   }
 
-  async list(id: string, dir: string): Promise<SandboxFileEntry[]> {
+  async list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]> {
     const sandbox = this.require(id);
+    if (options?.missingOk) {
+      // Node stat preserves ENOENT/EACCES distinctions. A shell test -e would
+      // silently classify an inaccessible parent directory as a missing path.
+      try { await this.fileSystem(id).stat(dir); }
+      catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
+        throw error;
+      }
+    }
     // `find` prints: <mtime-epoch-seconds> <size-bytes> <path>, one per file.
     // We use it (rather than the SDK's `files.list`) so size + mtime are always
     // present and the listing is fully recursive, the ToolExecutor listing contract.
@@ -335,10 +347,29 @@ export class E2BSandboxClient implements SandboxClient {
     if (!sandbox) return false; // never created here, or already destroyed.
     try {
       return await sandbox.isRunning();
-    } catch {
-      // A transport/not-found error means the gateway no longer has it live.
-      return false;
+    } catch (error) {
+      if (error instanceof SandboxNotFoundError) return false;
+      // A network failure is not evidence that an active Sandbox vanished.
+      throw error;
     }
+  }
+
+  async reconnect(id: string, metadata: Record<string, string>): Promise<boolean> {
+    if (this.sandboxes.has(id)) return true;
+    let sandbox: E2BSandbox;
+    try {
+      sandbox = await this.connectSandbox(id, {
+        apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs,
+      });
+    } catch (error) {
+      if (error instanceof SandboxNotFoundError) return false;
+      throw error;
+    }
+    this.sandboxes.set(id, sandbox);
+    // The coordinates come from the Host's immutable Workspace binding. The
+    // regular mount verifier independently checks the gateway's authorization.
+    this.creationMetadata.set(id, { ...metadata });
+    return true;
   }
 
   async destroy(id: string): Promise<void> {

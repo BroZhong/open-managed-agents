@@ -9,7 +9,7 @@ import { apiFetch } from "@/lib/api";
 export interface Session {
   id: string;
   agentId: string;
-  status: "idle" | "running" | "terminated";
+  status: "idle" | "running" | "waiting" | "terminated";
   /** Snapshot of the user's first message; the console shows `title ?? id`. */
   title?: string;
   /** The Workspace this Session is bound to (used to group by workspace). */
@@ -27,22 +27,29 @@ interface SessionsResponse {
   next_cursor?: string;
 }
 
-export function useSessions(status?: string) {
-  const params = status ? `?status=${status}` : "";
+export interface SessionListOptions {
+  excludeDelegated?: boolean;
+}
+
+export function useSessions(status?: string, options?: SessionListOptions) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (options?.excludeDelegated) params.set("exclude_delegated", "true");
+  const query = params.size ? `?${params}` : "";
   return useQuery({
-    queryKey: ["sessions", status ?? "all"],
+    queryKey: ["sessions", status ?? "all", ...(options?.excludeDelegated ? ["parents"] : [])],
     queryFn: ({ signal }) =>
-      apiFetch<SessionsResponse>(`/v1/sessions${params}`, { signal }).then((r) => r.data),
+      apiFetch<SessionsResponse>(`/v1/sessions${query}`, { signal }).then((r) => r.data),
   });
 }
 
 /** Sessions belonging to a single Agent (nested under the Agent, not global). */
-export function useAgentSessions(agentId: string) {
+export function useAgentSessions(agentId: string, options?: SessionListOptions) {
   return useQuery({
-    queryKey: ["sessions", "byAgent", agentId],
+    queryKey: ["sessions", "byAgent", agentId, ...(options?.excludeDelegated ? ["parents"] : [])],
     queryFn: ({ signal }) =>
       apiFetch<SessionsResponse>(
-        `/v1/sessions?agent_id=${agentId}&exclude_loop=true`,
+        `/v1/sessions?agent_id=${encodeURIComponent(agentId)}&exclude_loop=true${options?.excludeDelegated ? "&exclude_delegated=true" : ""}`,
         { signal },
       ).then((r) => r.data),
     enabled: !!agentId,
@@ -57,16 +64,16 @@ export function useSession(id: string) {
   });
 }
 
-export function useLoopSessions(loopId: string, enabled = true) {
+export function useLoopSessions(loopId: string, enabled = true, options?: SessionListOptions) {
   const query = useInfiniteQuery({
-    queryKey: ["sessions", "byLoop", loopId],
+    queryKey: ["sessions", "byLoop", loopId, ...(options?.excludeDelegated ? ["parents"] : [])],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => {
       const cursor = pageParam
         ? `&cursor=${encodeURIComponent(pageParam)}`
         : "";
       return apiFetch<SessionsResponse>(
-        `/v1/sessions?loop_id=${encodeURIComponent(loopId)}&limit=50${cursor}`,
+        `/v1/sessions?loop_id=${encodeURIComponent(loopId)}&limit=50${cursor}${options?.excludeDelegated ? "&exclude_delegated=true" : ""}`,
         { signal },
       );
     },

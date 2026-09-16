@@ -17,27 +17,27 @@ export class InMemoryTurnStreamStore implements TurnStreamStore {
   activeTurns = new Map<string, ActiveTurn>();
   private seq = 0;
 
-  async appendDelta(delta: TurnDelta): Promise<string> {
+  async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
     const id = `0-${this.seq++}`;
-    const list = this.streams.get(delta.turnId) ?? [];
+    const list = this.streams.get(JSON.stringify([sessionId, delta.turnId])) ?? [];
     list.push({ ...delta, id });
-    this.streams.set(delta.turnId, list);
+    this.streams.set(JSON.stringify([sessionId, delta.turnId]), list);
     return id;
   }
 
-  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
-    const list = this.streams.get(turnId) ?? [];
+  async readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
+    const list = this.streams.get(JSON.stringify([sessionId, turnId])) ?? [];
     if (!afterId) return [...list];
     const idx = list.findIndex((d) => d.id === afterId);
     return list.slice(idx + 1);
   }
 
-  async deltaCount(turnId: string): Promise<number> {
-    return this.streams.get(turnId)?.length ?? 0;
+  async deltaCount(sessionId: string, turnId: string): Promise<number> {
+    return this.streams.get(JSON.stringify([sessionId, turnId]))?.length ?? 0;
   }
 
-  async reclaim(turnId: string): Promise<void> {
-    this.streams.delete(turnId);
+  async reclaim(sessionId: string, turnId: string): Promise<void> {
+    this.streams.delete(JSON.stringify([sessionId, turnId]));
   }
 
   async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {

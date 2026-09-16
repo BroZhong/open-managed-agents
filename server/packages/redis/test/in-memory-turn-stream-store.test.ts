@@ -48,22 +48,22 @@ describe("InMemoryTurnStreamStore", () => {
 
   describe("delta streams", () => {
     it("appends and reads deltas back in order, with afterId resume", async () => {
-      const id0 = await store.appendDelta({ turnId: "turn_1", blockIndex: 0, type: "chunk", data: { text: "Hel" } });
-      await store.appendDelta({ turnId: "turn_1", blockIndex: 0, type: "chunk", data: { text: "lo" } });
+      const id0 = await store.appendDelta("session", { turnId: "turn_1", blockIndex: 0, type: "chunk", data: { text: "Hel" } });
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 0, type: "chunk", data: { text: "lo" } });
 
-      expect(await store.deltaCount("turn_1")).toBe(2);
-      const all = await store.readDeltas("turn_1");
+      expect(await store.deltaCount("session", "turn_1")).toBe(2);
+      const all = await store.readDeltas("session", "turn_1");
       expect(all.map((d) => (d.data as { text: string }).text)).toEqual(["Hel", "lo"]);
 
-      const after = await store.readDeltas("turn_1", id0);
+      const after = await store.readDeltas("session", "turn_1", id0);
       expect(after).toHaveLength(1);
       expect((after[0].data as { text: string }).text).toBe("lo");
     });
 
     it("reclaims a turn's stream", async () => {
-      await store.appendDelta({ turnId: "turn_1", blockIndex: 0, type: "chunk", data: null });
-      await store.reclaim("turn_1");
-      expect(await store.deltaCount("turn_1")).toBe(0);
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 0, type: "chunk", data: null });
+      await store.reclaim("session", "turn_1");
+      expect(await store.deltaCount("session", "turn_1")).toBe(0);
     });
   });
 });

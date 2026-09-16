@@ -179,29 +179,29 @@ class InMemoryTurnStreamStore implements TurnStreamStore {
   appendedDeltas: StoredTurnDelta[] = [];
   private seq = 0;
 
-  async appendDelta(delta: TurnDelta): Promise<string> {
+  async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
     const id = `0-${this.seq++}`;
-    const list = this.streams.get(delta.turnId) ?? [];
+    const list = this.streams.get(JSON.stringify([sessionId, delta.turnId])) ?? [];
     const stored = { ...delta, id };
     list.push(stored);
-    this.streams.set(delta.turnId, list);
+    this.streams.set(JSON.stringify([sessionId, delta.turnId]), list);
     this.appendedDeltas.push(stored);
     return id;
   }
 
-  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
-    const list = this.streams.get(turnId) ?? [];
+  async readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
+    const list = this.streams.get(JSON.stringify([sessionId, turnId])) ?? [];
     if (!afterId) return [...list];
     const idx = list.findIndex((d) => d.id === afterId);
     return list.slice(idx + 1);
   }
 
-  async deltaCount(turnId: string): Promise<number> {
-    return this.streams.get(turnId)?.length ?? 0;
+  async deltaCount(sessionId: string, turnId: string): Promise<number> {
+    return this.streams.get(JSON.stringify([sessionId, turnId]))?.length ?? 0;
   }
 
-  async reclaim(turnId: string): Promise<void> {
-    this.streams.delete(turnId);
+  async reclaim(sessionId: string, turnId: string): Promise<void> {
+    this.streams.delete(JSON.stringify([sessionId, turnId]));
   }
 
   async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
@@ -1352,6 +1352,38 @@ describe("SessionRouter", () => {
       return { ...deps, session };
     }
 
+    it("isolates concurrent first Turns and does not reclaim another Session's active stream", async () => {
+      const gates = new Map<string, { ready(): void; promise: Promise<void> }>();
+      const adapter: Adapter = { async *run(input) {
+        yield { id: "start", timestamp: "t", type: "agent.message_stream_start" };
+        yield { id: "chunk", timestamp: "t", type: "agent.message_chunk", text: input.sessionId };
+        const gate = gates.get(input.sessionId)!;
+        gate.ready(); await gate.promise;
+        yield { id: "end", timestamp: "t", type: "agent.message_stream_end" };
+        yield { id: "message", timestamp: "t", type: "agent.message", content: [{ type: "text", text: input.sessionId }] };
+      } };
+      const deps = createTestDepsWithTurnStream(adapter);
+      const sessions = await Promise.all(["tenant-a", "tenant-b"].map(tenantId => deps.sessionStore.create({ tenantId, agentId: testAgent.id, agent: testAgent, workspaceId: "workspace" })));
+      const releases: Array<() => void> = [];
+      const ready = sessions.map(session => new Promise<void>(resolve => {
+        gates.set(session.id, { ready: resolve, promise: new Promise<void>(release => releases.push(release)) });
+      }));
+      for (const session of sessions) await deps.pendingEventStore.enqueue(session.id, { type: "user.message", data: { content: [{ type: "text", text: "run" }] }, sessionThreadId: "sthr_primary" });
+      const runs = sessions.map(session => deps.router.handleNewEvent(session.id, testAgent));
+      try {
+        await Promise.all(ready);
+        for (const session of sessions) {
+          expect(await deps.turnStreamStore.getActiveTurn(session.id)).toEqual({ turnId: "turn_1_a1", status: "running" });
+          const chunks = (await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1")).filter(delta => delta.type === "agent.message_chunk");
+          expect(chunks.map(delta => (delta.data as { text: string }).text)).toEqual([session.id]);
+        }
+        releases[0](); await runs[0];
+        expect(await deps.turnStreamStore.deltaCount(sessions[0].id, "turn_1_a1")).toBe(0);
+        expect(await deps.turnStreamStore.deltaCount(sessions[1].id, "turn_1_a1")).toBeGreaterThan(0);
+        expect(await deps.turnStreamStore.getActiveTurn(sessions[1].id)).toEqual({ turnId: "turn_1_a1", status: "running" });
+      } finally { releases.forEach(release => release()); await Promise.all(runs); }
+    });
+
     it("writes deltas to the per-turn Redis stream, never to PostgreSQL", async () => {
       const { eventLogStore, turnStreamStore, session } = await runOneTurn();
 
@@ -1507,10 +1539,10 @@ describe("SessionRouter", () => {
     });
 
     it("reclaims the per-turn Redis stream after the turn completes", async () => {
-      const { turnStreamStore } = await runOneTurn();
+      const { turnStreamStore, session } = await runOneTurn();
       // The stream was reclaimed (DEL) at turn end.
-      expect(await turnStreamStore.deltaCount("turn_1_a1")).toBe(0);
-      expect(await turnStreamStore.readDeltas("turn_1_a1")).toEqual([]);
+      expect(await turnStreamStore.deltaCount(session.id, "turn_1_a1")).toBe(0);
+      expect(await turnStreamStore.readDeltas(session.id, "turn_1_a1")).toEqual([]);
     });
 
     it("records the active turn in Redis and clears it when the session goes idle", async () => {
@@ -1555,7 +1587,7 @@ describe("SessionRouter", () => {
       await new Promise((r) => setTimeout(r, 20));
       const active = await deps.turnStreamStore.getActiveTurn(session.id);
       expect(active).toEqual({ turnId: "turn_1_a1", status: "running" });
-      const midDeltas = await deps.turnStreamStore.readDeltas("turn_1_a1");
+      const midDeltas = await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1");
       expect(midDeltas.some((d) => d.type === "agent.message_chunk")).toBe(true);
 
       await run;

@@ -74,6 +74,8 @@ export interface SandboxClient {
 
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
+  /** Attach a Host to a persisted, trusted Sandbox identity without creating it. */
+  reconnect?(id: string, metadata: Record<string, string>): Promise<boolean>;
 
   /** Verify the real OSS mount, exact prefix and ordinary-user read/write access. */
   verifyWorkspaceMount(id: string, target: WorkspaceMountTarget): Promise<void>;
@@ -100,8 +102,8 @@ export interface SandboxClient {
   /** Remove a file or directory tree. Missing paths are an idempotent no-op. */
   remove(id: string, path: string): Promise<void>;
 
-  /** List files under an absolute directory (recursively). */
-  list(id: string, dir: string): Promise<SandboxFileEntry[]>;
+  /** List recursively; missingOk returns empty only when the root is confirmed ENOENT. */
+  list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]>;
 
   /**
    * True when the sandbox `id` is still live and able to accept ops. Because

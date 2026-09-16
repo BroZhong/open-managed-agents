@@ -365,6 +365,9 @@ async function main() {
   console.log("OSS Workspace enabled; Sandbox mount checks required; Skills projected from Supabase");
 
   const sessionRouter = new SessionRouter({
+    delegationStore: stores.delegationStore,
+    maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
+    maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 30),
     eventLogStore: stores.eventLogStore,
     pendingEventStore,
     sessionStore: stores.sessionStore,
@@ -402,6 +405,7 @@ async function main() {
   loopScheduler.start();
 
   const app = createApp({
+    delegationStore: stores.delegationStore,
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,
     agentStore: stores.agentStore,

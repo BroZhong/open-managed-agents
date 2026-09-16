@@ -36,6 +36,28 @@ function rowToEvent(row: PendingRow): PendingEvent {
 export class PgPendingEventStore implements PendingEventIngressStore {
   constructor(private readonly pool: Pool) {}
 
+  async requestInterrupt(sessionId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE pending_events p SET interrupt_requested_at = COALESCE(interrupt_requested_at, NOW()),
+       interrupt_generation = COALESCE(interrupt_generation, claim_generation)
+       WHERE p.id = (SELECT id FROM pending_events WHERE session_id = $1
+         ORDER BY arrived_at, id LIMIT 1)
+       AND p.claim_owner IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = p.session_id
+         AND e.type = 'session.turn_completed' AND e.data->>'pendingEventId' = p.id)
+       RETURNING p.id`, [sessionId],
+    );
+    return result.rows.length > 0;
+  }
+
+  async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT 1 FROM pending_events WHERE session_id = $1 AND id = $2
+       AND interrupt_requested_at IS NOT NULL`, [sessionId, eventId],
+    );
+    return result.rows.length > 0;
+  }
+
   private validateLeaseMs(leaseMs: number): void {
     if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
       throw new RangeError("pending event leaseMs must be a positive finite number");

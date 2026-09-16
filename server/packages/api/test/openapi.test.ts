@@ -7,6 +7,7 @@ import { agentSkillRoutes } from "../src/routes/agent-skills.js";
 import { agentRoutes } from "../src/routes/agents.js";
 import { apiKeyRoutes } from "../src/routes/api-keys.js";
 import { authRoutes } from "../src/routes/auth.js";
+import { delegationRoutes } from "../src/routes/delegations.js";
 import { eventRoutes } from "../src/routes/events.js";
 import { loopRoutes } from "../src/routes/loops.js";
 import { mcpCatalogRoutes } from "../src/routes/mcp-catalog.js";
@@ -97,6 +98,7 @@ function runtimeOperations(): string[] {
       agentStore: adapter,
       workspaceStore: adapter,
     }),
+    delegationRoutes({ delegationStore: adapter, sessionStore: adapter, eventLogStore: adapter }),
     eventRoutes({
       eventLogStore: adapter,
       pendingEventStore: adapter,
@@ -175,7 +177,8 @@ describe("OpenAPI contract", () => {
         agentStore: adapter,
         workspaceStore: adapter,
       }),
-      eventRoutes({
+      delegationRoutes({ delegationStore: adapter, sessionStore: adapter, eventLogStore: adapter }),
+    eventRoutes({
         eventLogStore: adapter,
         pendingEventStore: adapter,
         sessionStore: adapter,
@@ -262,7 +265,7 @@ describe("OpenAPI contract", () => {
       document.paths?.["/v1/sessions"]?.get?.parameters?.map(
         (parameter: any) => parameter.name,
       ),
-    ).toEqual(expect.arrayContaining(["loop_id", "exclude_loop"]));
+    ).toEqual(expect.arrayContaining(["loop_id", "exclude_loop", "exclude_delegated"]));
     expect(schemas.ApiKeyInfo.properties).toHaveProperty("revokedAt");
     expect(document.paths?.["/v1/api-keys/{id}"]?.delete?.operationId).toBe(
       "revokeApiKey",

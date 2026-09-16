@@ -1040,7 +1040,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
       turnId: "turn_1_a2",
       status: "running",
     });
-    expect(await turns.deltaCount("turn_1_a2")).toBeGreaterThan(0);
+    expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
 
     releaseLateRenew();
     await staleDrain;
@@ -1048,7 +1048,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
       turnId: "turn_1_a2",
       status: "running",
     });
-    expect(await turns.deltaCount("turn_1_a2")).toBeGreaterThan(0);
+    expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
 
     releaseGen2();
     await newDrain;
@@ -1189,7 +1189,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
     const oldTurnId = `turn_${promoted.seq}_a1`;
     await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running" });
-    await turns.appendDelta({
+    await turns.appendDelta(session.id, {
       turnId: oldTurnId,
       blockIndex: 0,
       type: "agent.message_chunk",
@@ -1222,7 +1222,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await router.handleNewEvent(session.id, testAgent);
     expect(retryTurnId).toBe(`turn_${promoted.seq}_a2`);
     expect(retryTurnId).not.toBe(oldTurnId);
-    expect(await turns.deltaCount(oldTurnId)).toBe(0);
+    expect(await turns.deltaCount(session.id, oldTurnId)).toBe(0);
     const output = (await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data
       .find((event) => event.type === "agent.message");
     expect(output?.data).toMatchObject({ turnId: retryTurnId });

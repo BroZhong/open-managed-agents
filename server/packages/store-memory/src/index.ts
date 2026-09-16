@@ -1,3 +1,5 @@
+import { InMemoryDelegationStore } from "./delegation-store.js";
+export { InMemoryDelegationStore, MemoryDelegationStore } from "./delegation-store.js";
 import { InMemoryAgentStore } from "./agent-store.js";
 import { InMemoryAgentFileStore } from "./agent-file-store.js";
 import { InMemorySkillStore } from "./skill-store.js";
@@ -37,6 +39,7 @@ export interface MemoryStores {
   userStore: InMemoryUserStore;
   workspaceStore: InMemoryWorkspaceMetadataStore;
   loopStore: InMemoryLoopStore;
+  delegationStore: InMemoryDelegationStore;
 }
 
 export function createMemoryStores(): MemoryStores {
@@ -75,5 +78,6 @@ export function createMemoryStores(): MemoryStores {
     userStore: new InMemoryUserStore(),
     workspaceStore,
     loopStore,
+    delegationStore: new InMemoryDelegationStore(sessionStore, pendingEventStore, eventLogStore, workspaceStore),
   };
 }

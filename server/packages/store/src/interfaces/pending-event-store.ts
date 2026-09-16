@@ -37,6 +37,9 @@ export interface PendingEventFence extends PendingEventClaimRef {
 }
 
 export interface PendingEventStore {
+  /** Persist an Interrupt for the currently claimed input only. */
+  requestInterrupt?(sessionId: string): Promise<boolean>;
+  interruptRequested?(sessionId: string, eventId: string): Promise<boolean>;
   enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent>;
   /** @deprecated Runtime drainers must use claim + fenced ack. */
   dequeue(sessionId: string): Promise<PendingEvent | null>;
