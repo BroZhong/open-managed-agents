@@ -14,6 +14,8 @@ spec:
   scaleStrategy: {}
   template:
     metadata:
+      annotations:
+        image.alibabacloud.com/enable-image-cache: "true"
       labels:
         alibabacloud.com/acs: 'true'
         alibabacloud.com/compute-class: agent-sandbox
