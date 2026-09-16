@@ -10,13 +10,13 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 // Resolve the application's pinned E2B version after `pnpm --dir server install`.
-const requireSandbox = createRequire(new URL('../../../server/packages/sandbox/package.json', import.meta.url));
+const requireSandbox = createRequire(new URL('../../server/packages/sandbox/package.json', import.meta.url));
 const { Sandbox } = requireSandbox('e2b');
 const DOMAIN = 'sandbox.agentry.welltop.tech';
 const BUCKET = 'agentry';
 const REGION = 'cn-shanghai';
 const PROFILE = 'welltop';
-const TEMPLATE = 'code-interpreter-vfscli';
+const TEMPLATE = 'auto-story-v2';
 const WORKSPACE = '/home/user/workspace';
 const SOAK_MS = 65 * 60 * 1000;
 const testId = randomUUID().replaceAll('-', '');

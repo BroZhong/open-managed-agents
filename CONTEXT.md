@@ -13,8 +13,17 @@ The Host enables sandboxes with global default template
 `auto-story-v2` (the sole maintained Sandbox template) and E2B domain `sandbox.agentry.welltop.tech`.
 Sandbox images come from the Shanghai ACR repository
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
-See `deploy/k8s.yaml` and `deploy/sandbox/README.md` for deployment configuration.
+See `deploy/k8s.yaml` and `sandbox/README.md` for deployment configuration.
 Historical test reports describe their original runs, not the current deployment.
+
+## Repository boundaries
+
+`sandbox/` contains the sole maintained template, its image recipe and required
+build tools. `deploy/` contains application deployment and shared infrastructure.
+Business Agent presets, prompts, workflows and Skill content belong outside
+this repository; the platform still provides Skill Library, Equip and projection
+mechanisms. The legacy `AUTO_STORY_*` environment injection remains required by
+existing production Agents and must be migrated before removal.
 
 ## Language
 

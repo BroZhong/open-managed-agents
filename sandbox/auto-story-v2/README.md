@@ -6,13 +6,12 @@ derive from the OpenMontage image: OpenMontage, Whisper, their source trees,
 and model weights are absent from every added layer. FFmpeg is compiled with
 `--disable-whisper`.
 
-Published image and current acceptance results: [VERIFICATION.md](./VERIFICATION.md).
-The [0.1.2 and earlier verification records](./VERIFICATION-0.1.2.md) preserve
-the original releases and their separate live acceptance reports. Their old
-parent images and runtime-reuse instructions do not apply to this recipe.
+The deployed image digest is recorded in [sandboxset.yaml](sandboxset.yaml).
+`versions.json` pins the inputs for future builds; build verification runs
+again for each release and is not implied by historical reports.
 
 The ACS Jupyter runtime, Node.js, and E2B startup contract are retained. Agent
-commands use `/home/user`; Python on a minimal PATH runs the Gemini environment
+commands use the mounted `/home/user/workspace`; Python on a minimal PATH runs the Gemini environment
 at `/opt/auto-story/venv`. Its packages take precedence, with `acs-base.pth`
 providing access to scientific packages from the clean ACS `/opt/venv` after
 them. Installing the Gemini SDK does not modify Jupyter's environment. Python
@@ -45,7 +44,7 @@ available to the ordinary sandbox user without an install during Skill execution
 
 `versions.json` records the FFmpeg/CLI source hashes, CLI binary hashes and
 the base image digest. The shared `../prepare-search-binaries.py` pins the
-rg/fd archives and binaries; Docker independently verifies all four CLI binary
+rg/fd archives and binaries; Docker independently verifies the pinned CLI binary
 hashes before executing them. Search versions and checksums are recorded under
 `/opt/pi-search/`.
 The FFmpeg source archive was also verified against its official detached
@@ -56,7 +55,7 @@ updated transitive Python/Debian dependencies; the source archive hashes and
 the component versions and verified upstream inputs remain pinned.
 
 Pi's native `grep` and `find` run these sandbox binaries through the pinned
-[Pi process hooks](../../../adapter/patches/README.md). The adapter and Server
+[Pi process hooks](../../adapter/patches/README.md). The adapter and Server
 workspaces both need the patch. Missing rg/fd is a tool error; there is no
 Host search or Python matching fallback, and no runtime tool download.
 
@@ -71,7 +70,7 @@ Run on an amd64 builder with access to the Shanghai VPC image mirror, such as
 `vfs-dev`. Authenticate to the Shanghai ACR before a push:
 
 ```bash
-cd deploy/sandbox/auto-story
+cd sandbox/auto-story-v2
 bash build.sh --prepare-only # stages verified inputs without running Docker
 bash build.sh                # builds and tests without pushing
 PUSH=1 bash build.sh         # pushes only after all acceptance checks pass
@@ -85,13 +84,13 @@ checksums must match the pinned releases. `RG_SRC` and `FD_SRC` provide the
 same option for the search binaries.
 
 To prepare on a machine with GitHub access and build elsewhere, copy the
-`deploy/sandbox` recipe tree, including `prepare-search-binaries.py`, the
-prepared `auto-story/sources/` archives and `auto-story/bin/` files. Both shared
+`sandbox` recipe tree, including `prepare-search-binaries.py`, the
+prepared `auto-story-v2/sources/` archives and `auto-story-v2/bin/` files. Both shared
 helpers, `prepare-search-binaries.py` and `prepare-ossutil.py`, must remain beside
-the auto-story directory. Python wheels and Debian
+the auto-story-v2 directory. Python wheels and Debian
 packages still need a reachable package mirror during the build.
 
-The default tag is `auto-story-0.2.1` in
+The default tag is `auto-story-v2-0.2.1` in
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 `REGISTRY`, `TAG`, `VERSION`, `BUILD_JOBS`, `BASE_IMAGE`, and `PIP_INDEX_URL`
 may be overridden. A base override must retain the clean ACS runtime contract
@@ -124,10 +123,23 @@ local processing against FFmpeg 9.0.1. VFS dry-runs explicitly accept exit code
 endpoint. They submit no uploads or generation. All checks run without network
 access and require no service credentials; temporary media and fixtures are removed.
 
+## Workspace and local directories
+
+Only `/home/user/workspace` persists in OSS. The image leaves it absent so CSI
+can provide the mount. HOME stays at `/home/user`; local dependency paths are
+`/home/user/.local/npm`, `/home/user/.local/oma-node/node_modules`,
+`/home/user/.local/oma-python` and `/home/user/.local/venvs`. npm/pip caches live
+under `/home/user/.cache`, and temporary files use `/tmp`. Sandbox rebuilds can
+discard these local files. Install a Python venv outside the Workspace and use
+`npm install --prefix /home/user/.local/oma-node` for local Node dependencies.
+
+The internal `/opt/auto-story` tool paths and `auto-story-smoke` executable are
+part of the existing image contract; they do not name an additional template.
+
 ## Runtime configuration
 
-Only non-secret defaults are included: `WORKSPACE_DIR=/home/user`,
-`MEDIAKIT_OUTPUT_PATH=/home/user/media`, `MEDIAKIT_SURFACE=skill`, and
+Only non-secret defaults are included: `WORKSPACE_DIR=/home/user/workspace`,
+`MEDIAKIT_OUTPUT_PATH=/home/user/workspace/media`, `MEDIAKIT_SURFACE=skill`, and
 `MEDIAKIT_RUNTIME=pi-agent`. Runtime credentials must be injected by the Host
 or the Agent's `sandbox.env`; they are not build arguments or image layers.
 
@@ -139,7 +151,7 @@ Host-owned credentials in `oma-auto-story-env`.
 
 Building and pushing an image does not change the running SandboxSet. Its
 pinned digest and pool configuration are in
-[sandboxset-auto-story-v2.yaml](../sandboxset-auto-story-v2.yaml). Existing Session
+[sandboxset.yaml](sandboxset.yaml). Existing Session
 sandboxes must be rebuilt, or new Sessions created, to pick up the new image.
 Use `~/.kube/agent-platform-config` for the Shanghai cluster. From the repository
 root, the standard deployment script validates auto-story-v2 by default:
@@ -157,7 +169,7 @@ To test a subsequent rollout through the running Host's E2B gateway:
 
 ```bash
 kubectl --kubeconfig ~/.kube/agent-platform-config -n oma-infra exec -i deployment/oma-server -c server \
-  -- node --input-type=module < deploy/sandbox/auto-story/verify-live.mjs
+  -- node --input-type=module < sandbox/auto-story-v2/verify-live.mjs
 ```
 
 Run this command from the repository root. It requires the Host's configured

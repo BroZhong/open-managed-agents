@@ -8,7 +8,7 @@ on:
       - "deploy/Dockerfile.web"
       - "deploy/k8s.yaml"
       - "deploy/migrations/**"
-      - "deploy/sandbox/prepare-search-binaries.py"
+      - "sandbox/**"
       - "deploy/patch-*.mjs"
       - "deploy/*.test.mjs"
       - "server/packages/api/**"
@@ -30,7 +30,7 @@ on:
       - "deploy/Dockerfile.web"
       - "deploy/k8s.yaml"
       - "deploy/migrations/**"
-      - "deploy/sandbox/prepare-search-binaries.py"
+      - "sandbox/**"
       - "deploy/patch-*.mjs"
       - "deploy/*.test.mjs"
       - "server/packages/api/**"
@@ -97,7 +97,7 @@ jobs:
       - run: pnpm --dir adapter install --frozen-lockfile
       - name: Provision pinned native search binaries
         run: |
-          python3 deploy/sandbox/prepare-search-binaries.py "$RUNNER_TEMP/pi-native-search-bin"
+          python3 sandbox/prepare-search-binaries.py "$RUNNER_TEMP/pi-native-search-bin"
           printf '%s\n' "$RUNNER_TEMP/pi-native-search-bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/pi-native-search-bin/rg" --version
           "$RUNNER_TEMP/pi-native-search-bin/fd" --version

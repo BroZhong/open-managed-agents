@@ -30,7 +30,7 @@ RUN echo 'cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  /tmp
 
 FROM ${BASE_IMAGE} AS runtime
 USER root
-ARG IMAGE_VERSION=0.2.2
+ARG IMAGE_VERSION=0.2.1
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV HOME=/home/user \
     WORKSPACE_DIR=/home/user/workspace \

@@ -111,11 +111,11 @@ describe("POST /v1/agents", () => {
     process.env.AUTH_DISABLED = "true";
   });
 
-  it("preserves auto-story sandbox environment and rejects invalid values on create and update", async () => {
+  it("preserves custom sandbox environment and rejects invalid values on create and update", async () => {
     const { app } = createTestApp();
     const definition = {
-      name: "auto-story", runtime: "pi-agent", model: "openai-codex/gpt-5.6-sol", system: "Use equipped skills",
-      sandbox: { enabled: true, image: "auto-story", env: { CUSTOM: "a=b\nsecond line", MEDIAKIT_RUNTIME: "pi-agent" } },
+      name: "custom-agent", runtime: "pi-agent", model: "openai-codex/gpt-5.6-sol", system: "Use equipped skills",
+      sandbox: { enabled: true, image: "auto-story-v2", env: { CUSTOM: "a=b\nsecond line", MEDIAKIT_RUNTIME: "pi-agent" } },
     };
     const request = (path: string, body: unknown) => app.request(path, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

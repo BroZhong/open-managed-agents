@@ -620,7 +620,7 @@ curl -fsS -N "$OMA_API_URL/v1/sessions/$SESSION_ID/events?include=chunks" \
 各自 Service，通过 ALB Ingress 统一暴露在 `https://agentry.welltop.tech`，API 基址是
 `https://agentry.welltop.tech/api`。依赖：PostgreSQL（Supabase）、Redis、Workspace 专用 OSS、
 Skill 使用的 Supabase Storage，以及 `sandbox-system` 中默认的 ACK Agent Sandbox
-`auto-story` 暖池（**通过 E2B 兼容 SDK 接入**，配 `E2B_DOMAIN` + `E2B_API_KEY`）。
+`auto-story-v2` 暖池（唯一维护的模板）（**通过 E2B 兼容 SDK 接入**，配 `E2B_DOMAIN` + `E2B_API_KEY`）。
 
 健康检查访问 `/api/health` 并确认 JSON `{"status":"ok"}`；不带 `/api` 的 `/health` 和
 `/openapi.json` 会返回 `200` HTML 控制台，不能据此判断 API 健康或读取到了接口定义。

@@ -12,7 +12,7 @@ Scope: GitHub issues #133–#141. Release branch: `codex/durable-subagents-133-1
 - Migration `0011_durable_delegations.sql` applied to the verified production database; application role read access to all six new tables verified.
 - Initial cutover: confirmed zero pending inputs and no running Sessions, removed old Host from Service routing, scaled it to zero and waited for termination, then enabled the new Host. No old plugin Turn crossed the cutover.
 - Image seed contains only `pi-web-access@0.13.0` and `pi-mcp-adapter@2.11.0`; Host owns the three delegation tools.
-- Final image deployed using the image-only release script. The production layout mounts gateway configuration directly; the script also updates `seed-pi-auth` when an installation has that init container.
+- Final image deployed using the image-only release script. The production layout mounts gateway configuration directly. The old seed init-container compatibility path has since been removed from the release script.
 - Host replacement for recovery verification: `oma-server-57778c8565-ct428` → `oma-server-6dd8696597-lv6n4`, after confirming zero pending inputs. Sandbox resources were retained.
 
 ## Automated validation

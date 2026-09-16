@@ -36,7 +36,7 @@ export function workspaceConfigFromEnv(env: HostEnv) {
     sandbox: {
       domain: required(env, "E2B_DOMAIN"),
       apiKey: required(env, "E2B_API_KEY"),
-      defaultTemplate: env.SANDBOX_TEMPLATE || "code-interpreter-vfscli",
+      defaultTemplate: env.SANDBOX_TEMPLATE || "auto-story-v2",
       requestTimeoutMs,
     },
   };

@@ -4,7 +4,10 @@
 
 **Partially superseded by [ADR-0008](0008-oss-mounted-workspaces.md).** Sections 3 (artifact medium), 4 and 5, and their sync-specific consequences are superseded by ADR-0008. Host/Adapter ownership and per-call ToolExecutor injection remain accepted. The original decision below records history, not the current storage contract.
 
-Accepted. Extends (does not supersede) ADR-0001 — realizes its "Sandbox as Tool mode for Pi Agent (future)" while Agent-in-the-Sandbox remains for Claude Code and Codex.
+Accepted for Host-resident Pi and Sandbox-as-Tool. This originally extended
+ADR-0001's proposed second mode; ADR-0001 is now historical, and its
+Agent-in-the-Sandbox deployment recipes are no longer maintained. The presence
+of Claude Code/Codex adapters does not imply a deployed sandbox template for them.
 
 ## Context
 

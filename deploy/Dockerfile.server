@@ -63,9 +63,9 @@ FROM adapter-deps AS pi-seed
 # Pi extensions used by every managed Pi runtime. Install them with Pi's own
 # package manager (rather than merely adding npm dependencies) so the generated
 # settings.json + package tree are exactly what DefaultResourceLoader discovers
-# at runtime. The live /root/.pi/agent is a writable
-# emptyDir; deploy/k8s.yaml copies this immutable seed into it before the server
-# starts, then overlays the refreshable auth.json Secret.
+# at runtime. Production uses /opt/pi-agent-seed directly, with auth.json and
+# models.json mounted read-only from oma-pi-gateway. Settings and extensions
+# remain part of the release image.
 ARG PI_WEB_ACCESS_VERSION=0.13.0
 RUN --mount=type=cache,id=oma-npm-${TARGETARCH},target=/root/.npm,sharing=locked \
     PI_CODING_AGENT_DIR=/opt/pi-agent-seed \

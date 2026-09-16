@@ -1,7 +1,0 @@
-# Build on the freshly released Host image so the durable delegation runtime,
-# database schema, Adapter and deployment settings stay on the same version.
-# Supply BASE_IMAGE as the immutable digest emitted by deploy/scripts/build-images.sh.
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
-COPY deploy/pi-models.json /opt/pi-agent-seed/models.json
-WORKDIR /app/server/packages/api

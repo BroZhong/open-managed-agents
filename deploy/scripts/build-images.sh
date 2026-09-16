@@ -46,7 +46,7 @@ Options:
   -h, --help      Show this help.
 
 With no component arguments, server and web are built. The sandbox component
-builds and verifies auto-story-v2 using deploy/sandbox/auto-story/ and its pinned releases.
+builds and verifies auto-story-v2 using sandbox/auto-story-v2/ and its pinned releases.
 EOF
 }
 
@@ -233,7 +233,7 @@ for component in "${components[@]}"; do
       if [[ -n "${VFS_CLI_SRC:-}" ]]; then
         sandbox_command+=("VFS_CLI_SRC=${VFS_CLI_SRC}")
       fi
-      sandbox_command+=(bash "${REPO_ROOT}/deploy/sandbox/auto-story/build.sh")
+      sandbox_command+=(bash "${REPO_ROOT}/sandbox/auto-story-v2/build.sh")
       run "${sandbox_command[@]}"
       ;;
   esac

@@ -2,7 +2,15 @@
 
 ## Status
 
-Accepted
+**Historical; not the current deployment architecture.** The original
+Agent-in-the-Sandbox/OpenSandbox proposal below is retained as design history.
+Its image recipes and release entrypoints have been retired. Current production
+uses Host-resident Pi with Sandbox-as-Tool (ADR-0002/0005), OSS-mounted Workspaces
+(ADR-0008) and the Workspace file API (ADR-0009). There is no maintained
+Agent-in-the-Sandbox deployment or rootfs pause/resume persistence contract.
+See [CONTEXT.md](../../CONTEXT.md) and [the active template](../../sandbox/README.md).
+
+Original status: Accepted.
 
 ## Context
 

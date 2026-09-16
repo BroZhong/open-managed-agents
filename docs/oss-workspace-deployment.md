@@ -1,8 +1,9 @@
 # OSS Workspace deployment and recovery
 
-Production was released on 2026-09-14 with `auto-story-v2` as its only template.
-See the [release record](./oss-workspace-production-release.md) for current
-image digests and post-deployment acceptance.
+Production uses Shanghai `agent-platform` with `auto-story-v2` as its only
+template. [The current manifest](../sandbox/auto-story-v2/sandboxset.yaml)
+records its pinned image. The [2026-09-14 release record](./oss-workspace-production-release.md)
+is historical migration evidence, not the current image inventory.
 
 This is the operational handoff for issues #124–#127 and
 [ADR-0008](./adr/0008-oss-mounted-workspaces.md). The application remains on its
@@ -13,10 +14,10 @@ resources are in the same `agent-platform` Shanghai cluster.
 
 The application manifest is [`deploy/k8s.yaml`](../deploy/k8s.yaml). The Shanghai
 cluster inventory, Agent Identity declarations and live evidence are in
-[`deploy/sandbox/oss-workspace/`](../deploy/sandbox/oss-workspace/README.md).
+[`deploy/oss-workspace/`](../deploy/oss-workspace/README.md).
 Production uses `auto-story-v2` for the default and existing Agent overrides.
-The mounted Workspace overlay preserves its verified runtime base digest;
-see [the overlay](../deploy/sandbox/oss-workspace/Dockerfile).
+The maintained [image recipe](../sandbox/auto-story-v2/Dockerfile) includes
+the mounted Workspace environment directly; no overlay image is required.
 Use an explicit Shanghai kubeconfig and namespace for both application and
 Sandbox changes. Do not change the default
 kubectl context or restore any removed cloud profile. The inventory's local
@@ -53,14 +54,15 @@ signed GET access for the configured bucket. They also need to list the
 startup-check prefix described below and read runtime verification objects.
 Production uses RAM user `agentry-workspace-host` with policy
 `AgentryHostWorkspaceAccess`, limited to bucket `agentry`; its
-[policy document](../deploy/sandbox/oss-workspace/ram-host-permissions-policy.json)
+[policy document](../deploy/oss-workspace/ram-host-permissions-policy.json)
 contains no credential. The application reads its access key from
 `oma-infra/oma-secrets`; rotate the key through that managed Secret and restart
 the Host. This principal is separate from the operator's `welltop` CLI profile.
 Use the existing secret-management process to provision the required
 `WORKSPACE_OSS_ACCESS_KEY_ID`, `WORKSPACE_OSS_ACCESS_KEY_SECRET` and Shanghai
-`E2B_API_KEY` keys before rollout. The manifest references optional
-`WORKSPACE_OSS_STS_TOKEN` only when that key exists. No secret values are present
+`E2B_API_KEY` keys before rollout. The Host also supports
+`WORKSPACE_OSS_STS_TOKEN` for temporary credentials; the current production
+manifest does not configure it. No secret values are present
 in the repository's manifests or examples.
 
 An environment-injected Host STS token is static in the current assembly;
@@ -109,7 +111,7 @@ residue; a cleanup or readback failure blocks execution instead of reporting a
 successful check.
 
 `HOME=/home/user` remains local. Node packages, Python packages/venvs and caches
-follow the [supported local installation paths](../deploy/sandbox/code-interpreter-vfscli/README.md#workspace-and-local-directories).
+follow the [supported local installation paths](../sandbox/auto-story-v2/README.md#workspace-and-local-directories).
 Rebuilds can discard them. Only mounted Workspace content persists. Arbitrary
 shell commands are not rewritten to exclude `node_modules` or `.venv`.
 
@@ -148,7 +150,12 @@ or the explicit `OSS Workspace startup check failed` error. Do not dump Secret
 contents, environment variables, cloud responses containing tokens, or signed
 URLs into release notes or logs.
 
-## Coordinated maintenance switch
+## Coordinated storage maintenance
+
+The initial OSS migration is complete. The procedure below applies only when
+a future change alters the storage contract; ordinary image releases follow
+[the deployment guide](../deploy/README.md). The file API uses Workspace IDs,
+requires no Session and permits concurrent writes (ADR-0009).
 
 Complete the [acceptance evidence](./oss-workspace-acceptance.md) before choosing
 a maintenance window. Infrastructure checks alone do not replace the
@@ -161,7 +168,7 @@ simulation is not a substitute. Unfinished checks remain release blockers.
    timeout. Keep the existing application PG/Redis/Skills/LLM-proxy addresses.
 2. Publish the reviewed Sandbox image to an authorized registry and pin the
    resulting registry digest in the Shanghai SandboxSet. The
-   [local build](../deploy/sandbox/code-interpreter-vfscli/local-build-verification.json)
+   [local image check](../sandbox/auto-story-v2/README.md#build-and-verify)
    alone is insufficient; use the published registry digest. Also build and pin
    the reviewed Host/web artifacts.
 3. Inventory active Sessions, running Turns, accepted Queued Input and app-owned
@@ -203,7 +210,7 @@ permission to delete an old bucket or business objects as cleanup.
 | Missing Host settings or startup-list failure | Keep the new Host unavailable; verify configured bucket, network, required Secret keys and Host permissions. Do not switch backend or fabricate an empty directory. |
 | Missing mount, wrong prefix, expired permission or probe/readback failure | Block affected execution, repair the storage/identity condition, and retry after the next mount check succeeds. Preserve already saved files. |
 | Turn finished but storage check or web file refresh failed | Keep the answer and completed Turn state. Show the storage error and retry the file refresh/check; do not silently rerun the Turn or claim all files were saved. |
-| Session deletion cleanup failed | Report the resource-cleanup failure and retry cleanup of the identified Sandbox. Workspace objects remain; do not delete them or wait indefinitely for arbitrary background processes. |
+| Explicit Session termination cleanup failed | Report the resource-cleanup failure and retry cleanup of the identified Sandbox. Workspace objects remain. Console soft deletion is separate and does not terminate execution or reclaim a Sandbox. |
 
 Saved means that an individual file operation completed and closed successfully.
 There is no Turn transaction, rollback, locking, conflict merge, version history

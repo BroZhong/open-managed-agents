@@ -60,7 +60,7 @@ Configuration/quota failures requiring a different remedy:
 - Added checksum-pinned official Linux amd64 ossutil 2.2.0 preparation and
   independent Docker binary verification. `OSSUTIL_SRC` supports the same
   verified binary offline. No runtime credentials are packaged.
-- Only the maintained auto-story-v2 recipe (`deploy/sandbox/auto-story/`) installs
+- Only the maintained auto-story-v2 recipe (`sandbox/auto-story-v2/`) installs
   ossutil, Debian procps (`ps`) and unzip. Its offline acceptance now checks
   the CLI version/help, visibility of its own process, and ZIP extraction with
   verified contents, as the non-root sandbox user on the minimal PATH.

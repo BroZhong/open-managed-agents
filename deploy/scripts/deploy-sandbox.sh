@@ -80,7 +80,7 @@ render_dir="$(mktemp -d "${TMPDIR:-/tmp}/oma-sandbox-deploy.XXXXXX")"
 trap 'rm -rf "${render_dir}"' EXIT
 
 resource_name="auto-story-v2"
-source_manifest="${REPO_ROOT}/deploy/sandbox/sandboxset-${resource_name}.yaml"
+source_manifest="${REPO_ROOT}/sandbox/${resource_name}/sandboxset.yaml"
 manifest="${source_manifest}"
 if [[ -n "${image}" ]]; then
   # The maintained SandboxSet has one container. Replace its pinned image,
