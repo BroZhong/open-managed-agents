@@ -1,0 +1,119 @@
+{
+  "commit": "e4860c5bc43dce87273079ea8033c49866833760",
+  "main": "cf47dc83ada97d25bb577e82fc8a23bd1e5318db",
+  "runId": "release-1789527223067",
+  "agentId": "agent_BIIIGe_EPrORy93cOgr5p",
+  "parentSessionId": "sess_VOng-dbHPIEP8LRLzdyPd",
+  "childSessionId": "sess_bb-RhGsywsUSPMuTqbs2d",
+  "executionId": "deleg_nLkeOhq8oQHvD8HVQ1b03",
+  "checks": [
+    {
+      "phase": "start",
+      "name": "new run",
+      "ok": true,
+      "time": "2026-09-16T02:53:43.127Z"
+    },
+    {
+      "phase": "finish",
+      "name": "child completed",
+      "ok": true,
+      "time": "2026-09-16T02:54:53.459Z"
+    },
+    {
+      "phase": "finish",
+      "name": "child expected output",
+      "ok": true,
+      "time": "2026-09-16T02:54:53.459Z"
+    },
+    {
+      "phase": "finish",
+      "name": "normal list includes child",
+      "ok": true,
+      "time": "2026-09-16T02:54:53.468Z"
+    },
+    {
+      "phase": "finish",
+      "name": "sidebar list includes parent",
+      "ok": true,
+      "time": "2026-09-16T02:54:53.468Z"
+    },
+    {
+      "phase": "finish",
+      "name": "sidebar list excludes children",
+      "ok": true,
+      "time": "2026-09-16T02:54:53.468Z"
+    },
+    {
+      "phase": "finish",
+      "name": "direct child created no nested executions",
+      "ok": true,
+      "time": "2026-09-16T02:54:59.509Z"
+    },
+    {
+      "phase": "finish",
+      "name": "direct child made no delegation tool calls",
+      "ok": true,
+      "time": "2026-09-16T02:54:59.509Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "verified before cleanup",
+      "ok": true,
+      "time": "2026-09-16T02:56:06.441Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "test Session inactive before cleanup",
+      "ok": true,
+      "details": {
+        "id": "sess_bb-RhGsywsUSPMuTqbs2d",
+        "status": "idle",
+        "pending": 0
+      },
+      "time": "2026-09-16T02:56:06.462Z"
+    },
+    {
+      "phase": "cleanup",
+      "name": "test Session inactive before cleanup",
+      "ok": true,
+      "details": {
+        "id": "sess_VOng-dbHPIEP8LRLzdyPd",
+        "status": "idle",
+        "pending": 0
+      },
+      "time": "2026-09-16T02:56:06.469Z"
+    }
+  ],
+  "cleanedUp": true,
+  "directChild": {
+    "afterSeq": 12,
+    "outputs": [
+      {
+        "id": "sevt_manIZ5FFp2_iOvrieYnDL",
+        "api": "openai-responses",
+        "type": "agent.message",
+        "model": "gpt-5.6-sol",
+        "turnId": "turn_13_a1",
+        "content": [
+          {
+            "text": "TOOLS: functions.bash, functions.read, functions.write, functions.edit, functions.ls, functions.grep, functions.find, multi_tool_use.parallel",
+            "type": "text"
+          }
+        ],
+        "provider": "openai-codex",
+        "timestamp": "2026-09-16T02:54:58.165Z",
+        "blockIndex": 1
+      }
+    ]
+  },
+  "browserChecks": [
+    "Stopped Sessions show no activity label or spinner",
+    "Running parent and child display spinners",
+    "Sidebar shows parent without child",
+    "No usage/delegation/origin blocks above Conversation",
+    "Child tab includes initial, resumed and direct-input history",
+    "Opening same child reuses one tab",
+    "Closing tab preserves unsent parent draft",
+    "Parent route stays unchanged"
+  ]
+}
