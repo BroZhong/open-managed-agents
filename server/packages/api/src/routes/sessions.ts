@@ -96,6 +96,10 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     const status = c.req.query("status") || undefined;
     const loopId = c.req.query("loop_id") || undefined;
     const excludeLoop = c.req.query("exclude_loop");
+    const excludeDelegated = c.req.query("exclude_delegated");
+    if (excludeDelegated !== undefined && excludeDelegated !== "true" && excludeDelegated !== "false") {
+      return c.json({ error: "exclude_delegated must be true or false" }, 400);
+    }
     if (excludeLoop !== undefined && excludeLoop !== "true" && excludeLoop !== "false") {
       return c.json({ error: "exclude_loop must be true or false" }, 400);
     }
@@ -120,6 +124,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       status: status as any,
       loopId,
       withoutLoop: excludeLoop === "true",
+      excludeDelegated: excludeDelegated === "true",
     });
 
     const response: Record<string, unknown> = {

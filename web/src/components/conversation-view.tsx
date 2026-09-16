@@ -13,7 +13,9 @@ import { SessionDisclosure } from "@/components/session-disclosure";
 import { ToolCard } from "@/components/tool-card";
 
 import { DelegationCard } from "@/components/delegation-card";
+import type { DelegationExecution } from "@/lib/delegations";
 const SessionContext = createContext("");
+const OpenExecutionContext = createContext<((execution: DelegationExecution) => void) | undefined>(undefined);
 
 interface Turn {
   id: string;
@@ -55,6 +57,7 @@ function groupMessagesIntoTurns(messages: DisplayMessage[]): Turn[] {
 }
 
 interface ConversationViewProps {
+  onOpenExecution?: (execution: DelegationExecution) => void;
   sessionId?: string;
   focusToolUseId?: string;
   events: SessionEvent[];
@@ -63,6 +66,7 @@ interface ConversationViewProps {
 }
 
 export function ConversationView({
+  onOpenExecution,
   events,
   sessionId = "",
   focusToolUseId,
@@ -128,7 +132,7 @@ export function ConversationView({
   const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
 
   return (
-    <SessionContext.Provider value={sessionId}><div className="relative flex h-full flex-col">
+    <SessionContext.Provider value={sessionId}><OpenExecutionContext.Provider value={onOpenExecution}><div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
         <div ref={contentRef} className="session-thread">
           {messages.length === 0 && (
@@ -156,7 +160,7 @@ export function ConversationView({
           Jump to latest
         </button>
       )}
-    </div></SessionContext.Provider>
+    </div></OpenExecutionContext.Provider></SessionContext.Provider>
   );
 }
 
@@ -193,6 +197,7 @@ function ProcessGroup({ messages, running, focused }: { messages: DisplayMessage
 
 function MessageBubble({ message, running = false }: { message: DisplayMessage; running?: boolean }) {
   const sessionId = useContext(SessionContext);
+  const onOpenExecution = useContext(OpenExecutionContext);
   switch (message.role) {
     case "user":
       return <UserBubble text={message.text} />;
@@ -212,7 +217,7 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
         />
       );
     case "tool_use":
-      if (sessionId && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} />;
+      if (sessionId && onOpenExecution && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} onOpenExecution={onOpenExecution} />;
       return (
         <ToolCard
           name={message.name || "unknown"}

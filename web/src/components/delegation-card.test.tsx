@@ -18,32 +18,22 @@ function mount(element: React.ReactNode) {
 function json(value: unknown) { return new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } }); }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-it("independently expands calls to two executions of the same child and releases a collapsed observer", async () => {
-  const traceRequests: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (raw: string, options?: RequestInit) => {
-    const url = new URL(raw);
-    if (!url.pathname.endsWith("events")) {
-      const second = url.searchParams.get("tool_use_id") === "call-2";
-      return json({ data: [{ ...execution, id: second ? "exec-2" : "exec-1", callerToolUseId: second ? "call-2" : "call-1", status: second ? "failed" : "completed" }], has_more: false });
-    }
-    traceRequests.push(url.pathname);
-    const second = url.pathname.includes("exec-2");
-    if (second) options?.signal?.addEventListener("abort", () => traceRequests.push("aborted-second"));
-    return json({ execution: { ...execution, id: second ? "exec-2" : "exec-1" }, workspaceId: "workspace", usage, data: [{ seq: 1, type: "agent.message", data: { content: [{ type: "text", text: second ? "Second execution failed" : "First execution output" }] } }], deltas: [], has_more: false, next_cursor: 1 });
-  }));
-  mount(<><DelegationCard sessionId="parent" message={{ id: "1", role: "tool_use", text: "", name: "Agent", toolUseId: "call-1", turnId: "parent-turn" }} /><DelegationCard sessionId="parent" message={{ id: "2", role: "tool_use", text: "", name: "Agent", toolUseId: "call-2", turnId: "next-parent-turn" }} /></>);
-  await screen.findByText(/async · failed/);
-  expect(traceRequests).toEqual([]);
+it("opens the selected execution without nesting a trace or navigating away", async () => {
+  const open = vi.fn();
+  const fetcher = vi.fn(async (raw: string) => {
+    const second = new URL(raw).searchParams.get("tool_use_id") === "call-2";
+    return json({ data: [{ ...execution, id: second ? "exec-2" : "exec-1", callerToolUseId: second ? "call-2" : "call-1" }], has_more: false });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  mount(<><DelegationCard onOpenExecution={open} sessionId="parent" message={{ id: "1", role: "tool_use", text: "", name: "Agent", toolUseId: "call-1", turnId: "parent-turn" }} /><DelegationCard onOpenExecution={open} sessionId="parent" message={{ id: "2", role: "tool_use", text: "", name: "Agent", toolUseId: "call-2", turnId: "next-parent-turn" }} /></>);
+  await screen.findAllByText(/Open session/);
   const buttons = screen.getAllByRole("button", { name: /Agent/ });
   fireEvent.click(buttons[0]);
-  await screen.findByText("First execution output");
-  expect(screen.queryByText("Second execution failed")).toBeNull();
   fireEvent.click(buttons[1]);
-  await screen.findByText("Second execution failed");
-  expect(screen.getAllByRole("link", { name: "Open child Session execution" }).map((a) => a.getAttribute("href"))).toEqual(["/sessions/child/executions/exec-1", "/sessions/child/executions/exec-2"]);
-  fireEvent.click(buttons[1]);
-  expect(traceRequests).toContain("aborted-second");
-  expect(screen.queryByText("Second execution failed")).toBeNull();
+  expect(open.mock.calls.map(([value]) => value.id)).toEqual(["exec-1", "exec-2"]);
+  expect(screen.queryByRole("region", { name: "Delegation execution trace" })).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it("paginates only the selected execution and displays complete tool inputs/results while hiding thinking", async () => {
@@ -96,8 +86,7 @@ it("keeps observing after a parent has ended and replaces a reconnected Delta wi
 
 it("preserves the plugin summary when no persisted child relation exists", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => json({ data: [], has_more: false })));
-  mount(<DelegationCard sessionId="legacy" message={{ id: "old", role: "tool_use", name: "Agent", text: "", toolUseId: "old-call", input: { prompt: "Old task" }, result: { content: "Original plugin result", isError: false } }} />);
-  fireEvent.click(screen.getByRole("button", { name: /Agent/ }));
+  mount(<DelegationCard onOpenExecution={() => {}} sessionId="legacy" message={{ id: "old", role: "tool_use", name: "Agent", text: "", toolUseId: "old-call", input: { prompt: "Old task" }, result: { content: "Original plugin result", isError: false } }} />);
   await screen.findByText(/No persisted execution/);
   expect(screen.getByText("Original plugin result")).toBeTruthy();
   expect(screen.queryByRole("link", { name: "Open child Session execution" })).toBeNull();
@@ -133,21 +122,20 @@ it("rechecks an initially absent execution when the Agent result arrives", async
   const fetcher = vi.fn().mockResolvedValueOnce(json({ data: [], has_more: false }))
     .mockResolvedValueOnce(json({ data: [{ ...execution, status: "running" }], has_more: false }));
   vi.stubGlobal("fetch", fetcher);
+  const open = vi.fn();
   function LiveCall() {
     const [finished, setFinished] = useState(false);
-    return <><button onClick={() => setFinished(true)}>Receive Agent result</button><DelegationCard sessionId="parent" message={{
+    return <><button onClick={() => setFinished(true)}>Receive Agent result</button><DelegationCard onOpenExecution={open} sessionId="parent" message={{
       id: "live", role: "tool_use", name: "Agent", text: "", toolUseId: "call-1", turnId: "parent-turn",
       result: finished ? { content: "Child accepted", isError: false } : undefined,
     }} /></>;
   }
   mount(<LiveCall />);
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole("button", { name: /Agent.*Expand/ }));
-  await screen.findByText(/No persisted execution/);
-  fireEvent.click(screen.getByRole("button", { name: /Agent.*Collapse/ }));
   fireEvent.click(screen.getByRole("button", { name: "Receive Agent result" }));
   await screen.findByText(/async · running/);
-  expect(screen.getByRole("link", { name: "Open child Session execution" }).getAttribute("href")).toBe("/sessions/child/executions/exec-1");
+  fireEvent.click(screen.getByRole("button", { name: /Agent.*Open session/ }));
+  expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: "exec-1" }));
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 

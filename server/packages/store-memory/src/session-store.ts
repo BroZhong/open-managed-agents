@@ -57,6 +57,7 @@ export class InMemorySessionStore implements SessionStore {
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
     if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
+    if (opts?.excludeDelegated) filtered = filtered.filter((s) => !s.delegation);
 
     if (loopId) {
       filtered = filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

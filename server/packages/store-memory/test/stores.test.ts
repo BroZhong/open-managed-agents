@@ -59,6 +59,24 @@ describe("createMemoryStores", () => {
       expect(found).toEqual(session);
     });
 
+    it("excludes delegated children before pagination only when requested", async () => {
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const ws = await stores.workspaceStore.create({ tenantId: "t1" });
+      const input = { tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id };
+      await stores.sessionStore.create({ ...input, delegation: {
+        parentSessionId: "sess_parent", parentTurnId: "turn_parent", parentToolUseId: "tool_child", sandboxSessionId: "sess_parent",
+      } });
+      const roots = [await stores.sessionStore.create(input), await stores.sessionStore.create(input)];
+      expect((await stores.sessionStore.list("t1")).data).toHaveLength(3);
+      expect((await stores.sessionStore.list("t1", { excludeDelegated: false })).data).toHaveLength(3);
+      const first = await stores.sessionStore.list("t1", { excludeDelegated: true, limit: 1 });
+      expect(first.data.map((session) => session.id)).toEqual([roots[0].id]);
+      expect(first.hasMore).toBe(true);
+      const second = await stores.sessionStore.list("t1", { excludeDelegated: true, limit: 1, cursor: first.data[0].id });
+      expect(second.data.map((session) => session.id)).toEqual([roots[1].id]);
+      expect(second.hasMore).toBe(false);
+    });
+
     it("updates status without touching the workspace binding", async () => {
       const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1", id: "bound" });

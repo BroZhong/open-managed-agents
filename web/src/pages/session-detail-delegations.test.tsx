@@ -1,0 +1,87 @@
+// @vitest-environment jsdom
+import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryRouter, RouterProvider } from "react-router";
+import SessionDetailPage from "@/pages/session-detail";
+
+vi.mock("@/components/workspace-panel", () => ({ WorkspacePanel: () => <aside>Files stay here</aside> }));
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView; });
+
+it("reuses a full child Session tab across resumes and preserves parent state while closing independent SSE observers", async () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const subscriptions: string[] = [];
+  const aborted: string[] = [];
+  const streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
+  const message = (seq: number, type: string, text: string) => ({ seq, type, data: { content: [{ type: "text", text }] }, ts: "2026-09-16" });
+  const executions = [1, 2, 3].map((number) => ({ id: `exec-${number}`, childId: number === 3 ? "different-child" : "same-child", callerSessionId: "parent", callerTurnId: "turn", callerToolUseId: `call-${number}`, prompt: ["First child task", "Resumed child task", "Other child task"][number - 1], mode: "async", status: "completed", maxSteps: 30, createdAt: "", updatedAt: "" }));
+  const parentEvents = [message(1, "user.message", "Parent task"), ...executions.map((execution, index) => ({ seq: index + 2, type: "agent.tool_use", data: { turnId: "turn", toolUseId: execution.callerToolUseId, name: "Agent", input: { prompt: execution.prompt } } }))];
+  const childEvents = [message(1, "delegation.input", "Original delegated task"), message(2, "agent.message", "First Turn output"), message(3, "delegation.input", "Resume this child"), message(4, "agent.message", "Resumed Turn output"), message(5, "user.message", "Direct user input"), message(6, "agent.message", "Direct input answer")];
+  vi.stubGlobal("fetch", vi.fn(async (raw: string, options?: RequestInit) => {
+    const url = new URL(raw);
+    const sessionId = url.pathname.match(/\/sessions\/([^/]+)/)?.[1] ?? "";
+    const headers = options?.headers as Record<string, string> | undefined;
+    const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
+    if (url.pathname.endsWith("/delegations")) return json({ data: executions.filter((execution) => execution.callerToolUseId === url.searchParams.get("tool_use_id")), has_more: false });
+    if (url.pathname.endsWith("/pending")) return json({ data: [], has_more: false });
+    if (url.pathname.endsWith("/skills")) return json({ data: [] });
+    if (url.pathname.endsWith("/events")) {
+      if (headers?.Accept !== "text/event-stream") return json({ data: sessionId === "parent" ? parentEvents : sessionId === "same-child" ? childEvents : [message(1, "agent.message", "Other child output")], has_more: false });
+      subscriptions.push(sessionId);
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        streams.set(sessionId, controller);
+        options?.signal?.addEventListener("abort", () => { aborted.push(sessionId); controller.close(); }, { once: true });
+      } }), { headers: { "content-type": "text/event-stream" } });
+    }
+    return json({ id: sessionId, agentId: "agent", workspaceId: "workspace", status: "idle", createdAt: "", updatedAt: "" });
+  }));
+  const router = createMemoryRouter([{ path: "/sessions/:id", element: <SessionDetailPage /> }], { initialEntries: ["/sessions/parent"] });
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={router} /></QueryClientProvider>);
+  await screen.findByRole("button", { name: /Agent · First child task.*Open session/ });
+  const draft = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(draft, { target: { value: "Unsent parent draft" } });
+  const scroll = document.querySelector(".conversation-scroll")!;
+  scroll.scrollTop = 120;
+  fireEvent.scroll(scroll);
+  expect(screen.queryByLabelText("Token usage")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Delegated executions" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Child Session origin" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Workspace panel" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Agent · First child task.*Open session/ }));
+  await screen.findByText("First Turn output");
+  expect(screen.getByText("Resumed Turn output")).toBeTruthy();
+  expect(screen.getByText("Direct user input")).toBeTruthy();
+  expect(screen.getByText("Direct input answer")).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(router.state.location.pathname).toBe("/sessions/parent");
+  expect(draft.isConnected).toBe(true);
+  expect(document.querySelector(".conversation-scroll")).toBe(scroll);
+  expect(scroll.scrollTop).toBe(120);
+  await waitFor(() => expect(streams.has("same-child")).toBe(true));
+  await act(async () => {
+    streams.get("same-child")!.enqueue(new TextEncoder().encode('event: session.status_running\nid: 7\ndata: {}\n\nevent: agent.message\nid: 8\ndata: {"content":[{"type":"text","text":"Live child update"}]}\n\n'));
+  });
+  expect(await screen.findByText("Live child update")).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Session running" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
+  expect(screen.getByRole("textbox", { name: "Message" })).toBe(draft);
+  expect((draft as HTMLTextAreaElement).value).toBe("Unsent parent draft");
+  fireEvent.click(screen.getByRole("button", { name: /Agent · Resumed child task.*Open session/ }));
+  expect(screen.getAllByRole("button", { name: "Agent 1" })).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Agent 2" })).toBeNull();
+  expect(subscriptions.filter((id) => id === "same-child")).toHaveLength(1);
+  expect(screen.getByText("Live child update").closest("[hidden]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Conversation" }));
+  fireEvent.click(screen.getByRole("button", { name: /Agent · Other child task.*Open session/ }));
+  await screen.findByText("Other child output");
+  await waitFor(() => expect(streams.has("different-child")).toBe(true));
+  expect(screen.getByRole("button", { name: "Agent 2" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Close Agent 1" }));
+  expect(screen.queryByRole("button", { name: "Agent 1" })).toBeNull();
+  expect(screen.getByText("Other child output").closest("[hidden]")).toBeNull();
+  await waitFor(() => expect(aborted).toContain("same-child"));
+  fireEvent.click(screen.getByRole("button", { name: "Close Agent 2" }));
+  expect(screen.getByRole("textbox", { name: "Message" })).toBe(draft);
+  expect(aborted).toContain("different-child");
+  expect(aborted).not.toContain("parent");
+});

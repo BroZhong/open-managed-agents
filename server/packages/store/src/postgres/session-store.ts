@@ -87,6 +87,9 @@ export class PgSessionStore implements SessionStore {
       params.push(opts.loopId);
       where += ` AND loop_id = $${params.length}`;
     }
+    if (opts?.excludeDelegated) {
+      where += ` AND delegation->>'parentSessionId' IS NULL`;
+    }
     if (opts?.withoutLoop) {
       where += ` AND loop_id IS NULL`;
     }

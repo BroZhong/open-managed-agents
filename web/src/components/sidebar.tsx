@@ -295,7 +295,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
   const location = useLocation()
   const navigate = useNavigate()
   const { data: agent } = useAgent(agentId)
-  const { data: sessions } = useAgentSessions(agentId)
+  const { data: sessions } = useAgentSessions(agentId, { excludeDelegated: true })
   const { data: workspaces } = useWorkspaces()
   const { data: loops } = useAgentLoops(agentId)
   const createSession = useCreateSession()
@@ -571,7 +571,7 @@ function LoopRow({ loop }: { loop: Loop }) {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useLoopSessions(loop.id, open)
+  } = useLoopSessions(loop.id, open, { excludeDelegated: true })
 
   useEffect(() => {
     if (!menuOpen) return

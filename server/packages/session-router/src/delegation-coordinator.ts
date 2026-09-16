@@ -53,6 +53,7 @@ export class DelegationCoordinator {
   }
 
   capability(run: DelegationRun): HostSubagentCapability {
+    if (run.session.delegation) throw new Error("Child Sessions cannot receive delegation capabilities");
     return {
       delegate: async (input, context) => {
         await this.assertOwner(run);

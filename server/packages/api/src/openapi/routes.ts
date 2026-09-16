@@ -852,6 +852,15 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
           .string()
           .optional()
           .openapi({ param: { name: "loop_id", in: "query" } }),
+        exclude_delegated: z
+          .enum(["true", "false"], {
+            error: "exclude_delegated must be true or false",
+          })
+          .optional()
+          .openapi({
+            param: { name: "exclude_delegated", in: "query" },
+            description: "Set to true to exclude delegated child Sessions before pagination. Defaults to false.",
+          }),
         exclude_loop: z
           .enum(["true", "false"], {
             error: "exclude_loop must be true or false",

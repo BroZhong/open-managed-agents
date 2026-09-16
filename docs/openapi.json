@@ -4458,6 +4458,20 @@
                 "true",
                 "false"
               ],
+              "description": "Set to true to exclude delegated child Sessions before pagination. Defaults to false."
+            },
+            "required": false,
+            "description": "Set to true to exclude delegated child Sessions before pagination. Defaults to false.",
+            "name": "exclude_delegated",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
               "description": "Set to true to exclude Loop-owned Sessions. Cannot be combined with loop_id."
             },
             "required": false,

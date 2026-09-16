@@ -70,6 +70,46 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
+  it("requests parent Sessions without reusing a cached list containing children", async () => {
+    const agent = { id: "agent_parents", name: "Parent list Agent" };
+    const parent = {
+      id: "parent_session", agentId: agent.id, title: "Main task",
+      status: "terminated", workspaceId: "workspace_parents",
+    };
+    const child = {
+      ...parent, id: "child_session", title: "Delegated task",
+      delegation: { parentSessionId: parent.id },
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id], [child, parent]);
+    queryClient.setQueryData(["workspaces"], []);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const data = url.searchParams.get("exclude_delegated") === "true" ? [parent] : [child, parent];
+      return { ok: true, text: async () => JSON.stringify({ data, has_more: false }) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/agents/${agent.id}`]}>
+            <Routes><Route path="/agents/:id" element={<Sidebar />} /></Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("link", { name: "Main task" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Delegated task" })).toBeNull();
+    expect(screen.queryByText("terminated")).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).searchParams.get("exclude_delegated") === "true")).toBe(true);
+  });
+
   it("keeps live Session status consistent between header and sidebar", async () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -106,7 +146,7 @@ describe("Sidebar Session navigation", () => {
       },
     });
     queryClient.setQueryData(["sessions", session.id], session);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id], [session]);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], [session]);
     queryClient.setQueryData(["agents", agent.id], agent);
     queryClient.setQueryData(["agents", agent.id, "skills"], []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
@@ -160,9 +200,9 @@ describe("Sidebar Session navigation", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("running")).toBeTruthy();
+    expect((await screen.findAllByRole("img", { name: "Session running" })).length).toBeGreaterThan(0);
     expect(
-      screen.getByRole("link", { name: `${session.title}running` }),
+      screen.getByRole("link", { name: `${session.title}Session running` }),
     ).toBeTruthy();
   });
 
@@ -269,7 +309,7 @@ describe("Sidebar Session navigation", () => {
     );
 
     await waitFor(() => expect(listRequests).toBe(1));
-    expect(await screen.findByText("running")).toBeTruthy();
+    expect((await screen.findAllByRole("img", { name: "Session running" })).length).toBeGreaterThan(0);
     resolveOlderList({
       ok: true,
       status: 200,
@@ -277,7 +317,7 @@ describe("Sidebar Session navigation", () => {
     } as Response);
 
     expect(await screen.findByRole("link", {
-      name: `${idleSession.title}running`,
+      name: `${idleSession.title}Session running`,
     })).toBeTruthy();
     expect(listRequests).toBeGreaterThanOrEqual(2);
   });
@@ -342,8 +382,8 @@ describe("Sidebar Session navigation", () => {
       },
     });
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id], [scheduled, loose]);
-    queryClient.setQueryData(["sessions", "byLoop", loop.id], {
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], [scheduled, loose]);
+    queryClient.setQueryData(["sessions", "byLoop", loop.id, "parents"], {
       pages: [{
         data: [scheduled],
         has_more: true,
@@ -397,13 +437,13 @@ describe("Sidebar Session navigation", () => {
     expect(
       agentLink.compareDocumentPosition(loopsToggle) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Scheduled Reviewidle" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Scheduled Review" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: loop.name }));
-    expect(screen.getAllByRole("link", { name: "Scheduled Reviewidle" })).toHaveLength(1);
-    expect(screen.getAllByRole("link", { name: "Loose Sessionidle" })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "Scheduled Review" })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "Loose Session" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Load older Sessions" }));
     expect(
-      await screen.findByRole("link", { name: "Older Scheduled Reviewidle" }),
+      await screen.findByRole("link", { name: "Older Scheduled Review" }),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", {
@@ -478,7 +518,7 @@ describe("Sidebar Session navigation", () => {
     });
     queryClient.setQueryData(["sessions", sourceSession.id], sourceSession);
     queryClient.setQueryData(
-      ["sessions", "byAgent", agent.id],
+      ["sessions", "byAgent", agent.id, "parents"],
       [sourceSession, targetSession],
     );
     queryClient.setQueryData(["workspaces"], [workspace]);
@@ -514,7 +554,7 @@ describe("Sidebar Session navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: workspace.name }));
     fireEvent.click(
-      screen.getByRole("link", { name: `${targetSession.title}idle` }),
+      screen.getByRole("link", { name: `${targetSession.title}` }),
     );
 
     expect(screen.getByLabelText("Current path").textContent).toBe(
@@ -522,7 +562,7 @@ describe("Sidebar Session navigation", () => {
     );
     expect(screen.getByRole("link", { name: agent.name })).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: `${targetSession.title}idle` }),
+      screen.getByRole("link", { name: `${targetSession.title}` }),
     ).toBeTruthy();
 
     fireEvent.click(within(screen.getByTitle("New chat")).getByRole("button"));

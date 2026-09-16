@@ -1070,6 +1070,9 @@ export class SessionRouter {
       let currentAgent = claimedSession.loopId
         ? claimedSession.agent
         : await this.resolveCurrentAgent(agentConfig);
+      // Child restrictions belong to the Session, including later direct user
+      // input that has no DelegationExecution record for this pending event.
+      if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };
       const waitingConfig = resumableWaits[0]?.checkpoint.config as { model?: string; thinking?: string } | undefined;
       if (typeof waitingConfig?.model === "string") currentAgent = { ...currentAgent, model: waitingConfig.model };
       let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
@@ -1374,11 +1377,13 @@ export class SessionRouter {
         if (this.delegations && currentAgent.runtime === "pi-agent" && !session.delegation) {
           adapterInput.subagents = this.delegations.capability(delegationRun);
         }
-        if (delegationExecution && this.delegations) {
+        if (session.delegation) {
           adapterInput.execution = {
-            isChild: true, maxModelSteps: delegationExecution.maxSteps,
-            thinking: delegationExecution.thinking,
-            steering: this.delegations.steering(delegationRun, delegationExecution),
+            isChild: true, maxModelSteps: delegationExecution?.maxSteps ?? 30,
+            thinking: delegationExecution?.thinking,
+            ...(delegationExecution && this.delegations
+              ? { steering: this.delegations.steering(delegationRun, delegationExecution) }
+              : {}),
           };
         }
         if (resumableWaits.length) {

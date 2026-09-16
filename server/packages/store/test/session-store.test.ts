@@ -284,6 +284,27 @@ describe("PgSessionStore", () => {
     expect(page2.hasMore).toBe(false);
   });
 
+  it("excludes delegated children before pagination while retaining SQL and JSON null origins", async () => {
+    const input = { tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: await newWorkspace() };
+    const child = await store.create({ ...input, delegation: {
+      parentSessionId: "sess_parent", parentTurnId: "turn_parent", parentToolUseId: "tool_child", sandboxSessionId: "sess_parent",
+    } });
+    const roots = [await store.create(input), await store.create(input)];
+    // Keep a child before both roots, and exercise the legacy SQL NULL representation.
+    for (const [index, session] of [child, ...roots].entries()) {
+      await harness.pool.query("UPDATE sessions SET id = $2 WHERE id = $1", [session.id, `sess_${index}`]);
+    }
+    await harness.pool.query("UPDATE sessions SET delegation = NULL WHERE id = $1", ["sess_1"]);
+    expect((await store.list("tenant1")).data).toHaveLength(3);
+    expect((await store.list("tenant1", { excludeDelegated: false })).data).toHaveLength(3);
+    const first = await store.list("tenant1", { excludeDelegated: true, limit: 1 });
+    expect(first.data.map((session) => session.id)).toEqual(["sess_1"]);
+    expect(first.hasMore).toBe(true);
+    const second = await store.list("tenant1", { excludeDelegated: true, limit: 1, cursor: first.data[0].id });
+    expect(second.data.map((session) => session.id)).toEqual(["sess_2"]);
+    expect(second.hasMore).toBe(false);
+  });
+
   it("excludes Loop-owned Sessions at the query boundary", async () => {
     const workspaceId = await newWorkspace();
     const loose = await store.create({

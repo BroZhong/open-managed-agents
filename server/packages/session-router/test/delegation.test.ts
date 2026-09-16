@@ -5,6 +5,7 @@ import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { SessionRouter } from "../src/session-router.js";
+import { DelegationCoordinator } from "../src/delegation-coordinator.js";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (message: string) => event("agent.message", { content: [{ type: "text", text: message }], stopReason: "stop" });
@@ -43,6 +44,37 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
 }
 
 describe("Host-owned delegation through the Session Router", () => {
+  it("keeps child capabilities restricted for direct user input after its delegated Turn", async () => {
+    const inputs: AdapterInput[] = [];
+    let childId = "";
+    const h = await harness({ async *run(input) {
+      inputs.push(input);
+      if (input.sessionId === childId || input.execution?.isChild) { yield text("child done"); return; }
+      const call = tool("create-child"); yield call;
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "create-child", checkpoint: [call] }) as { childId: string };
+      childId = output.childId; yield result("create-child", output);
+    } });
+    await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    const child = (await h.stores.sessionStore.getById(childId))!;
+    const coordinator = new DelegationCoordinator({ store: h.stores.delegationStore,
+      pending: h.stores.pendingEventStore, sessions: h.stores.sessionStore,
+      events: h.stores.eventLogStore, wake() {}, publish() {}, maxSteps: 30 });
+    expect(() => coordinator.capability({ session: child, turnId: "direct-child-turn",
+      fence: { eventId: "not-issued", ownerId: "host", generation: 1 }, signal: new AbortController().signal,
+    })).toThrow("Child Sessions cannot receive delegation capabilities");
+    await h.stores.pendingEventStore.enqueue(childId, { type: "user.message", data: { content: [{ type: "text", text: "try delegating again" }] }, sessionThreadId: "sthr_primary" });
+    await h.makeRouter().handleNewEvent(childId, child.agent);
+    const childInputs = inputs.filter(input => input.sessionId === childId);
+    expect(childInputs).toHaveLength(2);
+    for (const input of childInputs) {
+      expect(input.subagents).toBeUndefined();
+      expect(input.execution).toMatchObject({ isChild: true, maxModelSteps: 30 });
+      expect(input.agent.mcpServers).toBeUndefined();
+      expect(input.toolExecutor).toBeDefined();
+    }
+    expect(h.errors).toEqual([]);
+  });
+
   it("accepts an Interrupt on another Host and stops synchronous children while preserving queued parent input", async () => {
     let childStarted = false;
     let parentTurns = 0;

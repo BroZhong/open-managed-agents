@@ -265,7 +265,7 @@ describe("OpenAPI contract", () => {
       document.paths?.["/v1/sessions"]?.get?.parameters?.map(
         (parameter: any) => parameter.name,
       ),
-    ).toEqual(expect.arrayContaining(["loop_id", "exclude_loop"]));
+    ).toEqual(expect.arrayContaining(["loop_id", "exclude_loop", "exclude_delegated"]));
     expect(schemas.ApiKeyInfo.properties).toHaveProperty("revokedAt");
     expect(document.paths?.["/v1/api-keys/{id}"]?.delete?.operationId).toBe(
       "revokeApiKey",
