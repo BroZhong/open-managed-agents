@@ -58,17 +58,18 @@ export function useSkills(enabled = true) {
   });
 }
 
-export function useUploadSkills() {
+export function useUploadSkills({ overwrite = false }: { overwrite?: boolean } = {}) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (files: DroppedFile[]) => {
       const form = new FormData();
+      if (overwrite) form.set("overwrite", "true");
       form.set("paths", JSON.stringify(files.map((f) => f.path)));
       for (const f of files) form.append("files", f.file, f.path);
       try {
         return await apiUpload<{ data: Skill[] }>("/v1/skills", form);
       } catch (error) {
-        if (!(error instanceof ApiError) || error.code !== "skill_name_conflict") throw error;
+        if (overwrite || !(error instanceof ApiError) || error.code !== "skill_name_conflict") throw error;
         if (!window.confirm(error.message + "\nThis replaces the entire Skill folder. Existing Agent copies stay unchanged.")) return;
         form.set("overwrite", "true");
         return apiUpload<{ data: Skill[] }>("/v1/skills", form);
@@ -142,25 +143,17 @@ export function useAgentSkills(agentId: string) {
   });
 }
 
-/** Equip a Library Skill onto an Agent (forks it). */
+/** Equip a Library Skill, replacing the Agent's existing copy by default. */
 export function useEquipSkill(agentId: string) {
   const queryClient = useQueryClient();
   const queryKey = ["agents", agentId, "skills"] as const;
   return useMutation({
     mutationKey: agentSkillWriteKey(agentId, "equip"),
-    mutationFn: async (skillId: string) => {
-      const send = (overwrite = false) => apiFetch<EquippedSkill>(`/v1/agents/${agentId}/skills`, {
+    mutationFn: (skillId: string) =>
+      apiFetch<EquippedSkill>(`/v1/agents/${agentId}/skills`, {
         method: "POST",
-        body: JSON.stringify({ skillId, ...(overwrite ? { overwrite: true } : {}) }),
-      });
-      try {
-        return await send();
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.code !== "skill_name_conflict") throw error;
-        if (!window.confirm(error.message + "\nReplace this Agent's copy with the Library Skill?")) return;
-        return send(true);
-      }
-    },
+        body: JSON.stringify({ skillId, overwrite: true }),
+      }),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey, exact: true });
     },
@@ -171,9 +164,10 @@ export function useEquipSkill(agentId: string) {
         { revert: false },
       );
       queryClient.setQueryData<EquippedSkill[]>(queryKey, (current = []) => [
-        ...current.filter((skill) => skill.id !== fork.id && skill.name !== fork.name && skill.sourceSkillId !== fork.sourceSkillId),
+        ...current.filter((skill) => skill.id !== fork.id),
         fork,
       ]);
+      void queryClient.invalidateQueries({ queryKey: ["skills", fork.id] });
       void queryClient.invalidateQueries({
         queryKey: ["agents", agentId],
         exact: true,
