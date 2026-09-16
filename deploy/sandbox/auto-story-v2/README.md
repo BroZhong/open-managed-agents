@@ -51,7 +51,7 @@ PUSH=1 bash deploy/sandbox/auto-story-v2/build.sh
 
 ## ACS ImageCache
 
-生产模板启用 `image.alibabacloud.com/enable-image-cache: "true"`，预热副本数保持 1。当前主镜像的上海缓存为 `imc-uf6fba9qbhsjywolg2pj`（4 GiB），匹配已发布的完整镜像地址和 digest。
+生产模板启用 `image.alibabacloud.com/enable-image-cache: "true"`，预热副本数为 2。当前主镜像的上海缓存为 `imc-uf6fba9qbhsjywolg2pj`（4 GiB），匹配已发布的完整镜像地址和 digest。
 
 镜像升级时必须先为新 digest 制作缓存并等待 Ready，再切换 SandboxSet；开启注解本身不会制作缓存。使用 `aliyun acc get-image-cache --biz-region-id cn-shanghai --image-cache-id <id>` 检查状态。Pod 缓存命中可通过 `ImageCacheHit` 事件确认；Sandbox CR 不一定透传 Pod 的 matched-image-caches 注解。
 
