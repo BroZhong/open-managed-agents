@@ -292,7 +292,7 @@ export function MessageInput({
           </button>
           </div>
         </div>
-        <p className="session-composer-help">{disabled ? "Start a new session to continue" : running ? "Enter to queue a follow-up · Shift + Enter for a new line" : "Enter to send · Shift + Enter for a new line"}</p>
+        {disabled && <p className="session-composer-help">Start a new session to continue</p>}
       </div>
     </div>
   );

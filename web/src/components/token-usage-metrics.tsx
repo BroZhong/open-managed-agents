@@ -8,9 +8,11 @@ import { cn } from "@/lib/utils";
 export function TokenUsageMetrics({
   usage,
   className,
+  compact = false,
 }: {
   usage: TokenUsageSummary;
   className?: string;
+  compact?: boolean;
 }) {
   const metrics = [
     ["Total tokens", formatTokenCount(usage.totalTokens)],
@@ -29,7 +31,7 @@ export function TokenUsageMetrics({
         className,
       )}
     >
-      {metrics.map(([label, value]) => (
+      {metrics.filter(([label]) => !compact || label === "Total tokens" || label === "KV cache hit").map(([label, value]) => (
         <div key={label} className="px-2.5 py-1" title={label === "KV cache hit" ? "Cache read tokens / input tokens" : `${label}: ${value}`}>
           <dt className="text-[10px] leading-3 text-[var(--color-fg-subtle)]">
             {label}

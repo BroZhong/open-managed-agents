@@ -8,7 +8,7 @@ export function SessionUsageFooter({ events }: { events: SessionEvent[] }) {
   const usage = useMemo(() => summarizeTokenUsage(events), [events]);
   return (
     <footer className="session-usage-footer" aria-label="Session usage">
-      <TokenUsageMetrics usage={usage} className="session-usage-metrics" />
+      <TokenUsageMetrics usage={usage} compact className="session-usage-metrics" />
     </footer>
   );
 }
