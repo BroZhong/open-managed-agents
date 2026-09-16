@@ -4,6 +4,10 @@
 .session-queued-input { width: min(100%, 760px); margin-inline: auto; }
 .session-thread { display: grid; gap: 36px; padding-block: 8px 20px; }
 .session-turn { display: grid; gap: 16px; min-width: 0; }
+.session-turn-segment { min-width: 0; }
+.session-turn-segment[hidden] { display: none; }
+.session-turn-summary { padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
+.session-turn-summary .session-disclosure-toggle { font-size: 13px; font-variant-numeric: tabular-nums; }
 .session-user-bubble { max-width: 82%; border-radius: 16px; padding: 10px 14px; background: var(--color-bg-muted); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .session-answer { padding-block: 0; line-height: 1.75; }
 .session-answer .prose { font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }

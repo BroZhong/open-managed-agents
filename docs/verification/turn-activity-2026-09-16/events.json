@@ -1,0 +1,311 @@
+{
+  "verifiedAt": "2026-09-16T15:47:54.301Z",
+  "parentSession": "sess_hjEeoyNmv10TgvEJKRmao",
+  "sessions": [
+    {
+      "id": "sess_GHqnzevcnIAGMHMywMviW",
+      "status": "idle",
+      "workspace_id": "ws_oZF6pRemO4D6IQ-QqnVL7",
+      "agent_id": "agent_Gm9zOmeyCQ6seu0O0XEwI"
+    },
+    {
+      "id": "sess_hjEeoyNmv10TgvEJKRmao",
+      "status": "idle",
+      "workspace_id": "ws_oZF6pRemO4D6IQ-QqnVL7",
+      "agent_id": "agent_Gm9zOmeyCQ6seu0O0XEwI"
+    },
+    {
+      "id": "sess_l-2MWIQgPT1KIHWGByAl0",
+      "status": "idle",
+      "workspace_id": "ws_oZF6pRemO4D6IQ-QqnVL7",
+      "agent_id": "agent_Gm9zOmeyCQ6seu0O0XEwI"
+    }
+  ],
+  "assertions": {
+    "parentTurns": 8,
+    "childSessions": 2,
+    "delegationExecutions": 4,
+    "resultArrivals": 4,
+    "asyncClaims": 2,
+    "sameChildrenResumed": true,
+    "resultDuringOtherParentTurn": true,
+    "claimAfterParentCompletion": true,
+    "allTestSessionsIdle": true
+  },
+  "executions": [
+    {
+      "id": "deleg_yn9SvHbPx6U3e0WvPtfqx",
+      "childId": "sess_l-2MWIQgPT1KIHWGByAl0",
+      "mode": "sync",
+      "sequence": 1,
+      "status": "completed",
+      "turnId": "turn_1_a1",
+      "callerTurnId": "turn_1_a1",
+      "notificationEventSeq": 8,
+      "notificationStatus": "consumed",
+      "result": {
+        "trace": {
+          "turnId": "turn_1_a1",
+          "sessionId": "sess_l-2MWIQgPT1KIHWGByAl0"
+        },
+        "output": "**SYNC_CHILD_OK**",
+        "reason": "Execution completed; saved artifacts have not been independently verified",
+        "status": "completed"
+      }
+    },
+    {
+      "id": "deleg_E18uRvW1kOKleOir6IvxF",
+      "childId": "sess_GHqnzevcnIAGMHMywMviW",
+      "mode": "async",
+      "sequence": 1,
+      "status": "completed",
+      "turnId": "turn_1_a1",
+      "callerTurnId": "turn_21_a1",
+      "notificationEventSeq": 39,
+      "notificationStatus": "processed",
+      "result": {
+        "trace": {
+          "turnId": "turn_1_a1",
+          "sessionId": "sess_GHqnzevcnIAGMHMywMviW"
+        },
+        "output": "**ASYNC_CHILD_OK**",
+        "reason": "Execution completed; saved artifacts have not been independently verified",
+        "status": "completed"
+      }
+    },
+    {
+      "id": "deleg_uGNQncKKwEpzbpgKG_nVA",
+      "childId": "sess_l-2MWIQgPT1KIHWGByAl0",
+      "mode": "sync",
+      "sequence": 2,
+      "status": "completed",
+      "turnId": "turn_13_a1",
+      "callerTurnId": "turn_58_a1",
+      "notificationEventSeq": 65,
+      "notificationStatus": "consumed",
+      "result": {
+        "trace": {
+          "turnId": "turn_13_a1",
+          "sessionId": "sess_l-2MWIQgPT1KIHWGByAl0"
+        },
+        "output": "**RESUME_CHILD_OK**",
+        "reason": "Execution completed; saved artifacts have not been independently verified",
+        "status": "completed"
+      }
+    },
+    {
+      "id": "deleg_C4wKLw2b6Vu3Y2-_8kM5E",
+      "childId": "sess_GHqnzevcnIAGMHMywMviW",
+      "mode": "async",
+      "sequence": 2,
+      "status": "completed",
+      "turnId": "turn_13_a1",
+      "callerTurnId": "turn_78_a1",
+      "notificationEventSeq": 96,
+      "notificationStatus": "processed",
+      "result": {
+        "trace": {
+          "turnId": "turn_13_a1",
+          "sessionId": "sess_GHqnzevcnIAGMHMywMviW"
+        },
+        "output": "**LIVE_ASYNC_CHILD_OK**",
+        "reason": "Execution completed; saved artifacts have not been independently verified",
+        "status": "completed"
+      }
+    }
+  ],
+  "parentEvents": [
+    {
+      "seq": 1,
+      "type": "user.message",
+      "at": "2026-09-16T15:32:08.087Z"
+    },
+    {
+      "seq": 2,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:32:08.210Z"
+    },
+    {
+      "seq": 8,
+      "type": "subagent.result",
+      "at": "2026-09-16T15:32:41.434Z",
+      "childId": "sess_l-2MWIQgPT1KIHWGByAl0",
+      "childTurnId": "turn_1_a1",
+      "callerTurnId": "turn_1_a1",
+      "executionId": "deleg_yn9SvHbPx6U3e0WvPtfqx",
+      "mode": "sync"
+    },
+    {
+      "seq": 10,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:32:42.171Z",
+      "turnId": "turn_1_a1"
+    },
+    {
+      "seq": 20,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:32:48.866Z",
+      "turnId": "turn_1_a1"
+    },
+    {
+      "seq": 21,
+      "type": "user.message",
+      "at": "2026-09-16T15:33:45.313Z"
+    },
+    {
+      "seq": 22,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:33:45.439Z"
+    },
+    {
+      "seq": 32,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:33:58.102Z",
+      "turnId": "turn_21_a1"
+    },
+    {
+      "seq": 33,
+      "type": "user.message",
+      "at": "2026-09-16T15:34:24.196Z"
+    },
+    {
+      "seq": 34,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:34:24.319Z"
+    },
+    {
+      "seq": 39,
+      "type": "subagent.result",
+      "at": "2026-09-16T15:34:53.024Z",
+      "childId": "sess_GHqnzevcnIAGMHMywMviW",
+      "childTurnId": "turn_1_a1",
+      "callerTurnId": "turn_21_a1",
+      "executionId": "deleg_E18uRvW1kOKleOir6IvxF",
+      "mode": "async"
+    },
+    {
+      "seq": 45,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:35:35.823Z",
+      "turnId": "turn_33_a1"
+    },
+    {
+      "seq": 46,
+      "type": "subagent.result_claimed",
+      "at": "2026-09-16T15:35:35.830Z",
+      "childId": "sess_GHqnzevcnIAGMHMywMviW",
+      "childTurnId": "turn_1_a1",
+      "callerTurnId": "turn_21_a1",
+      "executionId": "deleg_E18uRvW1kOKleOir6IvxF",
+      "notificationSeq": 39,
+      "mode": "async"
+    },
+    {
+      "seq": 47,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:35:35.961Z"
+    },
+    {
+      "seq": 57,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:35:45.732Z",
+      "turnId": "turn_46_a1"
+    },
+    {
+      "seq": 58,
+      "type": "user.message",
+      "at": "2026-09-16T15:44:10.797Z"
+    },
+    {
+      "seq": 59,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:44:10.928Z"
+    },
+    {
+      "seq": 65,
+      "type": "subagent.result",
+      "at": "2026-09-16T15:44:48.188Z",
+      "childId": "sess_l-2MWIQgPT1KIHWGByAl0",
+      "childTurnId": "turn_13_a1",
+      "callerTurnId": "turn_58_a1",
+      "executionId": "deleg_uGNQncKKwEpzbpgKG_nVA",
+      "mode": "sync"
+    },
+    {
+      "seq": 67,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:44:48.975Z",
+      "turnId": "turn_58_a1"
+    },
+    {
+      "seq": 77,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:45:11.981Z",
+      "turnId": "turn_58_a1"
+    },
+    {
+      "seq": 78,
+      "type": "user.message",
+      "at": "2026-09-16T15:45:29.432Z"
+    },
+    {
+      "seq": 79,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:45:29.562Z"
+    },
+    {
+      "seq": 89,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:45:41.872Z",
+      "turnId": "turn_78_a1"
+    },
+    {
+      "seq": 90,
+      "type": "user.message",
+      "at": "2026-09-16T15:45:54.498Z"
+    },
+    {
+      "seq": 91,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:45:54.622Z"
+    },
+    {
+      "seq": 96,
+      "type": "subagent.result",
+      "at": "2026-09-16T15:46:29.943Z",
+      "childId": "sess_GHqnzevcnIAGMHMywMviW",
+      "childTurnId": "turn_13_a1",
+      "callerTurnId": "turn_78_a1",
+      "executionId": "deleg_C4wKLw2b6Vu3Y2-_8kM5E",
+      "mode": "async"
+    },
+    {
+      "seq": 102,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:47:17.718Z",
+      "turnId": "turn_90_a1"
+    },
+    {
+      "seq": 103,
+      "type": "subagent.result_claimed",
+      "at": "2026-09-16T15:47:17.725Z",
+      "childId": "sess_GHqnzevcnIAGMHMywMviW",
+      "childTurnId": "turn_13_a1",
+      "callerTurnId": "turn_78_a1",
+      "executionId": "deleg_C4wKLw2b6Vu3Y2-_8kM5E",
+      "notificationSeq": 96,
+      "mode": "async"
+    },
+    {
+      "seq": 104,
+      "type": "session.status_running",
+      "at": "2026-09-16T15:47:17.859Z"
+    },
+    {
+      "seq": 114,
+      "type": "session.turn_completed",
+      "at": "2026-09-16T15:47:40.127Z",
+      "turnId": "turn_103_a1"
+    }
+  ]
+}
