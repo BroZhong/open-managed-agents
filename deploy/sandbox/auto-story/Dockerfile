@@ -55,7 +55,7 @@ RUN sed -i \
       ca-certificates libx264-164 libx265-199 libopenh264-7 libvpx7 libaom3 libmp3lame0 \
       libopus0 libvorbis0a libvorbisenc2 libass9 libfreetype6 libfontconfig1 \
       libfribidi0 libharfbuzz0b libwebp7 libwebpmux3 libgnutls30 zlib1g \
-      fontconfig fonts-dejavu-core fonts-noto-cjk && \
+      fontconfig fonts-dejavu-core fonts-noto-cjk procps unzip && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /opt/auto-story && \
     test ! -e "$WORKSPACE_DIR" && test ! -L "$WORKSPACE_DIR" && \
@@ -75,17 +75,18 @@ RUN /opt/venv/bin/python3 -m venv /opt/auto-story/venv && \
     ln -sf /usr/local/bin/pip3 /usr/local/bin/pip && \
     /opt/auto-story/venv/bin/python3 -m pip freeze > /opt/auto-story/python-packages.txt
 COPY --from=ffmpeg-build /out/ffmpeg /out/ffprobe /usr/local/bin/
-COPY bin/vfs-cli bin/mediakit-cli bin/rg bin/fd /usr/local/bin/
-RUN chmod 0755 /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin/rg /usr/local/bin/fd && \
+COPY bin/vfs-cli bin/mediakit-cli bin/rg bin/fd bin/ossutil /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin/rg /usr/local/bin/fd /usr/local/bin/ossutil && \
     printf '%s\n' \
       'fb9b291e8940a4cfaf7812fc897ee85d0e679b08c6c12b4f44adb63aa4b9ec63  /usr/local/bin/vfs-cli' \
       '2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca  /usr/local/bin/mediakit-cli' \
+      'de09edc5649d00bf9495040b09c70a52174f7ae6b812097411f46def16d47c2f  /usr/local/bin/ossutil' \
       'ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2  /usr/local/bin/rg' \
       '0dff4a420feb3e57fd1d4402d3e29f46115aa38d962467d2f3b72e7439d3ada8  /usr/local/bin/fd' | sha256sum --check - && \
     mkdir -p /opt/pi-search && \
     rg --version > /opt/pi-search/rg-version.txt && fd --version > /opt/pi-search/fd-version.txt && \
     sha256sum /usr/local/bin/rg /usr/local/bin/fd > /opt/pi-search/tool-sha256.txt && \
-    sha256sum /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin/ffmpeg /usr/local/bin/ffprobe > /opt/auto-story/tool-sha256.txt && \
+    sha256sum /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ossutil > /opt/auto-story/tool-sha256.txt && \
     dpkg-query -W > /opt/auto-story/debian-packages.txt
 COPY smoke.py /usr/local/bin/auto-story-smoke
 RUN chmod 0755 /usr/local/bin/auto-story-smoke && \

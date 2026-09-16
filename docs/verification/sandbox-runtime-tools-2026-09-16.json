@@ -1,0 +1,160 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "required_environment",
+      "ok": true,
+      "details": {
+        "present": [
+          "AUTO_STORY_SMOKE_VALUE"
+        ]
+      }
+    },
+    {
+      "name": "binary_versions",
+      "ok": true,
+      "details": {
+        "vfs-cli": "0.3.15",
+        "mediakit-cli": "0.2.1",
+        "ffmpeg": "9.0.1",
+        "ffprobe": "9.0.1",
+        "rg": "15.1.0",
+        "fd": "10.4.2",
+        "ossutil": "2.2.0"
+      }
+    },
+    {
+      "name": "gemini_sdk",
+      "ok": true,
+      "details": {
+        "version": "2.22.0",
+        "api": {
+          "files": [
+            "upload",
+            "get",
+            "list",
+            "delete",
+            "download"
+          ],
+          "interactions": [
+            "create",
+            "get",
+            "delete"
+          ]
+        },
+        "network_calls": 0
+      }
+    },
+    {
+      "name": "minimal_path_python_and_base_science",
+      "ok": true,
+      "details": {
+        "prefix": "/opt/auto-story/venv",
+        "google-genai": "2.22.0",
+        "base_science": {
+          "numpy": "1.26.4",
+          "pandas": "2.2.3"
+        }
+      }
+    },
+    {
+      "name": "excluded_software",
+      "ok": true,
+      "details": {
+        "openmontage": "absent",
+        "whisper": "absent"
+      }
+    },
+    {
+      "name": "workspace",
+      "ok": true,
+      "details": {
+        "root": "/home/user",
+        "uid": 1000
+      }
+    },
+    {
+      "name": "native_search",
+      "ok": true,
+      "details": {
+        "rg": "ripgrep 15.1.0 (rev af60c2de9d)",
+        "fd": "fd 10.4.2"
+      }
+    },
+    {
+      "name": "runtime_utilities",
+      "ok": true,
+      "details": {
+        "ps": "current process visible",
+        "unzip": "archive extracted",
+        "ossutil": "cp help available"
+      }
+    },
+    {
+      "name": "vfs_audio_contract_and_embedded_skills",
+      "ok": true,
+      "details": {
+        "embedded_skills": true,
+        "audio_schema": true,
+        "generation_dry_run": true,
+        "resource_url_and_file_dry_run": true
+      }
+    },
+    {
+      "name": "ffmpeg_encode",
+      "ok": true,
+      "details": {
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 240,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+      }
+    },
+    {
+      "name": "ffmpeg_subtitle_burn",
+      "ok": true,
+      "details": {
+        "filter": "subtitles",
+        "duration_seconds": 1.0,
+        "width": 320,
+        "height": 240,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+      }
+    },
+    {
+      "name": "mediakit_local_trim",
+      "ok": true,
+      "details": {
+        "duration_seconds": 1.2,
+        "width": 320,
+        "height": 240,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+      }
+    },
+    {
+      "name": "mediakit_local_concat",
+      "ok": true,
+      "details": {
+        "duration_seconds": 2.421289,
+        "width": 320,
+        "height": 240,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+      }
+    },
+    {
+      "name": "mediakit_local_subtitle",
+      "ok": true,
+      "details": {
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 240,
+        "video_codec": "h264",
+        "audio_codec": "aac"
+      }
+    }
+  ]
+}

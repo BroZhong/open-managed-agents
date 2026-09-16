@@ -85,7 +85,7 @@ export type CreateSandboxFn = (
   },
 ) => Promise<E2BSandbox>;
 
-const DEFAULT_TEMPLATE = "auto-story";
+const DEFAULT_TEMPLATE = "auto-story-v2";
 
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.agentry.welltop.tech"); SDK resolves api.<domain>. */

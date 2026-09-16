@@ -1,3 +1,5 @@
+> Historical recipe, no longer maintained. Use [auto-story-v2](../auto-story/README.md).
+
 # `code-interpreter-vfscli` Sandbox image
 
 This is the application template for Shanghai `agent-platform`

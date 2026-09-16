@@ -1,3 +1,4 @@
+# HISTORICAL REFERENCE: no longer maintained. Use sandboxset-auto-story-v2.yaml.
 # Warm pool for the `auto-story` E2B template on the Shanghai agent-platform
 # cluster. The image is auto-story 0.2.1, pinned to its published OCI index digest.
 # It includes vfs-cli, FFmpeg, the Gemini SDK and MediaKit, without OpenMontage

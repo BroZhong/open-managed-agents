@@ -14,7 +14,7 @@ const { E2BSandboxClient } = await tsImport(
 const options = { domain: process.env.E2B_DOMAIN, apiKey: process.env.E2B_API_KEY };
 assert(options.domain && options.apiKey, "The Host must configure its E2B endpoint and key");
 const template = process.env.SANDBOX_TEMPLATE;
-assert.equal(template, "auto-story", "The Host global default must be auto-story");
+assert.equal(template, "auto-story-v2", "The Host global default must be auto-story-v2");
 const marker = `auto-story-live-${Date.now()}`;
 const file = "/home/user/.auto-story-live-verification.txt";
 let sandbox;
@@ -31,7 +31,7 @@ try {
   });
   sandbox = await Sandbox.connect(handle.id, options);
   report.sandboxId = sandbox.sandboxId;
-  assert.match(handle.id, /auto-story/, "The gateway must allocate from the auto-story pool");
+  assert.match(handle.id, /auto-story-v2/, "The gateway must allocate from the auto-story-v2 pool");
   report.checks.push({ name: "gateway_create_server_default", ok: true });
 
   const env = await sandbox.commands.run("printf '%s' \"$AUTO_STORY_SMOKE_VALUE\"", {

@@ -227,7 +227,7 @@ describe("E2BSandboxClient", () => {
     ).toThrow(/apiKey/);
   });
 
-  it("defaults to auto-story while preserving explicit Agent template selection", async () => {
+  it("defaults to auto-story-v2 while preserving explicit Agent template selection", async () => {
     const templates: string[] = [];
     const client = new E2BSandboxClient({
       domain: "sandbox.example.com",
@@ -241,9 +241,9 @@ describe("E2BSandboxClient", () => {
 
     await client.create();
     await client.create({ image: "legacy/container:latest" });
-    await client.create({ image: "code-interpreter" });
+    await client.create({ image: "agent-specific-template" });
 
-    expect(templates).toEqual(["auto-story", "auto-story", "code-interpreter"]);
+    expect(templates).toEqual(["auto-story-v2", "auto-story-v2", "agent-specific-template"]);
   });
 
   it("create passes templateID + apiKey + domain and returns the sandboxId", async () => {

@@ -24,3 +24,20 @@ structured transcript. It does not append a user prompt. The Host first commits
 all pending tool results; the Adapter refuses continuation while any result is
 missing. `test/continuation-sdk.test.ts` verifies the public SDK method with a
 controlled provider failure followed by a successful automatic retry.
+
+## Gateway error normalization (no pi-ai patch)
+
+The adapter uses the public per-Agent `streamFn` hook in
+`packages/pi-agent/src/gateway-error-stream.ts`. It translates observed gateway
+errors into the existing Pi error vocabulary while retaining the original text:
+`stream_read_error` becomes `Network error`, temporary upstream unavailability
+becomes `Service unavailable`, and `AccountQuotaExceeded` becomes `Quota exceeded`.
+Pi's existing classifier then drives its bounded retry/backoff loop. No private
+method is overridden and no second retry loop is introduced.
+
+Pi 0.80.10 exports `isRetryableAssistantError` but does not offer a custom
+classifier callback or additional-pattern setting. Its extension API also
+supports custom providers through `registerProvider` / `streamSimple`; the
+per-Agent hook avoids replacing provider registrations shared across sessions.
+The actual SDK continuation tests exercise this adapter hook against unmodified
+pi-ai, including retained tool results, retry exhaustion and permanent errors.

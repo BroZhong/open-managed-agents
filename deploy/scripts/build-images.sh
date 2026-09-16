@@ -22,13 +22,12 @@ WEB_API_URL="${WEB_API_URL:-/api}"
 
 NODE_BASE_IMAGE="${NODE_BASE_IMAGE:-${REGISTRY}/node-base:22-slim-pnpm-10.12.4}"
 NGINX_BASE_IMAGE="${NGINX_BASE_IMAGE:-${REGISTRY}/nginx-base:1.27-alpine}"
-SANDBOX_BASE_IMAGE="${SANDBOX_BASE_IMAGE:-${REGISTRY}/sandbox-base:code-interpreter-v1.6}"
 
 push=false
 dry_run=false
 allow_dirty=false
 tag=""
-sandbox_template="auto-story"
+sandbox_template="auto-story-v2"
 components=()
 
 usage() {
@@ -39,17 +38,15 @@ Build OMA release images from the pinned Shanghai base images.
 
 Options:
   --tag TAG       Image tag. Defaults to the current Git short SHA.
-  --sandbox-template auto-story|code-interpreter-vfscli
-                  Sandbox recipe to build (default: auto-story).
+  --sandbox-template auto-story-v2
+                  Only maintained sandbox template (default: auto-story-v2).
   --push          Push to the Shanghai ACR instead of loading locally.
   --allow-dirty   Permit a dirty checkout. The auto tag gains a dirty timestamp.
   --dry-run       Print commands without running Docker.
   -h, --help      Show this help.
 
 With no component arguments, server and web are built. The sandbox component
-builds and verifies auto-story from its pinned releases. The optional
-code-interpreter-vfscli recipe requires VFS_CLI_SRC or an already staged
-executable at deploy/sandbox/code-interpreter-vfscli/bin/vfs-cli.
+builds and verifies auto-story-v2 using deploy/sandbox/auto-story/ and its pinned releases.
 EOF
 }
 
@@ -73,8 +70,8 @@ while (($# > 0)); do
   shift
 done
 
-if [[ "${sandbox_template}" != auto-story && "${sandbox_template}" != code-interpreter-vfscli ]]; then
-  echo "--sandbox-template must be auto-story or code-interpreter-vfscli." >&2
+if [[ "${sandbox_template}" != auto-story-v2 ]]; then
+  echo "Only --sandbox-template auto-story-v2 is maintained." >&2
   exit 2
 fi
 
@@ -230,15 +227,13 @@ for component in "${components[@]}"; do
         "TAG=${sandbox_template}-${tag}"
         "PUSH=${sandbox_push}"
       )
-      if [[ "${sandbox_template}" == code-interpreter-vfscli ]]; then
-        sandbox_command+=("BASE_IMAGE=${SANDBOX_BASE_IMAGE}")
-      elif [[ -n "${AUTO_STORY_BASE_IMAGE:-}" ]]; then
+      if [[ -n "${AUTO_STORY_BASE_IMAGE:-}" ]]; then
         sandbox_command+=("BASE_IMAGE=${AUTO_STORY_BASE_IMAGE}")
       fi
       if [[ -n "${VFS_CLI_SRC:-}" ]]; then
         sandbox_command+=("VFS_CLI_SRC=${VFS_CLI_SRC}")
       fi
-      sandbox_command+=(bash "${REPO_ROOT}/deploy/sandbox/${sandbox_template}/build.sh")
+      sandbox_command+=(bash "${REPO_ROOT}/deploy/sandbox/auto-story/build.sh")
       run "${sandbox_command[@]}"
       ;;
   esac

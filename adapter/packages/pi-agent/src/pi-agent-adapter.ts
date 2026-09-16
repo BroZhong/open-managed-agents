@@ -37,6 +37,7 @@ import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
 import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
+import { withGatewayErrors } from "./gateway-error-stream.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -519,6 +520,7 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
+      session.agent.streamFn = withGatewayErrors(session.agent.streamFn);
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
       const transformContext = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {

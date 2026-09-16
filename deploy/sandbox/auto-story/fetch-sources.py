@@ -51,3 +51,4 @@ for name in ("ffmpeg", "vfs-cli", "mediakit-cli"):
             raise SystemExit(f"Binary SHA-256 mismatch: {name}")
 
 subprocess.run(["python3", str(ROOT.parent / "prepare-search-binaries.py"), str(BIN)], check=True)
+subprocess.run(["python3", str(ROOT.parent / "prepare-ossutil.py"), str(BIN)], check=True)
