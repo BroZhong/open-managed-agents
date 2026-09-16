@@ -25,6 +25,7 @@ export interface DisplayMessage {
   input?: unknown;
   serverName?: string;
   result?: ToolResultData;
+  status?: string;
   seq?: number;
   /**
    * This message was cut short by an Interrupt rather than finished by the Agent
@@ -58,6 +59,9 @@ export function processEventsToMessages(
     { content: unknown; isError: boolean; seq: number }
   >();
   const pairedToolResultSeqs = new Set<number>();
+  const notifications = new Map(events.filter((event) => event.type === "subagent.result").map((event) => [event.seq, event]));
+  const claimedNotifications = new Set(events.filter((event) => event.type === "subagent.result_claimed")
+    .map((event) => (event.data as { notificationSeq?: number }).notificationSeq));
 
   for (const event of events) {
     if (event.type === "agent.tool_result") {
@@ -101,10 +105,16 @@ export function processEventsToMessages(
         break;
       }
       case "subagent.result":
+      case "subagent.result_claimed":
       case "session.subagent_result":
       case "agent.subagent_result": {
-        const data = event.data as { output?: string; reason?: string; status?: string; result?: { output?: string; reason?: string; status?: string } };
-        messages.push({ id: `notification-${seq}`, role: "notification", text: [data.status ?? data.result?.status, data.reason ?? data.result?.reason, data.output ?? data.result?.output].filter(Boolean).join("\n"), seq });
+        if (event.type === "subagent.result" && claimedNotifications.has(seq)) break;
+        const claimedSeq = (event.data as { notificationSeq?: number }).notificationSeq;
+        const data = (notifications.get(claimedSeq ?? -1)?.data ?? event.data) as { output?: string; reason?: string; status?: string; result?: { output?: string; reason?: string; status?: string } };
+        const status = data.status ?? data.result?.status;
+        const text = [data.reason ?? data.result?.reason, data.output ?? data.result?.output].filter(Boolean).join("\n\n");
+        messages.push({ id: `notification-${claimedSeq ?? seq}`, role: "notification", text, status,
+          result: { content: text, isError: !!status && status !== "completed" }, seq });
         break;
       }
       case "agent.message": {
@@ -123,6 +133,7 @@ export function processEventsToMessages(
           role: "assistant",
           text,
           seq,
+          turnId: data.turnId,
           // No stopReason means the message finished normally — legacy events
           // and every runtime that does not report one keep their meaning.
           ...(data.stopReason === "aborted" ? { aborted: true } : {}),
@@ -141,6 +152,7 @@ export function processEventsToMessages(
           text: data.text,
           streaming: false,
           seq,
+          turnId: data.turnId,
         });
         break;
       }
@@ -285,6 +297,7 @@ export function processEventsToMessages(
         id: `assistant-${blockId}`,
         role: "assistant_streaming",
         text,
+        turnId: block.turnId,
       });
     } else if (kind === "thinking" && text) {
       messages.push({
@@ -292,6 +305,7 @@ export function processEventsToMessages(
         role: "thinking",
         text,
         streaming: true,
+        turnId: block.turnId,
       });
     } else if (kind === "tool" && toolUseId) {
       messages.push({
