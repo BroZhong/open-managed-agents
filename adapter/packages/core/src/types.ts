@@ -73,6 +73,8 @@ export interface SubagentCallContext {
 }
 
 export interface HostSubagentCapability {
+  /** Current Host limit for one delegated execution, including resumes. */
+  readonly maxModelSteps: number;
   delegate(input: {
     prompt: string;
     resume?: string;

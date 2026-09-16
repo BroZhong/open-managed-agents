@@ -76,7 +76,7 @@ export function delegationRoutes(deps: DelegationRouteDeps) {
     // is then present in the durable page and replaces its matching Delta block.
     const active = execution.turnId && deps.turnStreamStore ? await deps.turnStreamStore.getActiveTurn(execution.childId) : undefined;
     const deltas = active?.turnId === execution.turnId && active?.status === "running" && deps.turnStreamStore
-      ? await deps.turnStreamStore.readDeltas(active.turnId) : [];
+      ? await deps.turnStreamStore.readDeltas(execution.childId, active.turnId) : [];
     const page = execution.turnId ? await deps.eventLogStore.getEvents(execution.childId, { turnId: execution.turnId, afterSeq, limit }) : { data: [], hasMore: false };
     const [usage, commands] = await Promise.all([
       execution.turnId ? deps.eventLogStore.getUsage({ sessionId: execution.childId, turnId: execution.turnId }) : Promise.resolve(EMPTY_TOKEN_USAGE),

@@ -37,7 +37,7 @@ async function run(isChild: boolean, ambient = false) {
     await writeFile(join(agentDir, "extensions", "ambient.ts"), `export default function(pi) { for (const name of ['subagent', 'web_search', 'mcp']) pi.registerTool({ name, label: name, description: name, parameters: { type: 'object', properties: {} }, execute: async () => ({content: [{type: 'text', text: 'ambient'}]}) }); }`);
   }
   const { executor, dispose } = await createLocalToolExecutor();
-  const host = { delegate: vi.fn(async () => ({})), getResult: vi.fn(async () => ({})), steer: vi.fn(async () => ({})) };
+  const host = { maxModelSteps: 30, delegate: vi.fn(async () => ({})), getResult: vi.fn(async () => ({})), steer: vi.fn(async () => ({})) };
   const input: AdapterInput = { sessionId: "registry", turnId: "turn", history: [], message: { role: "user", content: [{ type: "text", text: "task" }] }, agent: { model: "claude-sonnet-4-5", system: "Registry boundary test instructions." }, toolExecutor: executor, ...(isChild ? { execution: { isChild: true } } : { subagents: host }) };
   const events: SessionEvent[] = [];
   try { for await (const event of new PiAgentAdapter().run(input)) events.push(event); }

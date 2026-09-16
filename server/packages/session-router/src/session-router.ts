@@ -858,7 +858,7 @@ export class SessionRouter {
     }
     staleTurnIds.delete(currentTurnId);
     for (const staleTurnId of staleTurnIds) {
-      await this.turnStreamStore.reclaim(staleTurnId);
+      await this.turnStreamStore.reclaim(sessionId, staleTurnId);
     }
   }
 
@@ -1245,7 +1245,7 @@ export class SessionRouter {
         // turn record don't leak, then move on to the next pending event (the
         // drain loop falls through to the idle transition when the queue empties).
         if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(turnId);
+          await this.turnStreamStore.reclaim(sessionId, turnId);
           if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
             leaseLost = true;
             return;
@@ -1309,7 +1309,7 @@ export class SessionRouter {
             data: stored.data,
           });
           if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(turnId);
+            await this.turnStreamStore.reclaim(sessionId, turnId);
             if (!await this.setActiveTurnFenced(sessionId, {
               turnId,
               status: "idle",
@@ -1436,7 +1436,7 @@ export class SessionRouter {
           data: stored.data,
         });
         if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(turnId);
+          await this.turnStreamStore.reclaim(sessionId, turnId);
           if (!await this.setActiveTurnFenced(sessionId, {
             turnId,
             status: "idle",
@@ -1694,7 +1694,7 @@ export class SessionRouter {
               // dedup live vs. backfilled deltas exactly.
               let deltaId: string | undefined;
               if (this.turnStreamStore) {
-                deltaId = await this.turnStreamStore.appendDelta({
+                deltaId = await this.turnStreamStore.appendDelta(sessionId, {
                   turnId,
                   blockIndex: currentBlock,
                   type: event.type,
@@ -1735,13 +1735,13 @@ export class SessionRouter {
       } catch (err) {
         if (leaseLost) {
           if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(turnId);
+            await this.turnStreamStore.reclaim(sessionId, turnId);
           }
           return;
         }
         if (turnController.signal.aborted) {
           if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(turnId);
+            await this.turnStreamStore.reclaim(sessionId, turnId);
           }
         } else {
           const errorEvent = await this.eventLogStore.append(sessionId, {
@@ -1803,7 +1803,7 @@ export class SessionRouter {
       if (!storageCheckLease) {
         leaseLost = true;
         turnController.abort(new PendingLeaseLostError());
-        if (this.turnStreamStore) await this.turnStreamStore.reclaim(turnId);
+        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
         return;
       }
 
@@ -1825,7 +1825,7 @@ export class SessionRouter {
       // the turn idle. This runs on normal completion and on an in-turn
       // interrupt (the for-loop `break` falls through to here).
       if (this.turnStreamStore) {
-        await this.turnStreamStore.reclaim(turnId);
+        await this.turnStreamStore.reclaim(sessionId, turnId);
         if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
           leaseLost = true;
           return;
@@ -1841,7 +1841,7 @@ export class SessionRouter {
       } catch (error) {
         if (leaseLost || error instanceof PendingEventClaimLostError) {
           if (turnId && this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(turnId);
+            await this.turnStreamStore.reclaim(sessionId, turnId);
           }
           return;
         }

@@ -381,7 +381,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
                 const active = await turnStreamStore.getActiveTurn(sessionId);
                 if (responseClosed) return;
                 if (active && active.status === "running") {
-                  const deltas = await turnStreamStore.readDeltas(active.turnId);
+                  const deltas = await turnStreamStore.readDeltas(sessionId, active.turnId);
                   if (responseClosed) return;
                   for (const delta of deltas) {
                     const data = alignedChunkData({

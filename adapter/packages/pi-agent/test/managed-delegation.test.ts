@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildSubagentTools } from "../src/managed-subagents.js";
 import type { HostSubagentCapability } from "@open-managed-agents/adapter-core";
 
-const capability = (): HostSubagentCapability => ({ delegate: vi.fn(async () => ({ childId: "child", mode: "sync" })), getResult: vi.fn(async () => ({})), steer: vi.fn(async () => ({})) });
+const capability = (maxModelSteps = 30): HostSubagentCapability => ({ maxModelSteps, delegate: vi.fn(async () => ({ childId: "child", mode: "sync" })), getResult: vi.fn(async () => ({})), steer: vi.fn(async () => ({})) });
 
 describe("Host delegation tool boundary", () => {
   it("defaults to synchronous generic delegation and passes only Host-bound context", async () => {
@@ -28,6 +28,20 @@ describe("delegation validation", () => {
       await tool.execute("id", { prompt: "task", ...(resume ? { resume } : {}), run_in_background: mode }, undefined, undefined, {} as never);
       expect(host.delegate).toHaveBeenLastCalledWith({ prompt: "task", ...(resume ? { resume } : {}), runInBackground: mode }, expect.anything());
     }
+  });
+  it.each([7, 30, 250])("advertises and enforces the Host limit of %i model steps", async (maximum) => {
+    const host = capability(maximum);
+    const tool = buildSubagentTools(host, () => [])[0];
+    expect(tool.parameters).toMatchObject({ properties: { max_steps: {
+      minimum: 1, maximum, default: Math.min(30, maximum),
+    } } });
+    expect(tool.description).toContain(`at most ${maximum} model steps`);
+    expect(tool.description).toContain(`default to ${Math.min(30, maximum)} model steps`);
+    await expect(tool.execute("over-budget", { prompt: "task", max_steps: maximum + 1 }, undefined, undefined, {} as never))
+      .rejects.toThrow(`max_steps must be an integer between 1 and ${maximum}`);
+    expect(host.delegate).not.toHaveBeenCalled();
+    await tool.execute("within-budget", { prompt: "task", max_steps: maximum }, undefined, undefined, {} as never);
+    expect(host.delegate).toHaveBeenCalledWith({ prompt: "task", runInBackground: false, maxSteps: maximum }, expect.anything());
   });
   it("does not accept business subtypes or invalid execution budgets", async () => {
     const tool = buildSubagentTools(capability(), () => [])[0];

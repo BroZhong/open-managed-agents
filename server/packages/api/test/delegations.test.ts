@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import type { DelegationExecution } from "@oma-server/store";
+import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import { createApp } from "../src/app.js";
 
 const oldAuth = process.env.AUTH_DISABLED;
@@ -23,11 +24,28 @@ async function fixture() {
     getExecution: async (tenantId: string, id: string) => executions.find((execution) => execution.id === id && execution.tenantId === tenantId) || null,
     listExecutions: async (tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }) => executions.filter((e) => e.tenantId === tenantId && (!opts.callerSessionId || e.callerSessionId === opts.callerSessionId) && (!opts.callerTurnId || e.callerTurnId === opts.callerTurnId) && (!opts.callerToolUseId || e.callerToolUseId === opts.callerToolUseId) && (!opts.childId || e.childId === opts.childId) && (!opts.afterId || e.id > opts.afterId)).slice(0, opts.limit),
   };
-  const app = createApp({ ...stores, delegationStore });
-  return { ...stores, app, parent, child, unrelated, foreign };
+  const turnStreamStore = new InMemoryTurnStreamStore();
+  const app = createApp({ ...stores, delegationStore, turnStreamStore });
+  return { ...stores, app, parent, child, unrelated, foreign, turnStreamStore };
 }
 
 describe("Delegation trace API", () => {
+  it("reads child-owned deltas through either parent or child trace URL when Turn IDs collide", async () => {
+    const { app, parent, child, unrelated, turnStreamStore } = await fixture();
+    const turnId = "child-turn-1";
+    await Promise.all([parent, child, unrelated].map(async session => {
+      await turnStreamStore.setActiveTurn(session.id, { turnId, status: "running" });
+      await turnStreamStore.appendDelta(session.id, { turnId, blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: `${session.id}-private` } });
+    }));
+    for (const session of [parent, child]) {
+      const response = await app.request(`/v1/sessions/${session.id}/delegations/exec-1/events`);
+      expect(response.status).toBe(200);
+      const trace = await response.json();
+      expect(trace.deltas).toHaveLength(1);
+      expect(trace.deltas[0].data.text).toBe(`${child.id}-private`);
+    }
+  });
+
   it("restores creation and each resume source independently and paginates persisted references", async () => {
     const { app, parent, child } = await fixture();
     const origin = await (await app.request(`/v1/sessions/${child.id}/delegation-origin?limit=1`)).json();

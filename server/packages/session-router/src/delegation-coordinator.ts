@@ -55,6 +55,7 @@ export class DelegationCoordinator {
   capability(run: DelegationRun): HostSubagentCapability {
     if (run.session.delegation) throw new Error("Child Sessions cannot receive delegation capabilities");
     return {
+      maxModelSteps: this.deps.maxSteps,
       delegate: async (input, context) => {
         await this.assertOwner(run);
         if (run.session.delegation) throw new Error("Nested delegation is not supported");

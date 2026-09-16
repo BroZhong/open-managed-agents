@@ -386,7 +386,7 @@ describe("managed child SDK capability boundary", () => {
   });
   it("registers exactly the three Host tools alongside the parent Sandbox tools", async () => {
     sdkSeam.sessionOptions.length = 0; sdkSeam.resourceLoaderOptions.length = 0; sdkSeam.failBindExtensions = false;
-    const parent = input(true); parent.subagents = { delegate: vi.fn(), getResult: vi.fn(), steer: vi.fn() };
+    const parent = input(true); parent.subagents = { maxModelSteps: 30, delegate: vi.fn(), getResult: vi.fn(), steer: vi.fn() };
     const events = await collect(new PiAgentAdapter().run(parent));
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(sdkSeam.sessionOptions[0].customTools?.map(t => t.name)).toEqual(["bash", "read", "write", "edit", "ls", "grep", "find", "Agent", "get_subagent_result", "steer_subagent"]);

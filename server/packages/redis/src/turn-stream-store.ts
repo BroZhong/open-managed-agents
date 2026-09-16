@@ -2,7 +2,7 @@ import type { RedisLike } from "./redis-like.js";
 
 /**
  * A token-level delta emitted during a turn. Deltas live only in the per-turn
- * Redis stream `stream:turn:{turnId}`; they are NEVER persisted to PostgreSQL.
+ * Redis stream `stream:session:{sessionId}:turn:{turnId}`; they are NEVER persisted to PostgreSQL.
  *
  * `turnId` + `blockIndex` align a delta to the full Event it will eventually
  * roll up into: all deltas for one content block of one turn share the same
@@ -39,18 +39,19 @@ export interface ActiveTurn {
  * reconnect stays correct across multiple Host instances (nothing lives in
  * process memory).
  *
- * - Deltas: `stream:turn:{turnId}` (XADD append, XRANGE replay, DEL reclaim).
+ * - Deltas: `stream:session:{sessionId}:turn:{turnId}` (XADD append, XRANGE replay, DEL reclaim).
  * - Active turn: hash `session:active-turn:{sessionId}` → { turnId, status }.
  */
 export interface TurnStreamStore {
-  /** Append a delta to its turn's stream. Returns the stream entry id. */
-  appendDelta(delta: TurnDelta): Promise<string>;
+  /** Session ownership is mandatory: Turn IDs are only unique within a Session.
+   * Append a delta to its turn's stream. Returns the stream entry id. */
+  appendDelta(sessionId: string, delta: TurnDelta): Promise<string>;
   /** Read all deltas for a turn (optionally only those after a stream id). */
-  readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]>;
+  readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]>;
   /** Number of deltas currently buffered for a turn. */
-  deltaCount(turnId: string): Promise<number>;
+  deltaCount(sessionId: string, turnId: string): Promise<number>;
   /** Reclaim (DEL) a turn's delta stream — called when the turn ends. */
-  reclaim(turnId: string): Promise<void>;
+  reclaim(sessionId: string, turnId: string): Promise<void>;
 
   /** Record the active turn for a session and its status. */
   setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void>;
@@ -66,8 +67,8 @@ export interface TurnStreamStore {
   ): Promise<boolean>;
 }
 
-function turnStreamKey(turnId: string): string {
-  return `stream:turn:${turnId}`;
+function turnStreamKey(sessionId: string, turnId: string): string {
+  return `stream:session:${encodeURIComponent(sessionId)}:turn:${encodeURIComponent(turnId)}`;
 }
 
 function activeTurnKey(sessionId: string): string {
@@ -87,9 +88,9 @@ return 1`;
 export class RedisTurnStreamStore implements TurnStreamStore {
   constructor(private readonly redis: RedisLike) {}
 
-  async appendDelta(delta: TurnDelta): Promise<string> {
+  async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
     const id = await this.redis.xadd(
-      turnStreamKey(delta.turnId),
+      turnStreamKey(sessionId, delta.turnId),
       "*",
       "turnId",
       delta.turnId,
@@ -104,11 +105,11 @@ export class RedisTurnStreamStore implements TurnStreamStore {
     return id ?? "";
   }
 
-  async readDeltas(turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
+  async readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
     // XRANGE is inclusive; use the exclusive "(id" form to skip already-seen
     // entries when resuming after a stream id.
     const start = afterId ? `(${afterId}` : "-";
-    const entries = await this.redis.xrange(turnStreamKey(turnId), start, "+");
+    const entries = await this.redis.xrange(turnStreamKey(sessionId, turnId), start, "+");
     return entries.map(([id, fields]) => {
       const map = fieldsToRecord(fields);
       return {
@@ -121,12 +122,12 @@ export class RedisTurnStreamStore implements TurnStreamStore {
     });
   }
 
-  async deltaCount(turnId: string): Promise<number> {
-    return this.redis.xlen(turnStreamKey(turnId));
+  async deltaCount(sessionId: string, turnId: string): Promise<number> {
+    return this.redis.xlen(turnStreamKey(sessionId, turnId));
   }
 
-  async reclaim(turnId: string): Promise<void> {
-    await this.redis.del(turnStreamKey(turnId));
+  async reclaim(sessionId: string, turnId: string): Promise<void> {
+    await this.redis.del(turnStreamKey(sessionId, turnId));
   }
 
   async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {

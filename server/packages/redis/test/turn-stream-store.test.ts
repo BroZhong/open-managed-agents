@@ -33,20 +33,20 @@ describe("RedisTurnStreamStore", () => {
 
   describe("delta streams", () => {
     it("appends deltas to the per-turn stream and reads them back with turnId + blockIndex", async () => {
-      await store.appendDelta({
+      await store.appendDelta("session", {
         turnId: "turn_1",
         blockIndex: 0,
         type: "agent.message_chunk",
         data: { type: "agent.message_chunk", text: "Hel" },
       });
-      await store.appendDelta({
+      await store.appendDelta("session", {
         turnId: "turn_1",
         blockIndex: 0,
         type: "agent.message_chunk",
         data: { type: "agent.message_chunk", text: "lo" },
       });
 
-      const deltas = await store.readDeltas("turn_1");
+      const deltas = await store.readDeltas("session", "turn_1");
       expect(deltas).toHaveLength(2);
       expect(deltas[0].turnId).toBe("turn_1");
       expect(deltas[0].blockIndex).toBe(0);
@@ -55,44 +55,44 @@ describe("RedisTurnStreamStore", () => {
       expect((deltas[1].data as { text: string }).text).toBe("lo");
     });
 
-    it("writes deltas to stream:turn:{turnId} — a per-turn Redis key", async () => {
-      await store.appendDelta({ turnId: "turn_42", blockIndex: 0, type: "agent.message_chunk", data: {} });
-      expect(redis.hasStream("stream:turn:turn_42")).toBe(true);
+    it("writes deltas to stream:session:{sessionId}:turn:{turnId} — a per-turn Redis key", async () => {
+      await store.appendDelta("session", { turnId: "turn_42", blockIndex: 0, type: "agent.message_chunk", data: {} });
+      expect(redis.hasStream("stream:session:session:turn:turn_42")).toBe(true);
     });
 
     it("preserves blockIndex across content blocks within a turn", async () => {
-      await store.appendDelta({ turnId: "t", blockIndex: 0, type: "agent.message_chunk", data: { text: "a" } });
-      await store.appendDelta({ turnId: "t", blockIndex: 1, type: "agent.thinking_chunk", data: { text: "b" } });
+      await store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "agent.message_chunk", data: { text: "a" } });
+      await store.appendDelta("session", { turnId: "t", blockIndex: 1, type: "agent.thinking_chunk", data: { text: "b" } });
 
-      const deltas = await store.readDeltas("t");
+      const deltas = await store.readDeltas("session", "t");
       expect(deltas.map((d) => d.blockIndex)).toEqual([0, 1]);
     });
 
     it("readDeltas(afterId) resumes exclusively after a stream entry id", async () => {
-      const firstId = await store.appendDelta({ turnId: "t", blockIndex: 0, type: "c", data: { n: 1 } });
-      await store.appendDelta({ turnId: "t", blockIndex: 0, type: "c", data: { n: 2 } });
+      const firstId = await store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "c", data: { n: 1 } });
+      await store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "c", data: { n: 2 } });
 
-      const rest = await store.readDeltas("t", firstId);
+      const rest = await store.readDeltas("session", "t", firstId);
       expect(rest).toHaveLength(1);
       expect((rest[0].data as { n: number }).n).toBe(2);
     });
 
     it("deltaCount reports the number of buffered deltas", async () => {
-      expect(await store.deltaCount("t")).toBe(0);
-      await store.appendDelta({ turnId: "t", blockIndex: 0, type: "c", data: {} });
-      await store.appendDelta({ turnId: "t", blockIndex: 0, type: "c", data: {} });
-      expect(await store.deltaCount("t")).toBe(2);
+      expect(await store.deltaCount("session", "t")).toBe(0);
+      await store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "c", data: {} });
+      await store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "c", data: {} });
+      expect(await store.deltaCount("session", "t")).toBe(2);
     });
 
     it("reclaim deletes the per-turn stream", async () => {
-      await store.appendDelta({ turnId: "t", blockIndex: 0, type: "c", data: {} });
-      expect(redis.hasStream("stream:turn:t")).toBe(true);
+      await store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "c", data: {} });
+      expect(redis.hasStream("stream:session:session:turn:t")).toBe(true);
 
-      await store.reclaim("t");
+      await store.reclaim("session", "t");
 
-      expect(redis.hasStream("stream:turn:t")).toBe(false);
-      expect(await store.deltaCount("t")).toBe(0);
-      expect(await store.readDeltas("t")).toEqual([]);
+      expect(redis.hasStream("stream:session:session:turn:t")).toBe(false);
+      expect(await store.deltaCount("session", "t")).toBe(0);
+      expect(await store.readDeltas("session", "t")).toEqual([]);
     });
   });
 
