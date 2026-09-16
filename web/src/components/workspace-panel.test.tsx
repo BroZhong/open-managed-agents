@@ -169,3 +169,24 @@ it("creates folders and files inline, preserves existing names, and collapses th
   expect(screen.queryByRole("button", { name: "plan.md" })).toBeNull();
   expect(screen.getByRole("heading", { name: "plan" })).toBeTruthy();
 });
+
+it("reveals linked files through collapsed folders and search, including repeated selections", async () => {
+  const read = vi.fn(async (path: string) => ({ path, text: `Content of ${path}`, contentType: "text/plain", size: 10, isBinary: false }));
+  mockedSources.set("workspace-linked", {
+    capabilities: { hierarchy: "nested", idleGated: false },
+    list: async () => [{ path: "novel/reviews/check.txt", isDir: false }, { path: "other.txt", isDir: false }],
+    read,
+  } satisfies FileSource);
+  const view = render(<WorkspacePanel workspaceId="workspace-linked" refreshKey={0} />);
+  await screen.findByRole("button", { name: "novel" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search files" }), { target: { value: "other" } });
+  view.rerender(<WorkspacePanel workspaceId="workspace-linked" refreshKey={0} fileSelection={{ path: "novel/reviews/check.txt", nonce: 1 }} />);
+  await screen.findByText("Content of novel/reviews/check.txt");
+  expect(screen.getByRole("button", { name: /check\.txt/ }).getAttribute("aria-current")).toBe("true");
+  expect(screen.getByRole("textbox", { name: "Search files" })).toHaveProperty("value", "");
+  fireEvent.click(screen.getByRole("button", { name: /other\.txt/ }));
+  await screen.findByText("Content of other.txt");
+  view.rerender(<WorkspacePanel workspaceId="workspace-linked" refreshKey={0} fileSelection={{ path: "novel/reviews/check.txt", nonce: 2 }} />);
+  await screen.findByText("Content of novel/reviews/check.txt");
+  expect(screen.getByRole("button", { name: /check\.txt/ }).getAttribute("aria-current")).toBe("true");
+});

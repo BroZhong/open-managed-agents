@@ -9,9 +9,11 @@ import { TimelineView } from "@/components/timeline-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
+import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
 import type { DelegationExecution } from "@/lib/delegations";
 import { useSession } from "@/lib/hooks/use-sessions";
+import { useWorkspaces } from "@/lib/hooks/use-workspaces";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
 import { useInterrupt } from "@/lib/hooks/use-interrupt";
@@ -41,11 +43,16 @@ function SessionDetail({ id }: { id: string }) {
   const location = useLocation();
   const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
   const { data: session, isLoading: sessionLoading } = useSession(id);
+  const { data: workspaces = [] } = useWorkspaces();
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, fileChange, turnLifecycleNonce } =
     useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const { interrupt, isPending: isInterrupting, requestAccepted: interruptRequested } = useInterrupt(id);
+  const [fileSelection, setFileSelection] = useState<{ path: string; nonce: number }>();
+  const openWorkspaceFile = useCallback((path: string) => {
+    setFileSelection((previous) => ({ path, nonce: (previous?.nonce ?? 0) + 1 }));
+  }, []);
   const [activeTab, setActiveTab] = useState("conversation");
   const [childTabState, setChildTabState] = useState<{ tabs: ChildTab[]; next: number }>({ tabs: [], next: 1 });
   const childTabs = childTabState.tabs;
@@ -130,12 +137,13 @@ function SessionDetail({ id }: { id: string }) {
 
       {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
       <SplitWorkbench
-        workspace={session && <WorkspacePanel workspaceId={session.workspaceId} refreshKey={fileChange.nonce} />}
+        revealWorkspaceKey={fileSelection?.nonce}
+        workspace={session && <WorkspacePanel workspaceId={session.workspaceId} workspaceName={workspaces.find((workspace) => workspace.id === session.workspaceId)?.name} refreshKey={fileChange.nonce} fileSelection={fileSelection} />}
         session={
           <>
             <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
               <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
-              <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Timeline{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
+              <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Trajectry{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
               {childTabs.map(({ execution, label }) => <div key={execution.childId} className="flex shrink-0 items-center" title={execution.prompt}>
                 <TabButton active={activeTab === execution.childId} onClick={() => setActiveTab(execution.childId)}>{label}</TabButton>
                 <button aria-label={`Close ${label}`} className="mr-2 rounded p-1 text-[var(--color-fg-subtle)] hover:bg-[var(--color-bg-muted)]" onClick={() => closeChildSession(execution.childId)}><X className="h-3 w-3" /></button>
@@ -143,7 +151,7 @@ function SessionDetail({ id }: { id: string }) {
             </div>
             <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ConversationView sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+                <ConversationView onOpenWorkspaceFile={openWorkspaceFile} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
               </div>
               <MessageInput
                 onSend={send}
@@ -156,12 +164,13 @@ function SessionDetail({ id }: { id: string }) {
                 running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
                 onInterrupt={handleInterrupt}
               />
+              <SessionUsageFooter events={events} />
             </div>
             <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
               <TimelineView events={events} />
             </div>
             {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
-              <ChildSessionConversation sessionId={execution.childId} />
+              <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} />
             </div>)}
           </>
         }

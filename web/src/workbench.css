@@ -121,6 +121,7 @@
 }
 .workspace-heading {
   display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   font-size: 13px;

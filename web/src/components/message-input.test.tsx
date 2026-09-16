@@ -295,3 +295,23 @@ it("opens Skills from the toolbar without overwriting the current draft", () => 
   fireEvent.click(screen.getByRole("option", { name: /storyboard/ }));
   expect(screen.getByLabelText("Message")).toHaveProperty("value", "/skill:storyboard Outline the opening");
 });
+
+it("dismisses the Skill list on outside pointer clicks and reopens without losing the draft", () => {
+  render(<MessageInput onSend={vi.fn()} skills={skills} />);
+  const input = screen.getByLabelText("Message");
+  fireEvent.change(input, { target: { value: "/skill:" } });
+  fireEvent.pointerDown(document.body);
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(input).toHaveProperty("value", "/skill:");
+  const picker = screen.getByRole("button", { name: "Choose a Skill" });
+  fireEvent.pointerDown(picker);
+  fireEvent.click(picker);
+  expect(screen.getByRole("listbox")).toBeTruthy();
+  const option = screen.getByRole("option", { name: /research/ });
+  fireEvent.pointerDown(option);
+  fireEvent.click(option);
+  expect(input).toHaveProperty("value", "/skill:research ");
+  fireEvent.click(picker);
+  fireEvent.keyDown(picker, { key: "Escape" });
+  expect(screen.queryByRole("listbox")).toBeNull();
+});

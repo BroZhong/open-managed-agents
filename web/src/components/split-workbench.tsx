@@ -9,11 +9,17 @@ const DEFAULT = 58;
 const clamp = (value: number) => Math.min(MAX, Math.max(MIN, value));
 
 /** One mounted instance of each pane preserves editors and drafts on resize. */
-export function SplitWorkbench({ workspace, session }: { workspace: ReactNode; session: ReactNode }) {
+export function SplitWorkbench({ workspace, session, revealWorkspaceKey }: { workspace: ReactNode; session: ReactNode; revealWorkspaceKey?: number }) {
   const container = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(container, 820);
   const [pane, setPane] = useState<"workspace" | "session">("session");
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
+  const [lastRevealKey, setLastRevealKey] = useState(revealWorkspaceKey);
+  if (lastRevealKey !== revealWorkspaceKey) {
+    setLastRevealKey(revealWorkspaceKey);
+    setWorkspaceOpen(true);
+    setPane("workspace");
+  }
   const [width, setWidth] = useState(() => {
     const stored = localStorage.getItem(WIDTH_KEY);
     const value = stored === null ? DEFAULT : Number(stored);
