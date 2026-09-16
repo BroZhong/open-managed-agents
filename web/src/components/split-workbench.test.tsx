@@ -62,3 +62,13 @@ it("switches compact panes without remounting drafts or changing the desktop spl
   expect(session.value).toBe("Keep Session draft");
   expect(screen.getByRole("separator").getAttribute("aria-valuenow")).toBe("58");
 });
+
+it("reveals Workspace for a conversation path request without replacing mounted drafts", () => {
+  const workspace = <textarea aria-label="File draft" defaultValue="Keep this draft" />;
+  const session = <p>Conversation</p>;
+  const view = render(<SplitWorkbench workspace={workspace} session={session} />);
+  const draft = screen.getByRole("textbox", { name: "File draft" });
+  fireEvent.click(screen.getByRole("button", { name: "Hide workspace" }));
+  view.rerender(<SplitWorkbench workspace={workspace} session={session} revealWorkspaceKey={1} />);
+  expect(screen.getByRole("textbox", { name: "File draft" })).toBe(draft);
+});

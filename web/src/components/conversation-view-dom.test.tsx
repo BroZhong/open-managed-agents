@@ -327,7 +327,8 @@ it("opens absolute and relative file links in Workspace while preserving externa
   for (const name of ["旁白稿", "场面草案", "文件"]) fireEvent.click(screen.getByRole("link", { name }));
   expect(open.mock.calls).toEqual([["novel/narration.txt"], ["novel/scenes.md"], ["novel/production.json"]]);
   expect(screen.getByRole("link", { name: "文档" }).getAttribute("href")).toBe("https://example.com/docs");
-  expect(screen.getByRole("link", { name: "技能" }).getAttribute("title")).toBeNull();
+  expect(screen.queryByRole("link", { name: "技能" })).toBeNull();
+  expect(screen.getByText("技能").getAttribute("title")).toBe("This Skill is not equipped on the current Agent.");
 });
 
 it("updates live process elapsed time and freezes it when the next answer arrives", () => {

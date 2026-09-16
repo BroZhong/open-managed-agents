@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TextFileEditor } from "@/components/text-file-editor";
 import { AudioPreview } from "@/components/audio-preview";
-import { buildTree, formatSize, type TreeNode } from "@/lib/workspace-tree";
+import { buildTree, formatSize, isDirectoryPath, type TreeNode } from "@/lib/workspace-tree";
 import { collectUploadFiles, type UploadInput } from "@/lib/upload-files";
 import {
   classifyMedia,
@@ -59,8 +59,6 @@ import {
  */
 export interface FileManagerProps {
   source: FileSource;
-  rootLabel?: string;
-  /** A new request reveals and selects a file, including repeated clicks. */
   fileSelection?: { path: string; nonce: number };
   /** Injected by the host page (from its existing SSE). Not subscribed here. */
   turnStatus: TurnStatus;
@@ -69,6 +67,8 @@ export interface FileManagerProps {
   /** Copy shown above the tree when it is empty. */
   emptyHint?: string;
   presentation?: "default" | "workbench";
+  rootLabel?: string;
+  selectionHint?: string;
 }
 
 // ─── Tree rendering (mirrors workspace-panel's TreeRow visual language) ────────
@@ -139,7 +139,8 @@ function TreeRow({
         onClick={() => (node.isDir ? onToggle(node.path) : onSelect(node.path))}
         {...drop.handlers}
         aria-expanded={node.isDir ? isOpen : undefined}
-        aria-current={!node.isDir && isSelected ? "true" : undefined}
+        aria-current={isSelected ? "true" : undefined}
+        data-file-path={node.path}
         title={onDropFiles ? `Drop files into /${destDir}` : undefined}
         className={cn(
           "file-tree-row flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm transition-colors",
@@ -470,6 +471,7 @@ function VideoPreview({
 
 function FilePane({
   workbench = false,
+  selectionHint,
   content,
   contentRevision,
   loading,
@@ -483,6 +485,7 @@ function FilePane({
   onDownload,
 }: {
   workbench?: boolean;
+  selectionHint: string;
   content: FileContent | null;
   contentRevision: number;
   loading: boolean;
@@ -515,7 +518,7 @@ function FilePane({
       <div className={workbench ? "workspace-preview-empty" : "flex h-full items-center justify-center text-sm text-[var(--color-fg-subtle)]"}>
         {workbench && <FileIcon />}
         <span>Select a file</span>
-        {workbench && <p>Browse your Workspace to preview or edit a file alongside the Session.</p>}
+        {workbench && <p>{selectionHint}</p>}
       </div>
     );
   }
@@ -673,7 +676,7 @@ function writeErrorMessage(err: unknown): string {
   return isLockedError(err) ? WRITE_LOCKED_RETRY : (err as Error).message;
 }
 
-export function FileManager({ source, rootLabel = "Workspace", turnStatus, refreshKey = 0, emptyHint, presentation = "default", fileSelection }: FileManagerProps) {
+export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0, emptyHint, presentation = "default", rootLabel = "Workspace", selectionHint = "Browse your Workspace to preview or edit a file alongside the Session." }: FileManagerProps) {
   const workbench = presentation === "workbench";
   const managerRef = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(managerRef, 520);
@@ -691,6 +694,10 @@ export function FileManager({ source, rootLabel = "Workspace", turnStatus, refre
     [source.capabilities, methods, turnStatus],
   );
 
+  const nodesRef = useRef<FileNode[]>([]);
+  const readVersion = useRef(0);
+  const invalidateRead = useCallback(() => { ++readVersion.current; }, []);
+  const scrolledRequest = useRef<number | undefined>(undefined);
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -723,6 +730,7 @@ export function FileManager({ source, rootLabel = "Workspace", turnStatus, refre
     setSaved(false);
     try {
       const nextNodes = await source.list();
+      nodesRef.current = nextNodes;
       setNodes(nextNodes);
       return nextNodes;
     } catch (err) {
@@ -733,50 +741,91 @@ export function FileManager({ source, rootLabel = "Workspace", turnStatus, refre
     }
   }, [source]);
 
+  const revealPath = useCallback((path: string, directory: boolean) => {
+    setSearch("");
+    setDirectoryOpen(true);
+    const parts = path.split("/").filter(Boolean);
+    if (!directory) parts.pop();
+    setExpanded((current) => {
+      const next = new Set(current);
+      for (let i = 1; i <= parts.length; i++) next.add(parts.slice(0, i).join("/"));
+      return next;
+    });
+  }, []);
+
   const openFile = useCallback(
-    async (path: string, selectUploadDir = true) => {
+    async (requestedPath: string, selectUploadDir = true) => {
+      const version = ++readVersion.current;
+      const directory = nested && isDirectoryPath(requestedPath, nodesRef.current);
+      const path = requestedPath.replace(/\/+$/, "");
+      setContentError(null);
+      setWriteError(undefined);
+      setSaved(false);
+      if (directory) {
+        revealPath(path, true);
+        setUploadDir(path);
+        setSelectedPath(null);
+        setContent(null);
+        setContentLoading(false);
+        setDetailOpen(false);
+        return;
+      }
       setSelectedPath(path);
       setDetailOpen(true);
       if (selectUploadDir) setUploadDir(currentDir(path) ?? "");
       setContentLoading(true);
-      setContentError(null);
-      setWriteError(undefined);
-      setSaved(false);
       try {
         const nextContent = await source.read(path);
+        if (version !== readVersion.current) return;
         setContent(nextContent);
         setContentRevision((revision) => revision + 1);
       } catch (err) {
+        if (version !== readVersion.current) return;
         setContent(null);
         setContentError((err as Error).message);
       } finally {
-        setContentLoading(false);
+        if (version === readVersion.current) setContentLoading(false);
       }
     },
-    [source],
+    [source, nested, revealPath],
   );
 
   useEffect(() => {
     if (!fileSelection) return;
-    let active = true;
-    void Promise.resolve().then(() => {
-      if (!active) return;
-      const { path } = fileSelection;
-      setSearch("");
-      setDirectoryOpen(true);
-      const parts = path.split("/");
-      setExpanded((previous) => new Set([...previous, ...parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"))]));
-      void refresh();
-      void openFile(path);
+    let cancelled = false;
+    invalidateRead();
+    // Refresh first so a directory created by the latest Turn is classified
+    // from the current listing before attempting any file read.
+    void source.list().then(async (nextNodes) => {
+      if (cancelled) return;
+      nodesRef.current = nextNodes;
+      setNodes(nextNodes);
+      setListError(null);
+      revealPath(fileSelection.path, isDirectoryPath(fileSelection.path, nextNodes));
+      await openFile(fileSelection.path);
+    }).catch((err: unknown) => {
+      if (!cancelled) setListError(err instanceof Error ? err.message : "Failed to load files");
     });
-    return () => { active = false; };
-  }, [fileSelection, openFile, refresh]);
+    return () => { cancelled = true; invalidateRead(); };
+  }, [fileSelection, source, openFile, revealPath, invalidateRead]);
+
+  useEffect(() => {
+    if (!fileSelection || scrolledRequest.current === fileSelection.nonce) return;
+    const path = fileSelection.path.replace(/\/+$/, "");
+    const row = Array.from(managerRef.current?.querySelectorAll<HTMLElement>("[data-file-path]") ?? [])
+      .find((element) => element.dataset.filePath === path);
+    if (row) {
+      row.scrollIntoView?.({ block: "nearest" });
+      scrolledRequest.current = fileSelection.nonce;
+    }
+  }, [fileSelection, nodes, expanded]);
 
   /** Refresh the tree and reload/drop the selected file from the same snapshot. */
   const refreshSelected = useCallback(
     async (path: string | null = selectedPath) => {
+      const version = readVersion.current;
       const nextNodes = await refresh();
-      if (!nextNodes || !path) return;
+      if (!nextNodes || !path || version !== readVersion.current) return;
       if (nextNodes.some((node) => node.path === path && !node.isDir)) {
         await openFile(path, false);
       } else {
@@ -1006,7 +1055,7 @@ export function FileManager({ source, rootLabel = "Workspace", turnStatus, refre
     return query ? nodes.filter((node) => node.path.toLowerCase().includes(query)) : nodes;
   }, [nodes, search]);
   const tree = useMemo(
-    () => (nested ? buildTree(visibleNodes.map((n) => ({ path: n.path, isDir: n.isDir, size: n.size ?? 0, updated_at: n.updatedAt ?? null }))) : null),
+    () => (nested ? buildTree(visibleNodes.map((n) => ({ path: n.path, isDir: n.isDir, size: n.size, updated_at: n.updatedAt ?? null }))) : null),
     [nested, visibleNodes],
   );
   const visibleExpanded = useMemo(() => {
@@ -1253,6 +1302,7 @@ export function FileManager({ source, rootLabel = "Workspace", turnStatus, refre
           <div className="file-preview-content">
           <FilePane
             workbench={workbench}
+            selectionHint={selectionHint}
             content={content}
             contentRevision={contentRevision}
             loading={contentLoading}

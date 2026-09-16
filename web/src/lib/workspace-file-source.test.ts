@@ -6,7 +6,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("Workspace file list responses", () => {
   it("uses the Workspace ID for every file operation", async () => {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ data: [] }));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({ data: [] }));
     vi.stubGlobal("fetch", fetch);
     const source = createWorkspaceFileSource("workspace_123");
     await source.list();
@@ -54,5 +54,20 @@ it("persists an empty folder and lists its marker as a directory", async () => {
   expect(await source.list()).toEqual([
     { path: "assets", isDir: true, size: 0, updatedAt: undefined },
     { path: "notes.md", isDir: false, size: 2, updatedAt: undefined },
+  ]);
+});
+
+it("recognizes directory flags, trailing slashes and implicit parent entries", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [
+    { path: "chapters", size: 0 },
+    { path: "chapters/EP1.txt", size: 100 },
+    { path: "empty/", size: 0 },
+    { path: "flagged", isDir: true, size: 0 },
+    { path: "empty-file.txt", size: 0 },
+  ] })));
+  const nodes = await createWorkspaceFileSource("workspace").list();
+  expect(nodes.map(({ path, isDir }) => ({ path, isDir }))).toEqual([
+    { path: "chapters", isDir: true }, { path: "chapters/EP1.txt", isDir: false },
+    { path: "empty", isDir: true }, { path: "flagged", isDir: true }, { path: "empty-file.txt", isDir: false },
   ]);
 });

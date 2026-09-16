@@ -1,3 +1,4 @@
+import { Trash2 } from "lucide-react"
 import { Dialog, DialogHeader, DialogFooter } from "./dialog"
 import { Button } from "./button"
 
@@ -30,12 +31,15 @@ export function ConfirmDialog({
         </Button>
         <Button
           variant="destructive"
+          size={confirmLabel === "Delete" || confirmLabel === "Unequip" ? "icon" : "default"}
+          aria-label={confirmLabel}
+          title={confirmLabel}
           onClick={() => {
             onConfirm()
             onOpenChange(false)
           }}
         >
-          {confirmLabel}
+          {confirmLabel === "Delete" || confirmLabel === "Unequip" ? <Trash2 className="h-4 w-4" /> : confirmLabel}
         </Button>
       </DialogFooter>
     </Dialog>
