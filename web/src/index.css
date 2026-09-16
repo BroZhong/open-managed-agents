@@ -137,18 +137,22 @@ body {
     padding-inline: 2px;
   }
   .brand-mark {
-    display: inline-grid;
+    position: relative;
+    display: inline-block;
     flex-shrink: 0;
-    place-items: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    background: var(--color-brand-muted);
-    color: var(--color-brand);
+    width: 40px;
+    height: 40px;
+    overflow: hidden;
+    mix-blend-mode: multiply;
   }
-  .brand-mark svg {
-    width: 28px;
-    height: 28px;
+  .brand-mark img {
+    /* Trim only the original canvas margins; keep the entire mascot visible. */
+    position: absolute;
+    top: -15%;
+    left: -15%;
+    width: 130%;
+    height: 130%;
+    max-width: none;
   }
   .sidebar-brand {
     display: flex;
@@ -388,14 +392,9 @@ body {
     box-shadow: 0 0 0 1px rgb(32 33 36 / 4%), 0 12px 32px rgb(32 33 36 / 3%);
   }
   .auth-brand {
-    width: 48px;
-    height: 48px;
+    width: 64px;
+    height: 64px;
     margin-bottom: 16px;
-    border-radius: 14px;
-  }
-  .auth-brand svg {
-    width: 38px;
-    height: 38px;
   }
   .composer-area {
     flex-shrink: 0;

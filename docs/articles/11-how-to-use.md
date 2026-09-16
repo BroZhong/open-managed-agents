@@ -142,7 +142,7 @@ curl -fsS -N "$OMA_API_URL/v1/sessions/$SESSION_ID/events?include=chunks" \
 - **Redis** —— per-Turn delta 流 + 活跃 Turn 映射
 - **OSS** —— Workspace 文件的权威存储，沙箱直接挂载，Host 使用独立 OSS 配置访问
 - **Supabase Storage** —— Skill 内容，与 Workspace 存储分开配置
-- **ACK Agent Sandbox** —— `sandbox-system` 中默认的 `auto-story` SandboxSet 暖池（Agent 可显式选择其他模板），通过
+- **ACK Agent Sandbox** —— `sandbox-system` 中唯一维护的 `auto-story-v2` SandboxSet 暖池，通过
   **E2B 兼容 SDK** 接入（配 `E2B_DOMAIN` + `E2B_API_KEY`）
 
 沙箱底座为什么选它，正好呼应 02 号文章的"自研不等于全部自己写"：

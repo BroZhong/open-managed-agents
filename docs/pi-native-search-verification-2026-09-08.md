@@ -1,9 +1,9 @@
 # Pi native grep/find sandbox verification — 2026-09-08
 
 This is the historical pre-release snapshot from 2026-09-08. Its test results
-and then-current deployment status are preserved below. It is superseded by
-the [2026-09-09 release verification](pi-native-search-release-verification-2026-09-09.md),
-including the published images with pinned rg/fd binaries.
+and then-current deployment status are preserved below. Its template names and
+release status are not current. See [the maintained recipe](../sandbox/auto-story-v2/README.md)
+for the pinned rg/fd binaries and current build/verification instructions.
 
 At the close of this verification, the implementation ran Pi 0.80.10's native
 `grep` and `find` logic through sandbox filesystem/process operations. Code and

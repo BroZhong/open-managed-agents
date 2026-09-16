@@ -1,5 +1,10 @@
 # OSS Workspace implementation review
 
+> Historical OSS migration record (2026-09-14). Image digests, templates and
+> observations below belong to that run. Session file routes and the HTTP 423
+> write gate were superseded by [ADR-0009](adr/0009-workspace-file-api.md).
+> Use [the deployment guide](../deploy/README.md) for current operations.
+
 Independent Standards and Spec agents reviewed `git diff 5609760...HEAD` at
 `2fb4e20`, covering commits `4d8378a` (#124), `674dd54` (#125), `12cc079` (#126)
 and `2fb4e20` (#127). Standards sources were AGENTS.md, the domain instructions,
@@ -50,7 +55,7 @@ A separate browser-triggered Turn exercised the new `ToolExecutor.list('.')`
 assertions against three uploaded/generated files, returned the exact named
 Skill path, and automatically refreshed the page after completion. These runs
 confirm the original failure path; their detailed evidence and cleanup are in
-`deploy/sandbox/oss-workspace/verification.json`.
+`docs/verification/oss-workspace/verification.json`.
 
 Final status: Standards 0 unresolved; Spec 0 unresolved. Native download-event
 and prompt limitations of the built-in browser are recorded separately from

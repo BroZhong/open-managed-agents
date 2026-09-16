@@ -1,2 +1,0 @@
-google-genai==2.22.0
-httpx[socks]==0.28.1

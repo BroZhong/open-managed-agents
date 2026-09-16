@@ -11,7 +11,7 @@ original runs and must not be used as current runbooks.
 | --- | --- | --- |
 | OMA application | `oma-infra` | `oma-server`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
-| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; default `auto-story` and optional `code-interpreter` / `code-interpreter-vfscli` SandboxSets |
+| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to `oma-server` and all other paths to `oma-web`. The Server therefore
@@ -32,10 +32,10 @@ schema.
 
 The application images are stored in the Shanghai `welltop` ACR. Pods pull
 through the VPC endpoint with the `ali-shanghai` image-pull Secret. The active
-sandbox default is `auto-story`, whose immutable image digest is declared in
-`sandbox/sandboxset-auto-story.yaml`. It includes VFS CLI, FFmpeg, Gemini's
+sandbox default is `auto-story-v2`, whose immutable image digest is declared in
+[`sandbox/auto-story-v2/sandboxset.yaml`](../sandbox/auto-story-v2/sandboxset.yaml). It includes VFS CLI, FFmpeg, Gemini's
 Python SDK, MediaKit and native `rg`/`fd` search, without OpenMontage or Whisper.
-The other pools remain available through explicit Agent `sandbox.image` values.
+This is the only pool maintained or shipped by this repository.
 
 ## Image pipeline
 
@@ -46,8 +46,7 @@ these pinned bases in the Shanghai ACR:
 | --- | --- |
 | Server and Web build stage | `welltop/node-base:22-slim-pnpm-10.12.4` |
 | Web runtime | `welltop/nginx-base:1.27-alpine` |
-| Default `auto-story` sandbox | Clean Shanghai ACS `code-interpreter` image, pinned in `sandbox/auto-story/versions.json` |
-| Optional custom sandbox | `welltop/sandbox-base:code-interpreter-v1.6` |
+| Default `auto-story-v2` sandbox | Clean Shanghai ACS `code-interpreter` image, pinned in `sandbox/auto-story-v2/versions.json` |
 
 Prepare or refresh the bases from the `vfs-dev` checkout:
 
@@ -57,7 +56,7 @@ ssh vfs-dev \
 ```
 
 Existing tags are skipped. Add `--force` only when intentionally rebuilding a
-base tag. The script accepts `node`, `nginx`, or `sandbox` to process a subset.
+base tag. The script accepts `node` or `nginx` to process a subset.
 
 A normal application release starts from a clean, committed checkout:
 
@@ -95,19 +94,10 @@ ssh vfs-dev \
    deploy/scripts/build-images.sh --push --tag <tag> sandbox'
 ```
 
-This produces `oma-sandbox:auto-story-<tag>`. The standalone recipe defaults to
-its versioned release tag; see [sandbox/auto-story/README.md](sandbox/auto-story/README.md)
+This produces `oma-sandbox:auto-story-v2-<tag>`. The standalone recipe defaults to
+its versioned release tag; see [the sandbox recipe](../sandbox/auto-story-v2/README.md)
 for preparation, version pins and image checks. `AUTO_STORY_BASE_IMAGE` can
 override the clean base for this wrapper; it must satisfy the recipe's checks.
-
-The optional custom sandbox additionally needs a Linux AMD64 `vfs-cli` binary:
-
-```bash
-ssh vfs-dev \
-  'cd ~/workspace/yuzhong/open-managed-agents && \
-   VFS_CLI_SRC=/path/to/vfs-cli deploy/scripts/build-images.sh --push --tag <tag> \
-     --sandbox-template code-interpreter-vfscli sandbox'
-```
 
 Both build scripts support `--dry-run`. A dirty checkout is rejected unless
 `--allow-dirty` is explicit; auto-tagged dirty builds include a UTC timestamp so
@@ -138,19 +128,14 @@ on exit and is never committed.
 SandboxSet validation and deployment use the same safety gate:
 
 ```bash
-# Default auto-story pool: dry-run only
+# Default auto-story-v2 pool: dry-run only
 deploy/scripts/deploy-sandbox.sh
 deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-production
 
-# Optional stock and custom pools
-deploy/scripts/deploy-sandbox.sh --pool stock
-deploy/scripts/deploy-sandbox.sh --pool custom --image <immutable-image>
-deploy/scripts/deploy-sandbox.sh --pool custom --image <immutable-image> \
-  --apply --confirm-production
 ```
 
 Pool deployment does not change the Server's `SANDBOX_TEMPLATE` setting.
-The ConfigMap and the SDK fallback default to `auto-story`; explicit Agent
+The ConfigMap and the SDK fallback default to `auto-story-v2`; explicit Agent
 template selection still takes precedence. Existing Session sandboxes need a
 rebuild or a new Session to pick up a changed image or template.
 
@@ -177,11 +162,10 @@ See [the production verification report](../docs/verification/durable-delegation
 
 Apply `migrations/0012_durable_delegations.sql` before the Host image. Verify
 the application role can read all six `delegation_*` tables and the new
-Session/pending-input columns. Update the `server` container and, when present,
-the `seed-pi-auth` init container to the same image: the latter supplies the Pi
-settings and extensions, and an old seed would reinstall the retired plugin.
-The release script also supports deployments that mount gateway configuration
-directly into the image seed without an init container.
+Session/pending-input columns. Update the `server` container image. Production
+loads settings and extensions from `/opt/pi-agent-seed` in that image; the
+`oma-pi-gateway` Secret mounts `auth.json` and `models.json` there read-only.
+There is no seed init container or writable Pi configuration volume.
 
 For the first cutover, stop ingress to the old Host and stop its scheduler;
 wait for its active Turns to drain before starting the new image. The release
@@ -192,8 +176,13 @@ queries using those expired identifiers explicitly fail.
 New deployments register only `Agent`, `get_subagent_result`, and
 `steer_subagent`. `run_in_background` defaults to false for both creation and
 resume. `SUBAGENT_MAX_CONCURRENT` defaults to 4 per parent Session and
-`SUBAGENT_MAX_MODEL_STEPS` defaults to 30 (maximum 1000). These count concurrent
+`SUBAGENT_MAX_MODEL_STEPS` defaults to 500 (maximum 1000). These count concurrent
 child Turns and model steps respectively; waiting parents consume no child slot.
+The Host assigns its configured budget to each new or resumed execution; the
+Agent tool accepts no budget override. Exhaustion returns `budget_exhausted`;
+only an explicit resume starts a fresh budget. The live verification script’s
+`budget` phase requires a dedicated verification Host configured with
+`SUBAGENT_MAX_MODEL_STEPS=1`, also set in the script environment.
 
 Monitor `delegation_executions.record` for `status`, `notificationStatus`,
 `pendingEventId`, and the effective model configuration. `queued` inputs use the
@@ -270,8 +259,17 @@ pool:
 ```bash
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-server
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-web
-KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset auto-story
+KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset auto-story-v2
 ```
 
-The `code-interpreter` and `code-interpreter-vfscli` pools are independent
-options. The default build and deploy commands above target `auto-story`.
+Only `auto-story-v2` is maintained. Its recipe and SandboxSet manifest live in
+[`sandbox/`](../sandbox/README.md). Shared Workspace infrastructure lives in
+[`deploy/oss-workspace/`](oss-workspace/README.md). Retired templates and business
+Agent presets are not shipped here; supply business Skills through the platform.
+
+The manifest was aligned with the Shanghai deployment on 2026-09-16, including
+its direct Pi gateway mounts, internal E2B endpoints, proxy overrides and Host
+4 CPU / 8 GiB limits. Secrets are referenced by name only. The existing
+`oma-auto-story-env` compatibility injection is still used by three Agents and
+is retained until those settings are migrated. Removing repository presets
+must not silently remove their deployed credentials.

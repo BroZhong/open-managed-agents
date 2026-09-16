@@ -8,7 +8,7 @@ Boundary: test and record only; no fixes were attempted.
 This report records a retired environment. Its test findings are historical
 evidence, not verification of the current deployment. Retired connection
 addresses, cluster identifiers, and deployment configuration have been removed.
-For current deployment instructions, see [the sandbox deployment guide](../deploy/sandbox/README.md).
+For current deployment instructions, see [the sandbox deployment guide](../sandbox/README.md).
 
 ## Summary
 

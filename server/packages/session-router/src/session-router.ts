@@ -263,7 +263,7 @@ export class SessionRouter {
     if (!Number.isInteger(this.maxConcurrentSubagents) || this.maxConcurrentSubagents < 1 || this.maxConcurrentSubagents > 64) {
       throw new RangeError("maxConcurrentSubagents must be between 1 and 64");
     }
-    const maxSteps = deps.maxSubagentModelSteps ?? 30;
+    const maxSteps = deps.maxSubagentModelSteps ?? 500;
     if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000) throw new RangeError("maxSubagentModelSteps must be between 1 and 1000");
     if (deps.delegationStore) this.delegations = new DelegationCoordinator({
       store: deps.delegationStore, pending: deps.pendingEventStore,
@@ -936,6 +936,21 @@ export class SessionRouter {
       const interrupted = turnEvents.some((event) => event.type === "session.turn_aborted");
       const finished = await this.delegationStore.finishExecution(execution.id, pendingFence,
         outcomeFromEvents({ ...execution, turnId }, turnEvents, interrupted));
+      // finishExecution commits the parent notification in its transaction,
+      // outside the normal Router append/publish path. Publish that durable
+      // event before waking the parent so connected clients see arrival even
+      // while another parent Turn is still running or waiting synchronously.
+      if (finished.notificationEventSeq !== undefined) {
+        const notifications = await this.eventLogStore.getEvents(finished.callerSessionId, {
+          afterSeq: finished.notificationEventSeq - 1, limit: 1,
+        });
+        const notification = notifications.data[0];
+        if (notification?.seq === finished.notificationEventSeq) {
+          this.eventStreamHub.publish(finished.callerSessionId, {
+            type: notification.type, seq: notification.seq, data: notification.data,
+          });
+        }
+      }
       const parent = await this.sessionStore.getById(finished.callerSessionId);
       if (parent && parent.status !== "terminated") {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
@@ -1380,7 +1395,7 @@ export class SessionRouter {
         }
         if (session.delegation) {
           adapterInput.execution = {
-            isChild: true, maxModelSteps: delegationExecution?.maxSteps ?? 30,
+            isChild: true, maxModelSteps: delegationExecution?.maxSteps ?? 500,
             thinking: delegationExecution?.thinking,
             ...(delegationExecution && this.delegations
               ? { steering: this.delegations.steering(delegationRun, delegationExecution) }

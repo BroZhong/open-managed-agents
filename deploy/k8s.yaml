@@ -18,14 +18,13 @@
 # registry-vpc.cn-shanghai.aliyuncs.com/welltop before applying this manifest.
 #
 # Create the secret first (values NOT committed):
-# Omit ALIYUN_SUPABASE_INSTANCE when instance discovery is unambiguous.
-#   kubectl -n oma-infra create secret generic oma-secrets \
+# Supabase instance discovery is enabled in this deployment.
+#   kubectl --kubeconfig ~/.kube/agent-platform-config -n oma-infra create secret generic oma-secrets \
 #     --from-literal=PG_PASSWORD=... \
 #     --from-literal=REDIS_PASSWORD=... \
 #     --from-literal=SUPABASE_SERVICE_KEY=... \
 #     --from-literal=ALIYUN_ACCESS_KEY_ID=... \
 #     --from-literal=ALIYUN_ACCESS_KEY_SECRET=... \
-#     --from-literal=ALIYUN_SUPABASE_INSTANCE=... \
 #     --from-literal=WORKSPACE_OSS_ACCESS_KEY_ID=... \
 #     --from-literal=WORKSPACE_OSS_ACCESS_KEY_SECRET=... \
 #     --from-literal=E2B_DOMAIN=... \
@@ -35,7 +34,7 @@
 #     --from-literal=INVITE_CODE=...
 #
 # The following objects must also exist before rollout:
-#   - oma-infra/oma-pi-auth   (Pi auth.json)
+#   - oma-infra/oma-pi-gateway (Pi auth.json and models.json)
 #   - oma-infra/ali-shanghai (ACR image-pull credentials)
 #   - oma-infra/agentry-tls  (TLS certificate for agentry.welltop.tech)
 #
@@ -94,6 +93,9 @@ data:
   # E2B templateID = SandboxSet metadata.name in sandbox-system.
   SANDBOX_TEMPLATE: "auto-story-v2"
   E2B_REQUEST_TIMEOUT_MS: "185000"
+  E2B_API_URL: "http://sandbox-manager.sandbox-system.svc.cluster.local:8080"
+  E2B_SANDBOX_URL: "http://sandbox-manager.sandbox-system.svc.cluster.local:7788"
+  NO_PROXY: "localhost,127.0.0.1,sandbox-manager.sandbox-system.svc.cluster.local"
   # All Agents inherit valid environment keys directly from this existing
   # Secret through E2B create.envs. Apply sandbox-base-secret-rbac.yaml first.
   SANDBOX_BASE_SECRET_NAMESPACE: "sandbox-system"
@@ -119,19 +121,15 @@ spec:
       imagePullSecrets:
         - name: ali-shanghai
       volumes:
-        # Pi provider credentials (openai-codex OAuth). Copied to a writable
-        # emptyDir by initContainer so Pi's AuthStorage can refresh the token.
-        - name: pi-auth-seed
-          secret: { secretName: oma-pi-auth }
-        - name: pi-agent-dir
-          emptyDir: {}
-      initContainers:
-        - name: seed-pi-auth
-          image: OMA_SERVER_IMAGE  # replaced at deploy time
-          command: ["sh", "-c", "mkdir -p /root/.pi/agent && cp -a /opt/pi-agent-seed/. /root/.pi/agent/ && cp /seed/auth.json /root/.pi/agent/auth.json && chmod 600 /root/.pi/agent/auth.json"]
-          volumeMounts:
-            - { name: pi-auth-seed, mountPath: /seed, readOnly: true }
-            - { name: pi-agent-dir, mountPath: /root/.pi/agent }
+        - name: pi-gateway-config
+          secret:
+            secretName: oma-pi-gateway
+            defaultMode: 0400
+            items:
+              - key: auth.json
+                path: auth.json
+              - key: models.json
+                path: models.json
       containers:
         - name: server
           image: OMA_SERVER_IMAGE  # replaced at deploy time
@@ -155,8 +153,6 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_ID } }
             - name: WORKSPACE_OSS_ACCESS_KEY_SECRET
               valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_ACCESS_KEY_SECRET } }
-            - name: WORKSPACE_OSS_STS_TOKEN
-              valueFrom: { secretKeyRef: { name: oma-secrets, key: WORKSPACE_OSS_STS_TOKEN, optional: true } }
             # Deployment-scoped credentials for the managed Aliyun RDS
             # Supabase Sessions MCP. Tenant and query shape are injected and
             # fixed by the Host; the Agent cannot supply SQL or an endpoint.
@@ -166,10 +162,6 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_ACCESS_KEY_ID } }
             - name: ALIYUN_ACCESS_KEY_SECRET
               valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_ACCESS_KEY_SECRET } }
-            # Optional: set only when more than one running Supabase instance
-            # is discoverable. Omitting the Secret key keeps discovery enabled.
-            - name: ALIYUN_SUPABASE_INSTANCE
-              valueFrom: { secretKeyRef: { name: oma-secrets, key: ALIYUN_SUPABASE_INSTANCE, optional: true } }
             # E2B sandbox endpoint + key (issue #54) — never baked into the image.
             - name: E2B_DOMAIN
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
@@ -187,16 +179,46 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
             - name: RDS_MCP_APIKEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: DEFAULT_SANDBOX_VFS_TOKEN } }
+            - name: PI_CODING_AGENT_DIR
+              value: /opt/pi-agent-seed
+            # These explicit empty values match the production gateway setup.
+            # HTTP proxying uses Node's environment support; the other proxy
+            # paths must not inherit OMA_PROXY_URL from envFrom.
+            - name: OMA_PROXY_URL
+              value: ""
+            - name: HTTPS_PROXY
+              value: ""
+            - name: https_proxy
+              value: ""
+            - name: NODE_USE_ENV_PROXY
+              value: "1"
+            - name: HTTP_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  name: oma-server-config
+                  key: OMA_PROXY_URL
+            - name: http_proxy
+              value: "$(HTTP_PROXY)"
+            - name: NO_PROXY
+              value: "localhost,127.0.0.1,::1,.svc,.cluster.local,172.17.255.52"
+            - name: no_proxy
+              value: "$(NO_PROXY)"
           volumeMounts:
-            - { name: pi-agent-dir, mountPath: /root/.pi/agent }
+            - name: pi-gateway-config
+              mountPath: /opt/pi-agent-seed/auth.json
+              subPath: auth.json
+              readOnly: true
+            - name: pi-gateway-config
+              mountPath: /opt/pi-agent-seed/models.json
+              subPath: models.json
+              readOnly: true
           readinessProbe:
             httpGet: { path: /api/health, port: 3000 }
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 6
           resources:
-            requests: { cpu: "250m", memory: "512Mi" }
-            limits: { cpu: "1", memory: "1Gi" }
+            limits: { cpu: "4", memory: "8Gi" }
 ---
 apiVersion: v1
 kind: Service

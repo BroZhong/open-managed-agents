@@ -37,6 +37,7 @@ import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
 import { PiEventTranslator } from "./translator.js";
 import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
+import { withGatewayErrors } from "./gateway-error-stream.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -310,7 +311,7 @@ export class PiAgentAdapter implements Adapter {
       const queue = new EventQueue<SessionEvent>();
       const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
       const checkpointEvents: SessionEvent[] = [];
-      const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 30 : undefined);
+      const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 500 : undefined);
       if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
       let steps = input.execution?.completedModelSteps ?? 0;
       if (!Number.isInteger(steps) || steps < 0) throw new Error("completedModelSteps must be a non-negative integer");
@@ -519,6 +520,7 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
+      session.agent.streamFn = withGatewayErrors(session.agent.streamFn);
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
       const transformContext = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {

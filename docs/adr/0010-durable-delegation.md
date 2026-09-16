@@ -54,7 +54,10 @@ predefined subagent configuration exists yet; a future explicitly configured
 subagent model would require a separate Host-owned policy. Thinking overrides
 are validated and the effective configuration is recorded;
 credentials and capability objects are not persisted. The default child budget
-is 30 model requests, with a Host-configured bounded maximum. Pi retains its
+is 500 model requests, assigned by the Host for each new or resumed execution.
+The parent cannot override the budget through tool arguments. Exhaustion returns
+`budget_exhausted`; the parent decides whether to resume with a fresh budget.
+There is no automatic budget retry. The Host configuration remains bounded at 1000. Pi retains its
 normal retry and compaction behavior. Promise settlement alone is not success:
 final provider errors, Interrupt, budget exhaustion and recovery uncertainty
 produce distinct outcomes. Incomplete streamed tool arguments are recorded as

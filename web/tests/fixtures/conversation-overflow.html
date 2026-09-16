@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Conversation overflow regression</title></head>
+  <body>
+    <div id="root"></div>
+    <output id="result" role="status"></output>
+    <script type="module">
+      // Open /tests/fixtures/conversation-overflow.html with the Vite dev server.
+      // jsdom cannot measure Grid's intrinsic sizing; this uses the real browser
+      // and production ConversationView/CSS, without login or backend fixtures.
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { flushSync } from 'react-dom';
+      import { ConversationView } from '/src/components/conversation-view.tsx';
+      import '/src/index.css';
+
+      const path = 'novel74032/{production,selection,adaptation,audio,director-plan,asset-manifest,video-generation,edit-plan,review,delivery,run}.json';
+      const events = [
+        { seq: 1, type: 'user.message', data: { content: [{ type: 'text', text: 'Keep the first user message visible.' }] }, ts: '2026-09-16T09:56:16Z' },
+        { seq: 2, type: 'agent.message', data: { content: [{ type: 'text', text: `Files delivered.\n\n| Content | Path |\n|---|---|\n| Stage records | \`${path}\` |\n\n\`\`\`text\n${'long-tool-output/'.repeat(40)}\n\`\`\`` }] }, ts: '2026-09-16T12:18:19Z' },
+      ];
+      const root = createRoot(document.getElementById('root'));
+      const results = [];
+      for (const width of [360, 700, 1000]) {
+        flushSync(() => root.render(React.createElement('div', { style: { width, height: 500 } },
+          React.createElement(ConversationView, { events, sessionStatus: 'idle' }))));
+        await document.fonts.ready;
+        await new Promise(requestAnimationFrame);
+        const scroll = document.querySelector('.conversation-scroll');
+        const bubble = document.querySelector('.session-user-bubble').getBoundingClientRect();
+        const bounds = scroll.getBoundingClientRect();
+        results.push({
+          width,
+          clientWidth: scroll.clientWidth,
+          scrollWidth: scroll.scrollWidth,
+          bubbleRight: bubble.right,
+          pass: scroll.scrollWidth <= scroll.clientWidth + 1 && bubble.left >= bounds.left && bubble.right <= bounds.right,
+        });
+      }
+      document.getElementById('result').textContent = `${results.every(r => r.pass) ? 'PASS' : 'FAIL'} ${JSON.stringify(results)}`;
+    </script>
+  </body>
+</html>

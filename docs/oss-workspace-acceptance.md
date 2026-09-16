@@ -1,5 +1,10 @@
 # OSS Workspace implementation acceptance
 
+> Historical OSS migration record (2026-09-14). Image digests, templates and
+> observations below belong to that run. Session file routes and the HTTP 423
+> write gate were superseded by [ADR-0009](adr/0009-workspace-file-api.md).
+> Use [the deployment guide](../deploy/README.md) for current operations.
+
 Implementation branch: `codex/oss-workspace`, starting at `5609760`.
 Issues: #124 → #125 → #126 → #127. Production is not switched by these commits.
 
@@ -33,7 +38,7 @@ The authenticated integration test exercises the real OSS SDK against a local
 HTTP protocol fixture, including pagination, multipart upload, overwrite rename,
 Unicode download headers, media signing, cross-Tenant/Workspace denial and the
 existing per-Session 423 gate. The fixture is not evidence of live cloud IAM;
-real-cloud acceptance is recorded separately under `deploy/sandbox/oss-workspace`.
+real-cloud acceptance is recorded separately under `deploy/oss-workspace`.
 
 ## #125 — mounted execution
 
@@ -54,7 +59,7 @@ projection paths, including paths left by a partially failed copy.
 - Router mounted-execution checks: `pnpm --dir server/packages/session-router exec vitest run test/session-router-sandbox.test.ts` — 27 passed.
 - Adapter tool/Skill boundary checks — 25 passed.
 - Sandbox and Router typechecks — passed.
-- Local `linux/amd64` image build and ordinary-user smoke — passed; see `deploy/sandbox/code-interpreter-vfscli/local-build-verification.json`.
+- Local `linux/amd64` image build and ordinary-user smoke — passed; the retired template’s local build artifact has been removed.
 
 Real isolated cloud checks confirmed Host/Sandbox Unicode, empty and binary file
 visibility, concurrent writes, Workspace isolation, rebuild persistence, and
@@ -129,7 +134,7 @@ production Supabase access, or interactive browser rendering. Web rendering and
 Supabase behavior are covered by the package regressions above.
 
 Detailed live application results and >1h credential-refresh evidence are in
-`deploy/sandbox/oss-workspace/verification.json`. The same mounted Sandbox
+`docs/verification/oss-workspace/verification.json`. The same mounted Sandbox
 completed its initial write at **2026-09-14 09:44:46.011 UTC** and its final write
 at **10:49:47.561 UTC**: an actual interval of **3901.550 seconds (65 minutes
 1.55 seconds)**. Post-expiry mounted write/read, Unicode rename/delete and

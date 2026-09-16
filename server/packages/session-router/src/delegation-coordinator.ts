@@ -63,10 +63,8 @@ export class DelegationCoordinator {
         const parentModel = run.effectiveConfig?.model;
         if (typeof parentModel !== "string" || !parentModel.trim()) throw new Error("Parent Turn model has not been resolved");
         if (run.session.agent.sandbox?.enabled === false) throw new Error("Delegation requires a managed Sandbox");
-        const maxSteps = input.maxSteps ?? Math.min(30, this.deps.maxSteps);
-        if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > this.deps.maxSteps) {
-          throw new Error(`max_steps must be between 1 and ${this.deps.maxSteps}`);
-        }
+        if ("maxSteps" in input || "max_steps" in input) throw new Error("Delegated budget overrides are not supported; the Host assigns the execution budget");
+        const maxSteps = this.deps.maxSteps;
         const execution = await this.deps.store.accept({
           ...this.caller(run, context.toolUseId),
           prompt: input.prompt,

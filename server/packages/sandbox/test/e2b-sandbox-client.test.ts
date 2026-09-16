@@ -192,7 +192,7 @@ function makeClient(
   const client = new E2BSandboxClient({
     domain: "sandbox.example.com",
     apiKey: "gw-key",
-    defaultTemplate: "code-interpreter",
+    defaultTemplate: "configured-template",
     createSandbox,
     verifyWorkspaceProbe: opts?.verifyWorkspaceProbe ?? (async () => {}),
   });
@@ -227,7 +227,7 @@ describe("E2BSandboxClient", () => {
     ).toThrow(/apiKey/);
   });
 
-  it("defaults to auto-story while preserving explicit Agent template selection", async () => {
+  it("defaults to auto-story-v2 while preserving explicit Agent template selection", async () => {
     const templates: string[] = [];
     const client = new E2BSandboxClient({
       domain: "sandbox.example.com",
@@ -241,9 +241,9 @@ describe("E2BSandboxClient", () => {
 
     await client.create();
     await client.create({ image: "legacy/container:latest" });
-    await client.create({ image: "code-interpreter" });
+    await client.create({ image: "agent-specific-template" });
 
-    expect(templates).toEqual(["auto-story", "auto-story", "code-interpreter"]);
+    expect(templates).toEqual(["auto-story-v2", "auto-story-v2", "agent-specific-template"]);
   });
 
   it("create passes templateID + apiKey + domain and returns the sandboxId", async () => {
@@ -255,7 +255,7 @@ describe("E2BSandboxClient", () => {
     });
     expect(handle.id).toBe("sbx-1");
     expect(factoryCalls).toHaveLength(1);
-    expect(factoryCalls[0].template).toBe("code-interpreter");
+    expect(factoryCalls[0].template).toBe("configured-template");
     expect(factoryCalls[0].opts.apiKey).toBe("gw-key");
     expect(factoryCalls[0].opts.domain).toBe("sandbox.example.com");
     expect(factoryCalls[0].opts.envs).toEqual({ FOO: "bar" });
@@ -274,7 +274,7 @@ describe("E2BSandboxClient", () => {
     // valid E2B template name — the client must fall back to defaultTemplate.
     const { client, factoryCalls } = makeClient();
     await client.create({ image: "open-managed-agents/sandbox:latest" });
-    expect(factoryCalls[0].template).toBe("code-interpreter");
+    expect(factoryCalls[0].template).toBe("configured-template");
   });
 
   it("create leaves mount provisioning to CSI and gives ALB cold starts enough request time", async () => {
@@ -744,24 +744,24 @@ describe("parseFindOutput", () => {
 
 describe("resolveTemplate", () => {
   it("uses the default when no image is given", () => {
-    expect(resolveTemplate(undefined, "code-interpreter")).toBe(
-      "code-interpreter",
+    expect(resolveTemplate(undefined, "configured-template")).toBe(
+      "configured-template",
     );
   });
 
   it("honours a bare template name", () => {
-    expect(resolveTemplate("my-set", "code-interpreter")).toBe("my-set");
+    expect(resolveTemplate("my-set", "configured-template")).toBe("my-set");
   });
 
   it("falls back to default for a container-image ref (registry path or tag)", () => {
     expect(
-      resolveTemplate("open-managed-agents/sandbox:latest", "code-interpreter"),
-    ).toBe("code-interpreter");
-    expect(resolveTemplate("nginx:1.25", "code-interpreter")).toBe(
-      "code-interpreter",
+      resolveTemplate("open-managed-agents/sandbox:latest", "configured-template"),
+    ).toBe("configured-template");
+    expect(resolveTemplate("nginx:1.25", "configured-template")).toBe(
+      "configured-template",
     );
-    expect(resolveTemplate("repo/image", "code-interpreter")).toBe(
-      "code-interpreter",
+    expect(resolveTemplate("repo/image", "configured-template")).toBe(
+      "configured-template",
     );
   });
 });
