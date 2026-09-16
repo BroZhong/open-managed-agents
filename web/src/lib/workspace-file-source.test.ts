@@ -42,3 +42,17 @@ describe("Workspace file list responses", () => {
     await expect(source.list()).rejects.toThrow("Workspace storage is unavailable");
   });
 });
+
+it("persists an empty folder and lists its marker as a directory", async () => {
+  const fetchMock = vi.fn(async (_url, init?: RequestInit) => new Response(JSON.stringify(init?.method === "PUT" ? { path: "assets/.oma-directory" } : {
+    data: [{ path: "assets/.oma-directory", size: 0, updated_at: null }, { path: "notes.md", size: 2, updated_at: null }],
+  })));
+  vi.stubGlobal("fetch", fetchMock);
+  const source = createWorkspaceFileSource("workspace-a");
+  await source.createDirectory!("assets");
+  expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ path: "assets/.oma-directory", content: "" });
+  expect(await source.list()).toEqual([
+    { path: "assets", isDir: true, size: 0, updatedAt: undefined },
+    { path: "notes.md", isDir: false, size: 2, updatedAt: undefined },
+  ]);
+});

@@ -10,7 +10,7 @@ export interface TreeNode {
 }
 
 /** Build a nested tree from a flat list of workspace-relative file paths. */
-export function buildTree(files: WorkspaceFile[]): TreeNode {
+export function buildTree(files: (WorkspaceFile & { isDir?: boolean })[]): TreeNode {
   const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
   for (const file of files) {
     const segments = file.path.split("/").filter(Boolean);
@@ -18,9 +18,10 @@ export function buildTree(files: WorkspaceFile[]): TreeNode {
     segments.forEach((seg, i) => {
       const isLeaf = i === segments.length - 1;
       const path = segments.slice(0, i + 1).join("/");
-      let child = node.children.find((c) => c.name === seg && c.isDir !== isLeaf);
+      const isDir = !isLeaf || !!file.isDir;
+      let child = node.children.find((c) => c.name === seg && c.isDir === isDir);
       if (!child) {
-        child = { name: seg, path, isDir: !isLeaf, children: [] };
+        child = { name: seg, path, isDir, children: [] };
         node.children.push(child);
       }
       if (isLeaf) child.size = file.size;

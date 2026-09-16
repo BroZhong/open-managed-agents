@@ -439,16 +439,17 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/agents/{id}/skills",
     operationId: "equipAgentSkill",
     summary: "Equip a Library Skill by creating a Skill Fork",
-    description: "Copies the Library Skill's current metadata and files into an independent Agent Skill. Re-equipping the same Library Skill returns the existing fork with 200; it does not refresh that fork from the Library.",
+    description: "Copies the Library Skill's current metadata and files into an independent Agent Skill. Re-equipping the same Library Skill returns the existing fork with 200; it does not refresh that fork from the Library. A name collision returns 409. Set overwrite=true after confirmation to replace the existing Agent Skill, including its complete file tree.",
     tags: ["Agents/Skills"],
     request: {
       params: idParams,
-      body: jsonBody(z.object({ skillId: z.string() })),
+      body: jsonBody(z.object({ skillId: z.string(), overwrite: z.boolean().optional() })),
     },
     responses: {
       200: jsonResponse(SkillSchema, "Existing Skill Fork returned"),
       201: jsonResponse(SkillSchema, "Skill Fork created"),
       400: errorResponse("skillId is required"),
+      409: errorResponse("Skill name conflict; confirm overwrite before retrying"),
       404: errorResponse("Agent or Library Skill not found"),
     },
   }),
@@ -478,7 +479,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "uploadSkills",
     summary: "Upload one or more Library Skills",
     description:
-      "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths.",
+      "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths. Names are unique per owner. Conflicts return 409 before any writes; retry with overwrite=true after confirmation to replace the entire folder, retaining the Skill ID. For repeated names within one upload the last folder wins after confirmation.",
     tags: ["Skills"],
     request: {
       body: {
@@ -486,6 +487,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         content: {
           "multipart/form-data": {
             schema: z.object({
+              overwrite: z.enum(["true", "false"]).optional(),
               paths: z.string().openapi({ example: '["my-skill/SKILL.md"]' }),
               files: uploadedFilesSchema,
             }),
@@ -499,6 +501,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         "Library Skills created",
       ),
       400: errorResponse("Invalid multipart Skill tree"),
+      409: errorResponse("Skill name conflict; confirm overwrite before retrying"),
     },
   }),
   protectedRoute({
@@ -542,6 +545,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       200: jsonResponse(SkillSchema, "Skill updated"),
       400: errorResponse("Invalid Skill metadata"),
+      409: errorResponse("Skill name already exists for this owner"),
       404: errorResponse("Skill not found"),
     },
   }),
@@ -593,6 +597,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Skills/Files"],
     request: { params: idParams, body: jsonBody(SkillFileContentSchema) },
     responses: {
+      409: errorResponse("Skill name already exists for this owner"),
       200: jsonResponse(SkillFileContentSchema, "Skill file stored"),
       400: errorResponse("Invalid path or content"),
       404: errorResponse("Skill not found"),
@@ -709,6 +714,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       201: jsonResponse(WorkspaceSchema, "Workspace created or returned"),
       400: errorResponse("Invalid Workspace metadata"),
+      409: errorResponse("Workspace has been deleted"),
     },
   }),
   protectedRoute({
@@ -754,6 +760,40 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   }),
 
   protectedRoute({
+    method: "delete",
+    path: "/v1/workspaces/{id}",
+    operationId: "deleteWorkspace",
+    summary: "Soft-delete a Workspace",
+    description: "Marks the Workspace deleted. It and its Sessions disappear from lists; files, history, and running execution are retained.",
+    tags: ["Workspaces"],
+    request: { params: idParams },
+    responses: {
+      200: jsonResponse(DeletedSchema, "Workspace hidden"),
+      404: errorResponse("Workspace not found"),
+    },
+  }),
+  protectedRoute({
+    method: "post",
+    path: "/v1/sessions/{id}",
+    operationId: "updateSession",
+    summary: "Rename or soft-delete a Session",
+    description: "A title renames the Session. deleted=true hides it from lists without terminating execution or deleting any history or files. The DELETE endpoint retains its separate execution-termination semantics.",
+    tags: ["Sessions"],
+    request: {
+      params: idParams,
+      body: jsonBody(z.union([
+        z.object({ title: z.string().trim().min(1).max(500) }),
+        z.object({ deleted: z.literal(true) }),
+      ])),
+    },
+    responses: {
+      200: jsonResponse(z.union([SessionSchema, DeletedSchema]), "Session renamed or hidden"),
+      400: errorResponse("Invalid Session update"),
+      404: errorResponse("Session not found"),
+    },
+  }),
+
+  protectedRoute({
     method: "post",
     path: "/v1/sessions",
     operationId: "createSession",
@@ -789,6 +829,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       201: jsonResponse(SessionSchema, "Session created"),
       400: errorResponse("Invalid Session input"),
+      409: errorResponse("Workspace has been deleted"),
       404: errorResponse("Agent not found"),
     },
   }),

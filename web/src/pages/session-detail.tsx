@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -89,7 +89,7 @@ function SessionDetail({ id }: { id: string }) {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="session-header">
+      <div className="session-header session-detail-header">
         <Button
           variant="ghost"
           size="icon"
@@ -100,14 +100,14 @@ function SessionDetail({ id }: { id: string }) {
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm text-[var(--color-fg-muted)]">
-            {truncatedId}
+        <div className="session-heading">
+          <span className="session-title" title={session?.title || id}>
+            {session?.title || truncatedId}
           </span>
           {session?.agent && (
             <>
               <span className="text-[var(--color-border)]">|</span>
-              <span className="text-sm font-medium text-[var(--color-fg)]">
+              <span className="session-agent-name">
                 {session.agent.name}
               </span>
             </>
@@ -121,7 +121,7 @@ function SessionDetail({ id }: { id: string }) {
           )}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <TokenUsageMetrics usage={tokenUsage} />
+          <details className="session-token-details"><summary>Usage <ChevronDown size={13} /></summary><TokenUsageMetrics usage={tokenUsage} /></details>
 
         </div>
       </div>
@@ -144,7 +144,9 @@ function SessionDetail({ id }: { id: string }) {
                 queuedInput={queuedInput}
                 hasMoreQueuedInput={hasMoreQueuedInput}
                 skills={equippedSkills}
-                running={status === "running"}
+                disabled={session?.status === "terminated"}
+                model={session?.agent?.model}
+                running={effectiveTurnStatus === "running"}
                 onInterrupt={handleInterrupt}
               />
             </div>

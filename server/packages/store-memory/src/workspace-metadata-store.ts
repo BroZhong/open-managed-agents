@@ -42,10 +42,17 @@ export class InMemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
     return this.workspaces.get(this.key(tenantId, id)) ?? null;
   }
 
-  async list(tenantId: string): Promise<Workspace[]> {
+  async list(tenantId: string, includeDeleted = false): Promise<Workspace[]> {
     return [...this.workspaces.values()]
-      .filter((w) => w.tenantId === tenantId)
+      .filter((w) => w.tenantId === tenantId && (includeDeleted || !w.deletedAt))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async softDelete(tenantId: string, id: string): Promise<Workspace | null> {
+    const workspace = this.workspaces.get(this.key(tenantId, id));
+    if (!workspace) return null;
+    workspace.deletedAt ??= new Date();
+    return workspace;
   }
 
   async update(

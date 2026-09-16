@@ -29,6 +29,7 @@ export function SkillLibrary() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function submit(files: DroppedFile[]) {
+    if (upload.isPending) return;
     setError(null);
     if (files.length === 0) {
       setError("Drop a folder containing a SKILL.md.");
@@ -39,7 +40,7 @@ export function SkillLibrary() {
       setError(clientError);
       return;
     }
-    upload.mutate(files, { onError: (e) => setError((e as Error).message) });
+    upload.mutate(files, { onSuccess: () => setExpanded(null), onError: (e) => setError((e as Error).message) });
   }
 
   return (
@@ -76,6 +77,7 @@ export function SkillLibrary() {
         <input
           ref={inputRef}
           type="file"
+          disabled={upload.isPending}
           // @ts-expect-error non-standard directory-picker attributes
           webkitdirectory=""
           directory=""

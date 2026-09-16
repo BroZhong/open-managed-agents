@@ -3,6 +3,16 @@ import { QueryClient } from "@tanstack/react-query";
 export const BASE_URL =
   import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 const STORAGE_KEY = "oma_api_key";
 
 export async function apiFetch<T = unknown>(
@@ -41,7 +51,7 @@ export async function apiFetch<T = unknown>(
       (body as { message?: string }).message ??
       (body as { error?: string }).error ??
       `Request failed with status ${response.status}`;
-    throw new Error(message);
+    throw new ApiError(message, response.status, (body as { code?: string }).code);
   }
 
   const text = await response.text();
@@ -76,7 +86,7 @@ export async function apiUpload<T = unknown>(path: string, form: FormData): Prom
       (body as { message?: string }).message ??
       (body as { error?: string }).error ??
       `Upload failed with status ${response.status}`;
-    throw new Error(message);
+    throw new ApiError(message, response.status, (body as { code?: string }).code);
   }
   const text = await response.text();
   if (!text) return undefined as T;

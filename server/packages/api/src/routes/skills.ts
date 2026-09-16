@@ -1,3 +1,5 @@
+import { SkillNameConflictError } from "@oma-server/store";
+import { replaceSkillFiles } from "../skills/replace-files.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { SkillStore, SkillArtifactStore } from "@oma-server/store";
@@ -75,17 +77,37 @@ export function skillRoutes(
     const detected = detectSkills(dropped);
     if (!detected.ok) return c.json({ error: detected.error }, 400);
 
-    const created = [];
+    const existing = await skillStore.listByOwner(tenant.tenantId, "library", tenant.tenantId);
+    const byName = new Map(existing.map((skill) => [skill.name, skill]));
+    const incoming = new Map<string, (typeof detected.skills)[number]>();
+    const conflicts = new Set<string>();
     for (const skill of detected.skills) {
-      const row = await skillStore.create({
+      if (byName.has(skill.name) || incoming.has(skill.name)) conflicts.add(skill.name);
+      incoming.set(skill.name, skill);
+    }
+    if (conflicts.size && form.get("overwrite") !== "true") {
+      return c.json({
+        error: `Skills already exist: ${[...conflicts].join(", ")}. Replace them with the uploaded files?`,
+        code: "skill_name_conflict",
+      }, 409);
+    }
+
+    const created = [];
+    for (const skill of incoming.values()) {
+      const previous = byName.get(skill.name);
+      const row = previous ?? await skillStore.create({
         tenantId: tenant.tenantId,
         name: skill.name,
         description: skill.description,
       });
-      for (const file of skill.files) {
-        await skillArtifacts.put(tenant.tenantId, row.id, file.path, file.content);
+      try {
+        await replaceSkillFiles(skillArtifacts, tenant.tenantId, row.id,
+          skill.files.map((file) => ({ path: file.path, body: file.content })));
+      } catch (error) {
+        if (!previous) await skillStore.delete(row.id);
+        throw error;
       }
-      created.push(row);
+      created.push(await skillStore.update(row.id, { description: skill.description }));
     }
 
     return c.json({ data: created }, 201);
@@ -193,14 +215,27 @@ export function skillRoutes(
     if (typeof body.content !== "string") {
       return c.json({ error: "content is required" }, 400);
     }
-    await skillArtifacts.put(skill.tenantId, skill.id, path, body.content);
     // Keep summaries in sync with the edited entry point. A missing name keeps
     // the Skill's current name, matching upload parsing without renaming it to
     // a generic fallback. Other files only advance updatedAt.
-    const metadata = path === "SKILL.md"
+    const metadata: { name?: string; description?: string } = path === "SKILL.md"
       ? parseSkillMetadata(body.content, skill.name)
       : {};
+    if (metadata.name !== undefined) {
+      const siblings = await skillStore.listByOwner(skill.tenantId, skill.ownerType, skill.ownerId);
+      if (siblings.some((other) => other.id !== skill.id && other.name === metadata.name)) {
+        throw new SkillNameConflictError(metadata.name);
+      }
+    }
+    // Reserve the name before writing so concurrent renames cannot create duplicates.
+    const previousMetadata = { name: skill.name, description: skill.description };
     await skillStore.update(skill.id, metadata);
+    try {
+      await skillArtifacts.put(skill.tenantId, skill.id, path, body.content);
+    } catch (error) {
+      await skillStore.update(skill.id, previousMetadata);
+      throw error;
+    }
     return c.json({ path, content: body.content });
   });
 

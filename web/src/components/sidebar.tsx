@@ -1,3 +1,4 @@
+import { SidebarItemActions } from "@/components/sidebar-item-actions"
 import { useState, useEffect, useRef, createContext, useContext } from "react"
 import { useLocation, useParams, useNavigate, Link } from "react-router"
 import {
@@ -29,12 +30,14 @@ import {
   useAgentSessions,
   useCreateSession,
   useLoopSessions,
+  useUpdateSession,
   type Session,
 } from "@/lib/hooks/use-sessions"
 import {
   useWorkspaces,
   useCreateWorkspace,
   useUpdateWorkspace,
+  useDeleteWorkspace,
   type Workspace,
 } from "@/lib/hooks/use-workspaces"
 import { StatusBadge } from "@/components/status-badge"
@@ -257,22 +260,25 @@ export function Sidebar() {
 /** A session row: `title ?? id` + status badge, linking to the chat. */
 function SessionLink({ session }: { session: Session }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const update = useUpdateSession()
   const active = location.pathname === `/sessions/${session.id}`
   const label = session.title ?? session.id
   return (
-    <Link
-      to={`/sessions/${session.id}`}
-      state={{ agentId: session.agentId }}
-      className={cn(
-        "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
-        active
-          ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
-          : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]",
-      )}
-    >
-      <span className={cn("truncate", session.title ? "" : "font-mono")}>{label}</span>
-      <StatusBadge status={session.status} />
-    </Link>
+    <div className={cn("flex items-center rounded-lg text-xs transition-colors", active
+      ? "bg-[var(--color-bg-muted)] text-[var(--color-fg)]"
+      : "text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]")}>
+      <Link to={`/sessions/${session.id}`} state={{ agentId: session.agentId }} className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2.5 py-1.5">
+        <span className={cn("truncate", session.title ? "" : "font-mono")}>{label}</span>
+        <StatusBadge status={session.status} />
+      </Link>
+      <SidebarItemActions kind="Session" label={label}
+        onRename={(title) => update.mutateAsync({ id: session.id, title })}
+        onDelete={async () => {
+          await update.mutateAsync({ id: session.id, deleted: true })
+          if (active) navigate(`/agents/${session.agentId}`)
+        }} />
+    </div>
   )
 }
 
@@ -683,18 +689,11 @@ function LoopRow({ loop }: { loop: Loop }) {
 
 /**
  * A single named-Workspace row in the sidebar: an expand toggle + folder name,
- * a hover `…` menu (Rename / New chat here), and — when expanded — the
- * Workspace's Sessions nested beneath it. Rename edits in place; "New chat
+ * an `…` menu (Rename / New chat here / Delete), and — when expanded — the
+ * Workspace's Sessions nested beneath it. Delete hides the Workspace; "New chat
  * here" creates a Session bound to this Workspace and navigates into it.
  */
-function WorkspaceRow({
-  workspace,
-  agentId,
-  sessions,
-  open,
-  onToggle,
-  onExpand,
-}: {
+function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }: {
   workspace: Workspace
   agentId: string
   sessions: Session[]
@@ -703,145 +702,36 @@ function WorkspaceRow({
   onExpand: () => void
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const createSession = useCreateSession()
   const updateWorkspace = useUpdateWorkspace()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [renaming, setRenaming] = useState(false)
-  const [name, setName] = useState(workspace.name ?? "")
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // Close the `…` menu on any outside click.
-  useEffect(() => {
-    if (!menuOpen) return
-    function onDown(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
-  }, [menuOpen])
+  const deleteWorkspace = useDeleteWorkspace()
 
   function newChatHere() {
-    setMenuOpen(false)
     onExpand()
-    createSession.mutate(
-      { agentId, workspaceId: workspace.id },
-      {
-        onSuccess: (session) =>
-          navigate(`/sessions/${session.id}`, {
-            state: { agentId: session.agentId },
-          }),
-        onError: (err) => toast.error(err.message || "Failed to start chat"),
-      },
-    )
+    createSession.mutate({ agentId, workspaceId: workspace.id }, {
+      onSuccess: (session) => navigate(`/sessions/${session.id}`, { state: { agentId: session.agentId } }),
+      onError: (err) => toast.error(err.message || "Failed to start chat"),
+    })
   }
 
-  function submitRename() {
-    const next = name.trim()
-    if (!next || next === workspace.name) {
-      setRenaming(false)
-      setName(workspace.name ?? "")
-      return
-    }
-    updateWorkspace.mutate(
-      { id: workspace.id, name: next },
-      {
-        onSuccess: () => setRenaming(false),
-        onError: (err) => {
-          toast.error(err.message || "Failed to rename workspace")
-          setName(workspace.name ?? "")
-          setRenaming(false)
-        },
-      },
-    )
-  }
-
-  if (renaming) {
-    return (
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          submitRename()
+  return <div>
+    <div className="flex items-center rounded-lg text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]">
+      <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5">
+        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+        <FolderClosed className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{workspace.name}</span>
+      </button>
+      <SidebarItemActions kind="Workspace" label={workspace.name ?? workspace.id}
+        onRename={(name) => updateWorkspace.mutateAsync({ id: workspace.id, name })}
+        onDelete={async () => {
+          await deleteWorkspace.mutateAsync(workspace.id)
+          if (sessions.some((session) => location.pathname === `/sessions/${session.id}`)) navigate(`/agents/${agentId}`)
         }}
-        className="px-2.5 py-1"
-      >
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={submitRename}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              setName(workspace.name ?? "")
-              setRenaming(false)
-            }
-          }}
-          disabled={updateWorkspace.isPending}
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-xs text-[var(--color-fg)] outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
-        />
-      </form>
-    )
-  }
-
-  return (
-    <div>
-      <div className="group flex items-center rounded-lg text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5"
-        >
-          {open ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-          )}
-          <FolderClosed className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{workspace.name}</span>
-        </button>
-        <div ref={menuRef} className="relative">
-          <button
-            type="button"
-            aria-label="Workspace actions"
-            onClick={() => setMenuOpen((o) => !o)}
-            className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 opacity-0 transition-opacity hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] group-hover:opacity-100 data-[open=true]:opacity-100"
-            data-open={menuOpen}
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-6 z-30 w-36 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] py-1 shadow-md">
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false)
-                  setName(workspace.name ?? "")
-                  setRenaming(true)
-                }}
-                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)]"
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                onClick={newChatHere}
-                disabled={createSession.isPending}
-                className="flex w-full items-center px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
-              >
-                {createSession.isPending ? "Starting…" : "New chat here"}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-      {open && (
-        <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
-          {sessions.map((s) => (
-            <SessionLink key={s.id} session={s} />
-          ))}
-        </div>
-      )}
+        onNewSession={createSession.isPending ? undefined : newChatHere} />
     </div>
-  )
+    {open && <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
+      {sessions.map((session) => <SessionLink key={session.id} session={session} />)}
+    </div>}
+  </div>
 }

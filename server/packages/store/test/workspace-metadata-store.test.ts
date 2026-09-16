@@ -32,6 +32,26 @@ describe("PgWorkspaceMetadataStore", () => {
     store = new PgWorkspaceMetadataStore(harness.pool);
   });
 
+  it("persists soft deletion while retaining records and filtering before Session pagination", async () => {
+    const hidden = await store.create({ tenantId: "tenant1", name: "Hidden" });
+    const visible = await store.create({ tenantId: "tenant1", name: "Visible" });
+    const sessions = new PgSessionStore(harness.pool);
+    const removed = await sessions.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: visible.id });
+    await sessions.updateStatus(removed.id, "running");
+    await sessions.softDelete(removed.id);
+    await sessions.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: hidden.id });
+    const kept = await sessions.create({ tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: visible.id });
+    await store.softDelete("tenant1", hidden.id);
+    expect((await store.list("tenant1")).map((w) => w.id)).toEqual([visible.id]);
+    expect(await store.list("tenant1", true)).toHaveLength(2);
+    expect(await store.getById("tenant1", hidden.id)).toMatchObject({ deletedAt: expect.any(Date) });
+    expect(await sessions.getById(removed.id)).toMatchObject({ deletedAt: expect.any(Date), status: "running" });
+    const result = await sessions.list("tenant1", { limit: 1, excludedWorkspaceIds: [hidden.id] });
+    expect(result.data.map((s) => s.id)).toEqual([kept.id]);
+    expect(result.hasMore).toBe(false);
+    expect(await store.softDelete("other", hidden.id)).toBeNull();
+  });
+
   it("auto-creates a Workspace with ws_ prefix when no id is supplied", async () => {
     const ws = await store.create({ tenantId: "tenant1" });
     expect(ws.id).toMatch(/^ws_/);

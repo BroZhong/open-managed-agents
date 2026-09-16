@@ -76,6 +76,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       name: workspaceNameInput,
     });
 
+    if (workspace.deletedAt) return c.json({ error: "Workspace has been deleted" }, 409);
     const session = await deps.sessionStore.create({
       tenantId: tenant.tenantId,
       agentId: agent.id,
@@ -110,7 +111,9 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       }
     }
 
+    const workspaces = await deps.workspaceStore.list(tenant.tenantId, true);
     const result = await deps.sessionStore.list(tenant.tenantId, {
+      excludedWorkspaceIds: workspaces.filter((w) => w.deletedAt).map((w) => w.id),
       limit,
       cursor,
       agentId,
@@ -153,11 +156,29 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     const tenant = c.get("tenant");
 
     const session = await deps.sessionStore.getById(id);
-    if (!session || session.tenantId !== tenant.tenantId) {
+    if (!session || session.tenantId !== tenant.tenantId || session.deletedAt) {
       return c.json({ error: "Session not found" }, 404);
     }
 
+    const workspace = await deps.workspaceStore.getById(tenant.tenantId, session.workspaceId);
+    if (workspace?.deletedAt) return c.json({ error: "Session not found" }, 404);
     return c.json(publicSession(session));
+  });
+
+  registerContractRoute(router, getOpenApiRoute("updateSession"), async (c) => {
+    const id = c.req.param("id")!;
+    const tenant = c.get("tenant");
+    const existing = await deps.sessionStore.getById(id);
+    if (!existing || existing.tenantId !== tenant.tenantId || existing.deletedAt) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    const body = await c.req.json();
+    if (body.deleted === true) {
+      await deps.sessionStore.softDelete(id);
+      return c.json({ type: "session_deleted", id });
+    }
+    const session = await deps.sessionStore.setTitle(id, body.title.trim());
+    return c.json(publicSession(session!));
   });
 
   // DELETE /v1/sessions/:id — Terminate session

@@ -141,3 +141,5 @@ export type {
   PoolClient,
   PgConnectionConfig,
 } from "./postgres/index.js";
+
+export { SkillNameConflictError } from "./errors.js";

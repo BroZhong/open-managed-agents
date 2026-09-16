@@ -60,6 +60,19 @@ describe("PgSkillStore (ADR-0004 owner columns)", () => {
     expect((await store.list("t1")).data[0].createdAt).toBeNull();
   });
 
+  it("enforces name uniqueness per owner on create and rename", async () => {
+    const first = await store.create({ tenantId: "t1", name: "same", description: "" });
+    await expect(store.create({ tenantId: "t1", name: "same", description: "" })).rejects.toThrow();
+    const other = await store.create({ tenantId: "t1", name: "other", description: "" });
+    await expect(store.update(other.id, { name: "same" })).rejects.toThrow();
+    await store.create({ tenantId: "t2", name: "same", description: "" });
+    const fork = await store.create({ tenantId: "t1", name: "same", description: "", ownerType: "agent", ownerId: "a", sourceSkillId: first.id });
+    await store.create({ tenantId: "t1", name: "same", description: "", ownerType: "agent", ownerId: "b" });
+    await expect(store.create({ tenantId: "t1", name: "same", description: "", ownerType: "agent", ownerId: "a" })).rejects.toThrow();
+    await store.update(fork.id, { sourceSkillId: other.id });
+    expect((await store.getById(fork.id))?.sourceSkillId).toBe(other.id);
+  });
+
   it("defaults create() to a Library Skill owned by the tenant", async () => {
     const skill = await store.create({ tenantId: "t1", name: "S", description: "d" });
     expect(skill.id).toMatch(/^skill_/);

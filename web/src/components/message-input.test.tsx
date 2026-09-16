@@ -276,3 +276,22 @@ it("preserves Shift+Enter and IME composition behavior", () => {
   expect(onSend).not.toHaveBeenCalled();
   expect(input).toHaveProperty("value", "draft");
 });
+
+it("queues a typed follow-up with the pointer while keeping Stop available", async () => {
+  const send = vi.fn();
+  const stop = vi.fn();
+  render(<MessageInput onSend={send} onInterrupt={stop} running />);
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Next step" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Queue message" })); });
+  expect(send).toHaveBeenCalledWith("Next step");
+  expect(stop).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Stop generating" })).toHaveProperty("disabled", false);
+});
+
+it("opens Skills from the toolbar without overwriting the current draft", () => {
+  render(<MessageInput onSend={vi.fn()} skills={skills} />);
+  fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Outline the opening" } });
+  fireEvent.click(screen.getByRole("button", { name: "Choose a Skill" }));
+  fireEvent.click(screen.getByRole("option", { name: /storyboard/ }));
+  expect(screen.getByLabelText("Message")).toHaveProperty("value", "/skill:storyboard Outline the opening");
+});

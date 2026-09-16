@@ -1,3 +1,4 @@
+import { SkillNameConflictError } from "@oma-server/store";
 import type {
   Skill,
   SkillOwnerType,
@@ -16,6 +17,7 @@ export class InMemorySkillStore implements SkillStore {
     const now = new Date();
     const ownerType: SkillOwnerType = input.ownerType ?? "library";
     const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
+    this.assertUnique(input.tenantId, ownerType, ownerId, input.name);
     const skill: Skill = {
       id: `skill_${this.nextId++}`,
       tenantId: input.tenantId,
@@ -64,10 +66,20 @@ export class InMemorySkillStore implements SkillStore {
   async update(id: string, input: SkillStoreUpdateInput): Promise<Skill | null> {
     const skill = this.skills.find((s) => s.id === id);
     if (!skill) return null;
-    if (input.name !== undefined) skill.name = input.name;
+    if (input.name !== undefined) {
+      this.assertUnique(skill.tenantId, skill.ownerType, skill.ownerId, input.name, id);
+      skill.name = input.name;
+    }
+    if (input.sourceSkillId !== undefined) skill.sourceSkillId = input.sourceSkillId;
     if (input.description !== undefined) skill.description = input.description;
     skill.updatedAt = new Date();
     return skill;
+  }
+
+  private assertUnique(tenantId: string, ownerType: SkillOwnerType, ownerId: string, name: string, exceptId?: string) {
+    if (this.skills.some((s) => s.id !== exceptId && s.tenantId === tenantId && s.ownerType === ownerType && s.ownerId === ownerId && s.name === name)) {
+      throw new SkillNameConflictError(name);
+    }
   }
 
   async delete(id: string): Promise<boolean> {

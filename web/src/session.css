@@ -1,0 +1,71 @@
+/* Session rhythm and process disclosures follow OpenGrove's chat surface. */
+.session-thread,
+.session-composer-column,
+.session-queued-input { width: min(100%, 760px); margin-inline: auto; }
+.session-thread { display: grid; gap: 36px; padding-block: 8px 20px; }
+.session-turn { display: grid; gap: 16px; min-width: 0; }
+.session-user-bubble { max-width: 82%; border-radius: 16px; padding: 10px 14px; background: var(--color-bg-muted); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.session-answer { padding-block: 0; line-height: 1.75; }
+.session-answer .prose { font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
+.session-welcome { display: grid; justify-items: center; gap: 10px; padding: clamp(48px, 14vh, 150px) 12px; text-align: center; }
+.session-welcome h2 { font-size: clamp(20px, 2vw, 26px); font-weight: 550; letter-spacing: -.5px; }
+.session-welcome p { font-size: 13px; color: var(--color-fg-subtle); }
+.session-disclosure { min-width: 0; color: var(--color-fg-muted); font-size: 12px; }
+.session-disclosure-toggle { display: flex; align-items: center; gap: 8px; max-width: 100%; min-height: 32px; border-radius: 6px; padding: 5px 4px; text-align: left; cursor: pointer; }
+.session-disclosure-toggle:hover { color: var(--color-fg); background: var(--color-bg-muted); }
+.session-disclosure-toggle:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.session-disclosure-toggle > svg { flex-shrink: 0; transition: transform 160ms ease; }
+.session-disclosure-summary { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.session-disclosure-summary > svg { flex-shrink: 0; }
+.session-process > .session-disclosure-content { margin: 8px 0 4px 10px; padding-left: 14px; border-left: 1px solid var(--color-border); }
+.session-disclosure-content[hidden] { display: none; }
+.session-tool .session-disclosure-toggle { width: 100%; }
+.session-tool .session-disclosure-summary { flex: 1; }
+.session-tool-label { flex-shrink: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-tool-detail { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--color-fg-subtle); }
+.session-tool-status { margin-left: auto; flex-shrink: 0; }
+.session-tool-error .session-tool-status { color: #c64242; }
+.session-tool-payload { margin: 4px 0 12px; padding: 12px; border-radius: 8px; background: var(--color-bg-muted); }
+.session-tool-payload > p { overflow-wrap: anywhere; font-size: 11px; }
+.session-tool-payload h4 { margin: 10px 0 4px; font-size: 11px; font-weight: 500; }
+.session-tool-payload pre { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.65; }
+.session-reasoning-text { padding: 6px 4px 12px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.session-working { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-fg-muted); }
+.session-composer-column .message-composer { padding: 8px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-bg-muted); box-shadow: 0 2px 6px rgb(0 0 0 / 2%); }
+.session-composer-column .message-composer:focus-within { border-color: #bdc2c9; box-shadow: 0 2px 6px rgb(0 0 0 / 3%); }
+.session-composer-column .message-composer textarea { min-height: 52px; max-height: 200px; }
+.session-composer-toolbar { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 2px; }
+.session-skill-picker, .session-queue-send { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 7px; font-size: 12px; color: var(--color-fg-muted); cursor: pointer; }
+.session-skill-picker:hover, .session-queue-send:hover { background: var(--color-bg-active); color: var(--color-fg); }
+.session-composer-toolbar button:disabled { opacity: .45; cursor: not-allowed; }
+.session-composer-model { margin-left: auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg-muted); font-size: 11px; }
+.session-send-button { cursor: pointer; }
+.session-composer-help { margin: 7px 0 0; text-align: center; font-size: 10px; color: var(--color-fg-subtle); }
+.session-queued-input { display: grid; gap: 5px; max-height: 140px; overflow-y: auto; margin-bottom: 8px; }
+.session-queued-text { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.session-detail-header { flex-wrap: nowrap; min-height: 56px; gap: 8px; }
+.session-heading { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; }
+.session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
+.session-agent-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg-muted); font-size: 12px; }
+.session-token-details { position: relative; color: var(--color-fg-muted); font-size: 12px; }
+.session-token-details summary { display: flex; gap: 6px; align-items: center; padding: 6px; cursor: pointer; list-style: none; }
+.session-token-details summary::-webkit-details-marker { display: none; }
+.session-token-details dl { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; box-shadow: 0 4px 20px rgb(0 0 0 / 8%); max-width: calc(100vw - 32px); overflow-x: auto; }
+@media (max-width: 700px) {
+  .session-detail-header { padding: 8px 12px; }
+  .session-heading { gap: 6px; }
+  .session-agent-name, .session-heading > span:nth-child(2) { display: none; }
+  .session-thread { gap: 28px; }
+  .session-user-bubble { max-width: 90%; }
+  .session-composer-help { font-size: 9px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-disclosure-toggle > svg { transition: none; }
+  .session-process .animate-pulse, .session-working .animate-pulse { animation: none; }
+}
+@media (max-width: 700px) {
+  .session-header.session-detail-header > div:last-child { width: auto; flex-shrink: 0; }
+  .session-header.session-detail-header > .session-heading { flex-wrap: nowrap; }
+  .session-heading > span { flex-shrink: 0; }
+  .session-heading > .session-title { flex-shrink: 1; }
+}

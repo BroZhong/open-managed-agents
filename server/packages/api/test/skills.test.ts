@@ -185,3 +185,88 @@ describe("Skill Library routes", () => {
     expect((await upd.json()).description).toBe("new desc");
   });
 });
+
+describe("Skill name uniqueness", () => {
+  it("preflights the whole upload and replaces the complete tree only after confirmation", async () => {
+    const { app, skillStore, skillArtifactStore } = setup();
+    const send = (files: { path: string; content: string }[], overwrite = false) => {
+      const form = uploadForm(files);
+      if (overwrite) form.set("overwrite", "true");
+      return app.request("/v1/skills", { method: "POST", body: form });
+    };
+    const first = await (await send([
+      { path: "SKILL.md", content: SKILL_MD },
+      { path: "old.txt", content: "old" },
+    ])).json();
+    const id = first.data[0].id;
+    const files = [
+      { path: "a/SKILL.md", content: "---\nname: another\n---\nnew" },
+      { path: "b/SKILL.md", content: SKILL_MD + "\nnew" },
+    ];
+    const conflict = await send(files);
+    expect(conflict.status).toBe(409);
+    expect((await conflict.json()).code).toBe("skill_name_conflict");
+    expect((await skillStore.list("dev")).data).toHaveLength(1);
+    expect(await skillArtifactStore.list("dev", id)).toContain("old.txt");
+    const confirmed = await send(files, true);
+    expect(confirmed.status).toBe(201);
+    expect((await skillStore.list("dev")).data).toHaveLength(2);
+    expect(await skillArtifactStore.list("dev", id)).toEqual(["SKILL.md"]);
+    expect(new TextDecoder().decode(await skillArtifactStore.get("dev", id, "SKILL.md") ?? undefined)).toContain("new");
+  });
+
+  it("requires confirmation for duplicate names in one batch and keeps the last folder", async () => {
+    const { app } = setup();
+    const files = [{ path: "a/SKILL.md", content: SKILL_MD }, { path: "b/SKILL.md", content: SKILL_MD + "\nlast" }];
+    expect((await app.request("/v1/skills", { method: "POST", body: uploadForm(files) })).status).toBe(409);
+    const form = uploadForm(files);
+    form.set("overwrite", "true");
+    const saved = await (await app.request("/v1/skills", { method: "POST", body: form })).json();
+    expect(saved.data).toHaveLength(1);
+    const content = await (await app.request(`/v1/skills/${saved.data[0].id}/files/content?path=SKILL.md`)).json();
+    expect(content.content).toContain("last");
+  });
+
+  it("rejects conflicting metadata and SKILL.md renames without changing files", async () => {
+    const { app, skillStore, skillArtifactStore } = setup();
+    await skillStore.create({ tenantId: "dev", name: "greeter", description: "" });
+    const other = await skillStore.create({ tenantId: "dev", name: "other", description: "" });
+    await skillArtifactStore.put("dev", other.id, "SKILL.md", "original");
+    for (const [suffix, method, body] of [
+      ["", "POST", { name: "greeter" }],
+      ["/files/content", "PUT", { path: "SKILL.md", content: SKILL_MD }],
+    ] as const) {
+      const result = await app.request(`/v1/skills/${other.id}${suffix}`, {
+        method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      expect(result.status).toBe(409);
+    }
+    expect((await skillStore.getById(other.id))?.name).toBe("other");
+    expect(new TextDecoder().decode((await skillArtifactStore.get("dev", other.id, "SKILL.md"))!)).toBe("original");
+  });
+
+  it("restores the old tree if an overwrite upload fails", async () => {
+    const { app, skillStore, skillArtifactStore } = setup();
+    const skill = await skillStore.create({ tenantId: "dev", name: "greeter", description: "Original" });
+    await skillArtifactStore.put("dev", skill.id, "SKILL.md", "original");
+    await skillArtifactStore.put("dev", skill.id, "old.txt", "keep");
+    vi.spyOn(skillArtifactStore, "put").mockRejectedValueOnce(new Error("Storage unavailable"));
+    const form = uploadForm([{ path: "SKILL.md", content: SKILL_MD }]);
+    form.set("overwrite", "true");
+    expect((await app.request("/v1/skills", { method: "POST", body: form })).status).toBe(500);
+    expect((await skillStore.getById(skill.id))?.description).toBe("Original");
+    expect(new TextDecoder().decode((await skillArtifactStore.get("dev", skill.id, "SKILL.md"))!)).toBe("original");
+    expect(await skillArtifactStore.list("dev", skill.id)).toContain("old.txt");
+  });
+
+  it("isolates names by tenant and prevents concurrent duplicate creation", async () => {
+    const { app, skillStore } = setup();
+    await skillStore.create({ tenantId: "other", name: "greeter", description: "" });
+    const responses = await Promise.all([1, 2].map(() => app.request("/v1/skills", {
+      method: "POST", body: uploadForm([{ path: "SKILL.md", content: SKILL_MD }]),
+    })));
+    expect(responses.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect((await skillStore.list("dev")).data).toHaveLength(1);
+    expect((await skillStore.list("other")).data).toHaveLength(1);
+  });
+});

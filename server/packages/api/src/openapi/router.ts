@@ -1,3 +1,4 @@
+import { SkillNameConflictError } from "@oma-server/store";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { RouteConfig, RouteHandler } from "@hono/zod-openapi";
 import type { Env, Handler } from "hono";
@@ -22,6 +23,9 @@ export function createContractRouter<E extends Env>(): OpenAPIHono<E> {
     },
   });
   router.onError((error, c) => {
+    if (error instanceof SkillNameConflictError) {
+      return c.json({ error: error.message, code: error.code }, 409);
+    }
     if (
       error instanceof HTTPException &&
       error.status === 400 &&
