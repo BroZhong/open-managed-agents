@@ -182,7 +182,7 @@ describe("Agent list deletion", () => {
     fireEvent.click(screen.getByRole("button", { name: `Delete ${firstAgent.name}` }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
-    await screen.findByText("No agents yet. Create your first agent to get started.");
+    await screen.findByRole("heading", { name: "No Agents yet" });
     expect(deletionAttempts).toBe(2);
     expect(toast.success).toHaveBeenCalledWith("Agent deleted");
   });

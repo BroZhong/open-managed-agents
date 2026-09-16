@@ -26,9 +26,9 @@ export function Dialog({ open, onOpenChange, ariaLabel, children }: DialogProps)
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="fixed inset-0 bg-black/50"
+        className="fixed inset-0 bg-[#202124]/25 backdrop-blur-[3px]"
         aria-hidden="true"
         onClick={() => onOpenChange(false)}
       />
@@ -36,7 +36,7 @@ export function Dialog({ open, onOpenChange, ariaLabel, children }: DialogProps)
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}
-        className="relative z-50 mx-4 w-full max-w-md rounded-lg bg-white p-6 shadow-lg"
+        className="dialog-surface relative z-50 w-full max-w-md rounded-2xl bg-white p-6 shadow-lg"
       >
         {children}
       </div>

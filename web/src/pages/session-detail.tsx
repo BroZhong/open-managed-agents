@@ -1,11 +1,12 @@
 import { useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router";
-import { ArrowLeft, FolderOpen, PanelRight, PanelRightClose } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConversationView } from "@/components/conversation-view";
 import { TimelineView } from "@/components/timeline-view";
+import { SplitWorkbench } from "@/components/split-workbench";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
 import { TokenUsageMetrics } from "@/components/token-usage-metrics";
@@ -27,7 +28,7 @@ function messageText(data: unknown): string {
 }
 import { summarizeTokenUsage } from "@/lib/token-usage";
 
-type Tab = "conversation" | "timeline" | "workspace";
+type Tab = "conversation" | "timeline";
 
 export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -45,7 +46,6 @@ function SessionDetail({ id }: { id: string }) {
   const { send, isPending } = useSendMessage(id);
   const { interrupt, isPending: isInterrupting } = useInterrupt(id);
   const [activeTab, setActiveTab] = useState<Tab>("conversation");
-  const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
   // Whether input is waiting to run is the Host's fact, re-read whenever a Turn
   // starts or ends. This is what keeps the `queued` strip visible through the gap
@@ -89,10 +89,11 @@ function SessionDetail({ id }: { id: string }) {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-6 py-3">
+      <div className="session-header">
         <Button
           variant="ghost"
           size="icon"
+          aria-label="Back to Agent"
           onClick={() =>
             navigate(session ? `/agents/${session.agentId}` : "/agents")
           }
@@ -121,107 +122,38 @@ function SessionDetail({ id }: { id: string }) {
         </div>
         <div className="ml-auto flex items-center gap-2">
           <TokenUsageMetrics usage={tokenUsage} />
-          {activeTab === "conversation" && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setWorkspaceOpen((v) => !v)}
-              title={workspaceOpen ? "Hide workspace" : "Show workspace"}
-              aria-pressed={workspaceOpen}
-            >
-              {workspaceOpen ? (
-                <PanelRightClose className="h-4 w-4" />
-              ) : (
-                <PanelRight className="h-4 w-4" />
-              )}
-            </Button>
-          )}
+
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-6">
-        <TabButton
-          active={activeTab === "conversation"}
-          onClick={() => setActiveTab("conversation")}
-        >
-          Conversation
-        </TabButton>
-        <TabButton
-          active={activeTab === "timeline"}
-          onClick={() => setActiveTab("timeline")}
-        >
-          Timeline{events.length > 0 ? ` (${events.length})` : ""}
-        </TabButton>
-        <TabButton
-          active={activeTab === "workspace"}
-          onClick={() => setActiveTab("workspace")}
-        >
-          Workspace
-        </TabButton>
-      </div>
-
-      {/* Content */}
-      {activeTab === "conversation" ? (
-        <div className="flex min-h-0 flex-1">
-          {/* Conversation column */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex-1 overflow-hidden">
-              <ConversationView
-                events={events}
-                activeDeltas={activeDeltas}
-                sessionStatus={effectiveTurnStatus}
+      <SplitWorkbench
+        workspace={session && <WorkspacePanel workspaceId={session.workspaceId} refreshKey={fileChange.nonce} />}
+        session={
+          <>
+            <div className="session-tabs">
+              <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
+              <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Timeline{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
+            </div>
+            <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <ConversationView events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+              </div>
+              <MessageInput
+                onSend={send}
+                sending={isPending}
+                queuedInput={queuedInput}
+                hasMoreQueuedInput={hasMoreQueuedInput}
+                skills={equippedSkills}
+                running={status === "running"}
+                onInterrupt={handleInterrupt}
               />
             </div>
-            <MessageInput
-              onSend={send}
-              sending={isPending}
-              // Not gated on `status === "running"`: the queue outlives the Turn
-              // that was running when it was filled (issue #114).
-              queuedInput={queuedInput}
-              hasMoreQueuedInput={hasMoreQueuedInput}
-              skills={equippedSkills}
-              running={status === "running"}
-              onInterrupt={handleInterrupt}
-            />
-          </div>
-          {/* Slide-out Workspace panel */}
-          <div
-            className={cn(
-              "flex-shrink-0 overflow-hidden border-l border-[var(--color-border)] bg-[var(--color-bg)] transition-all duration-200 ease-in-out",
-              workspaceOpen ? "w-[28rem]" : "w-0",
-            )}
-          >
-            {workspaceOpen && session && (
-              <div className="flex h-full w-[28rem] flex-col">
-                <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2.5">
-                  <FolderOpen className="h-4 w-4 text-[var(--color-fg-muted)]" />
-                  <span className="text-sm font-medium text-[var(--color-fg)]">
-                    Workspace
-                  </span>
-                </div>
-                <div className="min-h-0 flex-1">
-                  <WorkspacePanel
-                    workspaceId={session.workspaceId}
-                    refreshKey={fileChange.nonce}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : activeTab === "timeline" ? (
-        <div className="flex-1 overflow-hidden">
-          <TimelineView events={events} />
-        </div>
-      ) : (
-        <div className="flex-1 overflow-hidden">
-          {session && <WorkspacePanel
-            workspaceId={session.workspaceId}
-            refreshKey={fileChange.nonce}
-          />}
-        </div>
-      )}
+            <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
+              <TimelineView events={events} />
+            </div>
+          </>
+        }
+      />
     </div>
   );
 }

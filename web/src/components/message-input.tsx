@@ -69,7 +69,8 @@ export function MessageInput({
     if (!textarea) return;
     textarea.style.height = "auto";
     const lineHeight = 24;
-    const maxHeight = lineHeight * 5;
+    // Include the composer toolbar padding when limiting the input to five lines.
+    const maxHeight = lineHeight * 5 + 64;
     textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
   }, []);
 
@@ -147,7 +148,7 @@ export function MessageInput({
   const buttonEnabled = showStop || canSend;
 
   return (
-    <div className="bg-[var(--color-bg)] px-6 py-4">
+    <div className="composer-area">
       {queuedInput.length > 0 && (
         <div
           className="mx-auto mb-2 max-w-3xl space-y-1.5"
@@ -178,7 +179,7 @@ export function MessageInput({
             {sendError}
           </p>
         )}
-        <div className="relative rounded-2xl bg-[var(--color-bg-surface)] shadow-sm ring-1 ring-[var(--color-border)]  focus-within:ring-[var(--color-fg-subtle)] transition-shadow">
+        <div className="message-composer">
           {skillSuggestions.length > 0 && (
             <div
               id="equipped-skill-suggestions"
@@ -225,6 +226,7 @@ export function MessageInput({
               adjustHeight();
             }}
             onKeyDown={handleKeyDown}
+            aria-label="Message"
             placeholder="Send a message..."
             disabled={disabled || sending}
             rows={1}
@@ -232,11 +234,12 @@ export function MessageInput({
             aria-controls={skillSuggestions.length > 0 ? "equipped-skill-suggestions" : undefined}
             aria-expanded={skillSuggestions.length > 0}
             className={cn(
-              "w-full resize-none bg-transparent px-4 py-3 pr-12 text-sm leading-6 text-[var(--color-fg)]",
+              "w-full resize-none bg-transparent px-4 pt-4 pb-12 text-sm leading-6 text-[var(--color-fg)]",
               "placeholder:text-[var(--color-fg-subtle)] focus:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           />
+          <span className="composer-hint">{skills.length > 0 ? "/ for Skills · " : ""}Shift + Enter for a new line</span>
           <button
             type="button"
             aria-label={showStop ? "Stop generating" : "Send message"}
@@ -244,10 +247,10 @@ export function MessageInput({
             onClick={showStop ? onInterrupt : handleSubmit}
             disabled={!buttonEnabled}
             className={cn(
-              "absolute bottom-2.5 right-3 flex h-7 w-7 items-center justify-center rounded-lg transition-all",
+              "absolute bottom-2.5 right-3 flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               buttonEnabled
                 ? "bg-[var(--color-fg)] text-white hover:opacity-80"
-                : "bg-[var(--color-bg-muted)] text-[var(--color-fg-subtle)]"
+                : "bg-[var(--color-bg-active)] text-[var(--color-fg-subtle)]"
             )}
           >
             {showStop ? (

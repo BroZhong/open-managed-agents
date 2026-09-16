@@ -44,6 +44,7 @@ import {
   useUpdateLoop,
   type Loop,
 } from "@/lib/hooks/use-loops"
+import { BrandMark } from "@/components/brand-mark"
 import { CreateLoopDialog } from "@/components/create-loop-dialog"
 
 const STORAGE_KEY = "oma_sidebar_collapsed"
@@ -83,7 +84,7 @@ const navGroups = [
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [collapsed] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY) === "true"
+    return localStorage.getItem(STORAGE_KEY) === "true" || (localStorage.getItem(STORAGE_KEY) === null && window.innerWidth < 768)
   })
 
   return (
@@ -117,7 +118,7 @@ function useActiveAgentId(): string | null {
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY) === "true"
+    return localStorage.getItem(STORAGE_KEY) === "true" || (localStorage.getItem(STORAGE_KEY) === null && window.innerWidth < 768)
   })
   const location = useLocation()
   const { logout } = useAuth()
@@ -130,22 +131,27 @@ export function Sidebar() {
 
   return (
     <aside
-      className={cn(
-        "fixed left-0 top-0 z-20 flex h-screen flex-col border-r bg-[var(--color-bg-surface)] transition-all duration-200",
-        "border-[var(--color-border)]",
-        collapsed ? "w-[52px]" : "w-[224px]"
-      )}
+      className="app-sidebar"
+      data-collapsed={collapsed}
+      aria-label="Console sidebar"
     >
       {/* Header / Brand */}
-      <div className="flex h-14 items-center px-3">
-        <span className="text-lg font-semibold tracking-tight text-[var(--color-fg)]">
-          {collapsed ? "O" : "OMA"}
-        </span>
-      </div>
+      <Link to="/" className="sidebar-brand" aria-label="OMA home">
+        <BrandMark />
+        {!collapsed && <span className="sidebar-brand-name">OMA<span>Managed agents</span></span>}
+      </Link>
 
       {/* Navigation — swaps between the global context (Agents list, …) and
           the in-Agent context (the current Agent + its workspaces & chats). */}
-      <nav className="flex-1 overflow-y-auto space-y-0.5 px-2 py-2">
+      <nav
+        aria-label="Main navigation"
+        className="sidebar-navigation flex-1 overflow-y-auto space-y-0.5 px-2 py-2"
+        onClick={(event) => {
+          if (window.innerWidth < 768 && (event.target as HTMLElement).closest("a")) {
+            setCollapsed(true)
+          }
+        }}
+      >
         {activeAgentId ? (
           <AgentContextNav agentId={activeAgentId} collapsed={collapsed} />
         ) : (
@@ -153,7 +159,7 @@ export function Sidebar() {
             {navGroups.map((group) => (
               <div key={group.label} className="space-y-0.5">
                 {!collapsed && (
-                  <p className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">
+                  <p className="px-2.5 pb-1 text-[11px] font-medium text-[var(--color-fg-subtle)]">
                     {group.label}
                   </p>
                 )}
@@ -166,6 +172,8 @@ export function Sidebar() {
                   const linkContent = (
                     <Link
                       to={item.path}
+                      aria-label={item.label}
+                      aria-current={isActive ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors",
                         isActive
@@ -195,12 +203,13 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom area */}
-      <div className="space-y-0.5 border-t border-[var(--color-border)] px-2 py-3">
+      <div className="sidebar-footer space-y-0.5 px-2 py-3">
         {collapsed ? (
           <Tooltip content="Logout">
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Logout"
               onClick={logout}
               className="w-full"
             >
@@ -223,6 +232,7 @@ export function Sidebar() {
             <Button
               variant="ghost"
               size="icon"
+              aria-label="Expand sidebar"
               onClick={() => setCollapsed(false)}
               className="w-full"
             >
@@ -298,6 +308,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
       <Tooltip content="All Agents">
         <Link
           to="/agents"
+          aria-label="All Agents"
           className="flex items-center justify-center rounded-lg px-2.5 py-2 text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]"
         >
           <ChevronLeft className="h-[18px] w-[18px]" />
@@ -393,7 +404,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           <button
             type="button"
             onClick={() => setLoopsOpen((open) => !open)}
-            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400 hover:text-[var(--color-fg-muted)]"
+            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium text-[var(--color-fg-subtle)] hover:text-[var(--color-fg-muted)]"
           >
             {loopsOpen ? (
               <ChevronDown className="h-3.5 w-3.5" />
@@ -435,7 +446,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           <button
             type="button"
             onClick={() => setWorkspacesOpen((o) => !o)}
-            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400 hover:text-[var(--color-fg-muted)]"
+            className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium text-[var(--color-fg-subtle)] hover:text-[var(--color-fg-muted)]"
           >
             {workspacesOpen ? (
               <ChevronDown className="h-3.5 w-3.5" />
@@ -508,7 +519,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
       {/* chats — flat list of loose (anonymous-workspace) sessions. */}
       <div className="pt-2">
         <div className="flex items-center pr-1">
-          <p className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-neutral-400">
+          <p className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium text-[var(--color-fg-subtle)]">
             <MessagesSquare className="h-3.5 w-3.5" />
             chats
           </p>

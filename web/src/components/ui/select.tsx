@@ -78,7 +78,7 @@ const Select = ({ className, label, id, value, onChange, disabled, children, pla
           onClick={() => !disabled && setIsOpen(!isOpen)}
           disabled={disabled}
           className={cn(
-            "flex h-9 w-full items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-left text-sm transition-colors",
+            "flex h-9 w-full items-center justify-between rounded-[10px] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-1.5 text-left text-sm transition-colors",
             "focus:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-200",
             "disabled:cursor-not-allowed disabled:opacity-50",
             isOpen && "border-neutral-400 ring-2 ring-neutral-200",
@@ -92,7 +92,7 @@ const Select = ({ className, label, id, value, onChange, disabled, children, pla
         </button>
 
         {isOpen && (
-          <div className="absolute z-[100] mt-1 max-h-60 w-full overflow-auto rounded-md border border-neutral-200 bg-white py-1 shadow-lg">
+          <div className="absolute z-[100] mt-1 max-h-60 w-full overflow-auto rounded-[10px] border border-[var(--color-border)] bg-[var(--color-bg-surface)] py-1 shadow-lg">
             {options.map((option) => (
               <button
                 key={option.value}

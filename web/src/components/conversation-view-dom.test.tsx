@@ -191,9 +191,10 @@ it("puts the markdown table inside the scrollable prose container (issue #117)",
     expect(classes).toContain(required);
   }
 
-  // The bubble itself must stay width-capped; an uncapped bubble would let a
-  // wide table overlap neighbouring messages even with the scroll box.
-  expect(prose!.parentElement!.className).toContain("max-w-[85%]");
+  // Full-width answers must still shrink to the conversation column so wide
+  // tables scroll inside the prose container rather than widening the page.
+  expect(prose!.parentElement!.className).toContain("max-w-full");
+  expect(prose!.parentElement!.className).toContain("min-w-0");
 });
 
 it("keeps the bubble's own prose overrides that the typography plugin would otherwise win (issue #117)", () => {

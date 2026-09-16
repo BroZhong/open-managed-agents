@@ -7,7 +7,7 @@ export default function McpPage() {
   return (
     <div>
       <PageHeader title="MCP" />
-      <div className="space-y-5 p-6">
+      <div className="page-body space-y-5">
         <div className="max-w-2xl space-y-1">
           <p className="text-sm text-[var(--color-fg-muted)]">
             Browse Host-reviewed MCP integrations available to your Agents.

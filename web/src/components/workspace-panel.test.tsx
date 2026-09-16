@@ -107,3 +107,31 @@ describe("WorkspacePanel Workspace isolation", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:workspace-a");
   });
 });
+
+it("searches nested paths and preserves unsaved Markdown when switching Preview and Edit", async () => {
+  mockedSources.set("workspace-notes", {
+    capabilities: { hierarchy: "nested", idleGated: false },
+    list: async () => [
+      { path: "notes/decision.md", isDir: false, size: 24 },
+      { path: "readme.txt", isDir: false, size: 8 },
+    ],
+    read: async (path) => ({ path, text: "# Decision\n\nInitial notes.", contentType: "text/markdown", size: 24, isBinary: false }),
+    write: vi.fn(async () => {}),
+  } satisfies FileSource);
+  render(<WorkspacePanel workspaceId="workspace-notes" refreshKey={0} />);
+  await screen.findByText("notes");
+  fireEvent.change(screen.getByRole("textbox", { name: "Search files" }), { target: { value: "decision" } });
+  fireEvent.click(await screen.findByText("decision.md"));
+  expect(await screen.findByRole("heading", { name: "Decision" })).toBeTruthy();
+  expect(screen.queryByText("readme.txt")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  const editor = screen.getByRole("textbox", { name: "File content" }) as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: "# Revised decision\n\nUnsaved notes." } });
+  fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+  expect(await screen.findByRole("heading", { name: "Revised decision" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect((screen.getByRole("textbox", { name: "File content" }) as HTMLTextAreaElement).value).toContain("Unsaved notes.");
+  fireEvent.change(screen.getByRole("textbox", { name: "Search files" }), { target: { value: "" } });
+  expect(await screen.findByText("readme.txt")).toBeTruthy();
+  expect((screen.getByRole("textbox", { name: "File content" }) as HTMLTextAreaElement).value).toContain("Unsaved notes.");
+});

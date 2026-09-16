@@ -127,7 +127,7 @@ export function ConversationView({
 
   return (
     <div className="relative flex h-full flex-col">
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-6">
+      <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto max-w-3xl space-y-6">
           {messages.length === 0 && (
             <div className="flex items-center justify-center py-24 text-[var(--color-fg-subtle)]">
@@ -252,7 +252,7 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
 function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-[var(--color-fg)] px-4 py-2.5 text-sm text-white shadow-sm">
+      <div className="max-w-[85%] rounded-2xl bg-[var(--color-bg-muted)] px-4 py-2.5 text-sm text-[var(--color-fg)] break-words">
         <p className="whitespace-pre-wrap">{text}</p>
       </div>
     </div>
@@ -270,7 +270,7 @@ function AssistantBubble({
 }) {
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl rounded-bl-sm bg-[var(--color-bg-surface)] px-4 py-3 text-sm text-[var(--color-fg)] shadow-sm ring-1 ring-[var(--color-border-subtle)]">
+      <div className="min-w-0 w-full max-w-full py-3 text-sm text-[var(--color-fg)] break-words">
         {/* `prose*` comes from @tailwindcss/typography, loaded by
             `@plugin "@tailwindcss/typography"` in index.css. Without that
             @plugin line these are dead class names and every markdown element
@@ -287,7 +287,7 @@ function AssistantBubble({
 
             Tables get GitHub's markdown treatment — `display:block` plus
             `width:max-content` and `overflow-x-auto` — so a wide table scrolls
-            inside itself instead of bursting the max-w-[85%] bubble and
+            inside itself instead of bursting the message column and
             overlapping neighbouring messages. No wrapper component needed.
             Under border-collapse the cells' own borders also win the CSS table
             border-conflict resolution against the plugin's thead/tr borders,

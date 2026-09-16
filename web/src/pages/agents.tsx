@@ -8,13 +8,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
 import { useAgents, useDeleteAgent, type Agent } from "@/lib/hooks/use-agents";
-import { cn } from "@/lib/utils";
-
-const runtimeColors: Record<string, string> = {
-  "claude-code": "bg-blue-100 text-blue-700",
-  codex: "bg-green-100 text-green-700",
-  "pi-agent": "bg-[var(--color-accent-muted)] text-[var(--color-accent)]",
-};
 
 export default function AgentsPage() {
   const [createOpen, setCreateOpen] = useState(false);
@@ -32,14 +25,14 @@ export default function AgentsPage() {
 
   return (
     <div>
-      <PageHeader title="Agents">
+      <PageHeader title="Agents" description="Configure your Agents and continue their work.">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" />
           Create Agent
         </Button>
       </PageHeader>
 
-      <div className="p-6">
+      <div className="page-body">
         <div>
           {isLoading ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -48,24 +41,26 @@ export default function AgentsPage() {
               ))}
             </div>
           ) : !agents || agents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--color-border)] py-24 text-neutral-500">
+            <div className="empty-state">
               <Bot className="mb-3 h-6 w-6 text-neutral-300" />
-              <p>No agents yet. Create your first agent to get started.</p>
+              <h2>No Agents yet</h2>
+              <p>Create an Agent to start your first Session.</p>
+              <Button className="mt-5" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />Create Agent</Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="agent-directory">
               {agents.map((agent) => (
                 <div
                   key={agent.id}
-                  className="relative rounded-xl border border-[var(--color-border)] bg-white transition-colors hover:border-[var(--color-accent)]"
+                  className="agent-card"
                 >
                   <Link
                     to={`/agents/${agent.id}`}
                     aria-label={`Open ${agent.name}`}
-                    className="flex h-full flex-col items-start gap-3 rounded-xl p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2"
+                    className="flex h-full flex-col items-start gap-4 rounded-xl p-5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2"
                   >
                     <div className="flex w-full items-center gap-3 pr-20">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+                      <span className="agent-identity">
                         <Bot className="h-5 w-5" />
                       </span>
                       <div className="min-w-0">
@@ -80,12 +75,9 @@ export default function AgentsPage() {
                         {agent.description}
                       </p>
                     )}
-                    <div className="flex flex-wrap gap-2">
+                    <div className="mt-auto flex flex-wrap gap-2 pt-2">
                       <span
-                        className={cn(
-                          "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                          runtimeColors[agent.runtime] ?? "bg-neutral-100 text-neutral-700",
-                        )}
+                        className="inline-block rounded-full bg-[var(--color-bg-muted)] px-2 py-0.5 text-xs font-medium text-[var(--color-fg-muted)]"
                       >
                         {agent.runtime}
                       </span>
@@ -99,7 +91,7 @@ export default function AgentsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="absolute right-2 top-3 text-[var(--color-danger)]"
+                    className="agent-delete absolute right-2 top-4 text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
                     aria-label={`Delete ${agent.name}`}
                     aria-busy={deleteMutation.isPending && deleteMutation.variables === agent.id}
                     disabled={deleteMutation.isPending}

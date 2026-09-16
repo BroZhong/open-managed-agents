@@ -16,12 +16,6 @@ import { useAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
 import { useAgentSessions } from "@/lib/hooks/use-sessions";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
-const runtimeColors: Record<string, string> = {
-  "claude-code": "bg-blue-100 text-blue-700",
-  codex: "bg-green-100 text-green-700",
-  "pi-agent": "bg-purple-100 text-purple-700",
-};
-
 export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -89,11 +83,11 @@ export default function AgentDetailPage() {
         </Button>
       </PageHeader>
 
-      <div className="p-6">
+      <div className="page-body">
         <div className="space-y-6">
           {/* Config section */}
           <section>
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            <h2 className="mb-4 text-sm font-semibold text-neutral-500">
               Configuration
             </h2>
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -113,8 +107,7 @@ export default function AgentDetailPage() {
                   <span
                     className={cn(
                       "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                      runtimeColors[agent.runtime] ??
-                        "bg-neutral-100 text-neutral-700"
+                      "bg-[var(--color-bg-muted)] text-[var(--color-fg-muted)]"
                     )}
                   >
                     {agent.runtime}
@@ -169,7 +162,7 @@ export default function AgentDetailPage() {
 
           {/* Agent Files — editable persona/instructions (Slice 2) */}
           <section>
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+            <h2 className="mb-4 text-sm font-semibold text-neutral-500">
               Customize
             </h2>
             <AgentFilesEditor agentId={agent.id} />
@@ -187,7 +180,7 @@ export default function AgentDetailPage() {
           {/* Sessions nested under this Agent (Slice 5) */}
           <section>
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+              <h2 className="text-sm font-semibold text-neutral-500">
                 Sessions
               </h2>
               <Button

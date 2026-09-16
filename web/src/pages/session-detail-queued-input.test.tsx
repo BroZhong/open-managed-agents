@@ -162,7 +162,7 @@ function renderPage() {
 it("keeps the completed answer and idle state when the Workspace check and list fail", async () => {
   renderPage();
   await screen.findByRole("button", { name: "Stop generating" });
-  fireEvent.click(screen.getByTitle("Show workspace"));
+  expect(screen.getByRole("region", { name: "Workspace panel" })).toBeTruthy();
   workspaceUnavailable = true;
   await act(async () => {
     emit(sseFrame("agent.message", 2, { content: [{ type: "text", text: "The completed answer stays here." }] }));
