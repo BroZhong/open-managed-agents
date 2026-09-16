@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
@@ -25,8 +25,10 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const parent = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
   const errors: unknown[] = [];
+  const hubs: InProcessEventStreamHub[] = [];
+  const createHub = () => { const hub = new InProcessEventStreamHub(); hubs.push(hub); return hub; };
   const makeRouter = () => new SessionRouter({
-    ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
+    ...stores, eventStreamHub: createHub(), resolveAdapter: () => adapter,
     sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox, provisionSources: {} }),
     workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
     maxConcurrentSubagents: options.quota,
@@ -40,10 +42,40 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
     type: "user.message", data: { content: [{ type: "text", text: message }] }, sessionThreadId: "sthr_primary",
   });
   const log = async (id = parent.id) => (await stores.eventLogStore.getEvents(id, { limit: 1000 })).data;
-  return { stores, sandbox, agent, parent, router, makeRouter, enqueue, log, errors };
+  return { stores, sandbox, agent, parent, router, makeRouter, enqueue, log, errors, hub: hubs[0] };
 }
 
 describe("Host-owned delegation through the Session Router", () => {
+  it.each([false, true])("publishes result arrival before the parent finishes (background=%s)", async (runInBackground) => {
+    const parentGate = gate();
+    let parentTurns = 0;
+    const h = await harness({ async *run(input) {
+      if (input.execution?.isChild) { yield text("child result"); return; }
+      if (++parentTurns > 1) { yield text("notification handled"); return; }
+      const call = tool("live-result"); yield call;
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground }, { toolUseId: "live-result", checkpoint: [call] });
+      yield result("live-result", output);
+      await parentGate.promise;
+      yield text("parent done");
+    } });
+    const published = vi.spyOn(h.hub, "publish");
+    await h.enqueue();
+    const running = h.router.handleNewEvent(h.parent.id, h.agent);
+    try {
+      await until(async () => published.mock.calls.some(([id, event]) => id === h.parent.id && event.type === "subagent.result"));
+      const log = await h.log();
+      const notifications = published.mock.calls.filter(([id, event]) => id === h.parent.id && event.type === "subagent.result");
+      expect(notifications).toHaveLength(1);
+      const durable = log.find(event => event.type === "subagent.result")!;
+      expect(notifications[0][1]).toEqual({ type: durable.type, seq: durable.seq, data: durable.data });
+      expect(log.some(event => event.type === "subagent.result_claimed" || event.type === "session.turn_completed")).toBe(false);
+    } finally {
+      parentGate.release();
+      await running;
+    }
+    expect(h.errors).toEqual([]);
+  });
+
   it("pins create and resume to the calling parent's resolved provider/model despite Agent changes", async () => {
     let parentTurns = 0;
     let childId: string | undefined;
