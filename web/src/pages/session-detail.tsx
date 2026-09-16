@@ -151,7 +151,7 @@ function SessionDetail({ id }: { id: string }) {
             </div>
             <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ConversationView onOpenWorkspaceFile={openWorkspaceFile} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+                <ConversationView resources={session ? { agentId: session.agentId, skills: equippedSkills, onOpenWorkspacePath: openWorkspaceFile } : undefined} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
               </div>
               <MessageInput
                 onSend={send}
@@ -170,7 +170,7 @@ function SessionDetail({ id }: { id: string }) {
               <TimelineView events={events} />
             </div>
             {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
-              <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} />
+              <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />
             </div>)}
           </>
         }

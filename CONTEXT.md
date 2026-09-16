@@ -31,6 +31,10 @@ existing production Agents and must be migrated before removal.
 A configured AI coding worker that can be used to create **Sessions**. An Agent has one runtime and may be configured to run as a **Sandboxed Agent**.
 _Avoid_: bot, assistant, worker
 
+**Agent Fork**:
+A new **Agent** copied from an existing Agent's configuration, **Agent Files**, and current **Agent Skills**. Every copied Skill has a new ID and belongs to the new Agent, with its original Library provenance retained. Forking preserves private edits, even when a Library source was deleted. Sessions, Loops and Workspaces are not copied. Subsequent edits to either Agent's configuration or files are independent.
+_Avoid_: shared Agent, linked copy
+
 **Sandboxed Agent**:
 An **Agent** whose tools run in an isolated Sandbox. In Sandbox-as-Tool mode Pi runs in the Host and uses a per-Turn injected ToolExecutor; Workspace operations execute inside the Sandbox.
 _Avoid_: sandbox agent, isolated agent, Kubernetes agent
@@ -98,7 +102,7 @@ replaces the complete file tree; Library replacement leaves Agent forks independ
 Metadata and SKILL.md edits cannot rename a Skill to another Skill's name.
 
 **Skill Library**:
-The tenant-scoped collection of all **Library Skills** a tenant has, independent of any **Agent**. Skills are added to the Library once (by uploading a folder — one folder is one Skill if it holds a `SKILL.md`, or many Skills if its subfolders each hold one), previewed and edited there, and then equipped onto Agents as desired. The Library is managed from the same entry page that lists Agents; equipping happens on an individual Agent's page. A Library Skill can be equipped by many Agents; each equip produces an independent **Skill Fork**.
+The tenant-scoped collection of all **Library Skills** a tenant has, independent of any **Agent**. Skills are added to the Library once (by uploading a folder — one folder is one Skill if it holds a `SKILL.md`, or many Skills if its subfolders each hold one), previewed and edited there, and then equipped onto Agents as desired. The Library has its own card directory and Skill detail pages, with a file tree and preview/editor. An Agent page shows only its equipped Skills; users select Library Skills in a bulk-import dialog or upload a folder to equip it. A Library Skill can be equipped by many Agents; each equip produces an independent **Skill Fork**.
 _Avoid_: marketplace, catalog, registry
 
 **Equip** (a Skill onto an Agent):

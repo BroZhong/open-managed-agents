@@ -244,13 +244,15 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       if (!Array.isArray(res?.data)) {
         throw new Error("File status is unconfirmed: the Workspace list response is incomplete. Retry Refresh.");
       }
-      return res.data.map((f) => ({
+      const nodes = res.data.map((f) => ({
         // A reserved, empty marker preserves empty directories in object storage.
-        path: f.path.endsWith(WORKSPACE_DIRECTORY_MARKER) && f.size === 0 ? f.path.slice(0, -WORKSPACE_DIRECTORY_MARKER.length) : f.path,
-        isDir: f.path.endsWith(WORKSPACE_DIRECTORY_MARKER) && f.size === 0,
+        path: (f.path.endsWith(WORKSPACE_DIRECTORY_MARKER) && f.size === 0 ? f.path.slice(0, -WORKSPACE_DIRECTORY_MARKER.length) : f.path).replace(/\/+$/, ""),
+        isDir: f.isDir === true || f.path.endsWith("/") || (f.path.endsWith(WORKSPACE_DIRECTORY_MARKER) && f.size === 0),
         size: f.size,
         updatedAt: f.updated_at ?? undefined,
       }));
+      // Some storage listings include a folder entry without a directory flag.
+      return nodes.map((node) => ({ ...node, isDir: node.isDir || nodes.some((child) => child.path.startsWith(`${node.path}/`)) }));
     },
 
     async read(path: string): Promise<FileContent> {
@@ -329,6 +331,7 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
 
 interface WorkspaceFileEntry {
   path: string;
+  isDir?: boolean;
   size: number;
   updated_at: string | null;
 }

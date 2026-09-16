@@ -8,21 +8,23 @@ import {
   shouldShowTypingIndicator,
   type DisplayMessage,
 } from "@/lib/conversation-projection";
+import { ConversationResourceLink } from "@/components/conversation-resource-link";
+import { ConversationResourcesContext, CodeBlockContext, type ConversationResources } from "@/lib/conversation-resources";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { SessionDisclosure } from "@/components/session-disclosure";
 import { ToolCard } from "@/components/tool-card";
 
 import { DelegationCard } from "@/components/delegation-card";
 import type { DelegationExecution } from "@/lib/delegations";
-import { workspaceLinkPath } from "@/lib/workspace-link";
+import { resolveResourcePath } from "@/lib/resource-path";
 import { groupMessagesIntoTurns, type ConversationTurn } from "@/lib/conversation-turns";
 import { processTimings, formatElapsedTime, type ProcessTiming } from "@/lib/process-timing";
 const SessionContext = createContext("");
 const OpenExecutionContext = createContext<((execution: DelegationExecution) => void) | undefined>(undefined);
-const OpenWorkspaceFileContext = createContext<((path: string) => void) | undefined>(undefined);
 
 interface ConversationViewProps {
   onOpenWorkspaceFile?: (path: string) => void;
+  resources?: ConversationResources;
   onOpenExecution?: (execution: DelegationExecution) => void;
   sessionId?: string;
   focusToolUseId?: string;
@@ -33,6 +35,7 @@ interface ConversationViewProps {
 
 export function ConversationView({
   onOpenWorkspaceFile,
+  resources,
   onOpenExecution,
   events,
   sessionId = "",
@@ -100,7 +103,7 @@ export function ConversationView({
   const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
 
   return (
-    <SessionContext.Provider value={sessionId}><OpenExecutionContext.Provider value={onOpenExecution}><OpenWorkspaceFileContext.Provider value={onOpenWorkspaceFile}><div className="relative flex h-full flex-col">
+    <ConversationResourcesContext.Provider value={resources ?? (onOpenWorkspaceFile ? { agentId: "", skills: [], onOpenWorkspacePath: onOpenWorkspaceFile } : undefined)}><SessionContext.Provider value={sessionId}><OpenExecutionContext.Provider value={onOpenExecution}><div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
         <div ref={contentRef} className="session-thread">
           {messages.length === 0 && (
@@ -129,7 +132,7 @@ export function ConversationView({
           Jump to latest
         </button>
       )}
-    </div></OpenWorkspaceFileContext.Provider></OpenExecutionContext.Provider></SessionContext.Provider>
+    </div></OpenExecutionContext.Provider></SessionContext.Provider></ConversationResourcesContext.Provider>
   );
 }
 
@@ -269,7 +272,7 @@ function AssistantBubble({
   isStreaming?: boolean;
   aborted?: boolean;
 }) {
-  const onOpenWorkspaceFile = useContext(OpenWorkspaceFileContext);
+  const resources = useContext(ConversationResourcesContext);
   return (
     <div className="flex justify-start">
       <div className="session-answer min-w-0 w-full max-w-full py-3 text-sm text-[var(--color-fg)] break-words">
@@ -295,16 +298,11 @@ function AssistantBubble({
             border-conflict resolution against the plugin's thead/tr borders,
             which is why those need no separate override. */}
         <div className="prose prose-sm prose-neutral max-w-none text-[var(--color-fg)]! [&_p]:my-1.5 [&_pre]:rounded-lg [&_pre]:bg-[var(--color-bg-muted)] [&_pre]:text-[var(--color-fg)] [&_code]:text-[13px] [&_code]:font-normal [&_code]:before:content-none [&_code]:after:content-none [&_table]:my-2 [&_table]:block [&_table]:w-max [&_table]:max-w-full [&_table]:table-auto [&_table]:overflow-x-auto [&_table]:border-collapse [&_th]:border [&_th]:border-[var(--color-border)] [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold [&_td]:border [&_td]:border-[var(--color-border)] [&_td]:px-2 [&_td]:py-1">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            urlTransform={(url, key) => key === "href" && onOpenWorkspaceFile && workspaceLinkPath(url) ? url : defaultUrlTransform(url)}
-            components={{ a: ({ href, children, title }) => {
-              const path = href && workspaceLinkPath(href);
-              return path && onOpenWorkspaceFile
-                ? <a href={href} title={title ?? `Open ${path} in Workspace`} onClick={(event) => { event.preventDefault(); onOpenWorkspaceFile(path); }}>{children}</a>
-                : <a href={href} title={title}>{children}</a>;
-            } }}
-          >{text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url, key) => key === "href" && resources && resolveResourcePath(url, resources.skills) ? url : defaultUrlTransform(url)} components={{
+            a: ({ href, children }) => <ConversationResourceLink href={href}>{children}</ConversationResourceLink>,
+            pre: ({ children }) => <pre><CodeBlockContext.Provider value={true}>{children}</CodeBlockContext.Provider></pre>,
+            code: ({ children, className }) => <ConversationResourceLink inlineCode href={typeof children === "string" ? children : undefined}><code className={className}>{children}</code></ConversationResourceLink>,
+          }}>{text}</ReactMarkdown>
         </div>
         {isStreaming && (
           <span className="inline-block h-4 w-0.5 animate-pulse bg-[var(--color-fg-subtle)]" />

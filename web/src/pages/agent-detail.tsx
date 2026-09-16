@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, GitFork } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { AgentFormDialog } from "@/components/agent-form-dialog";
 import { CreateSessionDialog } from "@/components/create-session-dialog";
 import { AgentFilesEditor } from "@/components/agent-files-editor";
 import { AgentMcpEditor } from "@/components/agent-mcp-editor";
+import { ForkAgentDialog } from "@/components/fork-agent-dialog";
 import { EquipPicker } from "@/components/equip-picker";
 import { StatusBadge } from "@/components/status-badge";
 import { useAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
@@ -22,6 +23,7 @@ export default function AgentDetailPage() {
   const { data: agent, isLoading } = useAgent(id ?? "");
   const deleteMutation = useDeleteAgent();
 
+  const [forkOpen, setForkOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
@@ -69,17 +71,19 @@ export default function AgentDetailPage() {
   return (
     <div>
       <PageHeader title={agent.name}>
+        <Button variant="outline" size="sm" onClick={() => setForkOpen(true)}><GitFork className="h-3.5 w-3.5" />Fork</Button>
         <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
           <Pencil className="h-3.5 w-3.5" />
           Edit
         </Button>
         <Button
           variant="destructive"
-          size="sm"
+          size="icon"
+          aria-label="Delete Agent"
+          title="Delete Agent"
           onClick={() => setDeleteOpen(true)}
         >
           <Trash2 className="h-3.5 w-3.5" />
-          Delete
         </Button>
       </PageHeader>
 
@@ -170,7 +174,7 @@ export default function AgentDetailPage() {
 
           {/* Equip Skills from the tenant Library (Slice 4) */}
           <section>
-            <EquipPicker agent={agent} />
+            <EquipPicker key={agent.id} agent={agent} />
           </section>
 
           <section>
@@ -195,6 +199,8 @@ export default function AgentDetailPage() {
           </section>
         </div>
       </div>
+
+      {forkOpen && <ForkAgentDialog agent={agent} onClose={() => setForkOpen(false)} />}
 
       <AgentFormDialog
         open={editOpen}

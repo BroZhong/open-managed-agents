@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { Plus, Bot, Trash2, Loader2 } from "lucide-react";
+import { Plus, Bot, Trash2, Loader2, GitFork } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ForkAgentDialog } from "@/components/fork-agent-dialog";
 import { AgentFormDialog } from "@/components/agent-form-dialog";
 import { useAgents, useDeleteAgent, type Agent } from "@/lib/hooks/use-agents";
 
 export default function AgentsPage() {
+  const [forking, setForking] = useState<Agent | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const { data: agents, isLoading } = useAgents();
@@ -88,22 +90,25 @@ export default function AgentsPage() {
                       )}
                     </div>
                   </Link>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="agent-delete absolute right-2 top-4 text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
-                    aria-label={`Delete ${agent.name}`}
-                    aria-busy={deleteMutation.isPending && deleteMutation.variables === agent.id}
-                    disabled={deleteMutation.isPending}
-                    onClick={() => setAgentToDelete(agent)}
-                  >
-                    {deleteMutation.isPending && deleteMutation.variables === agent.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                    Delete
-                  </Button>
+                  <div className="absolute right-2 top-4 flex items-center">
+                    <Button variant="ghost" size="icon" title="Fork Agent" aria-label={`Fork ${agent.name}`} onClick={() => setForking(agent)}><GitFork className="h-3.5 w-3.5" /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={`Delete ${agent.name}`}
+                      className="agent-delete text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
+                      aria-label={`Delete ${agent.name}`}
+                      aria-busy={deleteMutation.isPending && deleteMutation.variables === agent.id}
+                      disabled={deleteMutation.isPending}
+                      onClick={() => setAgentToDelete(agent)}
+                    >
+                      {deleteMutation.isPending && deleteMutation.variables === agent.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -111,6 +116,7 @@ export default function AgentsPage() {
         </div>
       </div>
 
+      {forking && <ForkAgentDialog agent={forking} onClose={() => setForking(null)} />}
       <AgentFormDialog open={createOpen} onOpenChange={setCreateOpen} />
       <ConfirmDialog
         open={agentToDelete !== null}

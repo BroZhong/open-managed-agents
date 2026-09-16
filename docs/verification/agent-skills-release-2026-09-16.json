@@ -1,0 +1,151 @@
+{
+  "release": "b185d01de549",
+  "name": "Release Skills 1789551481400",
+  "libraries": [
+    {
+      "id": "skill_YiN0_V1BT7iTxO2PHgtNE",
+      "tenantId": "29e8b8d7-41f6-4f83-83ac-9324aebcc009",
+      "name": "release-b185-a",
+      "description": "Release verification a",
+      "ownerType": "library",
+      "ownerId": "29e8b8d7-41f6-4f83-83ac-9324aebcc009",
+      "sourceSkillId": null,
+      "createdAt": "2026-09-16T09:38:05.601Z",
+      "updatedAt": "2026-09-16T09:38:05.794Z"
+    },
+    {
+      "id": "skill_y0NvZWq6XFpZdY4LYbl-u",
+      "tenantId": "29e8b8d7-41f6-4f83-83ac-9324aebcc009",
+      "name": "release-b185-b",
+      "description": "Release verification b",
+      "ownerType": "library",
+      "ownerId": "29e8b8d7-41f6-4f83-83ac-9324aebcc009",
+      "sourceSkillId": null,
+      "createdAt": "2026-09-16T09:38:06.104Z",
+      "updatedAt": "2026-09-16T09:38:06.503Z"
+    }
+  ],
+  "checks": [
+    {
+      "name": "new Agent does not inherit Library Skills",
+      "ok": true,
+      "at": "2026-09-16T09:38:06.962Z"
+    },
+    {
+      "name": "UI bulk import equipped two private copies",
+      "ok": true,
+      "at": "2026-09-16T09:39:59.109Z"
+    },
+    {
+      "name": "editing Agent Skill leaves Library unchanged",
+      "ok": true,
+      "at": "2026-09-16T09:40:01.431Z"
+    },
+    {
+      "name": "fork owns two new Skill IDs",
+      "ok": true,
+      "at": "2026-09-16T09:40:28.257Z"
+    },
+    {
+      "name": "fork preserves current release-b185-a bytes",
+      "ok": true,
+      "at": "2026-09-16T09:40:30.321Z"
+    },
+    {
+      "name": "fork preserves nested release-b185-a files",
+      "ok": true,
+      "at": "2026-09-16T09:40:30.972Z"
+    },
+    {
+      "name": "fork preserves current release-b185-b bytes",
+      "ok": true,
+      "at": "2026-09-16T09:40:31.618Z"
+    },
+    {
+      "name": "fork preserves nested release-b185-b files",
+      "ok": true,
+      "at": "2026-09-16T09:40:32.264Z"
+    },
+    {
+      "name": "fork copies Agent Files",
+      "ok": true,
+      "at": "2026-09-16T09:40:32.554Z"
+    },
+    {
+      "name": "fork edit does not affect source Agent",
+      "ok": true,
+      "at": "2026-09-16T09:40:33.300Z"
+    },
+    {
+      "name": "fork edit does not affect Library",
+      "ok": true,
+      "at": "2026-09-16T09:40:33.638Z"
+    },
+    {
+      "name": "temporary verification resources removed",
+      "ok": true,
+      "at": "2026-09-16T09:40:56.516Z"
+    }
+  ],
+  "agentId": "agent_1NI462EkN8Ub4TyFHmGbe",
+  "equipped": [
+    {
+      "id": "skill_EKEM0Mkv8qo8cvDPEukGk",
+      "name": "release-b185-a",
+      "description": "Release verification a",
+      "sourceSkillId": "skill_YiN0_V1BT7iTxO2PHgtNE",
+      "createdAt": "2026-09-16T09:39:43.180Z",
+      "updatedAt": "2026-09-16T09:39:43.180Z"
+    },
+    {
+      "id": "skill__vGgy63L_kjngdw3Ve-bK",
+      "name": "release-b185-b",
+      "description": "Release verification b",
+      "sourceSkillId": "skill_y0NvZWq6XFpZdY4LYbl-u",
+      "createdAt": "2026-09-16T09:39:43.332Z",
+      "updatedAt": "2026-09-16T09:39:43.332Z"
+    }
+  ],
+  "original": "---\nname: release-b185-a\ndescription: Release verification a\n---\n\n# Release Skill\n\nLibrary original.\n",
+  "privateText": "---\nname: release-b185-a\ndescription: Release verification a\n---\n\n# Release Skill\n\nAgent private edit before fork.\n",
+  "forkId": "agent_0rnJt0_1w9tngKaDBtSEv",
+  "copied": [
+    {
+      "id": "skill_ZQ4YgbM8vsAB4l5oi6k0z",
+      "name": "release-b185-a",
+      "description": "Release verification a",
+      "sourceSkillId": "skill_YiN0_V1BT7iTxO2PHgtNE",
+      "createdAt": "2026-09-16T09:40:07.515Z",
+      "updatedAt": "2026-09-16T09:40:07.515Z"
+    },
+    {
+      "id": "skill_cbU_SXc3SZQYqK4Cgftpe",
+      "name": "release-b185-b",
+      "description": "Release verification b",
+      "sourceSkillId": "skill_y0NvZWq6XFpZdY4LYbl-u",
+      "createdAt": "2026-09-16T09:40:07.598Z",
+      "updatedAt": "2026-09-16T09:40:07.598Z"
+    }
+  ],
+  "passed": true,
+  "cleaned": true,
+  "mainBase": "f0b481ccafa3597ef289b47526a63267098eb57d",
+  "implementationCommit": "b185d01de54955b86813ebdc8c409b29275a2f5a",
+  "deployment": {
+    "cluster": "agent-platform",
+    "namespace": "oma-infra",
+    "serverImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:b185d01de549",
+    "webImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web:b185d01de549",
+    "serverManifestDigest": "sha256:9eea35fb7afd94098c6a93ec14a981c4bbafee5d107f3c4dc165a53ac2b4cb35",
+    "webManifestDigest": "sha256:104abe2e66e7e2d17de5061c288c190859adc36226d3bc943889822399c9e6de",
+    "serverContainerImageId": "sha256:a99f346e9f6bd82fb385417a583d8e30dec6e929f4df62fdebe034bb427ad4ab",
+    "webContainerImageId": "sha256:ac8b0f5af9a5093a021e51554b1787a9f33b3d1454b214770d988e64750cb248",
+    "publicBundle": "index-Bv9SEQRL.js",
+    "health": "ok"
+  },
+  "cleanup": {
+    "activeVerificationKeys": 0,
+    "remainingVerificationAgents": 0,
+    "temporarySkillArtifactsDeleted": true
+  }
+}

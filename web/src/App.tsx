@@ -8,6 +8,7 @@ import ExecutionDetailPage from "@/pages/execution-detail";
 import SessionDetailPage from "@/pages/session-detail";
 import AgentsPage from "@/pages/agents";
 import AgentDetailPage from "@/pages/agent-detail";
+import SkillDetailPage from "@/pages/skill-detail";
 import SkillsPage from "@/pages/skills";
 import ApiKeysPage from "@/pages/api-keys";
 import McpPage from "@/pages/mcp";
@@ -43,6 +44,8 @@ export default function App() {
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/agents/:id" element={<AgentDetailPage />} />
+        <Route path="/skills/:skillId" element={<SkillDetailPage />} />
+        <Route path="/agents/:id/skills/:skillId" element={<SkillDetailPage />} />
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/mcp" element={<McpPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />

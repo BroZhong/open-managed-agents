@@ -29,3 +29,15 @@ Equipping a Library Skill onto an Agent **forks** it: the Host snapshots the Lib
 - Deleting a Library Skill no longer affects already-equipped Agents — the dangling-reference class of bug is structurally gone.
 - Library edits after equip do **not** reach Agents; re-equipping is the way to pull in Library changes. This is a deliberate trade of "stay in sync" for "edit safely in isolation."
 - Storage grows with equips (one copy per Agent per Skill) rather than one shared Library copy.
+
+## Agent Forks
+
+Forking an Agent copies its current Agent Skills, rather than equipping fresh
+copies from the Library. Each copied Skill has a new ID and the new Agent as
+owner, retaining `source_skill_id` as Library provenance. This preserves private
+edits and Skills whose Library source has been deleted. Agent configuration and
+Agent Files are copied too; Sessions, Loops and Workspaces remain with the source.
+
+The fork endpoint snapshots source data before writing the new Agent and attempts
+to clean up the new Agent, Agent Files and Skill copies on write failure. It is
+not a cross-store transaction or an atomic snapshot across concurrent source edits.
