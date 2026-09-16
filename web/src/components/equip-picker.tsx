@@ -12,7 +12,6 @@ import {
 } from "@/lib/hooks/use-skills";
 import { type Agent } from "@/lib/hooks/use-agents";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SkillFilesEditor } from "@/components/skill-files-editor";
 
 /** The Agent's private Skill forks, alongside Library Skills available to equip. */
@@ -24,7 +23,6 @@ export function EquipPicker({ agent }: { agent: Agent }) {
   const pendingWrites = usePendingAgentSkillWrites(agent.id);
   const [detailsOpen, setDetailsOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [pendingUnequip, setPendingUnequip] = useState<EquippedSkill | null>(null);
 
   const library = libraryQuery.data ?? [];
   const equipped = equippedQuery.data ?? [];
@@ -54,22 +52,17 @@ export function EquipPicker({ agent }: { agent: Agent }) {
   ];
 
   function toggle(fork: EquippedSkill | undefined, libraryId: string | undefined) {
+    if (busy) return;
     if (fork) {
-      setPendingUnequip(fork);
+      unequip.mutate(fork.id, {
+        onSuccess: () => setExpanded((current) => current === fork.id ? null : current),
+        onError: (err) => toast.error(err.message || "Failed to disable Skill"),
+      });
     } else if (libraryId) {
       equip.mutate(libraryId, {
         onError: (err) => toast.error(err.message || "Failed to enable Skill"),
       });
     }
-  }
-
-  function confirmUnequip() {
-    if (!pendingUnequip || busy) return;
-    const forkId = pendingUnequip.id;
-    unequip.mutate(forkId, {
-      onSuccess: () => setExpanded((current) => current === forkId ? null : current),
-      onError: (err) => toast.error(err.message || "Failed to disable Skill"),
-    });
   }
 
   return (
@@ -165,15 +158,6 @@ export function EquipPicker({ agent }: { agent: Agent }) {
           </div>
         );
       })}
-
-      <ConfirmDialog
-        open={pendingUnequip !== null}
-        onOpenChange={(open) => { if (!open) setPendingUnequip(null); }}
-        title="Disable Skill"
-        description={`Disabling "${pendingUnequip?.name ?? ""}" removes this Agent's private copy, including any edits. ${pendingUnequip?.sourceSkillId && libraryIds.has(pendingUnequip.sourceSkillId) ? "Enabling it again creates a new copy from the Skill Library." : "Its Library source is no longer available, so it cannot be enabled again from this page."}`}
-        onConfirm={confirmUnequip}
-        confirmLabel="Disable and remove copy"
-      />
     </div>
   );
 }

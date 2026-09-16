@@ -385,8 +385,7 @@ describe("EquipPicker optimistic updates", () => {
     const toggle = () => screen.getByRole("checkbox", { name: /Unequip Skill/ });
     expect((toggle() as HTMLInputElement).checked).toBe(true);
     fireEvent.click(toggle());
-    expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Disable and remove copy" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     try {
@@ -451,7 +450,7 @@ describe("EquipPicker optimistic updates", () => {
 
     const toggle = () => screen.getByRole("checkbox", { name: /Unequip Rollback Skill/ });
     fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole("button", { name: "Disable and remove copy" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() =>
       expect((toggle() as HTMLInputElement).checked).toBe(false),
     );
