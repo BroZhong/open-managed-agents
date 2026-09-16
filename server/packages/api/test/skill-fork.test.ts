@@ -304,6 +304,31 @@ describe("Skill directory file editing (issue #73)", () => {
 });
 
 describe("Agent Skill name conflicts", () => {
+  it("re-importing with overwrite refreshes the existing source fork and removes obsolete files", async () => {
+    const { app, agentStore, skillStore, skillArtifactStore } = setup();
+    const agentId = await makeAgent(app);
+    const libId = await makeLibrarySkill(skillStore, skillArtifactStore);
+    const send = () => app.request(`/v1/agents/${agentId}/skills`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skillId: libId, overwrite: true }),
+    });
+    const initial = await send();
+    expect(initial.status).toBe(201);
+    const fork = await initial.json();
+    await skillArtifactStore.put("dev", fork.id, "old.txt", "Agent-only file");
+    await skillStore.update(libId, { description: "Updated Library instructions" });
+    await skillArtifactStore.put("dev", libId, "SKILL.md", "Updated instructions");
+    await skillArtifactStore.put("dev", libId, "scripts/new.sh", "echo updated");
+
+    const updated = await send();
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ id: fork.id, sourceSkillId: libId, description: "Updated Library instructions" });
+    expect((await skillArtifactStore.list("dev", fork.id)).sort()).toEqual(["SKILL.md", "scripts/new.sh"]);
+    const files = await skillArtifactStore.getAll("dev", fork.id);
+    expect(new TextDecoder().decode(files.find((file) => file.path === "SKILL.md")!.body)).toBe("Updated instructions");
+    expect((await agentStore.getById(agentId))?.skills).toEqual([fork.id]);
+    expect(await skillStore.listByOwner("dev", "agent", agentId)).toHaveLength(1);
+  });
+
   it("confirms replacement of a same-name fork while preserving other Agents and the Library", async () => {
     const { app, agentStore, skillStore, skillArtifactStore } = setup();
     const agentId = await makeAgent(app);

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -23,12 +23,24 @@ it.each([false, true])("upload conflict asks for confirmation, overwrite=%s", as
   expect(calls).toEqual(confirmed ? [null, "true"] : [null]);
 });
 
-it("Agent equip retries only after confirmation with overwrite enabled", async () => {
-  vi.spyOn(window, "confirm").mockReturnValue(true);
-  const fetch = vi.fn().mockResolvedValueOnce(conflict()).mockResolvedValueOnce(new Response(JSON.stringify({ id: "fork", name: "greeter", sourceSkillId: "library" })));
+it("Agent equip overwrites immediately without confirmation", async () => {
+  const confirm = vi.spyOn(window, "confirm");
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "fork", name: "greeter", sourceSkillId: "library" })));
   vi.stubGlobal("fetch", fetch);
   const { result } = renderHook(() => useEquipSkill("agent"), { wrapper });
   await act(() => result.current.mutateAsync("library"));
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ skillId: "library", overwrite: true });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(confirm).not.toHaveBeenCalled();
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ skillId: "library", overwrite: true });
+});
+
+it("Agent upload opts into replacement on the first request without confirmation", async () => {
+  const confirm = vi.spyOn(window, "confirm");
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ data: [] })));
+  vi.stubGlobal("fetch", fetch);
+  const { result } = renderHook(() => useUploadSkills({ overwrite: true }), { wrapper });
+  await act(() => result.current.mutateAsync([{ path: "SKILL.md", file: new File(["name: greeter"], "SKILL.md") }]));
+  expect(fetch).toHaveBeenCalledOnce();
+  expect((fetch.mock.calls[0][1].body as FormData).get("overwrite")).toBe("true");
+  expect(confirm).not.toHaveBeenCalled();
 });

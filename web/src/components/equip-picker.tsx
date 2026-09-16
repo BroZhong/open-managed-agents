@@ -21,7 +21,7 @@ export function EquipPicker({ agent }: { agent: Agent }) {
   const equip = useEquipSkill(agent.id);
   const unequip = useUnequipSkill(agent.id);
   const pendingWrites = usePendingAgentSkillWrites(agent.id);
-  const upload = useUploadSkills();
+  const upload = useUploadSkills({ overwrite: true });
   const inputRef = useRef<HTMLInputElement>(null);
   const operationRef = useRef(false);
   const [working, setWorking] = useState(false);
@@ -32,8 +32,9 @@ export function EquipPicker({ agent }: { agent: Agent }) {
   const equipped = equippedQuery.data ?? [];
   const busy = working || pendingWrites.isPending;
   const ready = equippedQuery.data !== undefined && !equippedQuery.error;
+  const equippedNames = new Set(equipped.map((skill) => skill.name));
   const equippedSources = new Set(equipped.map((skill) => skill.sourceSkillId));
-  const available = (libraryQuery.data ?? []).filter((skill) => !equippedSources.has(skill.id));
+  const available = libraryQuery.data ?? [];
   const visible = available.filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(search.toLowerCase()));
   const selectedIds = available.filter((skill) => selected.has(skill.id)).map((skill) => skill.id);
 
@@ -115,7 +116,7 @@ export function EquipPicker({ agent }: { agent: Agent }) {
         ))}
       </div>
       <Dialog open={importOpen} ariaLabel="Import Skills" onOpenChange={(open) => { if (!busy) setImportOpen(open); }}>
-        <DialogHeader><h2 className="text-lg font-semibold">Import Skills</h2><p className="text-sm text-neutral-500">Select Library Skills to equip as independent copies for this Agent.</p></DialogHeader>
+        <DialogHeader><h2 className="text-lg font-semibold">Import Skills</h2><p className="text-sm text-neutral-500">Select Library Skills to equip as independent copies for this Agent. Existing copies will be overwritten.</p></DialogHeader>
         <input aria-label="Search Skills" className="w-full rounded-lg border border-[var(--color-border)] p-2 text-sm" placeholder="Search Skills…" value={search} disabled={busy} onChange={(e) => setSearch(e.target.value)} />
         {libraryQuery.isLoading && <p className="mt-3 text-sm">Loading Library…</p>}
         {libraryQuery.error && <div role="alert">{libraryQuery.error.message}<Button variant="ghost" onClick={() => void libraryQuery.refetch()}>Retry</Button></div>}
@@ -124,7 +125,9 @@ export function EquipPicker({ agent }: { agent: Agent }) {
           <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
             {visible.map((skill) => <label key={skill.id} className="flex cursor-pointer items-start gap-3 rounded-lg border border-[var(--color-border)] p-3">
               <input type="checkbox" className="mt-1" aria-label={`Select ${skill.name}`} disabled={busy} checked={selected.has(skill.id)} onChange={(e) => setSelected((current) => { const next = new Set(current); if (e.target.checked) next.add(skill.id); else next.delete(skill.id); return next; })} />
-              <span className="min-w-0"><span className="block truncate text-sm font-medium">{skill.name}</span><span className="line-clamp-2 text-xs text-neutral-500">{skill.description}</span></span>
+              <span className="min-w-0"><span className="block truncate text-sm font-medium">{skill.name}</span>
+                {(equippedNames.has(skill.name) || equippedSources.has(skill.id)) && <span className="my-1 inline-block rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">{equippedNames.has(skill.name) ? "Same name · will overwrite" : "Already equipped · will overwrite"}</span>}
+                <span className="line-clamp-2 text-xs text-neutral-500">{skill.description}</span></span>
             </label>)}
             {!visible.length && <p className="py-4 text-sm text-neutral-500">{available.length ? "No matching Skills." : "No Library Skills available to import."} <Link to="/skills" onClick={() => setImportOpen(false)} className="underline">Open Skill Library</Link></p>}
           </div>

@@ -12,6 +12,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const librarySkill: Skill = {
@@ -90,15 +91,18 @@ function mockSkillApi(
     if (url.pathname === agentSkillsPath) {
       if (method === "GET") return response({ data: state.equipped });
       if (method === "POST") {
-        const { skillId } = JSON.parse(String(init.body)) as { skillId: string };
+        const { skillId, overwrite } = JSON.parse(String(init.body)) as { skillId: string; overwrite?: boolean };
         const source = state.library.find((skill) => skill.id === skillId);
         if (!source) return response({ message: "Library Skill not found" }, 404);
+        const existing = state.equipped.find((skill) => skill.name === source.name)
+          ?? state.equipped.find((skill) => skill.sourceSkillId === source.id);
+        if (existing && !overwrite) return response({ message: "Overwrite required", code: "skill_name_conflict" }, 409);
         const fork: EquippedSkill = {
           ...source,
-          id: `fork_${source.id}`,
+          id: existing?.id ?? `fork_${source.id}`,
           sourceSkillId: source.id,
         };
-        state.equipped = [...state.equipped, fork];
+        state.equipped = [...state.equipped.filter((skill) => skill.id !== fork.id), fork];
         return response(fork);
       }
     }
@@ -182,7 +186,7 @@ describe("Agent Skills", () => {
     renderPicker();
     const dialog = await openImport();
     await within(dialog).findByRole("checkbox", { name: `Select ${inactiveSkill.name}` });
-    expect(within(dialog).queryByRole("checkbox", { name: `Select ${librarySkill.name}` })).toBeNull();
+    expect(within(dialog).getByRole("checkbox", { name: `Select ${librarySkill.name}` })).toBeTruthy();
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Search Skills" }), { target: { value: "video" } });
     fireEvent.click(within(dialog).getByRole("checkbox", { name: "Select all shown" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Equip selected (2)" }));
@@ -191,6 +195,32 @@ describe("Agent Skills", () => {
     expect(screen.getByRole("link", { name: `Open ${extra.name}` })).toBeTruthy();
     const posts = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(agentSkillsPath) && init?.method === "POST");
     expect(posts.map(([, init]) => JSON.parse(String(init?.body)).skillId)).toEqual([inactiveSkill.id, extra.id]);
+  });
+
+  it.each([
+    { name: librarySkill.name, sourceSkillId: librarySkill.id, label: "Same name · will overwrite" },
+    { name: librarySkill.name, sourceSkillId: "old-source", label: "Same name · will overwrite" },
+    { name: agentSkill.name, sourceSkillId: librarySkill.id, label: "Already equipped · will overwrite" },
+  ])("marks and updates an existing copy: $name / $sourceSkillId", async ({ name, sourceSkillId, label }) => {
+    const confirm = vi.spyOn(window, "confirm");
+    const existing = { ...agentSkill, name, sourceSkillId };
+    const { state, fetchMock } = mockSkillApi([librarySkill, inactiveSkill], [existing, orphanSkill]);
+    const client = renderPicker();
+    const dialog = await openImport();
+    const checkbox = await within(dialog).findByRole("checkbox", { name: `Select ${librarySkill.name}` });
+    expect(checkbox.closest("label")?.textContent).toContain(label);
+    expect(within(dialog).getByRole("checkbox", { name: `Select ${inactiveSkill.name}` }).closest("label")?.textContent).not.toContain("will overwrite");
+    fireEvent.click(checkbox);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Equip selected (1)" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const updated = { ...librarySkill, id: existing.id, sourceSkillId: librarySkill.id };
+    expect(state.equipped).toEqual([orphanSkill, updated]);
+    expect(client.getQueryData(["agents", agent.id, "skills"])).toEqual([orphanSkill, updated]);
+    expect(screen.getByRole("link", { name: `Open ${librarySkill.name}` }).getAttribute("href")).toBe(`/agents/${agent.id}/skills/${existing.id}`);
+    expect(confirm).not.toHaveBeenCalled();
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0][1]?.body))).toEqual({ skillId: librarySkill.id, overwrite: true });
   });
 
   it("offers Library Skills from subsequent pages in the batch picker", async () => {
@@ -229,6 +259,7 @@ describe("Agent Skills", () => {
     state.intercept = (url, init) => {
       if (url.pathname === "/v1/skills" && init.method === "POST") {
         expect(JSON.parse(String((init.body as FormData).get("paths")))).toEqual(["SKILL.md"]);
+        expect((init.body as FormData).get("overwrite")).toBe("true");
         state.library = [inactiveSkill];
         return response({ data: state.library });
       }

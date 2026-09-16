@@ -96,8 +96,12 @@ A self-contained, reusable capability packaged as a directory containing a `SKIL
 _Avoid_: plugin, tool (a Skill may bundle tools, but is not itself a tool)
 
 Skill names are unique within an owner: `(tenant, owner type, owner id, name)`.
-Uploading an existing Library Skill name or equipping a colliding Agent Skill
-requires explicit overwrite confirmation. Replacement retains the Skill ID and
+Uploading an existing name on the Skill Library page requires explicit overwrite
+confirmation. Agent-page imports and Upload & Equip overwrite existing copies by
+default; already-equipped Library Skills remain selectable for re-import, with
+same-name or already-equipped labels indicating which selections will overwrite.
+The console sends `overwrite: true` to opt into the API's replacement behavior.
+Replacement retains the Skill ID and
 replaces the complete file tree; Library replacement leaves Agent forks independent.
 Metadata and SKILL.md edits cannot rename a Skill to another Skill's name.
 
