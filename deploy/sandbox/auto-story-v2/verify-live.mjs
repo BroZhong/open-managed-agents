@@ -11,6 +11,10 @@ const { tsImport } = await import(pathToFileURL(apiRequire.resolve("tsx/esm/api"
 const { E2BSandboxClient } = await tsImport(
   "/app/server/packages/sandbox/src/e2b-sandbox-client.ts", import.meta.url,
 );
+const { sandboxBaseEnvFromKubernetes } = await tsImport(
+  "/app/server/packages/api/src/lib/sandbox-base-secret.ts", import.meta.url,
+);
+const baseEnv = await sandboxBaseEnvFromKubernetes(process.env);
 const options = { domain: process.env.E2B_DOMAIN, apiKey: process.env.E2B_API_KEY };
 assert(options.domain && options.apiKey, "The Host must configure its E2B endpoint and key");
 const template = process.env.SANDBOX_TEMPLATE;
@@ -32,7 +36,7 @@ try {
   const client = new E2BSandboxClient({ ...options, defaultTemplate: template });
   handle = await client.create({
     timeoutSeconds: 300,
-    env: { AUTO_STORY_SMOKE_VALUE: marker },
+    env: { ...baseEnv, AUTO_STORY_SMOKE_VALUE: marker },
     metadata: {
       purpose: "auto-story-default-verification",
       "security.agents.kruise.io/agent-name": mountEnv.WORKSPACE_OSS_AGENT_NAME,
