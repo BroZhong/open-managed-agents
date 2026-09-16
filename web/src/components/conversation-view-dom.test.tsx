@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ConversationView } from "@/components/conversation-view";
 import type { SessionDelta, SessionEvent } from "@/lib/types";
 
@@ -328,4 +328,26 @@ it("opens absolute and relative file links in Workspace while preserving externa
   expect(open.mock.calls).toEqual([["novel/narration.txt"], ["novel/scenes.md"], ["novel/production.json"]]);
   expect(screen.getByRole("link", { name: "文档" }).getAttribute("href")).toBe("https://example.com/docs");
   expect(screen.getByRole("link", { name: "技能" }).getAttribute("title")).toBeNull();
+});
+
+it("updates live process elapsed time and freezes it when the next answer arrives", () => {
+  vi.useFakeTimers();
+  try {
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    vi.setSystemTime(new Date("2026-09-16T00:02:16Z"));
+    const events: SessionEvent[] = [
+      { seq: 1, type: "span.model_request_start", data: {}, ts: "2026-09-16T00:00:00Z" },
+      { seq: 2, type: "agent.tool_use", data: { toolUseId: "timed", name: "bash", input: { command: "work" } }, ts: "2026-09-16T00:00:10Z" },
+    ];
+    const view = render(<ConversationView events={events} sessionStatus="running" />);
+    expect(screen.getByRole("button", { name: /Working.*2m 16s/ })).toBeTruthy();
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByRole("button", { name: /Working.*2m 17s/ })).toBeTruthy();
+    view.rerender(<ConversationView events={[...events,
+      { seq: 3, type: "agent.tool_result", data: { toolUseId: "timed", content: "Done" }, ts: "2026-09-16T00:02:17Z" },
+      { seq: 4, type: "agent.message", data: { content: [{ type: "text", text: "Finished" }] }, ts: "2026-09-16T00:02:18Z" },
+    ]} sessionStatus="idle" />);
+    act(() => vi.advanceTimersByTime(60000));
+    expect(screen.getByRole("button", { name: /Explored.*2m 18s/ }).getAttribute("aria-expanded")).toBe("false");
+  } finally { vi.useRealTimers(); }
 });

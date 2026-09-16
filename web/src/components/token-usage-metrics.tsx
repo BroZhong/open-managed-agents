@@ -13,12 +13,12 @@ export function TokenUsageMetrics({
   className?: string;
 }) {
   const metrics = [
-    ["Total", formatTokenCount(usage.totalTokens)],
+    ["Total tokens", formatTokenCount(usage.totalTokens)],
     ["Input", formatTokenCount(usage.inputTokens)],
     ["Output", formatTokenCount(usage.outputTokens)],
     ["Cache read", formatTokenCount(usage.cacheReadTokens)],
     ["Cache write", formatTokenCount(usage.cacheWriteTokens)],
-    ["Cache hit", formatCacheHitRate(usage.cacheHitRate)],
+    ["KV cache hit", formatCacheHitRate(usage.cacheHitRate)],
   ] as const;
 
   return (
@@ -30,7 +30,7 @@ export function TokenUsageMetrics({
       )}
     >
       {metrics.map(([label, value]) => (
-        <div key={label} className="px-2.5 py-1">
+        <div key={label} className="px-2.5 py-1" title={label === "KV cache hit" ? "Cache read tokens / input tokens" : `${label}: ${value}`}>
           <dt className="text-[10px] leading-3 text-[var(--color-fg-subtle)]">
             {label}
           </dt>

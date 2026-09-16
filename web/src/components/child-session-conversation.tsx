@@ -1,5 +1,6 @@
 import type { DelegationExecution } from "@/lib/delegations";
 import { ConversationView } from "@/components/conversation-view";
+import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { StatusBadge } from "@/components/status-badge";
 import { useSession } from "@/lib/hooks/use-sessions";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
@@ -19,5 +20,6 @@ export function ChildSessionConversation({ sessionId, onOpenExecution, onOpenWor
     <div className="min-h-0 flex-1">
       <ConversationView onOpenExecution={onOpenExecution} onOpenWorkspaceFile={onOpenWorkspaceFile} sessionId={sessionId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveStatus} />
     </div>
+    <SessionUsageFooter events={events} />
   </div>;
 }

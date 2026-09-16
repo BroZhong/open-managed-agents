@@ -15,6 +15,7 @@ import { ToolCard } from "@/components/tool-card";
 import { DelegationCard } from "@/components/delegation-card";
 import type { DelegationExecution } from "@/lib/delegations";
 import { workspaceLinkPath } from "@/lib/workspace-link";
+import { processTimings, formatElapsedTime, type ProcessTiming } from "@/lib/process-timing";
 const SessionContext = createContext("");
 const OpenExecutionContext = createContext<((execution: DelegationExecution) => void) | undefined>(undefined);
 const OpenWorkspaceFileContext = createContext<((path: string) => void) | undefined>(undefined);
@@ -92,6 +93,7 @@ export function ConversationView({
     () => groupMessagesIntoTurns(messages),
     [messages],
   );
+  const timings = useMemo(() => processTimings(messages, events, activeDeltas), [messages, events, activeDeltas]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -148,6 +150,7 @@ export function ConversationView({
               turn={turn}
               running={idx === turns.length - 1 && (sessionStatus === "running" || sessionStatus === "waiting")}
               focusToolUseId={focusToolUseId}
+              timings={timings}
             />
           ))}
           {showTypingIndicator && <TypingIndicator />}
@@ -168,7 +171,7 @@ export function ConversationView({
   );
 }
 
-function TurnBlock({ turn, running, focusToolUseId }: { turn: Turn; running: boolean; focusToolUseId?: string }) {
+function TurnBlock({ turn, running, focusToolUseId, timings }: { turn: Turn; running: boolean; focusToolUseId?: string; timings: Map<string, ProcessTiming> }) {
   const segments: { activity: boolean; messages: DisplayMessage[] }[] = [];
   for (const message of turn.responses) {
     const activity = message.role === "thinking" || message.role === "tool_use";
@@ -182,14 +185,14 @@ function TurnBlock({ turn, running, focusToolUseId }: { turn: Turn; running: boo
       {segments.map((segment, index) => {
         const focused = segment.messages.some((message) => !!focusToolUseId && message.toolUseId === focusToolUseId);
         return segment.activity
-          ? <ProcessGroup key={`process:${segment.messages[0].id}:${focused ? focusToolUseId : ""}`} messages={segment.messages} running={running && index === segments.length - 1} focused={focused} />
+          ? <ProcessGroup key={`process:${segment.messages[0].id}:${focused ? focusToolUseId : ""}`} messages={segment.messages} running={running && index === segments.length - 1} focused={focused} timing={timings.get(segment.messages[0].id)} />
           : <MessageBubble key={segment.messages[0].id} message={segment.messages[0]} />;
       })}
     </div>
   );
 }
 
-function ProcessGroup({ messages, running, focused }: { messages: DisplayMessage[]; running: boolean; focused: boolean }) {
+function ProcessGroup({ messages, running, focused, timing }: { messages: DisplayMessage[]; running: boolean; focused: boolean; timing?: ProcessTiming }) {
   const tools = messages.filter((message) => message.role === "tool_use");
   const thinking = messages.some((message) => message.role === "thinking");
   const failed = tools.filter((message) => message.result?.isError).length;
@@ -201,10 +204,22 @@ function ProcessGroup({ messages, running, focused }: { messages: DisplayMessage
     <SessionDisclosure className="session-process" active={active} defaultOpen={active || failed > 0 || focused} summary={<>
       {active ? <Circle size={12} className="animate-pulse" /> : failed || incomplete ? <Layers size={14} /> : <Check size={14} />}
       <span>{status} · {description}{failed ? ` · ${failed} failed` : ""}</span>
+      {timing && <ProcessElapsedTime timing={timing} running={running} />}
     </>}>
       {messages.map((message) => <MessageBubble key={message.id} message={message} running={running} />)}
     </SessionDisclosure>
   );
+}
+
+function ProcessElapsedTime({ timing, running }: { timing: ProcessTiming; running: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+  const elapsed = formatElapsedTime((running ? Math.max(now, timing.endedAt) : timing.endedAt) - timing.startedAt);
+  return <span className="session-process-duration" title={running ? "Elapsed time" : "Time spent"}>· {elapsed}</span>;
 }
 
 function MessageBubble({ message, running = false }: { message: DisplayMessage; running?: boolean }) {

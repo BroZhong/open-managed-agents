@@ -9,6 +9,7 @@ import { TimelineView } from "@/components/timeline-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { WorkspacePanel } from "@/components/workspace-panel";
 import { MessageInput } from "@/components/message-input";
+import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
 import type { DelegationExecution } from "@/lib/delegations";
 import { useSession } from "@/lib/hooks/use-sessions";
@@ -161,6 +162,7 @@ function SessionDetail({ id }: { id: string }) {
                 running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
                 onInterrupt={handleInterrupt}
               />
+              <SessionUsageFooter events={events} />
             </div>
             <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
               <TimelineView events={events} />
