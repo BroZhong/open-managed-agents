@@ -1,3 +1,4 @@
+# HISTORICAL REFERENCE: no longer maintained. Use sandboxset-auto-story-v2.yaml.
 # Shanghai agent-platform / sandbox-system; observed 2026-09-14.
 # Name is the E2B templateID. Mount metadata is supplied per Sandbox by Host.
 # The image digest records the currently deployed artifact; rebuild the image

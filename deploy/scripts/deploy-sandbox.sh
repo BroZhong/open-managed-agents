@@ -9,7 +9,7 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-agent-platform}"
 NAMESPACE="sandbox-system"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-300}"
 
-pool="auto-story"
+pool="auto-story-v2"
 image=""
 apply=false
 confirm_production=false
@@ -19,11 +19,11 @@ usage() {
 Usage: deploy/scripts/deploy-sandbox.sh [options]
 
 Validate or deploy an agent-platform SandboxSet. The default is the production
-auto-story pool in server-side dry-run mode.
+auto-story-v2 pool in server-side dry-run mode.
 
 Options:
-  --pool auto-story|stock|custom  SandboxSet to process (default: auto-story).
-  --image IMAGE             Override the manifest image; required for custom.
+  --pool auto-story-v2      Only maintained SandboxSet (default: auto-story-v2).
+  --image IMAGE             Override the manifest image.
   --apply                   Apply and wait for an available warm-pool replica.
   --confirm-production      Required together with --apply.
   -h, --help                Show this help.
@@ -50,12 +50,8 @@ while (($# > 0)); do
   shift
 done
 
-if [[ "${pool}" != auto-story && "${pool}" != stock && "${pool}" != custom ]]; then
-  echo "--pool must be auto-story, stock or custom." >&2
-  exit 2
-fi
-if [[ "${pool}" == custom && -z "${image}" ]]; then
-  echo "--image is required for --pool custom." >&2
+if [[ "${pool}" != auto-story-v2 ]]; then
+  echo "Only --pool auto-story-v2 is maintained." >&2
   exit 2
 fi
 if [[ -n "${image}" && ! "${image}" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
@@ -83,15 +79,11 @@ fi
 render_dir="$(mktemp -d "${TMPDIR:-/tmp}/oma-sandbox-deploy.XXXXXX")"
 trap 'rm -rf "${render_dir}"' EXIT
 
-case "${pool}" in
-  auto-story) resource_name="auto-story" ;;
-  stock) resource_name="code-interpreter" ;;
-  custom) resource_name="code-interpreter-vfscli" ;;
-esac
+resource_name="auto-story-v2"
 source_manifest="${REPO_ROOT}/deploy/sandbox/sandboxset-${resource_name}.yaml"
 manifest="${source_manifest}"
 if [[ -n "${image}" ]]; then
-  # Each supported SandboxSet has one container. Replace its pinned image,
+  # The maintained SandboxSet has one container. Replace its pinned image,
   # including manifests that no longer contain a release placeholder.
   image_count="$(awk '$1 == "image:" { count += 1 } END { print count + 0 }' "${source_manifest}")"
   if [[ "${image_count}" != 1 ]]; then

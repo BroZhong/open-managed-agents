@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import wave
+import zipfile
 
 
 EXPECTED = {
@@ -22,6 +23,7 @@ EXPECTED = {
     "google-genai": "2.22.0",
     "rg": "15.1.0",
     "fd": "10.4.2",
+    "ossutil": "2.2.0",
 }
 WORKSPACE = Path("/home/user")
 CHECKS = []
@@ -64,7 +66,7 @@ def check(name, operation):
 
 
 def binary_versions():
-    required_binaries = [name for name in EXPECTED if name != "google-genai"] + ["python3", "node"]
+    required_binaries = [name for name in EXPECTED if name != "google-genai"] + ["python3", "node", "ps", "unzip"]
     for executable in required_binaries:
         require(shutil.which(executable) is not None, f"Missing executable: {executable}")
     versions = {}
@@ -73,7 +75,7 @@ def binary_versions():
     data = payload["data"]
     versions["vfs-cli"] = data["version"].removeprefix("v")
     require(data.get("platform") == "linux/amd64", "vfs-cli must be linux/amd64")
-    for binary, flag in (("mediakit-cli", "--version"), ("ffmpeg", "-version"), ("ffprobe", "-version"), ("rg", "--version"), ("fd", "--version")):
+    for binary, flag in (("mediakit-cli", "--version"), ("ffmpeg", "-version"), ("ffprobe", "-version"), ("rg", "--version"), ("fd", "--version"), ("ossutil", "version")):
         output = run([binary, flag], mediakit=binary == "mediakit-cli", timeout=20)
         match = re.search(r"(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])", output)
         require(match is not None, f"Cannot parse {binary} version: {output[:300]}")
@@ -81,6 +83,22 @@ def binary_versions():
     for binary, version in versions.items():
         require(version == EXPECTED[binary], f"{binary}: expected {EXPECTED[binary]}, got {version}")
     return versions
+
+
+def runtime_utilities(directory):
+    # Test useful operations as the sandbox user, without service credentials.
+    processes = run(["ps", "-eo", "pid,comm"], timeout=10)
+    require(any(line.split()[0] == str(os.getpid()) for line in processes.splitlines()[1:] if line.split()),
+            "ps did not list the running acceptance process")
+    archive = directory / "utilities.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("nested/fixture.txt", "sandbox unzip works\n")
+    destination = directory / "unzipped"
+    run(["unzip", "-q", str(archive), "-d", str(destination)], timeout=10)
+    require((destination / "nested/fixture.txt").read_text() == "sandbox unzip works\n",
+            "unzip did not preserve fixture contents")
+    run(["ossutil", "cp", "--help"], timeout=20)
+    return {"ps": "current process visible", "unzip": "archive extracted", "ossutil": "cp help available"}
 
 
 def gemini_sdk():
@@ -345,6 +363,7 @@ def main():
             require(marker.read_text(encoding="utf-8") == "workspace writable\n", "Workspace read/write check failed")
             CHECKS.append({"name": "workspace", "ok": True, "details": {"root": str(WORKSPACE), "uid": os.geteuid()}})
             check("native_search", lambda: verify_native_search(directory))
+            check("runtime_utilities", lambda: runtime_utilities(directory))
             check("vfs_audio_contract_and_embedded_skills", lambda: verify_vfs_audio_contract(directory))
             check("ffmpeg_encode", lambda: create_video(directory))
             check("ffmpeg_subtitle_burn", lambda: subtitle_burn(directory))

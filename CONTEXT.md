@@ -10,7 +10,7 @@ the machine's default context may point to another cluster. The Host and web
 console are in `oma-infra`; SandboxSets are in `sandbox-system`.
 
 The Host enables sandboxes with global default template
-`auto-story` and E2B domain `sandbox.agentry.welltop.tech`.
+`auto-story-v2` (the sole maintained Sandbox template) and E2B domain `sandbox.agentry.welltop.tech`.
 Sandbox images come from the Shanghai ACR repository
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 See `deploy/k8s.yaml` and `deploy/sandbox/README.md` for deployment configuration.

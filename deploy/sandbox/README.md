@@ -1,22 +1,21 @@
-# Shanghai Sandbox templates
+# Shanghai sandbox
 
-The supported application template is `code-interpreter-vfscli` in the
-`sandbox-system` namespace of Shanghai `agent-platform`
-(`c4d4dbd36064d4341835496ed01023600`). It serves the E2B gateway
-`sandbox.agentry.welltop.tech`. A `SandboxSet` name is its E2B template ID;
-`Sandbox.create("code-interpreter-vfscli")` requests that template's warm pool.
+The sole maintained application template is `auto-story-v2` in the
+`sandbox-system` namespace of Shanghai `agent-platform`. It serves the E2B
+gateway `sandbox.agentry.welltop.tech`. The SandboxSet name is its E2B template
+ID; `Sandbox.create("auto-story-v2")` requests that template's warm pool.
 
-Use these records together:
-
-- [`sandboxset-code-interpreter-vfscli.yaml`](./sandboxset-code-interpreter-vfscli.yaml)
-  records the verified Shanghai template, image digest, DNS/runtime settings,
-  resource requests and `ali-shanghai` pull Secret reference.
-- [`code-interpreter-vfscli/README.md`](./code-interpreter-vfscli/README.md)
-  describes the image build, launcher, named Skill projections and supported
-  local dependency installation paths.
+- [`sandboxset-auto-story-v2.yaml`](./sandboxset-auto-story-v2.yaml) records the
+  active pool's pinned image, runtime, Secret references and resource settings.
+- [`auto-story/README.md`](./auto-story/README.md) describes the maintained image
+  recipe, including ossutil, procps (`ps`) and unzip. The directory and image
+  release version remain named auto-story; the template ID is auto-story-v2.
 - [`oss-workspace/README.md`](./oss-workspace/README.md) records the Agent
-  Identity, scoped OSS mount, explicit-cluster commands, operational limits,
-  isolated verification evidence and coordinated release gate.
+  Identity, scoped OSS mount, explicit-cluster commands and verification gate.
+
+The older `auto-story`, `code-interpreter` and `code-interpreter-vfscli` manifests
+and recipes are historical references, not maintained release targets. The
+standard build and deploy scripts accept only `auto-story-v2`.
 
 The Host computes a trusted `<tenantId>/<workspaceId>/` prefix after checking
 Workspace ownership. It passes the CSI volume metadata to E2B; Agent Identity
@@ -44,9 +43,3 @@ changing a default does not replace an existing Sandbox. Do not switch the web
 Workspace store while affected execution still uses the prior storage path.
 The inventory provides the explicit Shanghai kubeconfig procedure; all kubectl
 commands should use it without changing the default context.
-
-[`sandboxset-code-interpreter.yaml`](./sandboxset-code-interpreter.yaml) is an
-inactive stock-image reference with zero warm replicas. It has not been tested
-as an application OSS Workspace template and is not a supported substitute for
-`code-interpreter-vfscli`. Do not select or apply it as part of the release gate
-without separately validating its runtime, tooling and mounted execution.

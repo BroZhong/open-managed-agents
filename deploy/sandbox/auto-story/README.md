@@ -1,6 +1,6 @@
-# auto-story sandbox image
+# auto-story-v2 sandbox image
 
-This recipe builds auto-story 0.2.1 for the Shanghai `agent-platform` cluster
+This recipe builds the sole maintained `auto-story-v2` template (auto-story 0.2.1) for the Shanghai `agent-platform` cluster
 from the original ACS `code-interpreter` image, pinned by digest. It does not
 derive from the OpenMontage image: OpenMontage, Whisper, their source trees,
 and model weights are absent from every added layer. FFmpeg is compiled with
@@ -35,6 +35,13 @@ parity tests:
 | mediakit-cli | 0.2.1 | [Official release](https://github.com/volcengine/mediakit-cli/releases/tag/v0.2.1) |
 | ripgrep (`rg`) | 15.1.0 | [Official release](https://github.com/BurntSushi/ripgrep/releases/tag/15.1.0) |
 | fd | 10.4.2 | [Official release](https://github.com/sharkdp/fd/releases/tag/v10.4.2) |
+| ossutil | 2.2.0 | [Official archive](https://gosspublic.alicdn.com/ossutil/v2/2.2.0/ossutil-2.2.0-linux-amd64.zip) |
+
+The runtime also installs Debian `procps` (providing `ps`) and `unzip`.
+`../prepare-ossutil.py` pins and verifies both the official archive and extracted
+binary; Docker independently checks the binary hash. `OSSUTIL_SRC` may supply
+the same pinned Linux amd64 binary for offline preparation. These utilities are
+available to the ordinary sandbox user without an install during Skill execution.
 
 `versions.json` records the FFmpeg/CLI source hashes, CLI binary hashes and
 the base image digest. The shared `../prepare-search-binaries.py` pins the
@@ -79,8 +86,9 @@ same option for the search binaries.
 
 To prepare on a machine with GitHub access and build elsewhere, copy the
 `deploy/sandbox` recipe tree, including `prepare-search-binaries.py`, the
-prepared `auto-story/sources/` archives and `auto-story/bin/` files. The shared
-helper must remain beside the auto-story directory. Python wheels and Debian
+prepared `auto-story/sources/` archives and `auto-story/bin/` files. Both shared
+helpers, `prepare-search-binaries.py` and `prepare-ossutil.py`, must remain beside
+the auto-story directory. Python wheels and Debian
 packages still need a reachable package mirror during the build.
 
 The default tag is `auto-story-0.2.1` in
@@ -101,6 +109,7 @@ Acceptance runs with no network as the unprivileged `user`, on a minimal PATH:
 - Minimal-PATH `python3 -I` selects the Gemini venv and can import the same
   numpy/pandas versions present in the clean ACS environment.
 - rg Unicode regex, brace globs and `.gitignore`; fd recursive basename and path globs.
+- ossutil version/copy-command help, `ps` process visibility and actual ZIP extraction.
 - Embedded VFS Skill discovery, SeedAudio schema and reference limits,
   generation dry-run, and audio Resource URL/local-WAV registration dry-runs.
 - Workspace write access, H.264/AAC encoding, probing, and subtitle burn-in.
@@ -122,18 +131,18 @@ Only non-secret defaults are included: `WORKSPACE_DIR=/home/user`,
 `MEDIAKIT_RUNTIME=pi-agent`. Runtime credentials must be injected by the Host
 or the Agent's `sandbox.env`; they are not build arguments or image layers.
 
-The Server is configured with `SANDBOX_TEMPLATE=auto-story`, and the SDK
-fallback also selects `auto-story`. The UI's **Server default** choice inherits
+The Server is configured with `SANDBOX_TEMPLATE=auto-story-v2`, and the SDK
+fallback also selects `auto-story-v2`. The UI's **Server default** choice inherits
 this setting; an Agent's explicit `sandbox.image` keeps selecting its named
 template. Selecting a default template does not expand the Agent allowlist for
 Host-owned credentials in `oma-auto-story-env`.
 
 Building and pushing an image does not change the running SandboxSet. Its
 pinned digest and pool configuration are in
-[sandboxset-auto-story.yaml](../sandboxset-auto-story.yaml). Existing Session
+[sandboxset-auto-story-v2.yaml](../sandboxset-auto-story-v2.yaml). Existing Session
 sandboxes must be rebuilt, or new Sessions created, to pick up the new image.
 Use `~/.kube/agent-platform-config` for the Shanghai cluster. From the repository
-root, the standard deployment script validates auto-story by default:
+root, the standard deployment script validates auto-story-v2 by default:
 
 ```bash
 bash deploy/scripts/deploy-sandbox.sh
@@ -152,7 +161,7 @@ kubectl --kubeconfig ~/.kube/agent-platform-config -n oma-infra exec -i deployme
 ```
 
 Run this command from the repository root. It requires the Host's configured
-default to be `auto-story`, then uses its installed `E2BSandboxClient` to create
+default to be `auto-story-v2`, then uses its installed `E2BSandboxClient` to create
 a short-lived sandbox without an image override. It checks environment
 injection and file write/read/reconnect, runs the image acceptance checks
 through E2B commands, and reclaims the sandbox.

@@ -11,7 +11,7 @@ original runs and must not be used as current runbooks.
 | --- | --- | --- |
 | OMA application | `oma-infra` | `oma-server`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
-| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; default `auto-story` and optional `code-interpreter` / `code-interpreter-vfscli` SandboxSets |
+| Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to `oma-server` and all other paths to `oma-web`. The Server therefore
@@ -32,8 +32,8 @@ schema.
 
 The application images are stored in the Shanghai `welltop` ACR. Pods pull
 through the VPC endpoint with the `ali-shanghai` image-pull Secret. The active
-sandbox default is `auto-story`, whose immutable image digest is declared in
-`sandbox/sandboxset-auto-story.yaml`. It includes VFS CLI, FFmpeg, Gemini's
+sandbox default is `auto-story-v2`, whose immutable image digest is declared in
+`sandbox/sandboxset-auto-story-v2.yaml`. It includes VFS CLI, FFmpeg, Gemini's
 Python SDK, MediaKit and native `rg`/`fd` search, without OpenMontage or Whisper.
 The other pools remain available through explicit Agent `sandbox.image` values.
 
@@ -46,7 +46,7 @@ these pinned bases in the Shanghai ACR:
 | --- | --- |
 | Server and Web build stage | `welltop/node-base:22-slim-pnpm-10.12.4` |
 | Web runtime | `welltop/nginx-base:1.27-alpine` |
-| Default `auto-story` sandbox | Clean Shanghai ACS `code-interpreter` image, pinned in `sandbox/auto-story/versions.json` |
+| Default `auto-story-v2` sandbox | Clean Shanghai ACS `code-interpreter` image, pinned in `sandbox/auto-story/versions.json` |
 | Optional custom sandbox | `welltop/sandbox-base:code-interpreter-v1.6` |
 
 Prepare or refresh the bases from the `vfs-dev` checkout:
@@ -95,7 +95,7 @@ ssh vfs-dev \
    deploy/scripts/build-images.sh --push --tag <tag> sandbox'
 ```
 
-This produces `oma-sandbox:auto-story-<tag>`. The standalone recipe defaults to
+This produces `oma-sandbox:auto-story-v2-<tag>`. The standalone recipe defaults to
 its versioned release tag; see [sandbox/auto-story/README.md](sandbox/auto-story/README.md)
 for preparation, version pins and image checks. `AUTO_STORY_BASE_IMAGE` can
 override the clean base for this wrapper; it must satisfy the recipe's checks.
@@ -138,19 +138,14 @@ on exit and is never committed.
 SandboxSet validation and deployment use the same safety gate:
 
 ```bash
-# Default auto-story pool: dry-run only
+# Default auto-story-v2 pool: dry-run only
 deploy/scripts/deploy-sandbox.sh
 deploy/scripts/deploy-sandbox.sh --image <immutable-image> --apply --confirm-production
 
-# Optional stock and custom pools
-deploy/scripts/deploy-sandbox.sh --pool stock
-deploy/scripts/deploy-sandbox.sh --pool custom --image <immutable-image>
-deploy/scripts/deploy-sandbox.sh --pool custom --image <immutable-image> \
-  --apply --confirm-production
 ```
 
 Pool deployment does not change the Server's `SANDBOX_TEMPLATE` setting.
-The ConfigMap and the SDK fallback default to `auto-story`; explicit Agent
+The ConfigMap and the SDK fallback default to `auto-story-v2`; explicit Agent
 template selection still takes precedence. Existing Session sandboxes need a
 rebuild or a new Session to pick up a changed image or template.
 
@@ -270,8 +265,8 @@ pool:
 ```bash
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-server
 KUBECONFIG=~/.kube/agent-platform-config kubectl -n oma-infra rollout status deploy/oma-web
-KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset auto-story
+KUBECONFIG=~/.kube/agent-platform-config kubectl -n sandbox-system get sandboxset auto-story-v2
 ```
 
-The `code-interpreter` and `code-interpreter-vfscli` pools are independent
-options. The default build and deploy commands above target `auto-story`.
+Only `auto-story-v2` is maintained. Older pool manifests and recipes are
+historical references and are excluded from the build and deployment entrypoints.
