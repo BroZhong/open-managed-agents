@@ -227,10 +227,12 @@ describe("Agent Skill metadata and status", () => {
     );
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Enable ${orphanSkill.name}` }));
-    expect(screen.getByText(/Its Library source is no longer available, so it cannot be enabled again from this page/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByRole("button", { name: `Close editor for ${orphanSkill.name}` })).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `http://localhost:3000${agentSkillsPath}/${orphanSkill.id}`,
+      expect.objectContaining({ method: "DELETE" }),
+    ));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: orphanSkill.name })).toBeNull());
   });
 
   it("enables with a Library Skill id, then disables using the newly created fork id", async () => {
@@ -252,16 +254,7 @@ describe("Agent Skill metadata and status", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Enable ${inactiveSkill.name}` }));
 
-    expect(screen.getByRole("heading", { name: "Disable Skill" })).toBeTruthy();
-    expect(screen.getByText(/Enabling it again creates a new copy from the Skill Library/)).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect((screen.getByRole("checkbox", {
-      name: `Enable ${inactiveSkill.name}`,
-    }) as HTMLInputElement).checked).toBe(true);
-
-    fireEvent.click(screen.getByRole("checkbox", { name: `Enable ${inactiveSkill.name}` }));
-    fireEvent.click(screen.getByRole("button", { name: "Disable and remove copy" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
 
     await waitFor(() => expect((screen.getByRole("checkbox", {
       name: `Enable ${inactiveSkill.name}`,
