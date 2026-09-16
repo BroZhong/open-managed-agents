@@ -110,3 +110,17 @@ export function useCreateSession() {
     },
   });
 }
+
+export function useUpdateSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...update }: { id: string; title?: string; deleted?: true }) =>
+      apiFetch<Session | { type: string; id: string }>(`/v1/sessions/${id}`, {
+        method: "POST",
+        body: JSON.stringify(update),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}

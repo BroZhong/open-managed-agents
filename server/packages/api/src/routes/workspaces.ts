@@ -55,6 +55,7 @@ export function workspaceEntityRoutes(
       name,
     });
 
+    if (workspace.deletedAt) return c.json({ error: "Workspace has been deleted" }, 409);
     return c.json(workspace, 201);
   });
 
@@ -70,7 +71,7 @@ export function workspaceEntityRoutes(
     const id = c.req.param("id")!;
     const tenant = c.get("tenant");
     const workspace = await workspaceStore.getById(tenant.tenantId, id);
-    if (!workspace) {
+    if (!workspace || workspace.deletedAt) {
       return c.json({ error: "Not found" }, 404);
     }
     return c.json(workspace);
@@ -88,6 +89,8 @@ export function workspaceEntityRoutes(
     }
 
     const tenant = c.get("tenant");
+    const existing = await workspaceStore.getById(tenant.tenantId, id);
+    if (!existing || existing.deletedAt) return c.json({ error: "Not found" }, 404);
     const updated = await workspaceStore.update(tenant.tenantId, id, {
       name: body.name,
     });
@@ -95,6 +98,14 @@ export function workspaceEntityRoutes(
       return c.json({ error: "Not found" }, 404);
     }
     return c.json(updated);
+  });
+
+  registerContractRoute(router, getOpenApiRoute("deleteWorkspace"), async (c) => {
+    const tenant = c.get("tenant");
+    const id = c.req.param("id")!;
+    const workspace = await workspaceStore.softDelete(tenant.tenantId, id);
+    if (!workspace) return c.json({ error: "Not found" }, 404);
+    return c.json({ type: "workspace_deleted", id });
   });
 
   return router;

@@ -59,3 +59,13 @@ describe("encodePath", () => {
     expect(encodePath("weird name.txt")).toBe("weird%20name.txt");
   });
 });
+
+it("preserves explicit empty directories and merges them with inferred parents", () => {
+  const tree = buildTree([
+    { path: "empty", isDir: true, size: 0, updated_at: null },
+    { path: "notes", isDir: true, size: 0, updated_at: null },
+    { path: "notes/readme.md", size: 2, updated_at: null },
+  ]);
+  expect(tree.children.map((node) => [node.path, node.isDir])).toEqual([["empty", true], ["notes", true]]);
+  expect(tree.children[1].children).toHaveLength(1);
+});

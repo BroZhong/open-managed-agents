@@ -66,6 +66,12 @@ _Avoid_: prompt file, persona file, SOUL (as a category name)
 A self-contained, reusable capability packaged as a directory containing a `SKILL.md`. Every Skill has an **owner**: a **Library Skill** is owned by the tenant and lives in the **Skill Library**; an **Agent Skill** is owned by one Agent and exists only as that Agent's private copy (a **Skill Fork**). When a Session runs, the Host materializes that Agent's equipped Agent Skills into a resource location the runtime loads natively; a Skill is not a Session artifact and does not live in a Workspace.
 _Avoid_: plugin, tool (a Skill may bundle tools, but is not itself a tool)
 
+Skill names are unique within an owner: `(tenant, owner type, owner id, name)`.
+Uploading an existing Library Skill name or equipping a colliding Agent Skill
+requires explicit overwrite confirmation. Replacement retains the Skill ID and
+replaces the complete file tree; Library replacement leaves Agent forks independent.
+Metadata and SKILL.md edits cannot rename a Skill to another Skill's name.
+
 **Skill Library**:
 The tenant-scoped collection of all **Library Skills** a tenant has, independent of any **Agent**. Skills are added to the Library once (by uploading a folder — one folder is one Skill if it holds a `SKILL.md`, or many Skills if its subfolders each hold one), previewed and edited there, and then equipped onto Agents as desired. The Library is managed from the same entry page that lists Agents; equipping happens on an individual Agent's page. A Library Skill can be equipped by many Agents; each equip produces an independent **Skill Fork**.
 _Avoid_: marketplace, catalog, registry
@@ -125,6 +131,15 @@ _Avoid_: loader, fetcher, downloader
 Developer: "Should this Agent run directly in the API service?"
 
 Domain expert: "No. For the online alpha, make it a Sandboxed Agent so its tools use a verified Sandbox and the Session shares its persistent Workspace across rebuilds."
+
+## Console deletion
+
+Session and Workspace deletion from the sidebar is a `deleted_at` marker only.
+It does not terminate execution or delete records, events, queued input or files.
+Lists hide deleted Sessions and Sessions belonging to a deleted Workspace.
+The console uses `POST /v1/sessions/{id}` with `deleted: true`; the existing
+`DELETE /v1/sessions/{id}` remains the separate execution-termination operation.
+Deleted Workspace IDs cannot be reused to create new Sessions.
 
 ## Workspace file API
 

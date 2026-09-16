@@ -4,7 +4,7 @@ import {
   useQueryClient,
   useMutationState,
 } from "@tanstack/react-query";
-import { apiFetch, apiUpload } from "@/lib/api";
+import { ApiError, apiFetch, apiUpload } from "@/lib/api";
 
 export interface Skill {
   id: string;
@@ -36,13 +36,22 @@ export function useSkills() {
 export function useUploadSkills() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (files: DroppedFile[]) => {
+    mutationFn: async (files: DroppedFile[]) => {
       const form = new FormData();
       form.set("paths", JSON.stringify(files.map((f) => f.path)));
       for (const f of files) form.append("files", f.file, f.path);
-      return apiUpload<{ data: Skill[] }>("/v1/skills", form);
+      try {
+        return await apiUpload<{ data: Skill[] }>("/v1/skills", form);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "skill_name_conflict") throw error;
+        if (!window.confirm(error.message + "\nThis replaces the entire Skill folder. Existing Agent copies stay unchanged.")) return;
+        form.set("overwrite", "true");
+        return apiUpload<{ data: Skill[] }>("/v1/skills", form);
+      }
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["skills"] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["skills"] });
+    },
   });
 }
 
@@ -114,21 +123,30 @@ export function useEquipSkill(agentId: string) {
   const queryKey = ["agents", agentId, "skills"] as const;
   return useMutation({
     mutationKey: agentSkillWriteKey(agentId, "equip"),
-    mutationFn: (skillId: string) =>
-      apiFetch<EquippedSkill>(`/v1/agents/${agentId}/skills`, {
+    mutationFn: async (skillId: string) => {
+      const send = (overwrite = false) => apiFetch<EquippedSkill>(`/v1/agents/${agentId}/skills`, {
         method: "POST",
-        body: JSON.stringify({ skillId }),
-      }),
+        body: JSON.stringify({ skillId, ...(overwrite ? { overwrite: true } : {}) }),
+      });
+      try {
+        return await send();
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "skill_name_conflict") throw error;
+        if (!window.confirm(error.message + "\nReplace this Agent's copy with the Library Skill?")) return;
+        return send(true);
+      }
+    },
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey, exact: true });
     },
     onSuccess: async (fork) => {
+      if (!fork) return;
       await queryClient.cancelQueries(
         { queryKey, exact: true },
         { revert: false },
       );
       queryClient.setQueryData<EquippedSkill[]>(queryKey, (current = []) => [
-        ...current.filter((skill) => skill.sourceSkillId !== fork.sourceSkillId),
+        ...current.filter((skill) => skill.id !== fork.id && skill.name !== fork.name && skill.sourceSkillId !== fork.sourceSkillId),
         fork,
       ]);
       void queryClient.invalidateQueries({

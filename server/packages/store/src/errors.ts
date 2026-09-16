@@ -13,3 +13,11 @@ export class PendingEventClaimLostError extends Error {
     this.name = "PendingEventClaimLostError";
   }
 }
+
+export class SkillNameConflictError extends Error {
+  readonly code = "skill_name_conflict";
+  constructor(name: string) {
+    super(`A Skill named "${name}" already exists for this owner.`);
+    this.name = "SkillNameConflictError";
+  }
+}

@@ -1,3 +1,4 @@
+import { SkillNameConflictError } from "../errors.js";
 import { nanoid } from "nanoid";
 import type { Pool } from "./connection.js";
 import type {
@@ -50,7 +51,7 @@ export class PgSkillStore implements SkillStore {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
        RETURNING *`,
       [id, input.tenantId, input.name, input.description, ownerType, ownerId, input.sourceSkillId ?? null, now],
-    );
+    ).catch((error) => this.rethrowConflict(error, input.name));
     return rowToSkill(rows[0]);
   }
 
@@ -105,14 +106,25 @@ export class PgSkillStore implements SkillStore {
       params.push(input.description);
       sets.push(`description = $${params.length}`);
     }
+    if (input.sourceSkillId !== undefined) {
+      params.push(input.sourceSkillId);
+      sets.push(`source_skill_id = $${params.length}`);
+    }
     params.push(new Date());
     sets.push(`updated_at = $${params.length}`);
     params.push(id);
     const { rows } = await this.pool.query<SkillRow>(
       `UPDATE skills SET ${sets.join(", ")} WHERE skill_id = $${params.length} RETURNING *`,
       params,
-    );
+    ).catch((error) => this.rethrowConflict(error, input.name ?? ""));
     return rows[0] ? rowToSkill(rows[0]) : null;
+  }
+
+  private rethrowConflict(error: { code?: string; constraint?: string }, name: string): never {
+    if (error.code === "23505" && error.constraint === "skills_owner_name_unique") {
+      throw new SkillNameConflictError(name);
+    }
+    throw error;
   }
 
   async delete(id: string): Promise<boolean> {

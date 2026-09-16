@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertCircle, ChevronDown } from "lucide-react";
+import { AlertCircle, ChevronDown, Circle, Check, Layers } from "lucide-react";
 import type { SessionDelta, SessionEvent } from "@/lib/types";
 import {
   processEventsToMessages,
@@ -9,16 +9,16 @@ import {
   type DisplayMessage,
 } from "@/lib/conversation-projection";
 import { ThinkingBlock } from "@/components/thinking-block";
+import { SessionDisclosure } from "@/components/session-disclosure";
 import { ToolCard } from "@/components/tool-card";
 
 interface Turn {
   id: string;
   userMessage: DisplayMessage | null;
   responses: DisplayMessage[];
-  isComplete: boolean;
 }
 
-function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean): Turn[] {
+function groupMessagesIntoTurns(messages: DisplayMessage[]): Turn[] {
   const turns: Turn[] = [];
   let currentTurn: Turn | null = null;
 
@@ -31,7 +31,6 @@ function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean
         id: msg.id,
         userMessage: msg,
         responses: [],
-        isComplete: false,
       };
     } else {
       if (!currentTurn) {
@@ -39,8 +38,7 @@ function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean
           id: `turn-orphan-${msg.id}`,
           userMessage: null,
           responses: [],
-          isComplete: false,
-        };
+          };
       }
       currentTurn.responses.push(msg);
     }
@@ -48,16 +46,6 @@ function groupMessagesIntoTurns(messages: DisplayMessage[], isStreaming: boolean
 
   if (currentTurn) {
     turns.push(currentTurn);
-  }
-
-  // A turn is complete if it has responses, is not the last turn, OR is the last turn but not streaming
-  for (let i = 0; i < turns.length; i++) {
-    const isLast = i === turns.length - 1;
-    if (isLast) {
-      turns[i].isComplete = !isStreaming && turns[i].responses.length > 0;
-    } else {
-      turns[i].isComplete = true;
-    }
   }
 
   return turns;
@@ -77,19 +65,18 @@ export function ConversationView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [hasNewMessages, setHasNewMessages] = useState(false);
-  const prevProjectionSizeRef = useRef(0);
+  const followBottomRef = useRef(true);
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  const { messages, isStreaming } = useMemo(
+  const { messages } = useMemo(
     () => processEventsToMessages(events, activeDeltas),
     [events, activeDeltas],
   );
 
   const turns = useMemo(
-    () => groupMessagesIntoTurns(messages, isStreaming),
-    [messages, isStreaming],
+    () => groupMessagesIntoTurns(messages),
+    [messages],
   );
-  const projectionSize = events.length + activeDeltas.length;
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -100,7 +87,7 @@ export function ConversationView({
       const { scrollTop, scrollHeight, clientHeight } = container;
       const atBottom = scrollHeight - scrollTop - clientHeight < 100;
       setIsAtBottom(atBottom);
-      if (atBottom) setHasNewMessages(false);
+      followBottomRef.current = atBottom;
     }
 
     container.addEventListener("scroll", handleScroll, { passive: true });
@@ -108,19 +95,23 @@ export function ConversationView({
   }, []);
 
   useEffect(() => {
-    if (projectionSize > prevProjectionSizeRef.current) {
-      if (isAtBottom) {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      } else {
-        setHasNewMessages(true);
-      }
-    }
-    prevProjectionSizeRef.current = projectionSize;
-  }, [projectionSize, isAtBottom]);
+    if (followBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "instant" });
+  }, [messages]);
+
+  // Images, tables and streaming text can grow without adding a message.
+  useEffect(() => {
+    if (!contentRef.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (followBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "instant" });
+    });
+    observer.observe(contentRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   function scrollToBottom() {
+    followBottomRef.current = true;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    setHasNewMessages(false);
+    setIsAtBottom(true);
   }
 
   const showTypingIndicator = shouldShowTypingIndicator(messages, sessionStatus);
@@ -128,17 +119,15 @@ export function ConversationView({
   return (
     <div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto max-w-3xl space-y-6">
+        <div ref={contentRef} className="session-thread">
           {messages.length === 0 && (
-            <div className="flex items-center justify-center py-24 text-[var(--color-fg-subtle)]">
-              Send a message to start the conversation.
-            </div>
+            <div className="session-welcome"><h2>What would you like to work on?</h2><p>Send a message to start the conversation.</p></div>
           )}
           {turns.map((turn, idx) => (
             <TurnBlock
               key={turn.id}
               turn={turn}
-              isLast={idx === turns.length - 1}
+              running={idx === turns.length - 1 && sessionStatus === "running"}
             />
           ))}
           {showTypingIndicator && <TypingIndicator />}
@@ -146,77 +135,50 @@ export function ConversationView({
         </div>
       </div>
 
-      {hasNewMessages && (
+      {!isAtBottom && (
         <button
           onClick={scrollToBottom}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-[var(--color-fg)] px-4 py-1.5 text-xs text-white shadow-lg transition-opacity hover:opacity-80"
         >
           <ChevronDown className="mr-1 inline h-3 w-3" />
-          New messages
+          Jump to latest
         </button>
       )}
     </div>
   );
 }
 
-function TurnBlock({ turn, isLast }: { turn: Turn; isLast: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-
-  // Find the last assistant/streaming message in the responses
-  const lastAssistantMsg = [...turn.responses]
-    .reverse()
-    .find((m) => m.role === "assistant" || m.role === "assistant_streaming");
-
-  // Should this turn be collapsible?
-  const shouldCollapse = turn.isComplete && !isLast && turn.responses.length > 1;
-  const showCollapsed = shouldCollapse && !expanded;
-
-  // Count how many items are hidden
-  const hiddenCount = showCollapsed
-    ? turn.responses.length - (lastAssistantMsg ? 1 : 0)
-    : 0;
-
+function TurnBlock({ turn, running }: { turn: Turn; running: boolean }) {
+  const activity = turn.responses.filter((message) => message.role === "thinking" || message.role === "tool_use");
+  const answers = turn.responses.filter((message) => message.role !== "thinking" && message.role !== "tool_use");
   return (
-    <div className="space-y-3">
-      {/* User message */}
+    <div className="session-turn">
       {turn.userMessage && <UserBubble text={turn.userMessage.text} />}
-
-      {/* Collapsed state: show expand button + last assistant message */}
-      {showCollapsed ? (
-        <div className="space-y-2">
-          <button
-            onClick={() => setExpanded(true)}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-[var(--color-fg-subtle)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg-muted)]"
-          >
-            <ChevronDown className="h-3 w-3" />
-            <span>{hiddenCount} steps hidden</span>
-          </button>
-          {lastAssistantMsg && (
-            <MessageBubble message={lastAssistantMsg} />
-          )}
-        </div>
-      ) : (
-        /* Expanded state: show all responses */
-        <div className="space-y-3">
-          {shouldCollapse && expanded && (
-            <button
-              onClick={() => setExpanded(false)}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs text-[var(--color-fg-subtle)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg-muted)]"
-            >
-              <ChevronDown className="h-3 w-3 rotate-180" />
-              <span>Collapse</span>
-            </button>
-          )}
-          {turn.responses.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
-          ))}
-        </div>
-      )}
+      {activity.length > 0 && <ProcessGroup key="process" messages={activity} running={running} />}
+      {answers.map((message) => <MessageBubble key={message.id} message={message} />)}
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: DisplayMessage }) {
+function ProcessGroup({ messages, running }: { messages: DisplayMessage[]; running: boolean }) {
+  const tools = messages.filter((message) => message.role === "tool_use");
+  const thinking = messages.some((message) => message.role === "thinking");
+  const failed = tools.filter((message) => message.result?.isError).length;
+  const incomplete = tools.some((message) => !message.result);
+  const active = running && (incomplete || messages.some((message) => message.streaming));
+  const status = active ? "Working" : failed ? "Needs attention" : incomplete ? "Incomplete" : "Explored";
+  const description = [thinking ? "reasoning" : "", tools.length ? `${tools.length} tool ${tools.length === 1 ? "call" : "calls"}` : ""].filter(Boolean).join(" · ");
+  return (
+    <SessionDisclosure className="session-process" active={active} defaultOpen={failed > 0} summary={<>
+      {active ? <Circle size={12} className="animate-pulse" /> : failed || incomplete ? <Layers size={14} /> : <Check size={14} />}
+      <span>{status} · {description}{failed ? ` · ${failed} failed` : ""}</span>
+    </>}>
+      {messages.map((message) => <MessageBubble key={message.id} message={message} running={running} />)}
+    </SessionDisclosure>
+  );
+}
+
+function MessageBubble({ message, running = false }: { message: DisplayMessage; running?: boolean }) {
   switch (message.role) {
     case "user":
       return <UserBubble text={message.text} />;
@@ -228,7 +190,7 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
       return (
         <ThinkingBlock
           text={message.text}
-          streaming={message.streaming}
+          streaming={running && message.streaming}
         />
       );
     case "tool_use":
@@ -239,7 +201,8 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
           input={message.input}
           serverName={message.serverName}
           result={message.result}
-          streaming={message.streaming}
+          streaming={running && message.streaming}
+          running={running}
         />
       );
     case "error":
@@ -252,7 +215,7 @@ function MessageBubble({ message }: { message: DisplayMessage }) {
 function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl bg-[var(--color-bg-muted)] px-4 py-2.5 text-sm text-[var(--color-fg)] break-words">
+      <div className="session-user-bubble">
         <p className="whitespace-pre-wrap">{text}</p>
       </div>
     </div>
@@ -270,7 +233,7 @@ function AssistantBubble({
 }) {
   return (
     <div className="flex justify-start">
-      <div className="min-w-0 w-full max-w-full py-3 text-sm text-[var(--color-fg)] break-words">
+      <div className="session-answer min-w-0 w-full max-w-full py-3 text-sm text-[var(--color-fg)] break-words">
         {/* `prose*` comes from @tailwindcss/typography, loaded by
             `@plugin "@tailwindcss/typography"` in index.css. Without that
             @plugin line these are dead class names and every markdown element
@@ -320,15 +283,5 @@ function ErrorBlock({ text }: { text: string }) {
 }
 
 function TypingIndicator() {
-  return (
-    <div className="flex justify-start">
-      <div className="rounded-2xl rounded-bl-sm bg-[var(--color-bg-surface)] px-4 py-3 shadow-sm ring-1 ring-[var(--color-border-subtle)]">
-        <div className="flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--color-fg-subtle)] [animation-delay:0ms]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--color-fg-subtle)] [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--color-fg-subtle)] [animation-delay:300ms]" />
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="session-working" role="status"><Circle size={12} className="animate-pulse" /><span>Working…</span></div>;
 }

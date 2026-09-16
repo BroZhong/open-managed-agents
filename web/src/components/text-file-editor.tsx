@@ -79,7 +79,7 @@ export function TextFileEditor({
         }}
         className="file-editor-input flex min-h-[240px] w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 font-mono text-sm leading-relaxed transition-colors placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-border)]"
       />
-      <div className="file-editor-toolbar flex items-center gap-3">
+      <div hidden={previewMarkdown && showPreview && !dirty && !error && !saving && !saved} className="file-editor-toolbar flex items-center gap-3">
         <Button
           size="sm"
           disabled={!dirty || saving}

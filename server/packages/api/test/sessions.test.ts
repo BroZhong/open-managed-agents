@@ -114,7 +114,7 @@ class InMemorySessionStore implements SessionStore {
     const loopId = opts?.loopId;
     const withoutLoop = opts?.withoutLoop;
 
-    let filtered = this.sessions.filter((s) => s.tenantId === tenantId);
+    let filtered = this.sessions.filter((s) => s.tenantId === tenantId && !s.deletedAt && !opts?.excludedWorkspaceIds?.includes(s.workspaceId));
     if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
@@ -143,6 +143,12 @@ class InMemorySessionStore implements SessionStore {
     if (!session) return null;
     session.title = title;
     session.updatedAt = new Date();
+    return session;
+  }
+
+  async softDelete(id: string): Promise<Session | null> {
+    const session = await this.getById(id);
+    if (session) session.deletedAt = new Date();
     return session;
   }
 
@@ -182,9 +188,21 @@ class InMemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
     return this.workspaces.get(this.key(tenantId, id)) ?? null;
   }
 
-  async list(tenantId: string): Promise<Workspace[]> {
+  async softDelete(tenantId: string, id: string): Promise<Workspace | null> {
+    const workspace = await this.getById(tenantId, id);
+    if (workspace) workspace.deletedAt = new Date();
+    return workspace;
+  }
+
+  async update(tenantId: string, id: string, input: { name?: string }): Promise<Workspace | null> {
+    const workspace = await this.getById(tenantId, id);
+    if (workspace && input.name !== undefined) workspace.name = input.name;
+    return workspace;
+  }
+
+  async list(tenantId: string, includeDeleted = false): Promise<Workspace[]> {
     return [...this.workspaces.values()]
-      .filter((w) => w.tenantId === tenantId)
+      .filter((w) => w.tenantId === tenantId && (includeDeleted || !w.deletedAt))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 }

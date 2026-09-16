@@ -91,6 +91,8 @@ export interface FileSource {
 
   /** Present ⇒ writable. Save a text file's content. */
   write?(path: string, content: string): Promise<void>;
+  /** Persist an empty directory on sources that support it. */
+  createDirectory?(path: string): Promise<void>;
   /** Present ⇒ renamable. Move `from` → `to` (both source-relative). */
   rename?(from: string, to: string): Promise<void>;
   /** Present ⇒ deletable. Remove a file. */
@@ -227,6 +229,7 @@ export type WorkspaceFileSource = FileSource & {
 };
 
 const WS_TEXT_LIKE = /^(text\/|application\/(json|javascript|xml|x-yaml|yaml)|image\/svg)/;
+const WORKSPACE_DIRECTORY_MARKER = "/.oma-directory";
 const WS_MAX_TEXT_PREVIEW = 512 * 1024; // 512 KiB — mirrors use-workspace-files.ts
 
 export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
@@ -242,8 +245,9 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
         throw new Error("File status is unconfirmed: the Workspace list response is incomplete. Retry Refresh.");
       }
       return res.data.map((f) => ({
-        path: f.path,
-        isDir: false,
+        // A reserved, empty marker preserves empty directories in object storage.
+        path: f.path.endsWith(WORKSPACE_DIRECTORY_MARKER) && f.size === 0 ? f.path.slice(0, -WORKSPACE_DIRECTORY_MARKER.length) : f.path,
+        isDir: f.path.endsWith(WORKSPACE_DIRECTORY_MARKER) && f.size === 0,
         size: f.size,
         updatedAt: f.updated_at ?? undefined,
       }));
@@ -270,6 +274,13 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       await apiFetch(`${apiPath}/files/content`, {
         method: "PUT",
         body: JSON.stringify({ path, content }),
+      });
+    },
+
+    async createDirectory(path: string): Promise<void> {
+      await apiFetch(`${apiPath}/files/content`, {
+        method: "PUT",
+        body: JSON.stringify({ path: `${path}${WORKSPACE_DIRECTORY_MARKER}`, content: "" }),
       });
     },
 

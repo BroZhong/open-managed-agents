@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import { ArrowUp, Clock, Square } from "lucide-react";
+import { ArrowUp, Clock, Square, Sparkles, CornerDownRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EquippedSkill } from "@/lib/hooks/use-skills";
 
@@ -26,12 +26,12 @@ interface MessageInputProps {
   skills?: Array<Pick<EquippedSkill, "id" | "name" | "description">>;
   /**
    * Stop the Session's running Turn. When given together with `running`, the
-   * button becomes Stop — one control for "the Agent is working" instead of a
-   * Send button the user has to guess is inert (issue #113).
+   * primary button becomes Stop. A separate Queue action appears for follow-ups.
    */
   onInterrupt?: () => void;
   /** Whether a Turn of this Session is running right now. */
   running?: boolean;
+  model?: string;
 }
 
 export function MessageInput({
@@ -43,9 +43,11 @@ export function MessageInput({
   skills = [],
   onInterrupt,
   running = false,
+  model,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const submittingRef = useRef(false);
@@ -56,9 +58,9 @@ export function MessageInput({
       ? ""
       : text.match(/^\/skill:([^\s]*)$/)?.[1].toLowerCase();
   const skillSuggestions =
-    skillQuery === undefined || suggestionsDismissed
+    (!skillPickerOpen && skillQuery === undefined) || suggestionsDismissed
       ? []
-      : skills.filter((skill) => skill.name.toLowerCase().startsWith(skillQuery));
+      : skills.filter((skill) => skill.name.toLowerCase().startsWith(skillPickerOpen ? "" : skillQuery ?? ""));
   const activeSkillIndex = Math.min(
     selectedSkillIndex,
     Math.max(skillSuggestions.length - 1, 0),
@@ -99,7 +101,8 @@ export function MessageInput({
   function selectSkill(index: number) {
     const skill = skillSuggestions[index];
     if (!skill) return;
-    setText(`/skill:${skill.name} `);
+    setText(`/skill:${skill.name} ${skillPickerOpen ? text.replace(/^\/skill:[^\s]*\s*|^\/$/, "") : ""}`);
+    setSkillPickerOpen(false);
     setSelectedSkillIndex(0);
     setSuggestionsDismissed(true);
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -131,6 +134,7 @@ export function MessageInput({
       if (e.key === "Escape") {
         e.preventDefault();
         setSuggestionsDismissed(true);
+        setSkillPickerOpen(false);
         return;
       }
     }
@@ -140,9 +144,7 @@ export function MessageInput({
     }
   }
 
-  // While a Turn runs the button's job is to stop it, not to send: a Stop needs
-  // no typed text to be meaningful. Enter still queues a message, so typing
-  // ahead during a running Turn keeps working.
+  // Keep Stop reachable while a separate queue action accepts the next prompt.
   const showStop = running && Boolean(onInterrupt);
   const canSend = text.trim().length > 0 && !disabled && !sending;
   const buttonEnabled = showStop || canSend;
@@ -151,13 +153,13 @@ export function MessageInput({
     <div className="composer-area">
       {queuedInput.length > 0 && (
         <div
-          className="mx-auto mb-2 max-w-3xl space-y-1.5"
+          className="session-queued-input"
           aria-label="Queued input"
         >
           {queuedInput.map((entry) => (
             <div key={entry.id} className="flex items-center gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
-              <Clock className="h-3.5 w-3.5 flex-shrink-0 animate-pulse" />
-              <span className="truncate">{entry.text}</span>
+              <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="session-queued-text" title={entry.text}>{entry.text}</span>
               <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
             </div>
           ))}
@@ -168,7 +170,7 @@ export function MessageInput({
           )}
         </div>
       )}
-      <div className="mx-auto max-w-3xl">
+      <div className="session-composer-column">
         {sending && (
           <p role="status" className="mb-2 px-3 text-xs text-[var(--color-fg-subtle)]">
             Sending...
@@ -189,6 +191,7 @@ export function MessageInput({
             >
               {skillSuggestions.map((skill, index) => (
                 <button
+                  id={`equipped-skill-option-${index}`}
                   key={skill.id}
                   type="button"
                   role="option"
@@ -227,19 +230,28 @@ export function MessageInput({
             }}
             onKeyDown={handleKeyDown}
             aria-label="Message"
-            placeholder="Send a message..."
+            placeholder={disabled ? "This session has ended" : "Send a message..."}
             disabled={disabled || sending}
             rows={1}
+            aria-activedescendant={skillSuggestions.length ? `equipped-skill-option-${activeSkillIndex}` : undefined}
             aria-autocomplete="list"
             aria-controls={skillSuggestions.length > 0 ? "equipped-skill-suggestions" : undefined}
             aria-expanded={skillSuggestions.length > 0}
             className={cn(
-              "w-full resize-none bg-transparent px-4 pt-4 pb-12 text-sm leading-6 text-[var(--color-fg)]",
+              "w-full resize-none bg-transparent px-2.5 py-2 text-sm leading-6 text-[var(--color-fg)]",
               "placeholder:text-[var(--color-fg-subtle)] focus:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-50",
             )}
           />
-          <span className="composer-hint">{skills.length > 0 ? "/ for Skills · " : ""}Shift + Enter for a new line</span>
+          <div className="session-composer-toolbar">
+            {skills.length > 0 && <button type="button" className="session-skill-picker" aria-label="Choose a Skill" aria-expanded={skillSuggestions.length > 0} disabled={disabled || sending} onClick={() => {
+              setSkillPickerOpen(!skillPickerOpen);
+              setSuggestionsDismissed(skillPickerOpen);
+              setSelectedSkillIndex(0);
+              textareaRef.current?.focus();
+            }}><Sparkles size={15} /><span>Skills</span></button>}
+            <span className="session-composer-model" title={model}>{model?.split("/").at(-1)}</span>
+            {showStop && text.trim() && <button type="button" className="session-queue-send" disabled={!canSend} onClick={handleSubmit} aria-label="Queue message" title="Send after the current turn"><CornerDownRight size={15} /><span>Queue</span></button>}
           <button
             type="button"
             aria-label={showStop ? "Stop generating" : "Send message"}
@@ -247,7 +259,7 @@ export function MessageInput({
             onClick={showStop ? onInterrupt : handleSubmit}
             disabled={!buttonEnabled}
             className={cn(
-              "absolute bottom-2.5 right-3 flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+              "session-send-button flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
               buttonEnabled
                 ? "bg-[var(--color-fg)] text-white hover:opacity-80"
                 : "bg-[var(--color-bg-active)] text-[var(--color-fg-subtle)]"
@@ -259,7 +271,9 @@ export function MessageInput({
               <ArrowUp className="h-4 w-4" />
             )}
           </button>
+          </div>
         </div>
+        <p className="session-composer-help">{disabled ? "Start a new session to continue" : running ? "Enter to queue a follow-up · Shift + Enter for a new line" : "Enter to send · Shift + Enter for a new line"}</p>
       </div>
     </div>
   );

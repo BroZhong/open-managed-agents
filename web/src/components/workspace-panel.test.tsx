@@ -135,3 +135,37 @@ it("searches nested paths and preserves unsaved Markdown when switching Preview 
   expect(await screen.findByText("readme.txt")).toBeTruthy();
   expect((screen.getByRole("textbox", { name: "File content" }) as HTMLTextAreaElement).value).toContain("Unsaved notes.");
 });
+
+it("creates folders and files inline, preserves existing names, and collapses the tree", async () => {
+  const files = new Map([["notes/existing.md", "# Existing"]]);
+  const folders = new Set<string>();
+  const source: FileSource = {
+    capabilities: { hierarchy: "nested", idleGated: false },
+    list: async () => [...Array.from(files, ([path]) => ({ path, isDir: false })), ...Array.from(folders, (path) => ({ path, isDir: true }))],
+    read: async (path) => ({ path, text: files.get(path) ?? "", contentType: "text/markdown", size: 1, isBinary: false }),
+    write: vi.fn(async (path, content) => { files.set(path, content); }),
+    createDirectory: vi.fn(async (path) => { folders.add(path); }),
+  };
+  mockedSources.set("workspace-create", source);
+  render(<WorkspacePanel workspaceId="workspace-create" refreshKey={0} />);
+  await screen.findByText("notes");
+  fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Folder name" }), { target: { value: "assets" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(source.createDirectory).toHaveBeenCalledWith("assets"));
+  expect(await screen.findByRole("button", { name: "assets" })).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "New file" }));
+  expect((screen.getByRole("textbox", { name: "File name" }) as HTMLInputElement).value).toBe("assets/untitled.md");
+  fireEvent.change(screen.getByRole("textbox", { name: "File name" }), { target: { value: "notes/existing.md" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(source.write).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole("textbox", { name: "File name" }), { target: { value: "assets/plan.md" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  expect(await screen.findByRole("heading", { name: "plan" })).toBeTruthy();
+  expect(source.write).toHaveBeenCalledWith("assets/plan.md", "# plan\n");
+  fireEvent.click(screen.getByRole("button", { name: "Collapse folders" }));
+  expect(screen.queryByRole("button", { name: "plan.md" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "plan" })).toBeTruthy();
+});

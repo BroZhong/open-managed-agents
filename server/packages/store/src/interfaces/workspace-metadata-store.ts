@@ -49,5 +49,6 @@ export interface WorkspaceMetadataStore {
    * cursor pagination is unnecessary — kept intentionally simpler than the
    * agent/session list surfaces.
    */
-  list(tenantId: string): Promise<Workspace[]>;
+  list(tenantId: string, includeDeleted?: boolean): Promise<Workspace[]>;
+  softDelete(tenantId: string, id: string): Promise<Workspace | null>;
 }

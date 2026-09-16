@@ -17,6 +17,8 @@ import {
   Pencil,
   Trash2,
   FilePlus,
+  FolderPlus,
+  ListCollapse,
   Search,
   PanelLeft,
   ArrowLeft,
@@ -673,6 +675,11 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
   const managerRef = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(managerRef, 520);
   const [search, setSearch] = useState("");
+  const [newItem, setNewItem] = useState<"file" | "folder" | null>(null);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemError, setNewItemError] = useState<string | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const importFolderRef = useRef<HTMLInputElement>(null);
   const [directoryOpen, setDirectoryOpen] = useState(true);
   const [detailOpen, setDetailOpen] = useState(false);
   const methods = useMemo(() => methodsOf(source), [source]);
@@ -883,6 +890,12 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
 
   const handleNewFile = useCallback(async () => {
     if (!source.write) return;
+    if (workbench) {
+      setNewItem("file");
+      setNewItemName(`${uploadDir ? uploadDir + "/" : ""}untitled.md`);
+      setNewItemError(null);
+      return;
+    }
     const name = window.prompt(
       actions.allowSubdirs ? "New file path (e.g. notes/todo.md)" : "New file name",
     );
@@ -898,7 +911,42 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
     } finally {
       setBusy(false);
     }
-  }, [source, actions.allowSubdirs, refresh, openFile]);
+  }, [source, actions.allowSubdirs, refresh, openFile, workbench, uploadDir]);
+
+  async function createItem() {
+    const path = newItemName.trim();
+    if (!path || busy || writeGated) return;
+    if (path.split("/").some((part) => !part || part === "." || part === "..")) {
+      setNewItemError("Enter a valid relative path.");
+      return;
+    }
+    setBusy(true);
+    setNewItemError(null);
+    try {
+      const current = await source.list();
+      if (current.some((node) => node.path === path || node.path.startsWith(path + "/"))) {
+        throw new Error("This name already exists. Choose another name.");
+      }
+      if (newItem === "folder") await source.createDirectory!(path);
+      else await source.write!(path, /\.md$/i.test(path) ? `# ${path.split("/").pop()!.replace(/\.md$/i, "")}\n` : "");
+      await refresh();
+      const directory = newItem === "folder" ? path : currentDir(path);
+      if (directory) {
+        setUploadDir(directory);
+        setExpanded((previous) => {
+          const next = new Set(previous);
+          directory.split("/").forEach((_, index, parts) => next.add(parts.slice(0, index + 1).join("/")));
+          return next;
+        });
+      }
+      if (newItem === "file") await openFile(path);
+      setNewItem(null);
+    } catch (error) {
+      setNewItemError(writeErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const handleRename = useCallback(async () => {
     if (!source.rename || !selectedPath) return;
@@ -939,7 +987,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
     return query ? nodes.filter((node) => node.path.toLowerCase().includes(query)) : nodes;
   }, [nodes, search]);
   const tree = useMemo(
-    () => (nested ? buildTree(visibleNodes.map((n) => ({ path: n.path, size: n.size ?? 0, updated_at: n.updatedAt ?? null }))) : null),
+    () => (nested ? buildTree(visibleNodes.map((n) => ({ path: n.path, isDir: n.isDir, size: n.size ?? 0, updated_at: n.updatedAt ?? null }))) : null),
     [nested, visibleNodes],
   );
   const visibleExpanded = useMemo(() => {
@@ -974,8 +1022,8 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
         if (event.dataTransfer.files.length) event.preventDefault();
       }}
     >
-      {/* Toolbar */}
-      <div className="file-manager-toolbar flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
+      {/* Toolbar for embedded Skill and Agent file editors. */}
+      {!workbench && <div className="file-manager-toolbar flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
         {workbench && <span className="workspace-heading"><FolderOpen />Workspace</span>}
         <span className="min-w-0 truncate text-xs font-medium text-[var(--color-fg-muted)]">
           {nodes.filter((n) => !n.isDir).length} file
@@ -1031,19 +1079,39 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
             <RefreshCw className={cn("h-3.5 w-3.5", listLoading && "animate-spin")} />
           </Button>
         </div>
-      </div>
+      </div>}
 
+      {workbench && actions.canUpload && <>
+        <input ref={importRef} type="file" multiple hidden disabled={uploadDisabled} onChange={(event) => { if (event.target.files?.length) void handleUpload(Array.from(event.target.files)); event.target.value = ""; }} />
+        <input ref={importFolderRef} type="file" multiple hidden disabled={uploadDisabled}
+          // @ts-expect-error non-standard directory-picker attribute
+          webkitdirectory=""
+          onChange={(event) => { if (event.target.files?.length) void handleUpload(Array.from(event.target.files)); event.target.value = ""; }} />
+      </>}
       {/* Body: tree + selected-file pane */}
       <div className="file-manager-body flex min-h-0 flex-1">
         <div
-          className="file-directory flex w-64 flex-shrink-0 flex-col border-r border-[var(--color-border)]"
+          className={cn("file-directory flex w-64 flex-shrink-0 flex-col border-r border-[var(--color-border)]", workbench && rootDrop.dragging && "file-directory-dragging")}
+          {...(workbench ? rootDrop.handlers : {})}
           hidden={workbench && (compact ? detailOpen : !directoryOpen)}
           inert={workbench && (compact ? detailOpen : !directoryOpen)}
         >
           {workbench && (
             <div className="file-directory-heading">
-              <span>Files</span>
-              <button type="button" className="file-directory-collapse" aria-label="Hide file directory" onClick={() => setDirectoryOpen(false)}><PanelLeft /></button>
+              <button type="button" className="file-directory-collapse" aria-label="Hide file directory" title="Hide file directory" onClick={() => setDirectoryOpen(false)}><PanelLeft /></button>
+              <button type="button" className="workspace-heading" title="Workspace root" onClick={() => setUploadDir("")}>Workspace</button>
+              <div className="workspace-tools">
+                {actions.canUpload && <details className="workspace-import-menu">
+                  <summary className="workspace-tool" aria-label="Import files" title="Import files"><UploadCloud /></summary>
+                  <div className="workspace-import-options">
+                    <button type="button" disabled={uploadDisabled} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); importRef.current?.click(); }}>Upload files</button>
+                    {actions.allowSubdirs && <button type="button" disabled={uploadDisabled} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); importFolderRef.current?.click(); }}>Upload folder</button>}
+                  </div>
+                </details>}
+                {actions.canCreate && <button type="button" className="workspace-tool" title="New file" aria-label="New file" disabled={writeGated || busy} onClick={handleNewFile}><FilePlus /></button>}
+                {source.createDirectory && <button type="button" className="workspace-tool" title="New folder" aria-label="New folder" disabled={writeGated || busy} onClick={() => { setNewItem("folder"); setNewItemName(`${uploadDir ? uploadDir + "/" : ""}New folder`); setNewItemError(null); }}><FolderPlus /></button>}
+                <button type="button" className="workspace-tool" title="Collapse folders" aria-label="Collapse folders" onClick={() => setExpanded(new Set())}><ListCollapse /></button>
+              </div>
             </div>
           )}
           {workbench && (
@@ -1052,7 +1120,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
               <input aria-label="Search files" placeholder="Search files…" value={search} onChange={(event) => setSearch(event.target.value)} />
             </label>
           )}
-          {nested && actions.canUpload && (
+          {!workbench && nested && actions.canUpload && (
             <button
               type="button"
               onClick={() => setUploadDir("")}
@@ -1068,6 +1136,13 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
               Root directory /
             </button>
           )}
+          {workbench && newItem && <form className="workspace-new-item" onSubmit={(event) => { event.preventDefault(); void createItem(); }}>
+            <label>{newItem === "folder" ? "Folder name" : "File name"}
+              <input autoFocus aria-label={newItem === "folder" ? "Folder name" : "File name"} value={newItemName} disabled={busy} onChange={(event) => setNewItemName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape" && !busy) setNewItem(null); }} />
+            </label>
+            {newItemError && <p role="alert">{newItemError}</p>}
+            <div><Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setNewItem(null)}>Cancel</Button><Button type="submit" size="sm" disabled={busy || !newItemName.trim()}>{busy ? "Creating…" : "Create"}</Button></div>
+          </form>}
           <div className="min-h-0 flex-1 overflow-auto p-2">
             {listError && (
               <div role="alert" className="px-2 py-4 text-xs text-[var(--color-danger)]">
@@ -1116,7 +1191,7 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
             )}
           </div>
 
-          {actions.canUpload && (
+          {!workbench && actions.canUpload && (
             <div className="border-t border-[var(--color-border)] p-2">
               <Dropzone
                 onFiles={handleUpload}
@@ -1128,6 +1203,10 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
               />
             </div>
           )}
+          {workbench && <div className="workspace-directory-footer">
+            <span role={uploading ? "status" : undefined}>{uploading ? "Uploading…" : `${nodes.filter((node) => !node.isDir).length} files`}</span>
+            <button type="button" className="workspace-tool" aria-label="Refresh" title="Refresh" disabled={listLoading} onClick={() => void refreshSelected()}><RefreshCw className={listLoading ? "animate-spin" : ""} /></button>
+          </div>}
         </div>
 
         {/* Selected-file pane */}
@@ -1139,7 +1218,17 @@ export function FileManager({ source, turnStatus, refreshKey = 0, emptyHint, pre
           {workbench && (
             <div className="file-preview-bar">
               {(compact || !directoryOpen) && <button type="button" className="file-directory-reopen" onClick={() => { setDetailOpen(false); setDirectoryOpen(true); }}><ArrowLeft />Files</button>}
-              <span className="file-preview-name" title={selectedPath ?? undefined}><FileIcon />{selectedPath ?? "Preview"}</span>
+              <span className="file-preview-name" title={selectedPath ?? undefined}>{selectedPath ?? ""}</span>
+              <div className="workspace-tools">
+                <button type="button" className="workspace-tool" title="Show file in directory" aria-label="Show file in directory" disabled={!selectedPath} onClick={() => {
+                  setDirectoryOpen(true); setDetailOpen(false); setSearch("");
+                  const parts = (selectedPath ?? "").split("/");
+                  setExpanded((previous) => new Set([...previous, ...parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"))]));
+                }}><FolderOpen /></button>
+                {actions.canRename && <button type="button" className="workspace-tool" title="Rename" aria-label="Rename file" disabled={!selectedPath || writeGated || busy} onClick={handleRename}><Pencil /></button>}
+                {actions.canDelete && <button type="button" className="workspace-tool" title="Delete" aria-label="Delete file" disabled={!selectedPath || writeGated || busy} onClick={handleDelete}><Trash2 /></button>}
+                {source.previewUrl && <button type="button" className="workspace-tool" title="Download" aria-label="Download file" disabled={!selectedPath || contentLoading} onClick={() => void handleDownload()}><Download /></button>}
+              </div>
             </div>
           )}
           <div className="file-preview-content">

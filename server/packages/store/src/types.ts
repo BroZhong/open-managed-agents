@@ -71,6 +71,7 @@ export interface Agent {
  * concurrently (collisions are the user's responsibility). See ADR-0002 §4.
  */
 export interface Workspace {
+  deletedAt?: Date;
   id: string;
   tenantId: string;
   /** Optional human-friendly name. Set at creation; not renamable (out of scope). */
@@ -81,6 +82,7 @@ export interface Workspace {
 export type SessionStatus = "idle" | "running" | "terminated";
 
 export interface Session {
+  deletedAt?: Date;
   id: string;
   tenantId: string;
   agentId: string;

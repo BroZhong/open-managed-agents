@@ -6,6 +6,7 @@ import type { Agent, PaginatedResult, Session, SessionStatus } from "../types.js
 import { PendingEventClaimLostError } from "../errors.js";
 
 interface SessionRow {
+  deleted_at: Date | null;
   id: string;
   tenant_id: string;
   agent_id: string;
@@ -30,6 +31,7 @@ function reviveAgent(agent: Agent): Agent {
 function rowToSession(row: SessionRow): Session {
   return {
     id: row.id,
+    deletedAt: row.deleted_at ? new Date(row.deleted_at) : undefined,
     tenantId: row.tenant_id,
     agentId: row.agent_id,
     status: row.status,
@@ -66,7 +68,11 @@ export class PgSessionStore implements SessionStore {
   async list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>> {
     const limit = opts?.limit ?? 20;
     const params: unknown[] = [tenantId];
-    let where = `tenant_id = $1`;
+    let where = `tenant_id = $1 AND deleted_at IS NULL`;
+    for (const workspaceId of opts?.excludedWorkspaceIds ?? []) {
+      params.push(workspaceId);
+      where += ` AND workspace_id <> $${params.length}`;
+    }
     if (opts?.agentId) {
       params.push(opts.agentId);
       where += ` AND agent_id = $${params.length}`;
@@ -190,6 +196,14 @@ export class PgSessionStore implements SessionStore {
     const { rows } = await this.pool.query<SessionRow>(
       `UPDATE sessions SET title = $2, updated_at = $3 WHERE id = $1 RETURNING *`,
       [id, title, new Date()],
+    );
+    return rows[0] ? rowToSession(rows[0]) : null;
+  }
+
+  async softDelete(id: string): Promise<Session | null> {
+    const { rows } = await this.pool.query<SessionRow>(
+      `UPDATE sessions SET deleted_at = COALESCE(deleted_at, $2) WHERE id = $1 RETURNING *`,
+      [id, new Date()],
     );
     return rows[0] ? rowToSession(rows[0]) : null;
   }

@@ -8,6 +8,7 @@ import type {
 import type { Workspace } from "../types.js";
 
 interface WorkspaceRow {
+  deleted_at: Date | null;
   id: string;
   tenant_id: string;
   name: string | null;
@@ -17,6 +18,7 @@ interface WorkspaceRow {
 function rowToWorkspace(row: WorkspaceRow): Workspace {
   const ws: Workspace = {
     id: row.id,
+    deletedAt: row.deleted_at ? new Date(row.deleted_at) : undefined,
     tenantId: row.tenant_id,
     createdAt: new Date(row.created_at),
   };
@@ -60,12 +62,20 @@ export class PgWorkspaceMetadataStore implements WorkspaceMetadataStore {
     return rows[0] ? rowToWorkspace(rows[0]) : null;
   }
 
-  async list(tenantId: string): Promise<Workspace[]> {
+  async list(tenantId: string, includeDeleted = false): Promise<Workspace[]> {
     const { rows } = await this.pool.query<WorkspaceRow>(
-      `SELECT * FROM workspaces WHERE tenant_id = $1 ORDER BY created_at ASC`,
+      `SELECT * FROM workspaces WHERE tenant_id = $1 ${includeDeleted ? "" : "AND deleted_at IS NULL"} ORDER BY created_at ASC`,
       [tenantId],
     );
     return rows.map(rowToWorkspace);
+  }
+
+  async softDelete(tenantId: string, id: string): Promise<Workspace | null> {
+    const { rows } = await this.pool.query<WorkspaceRow>(
+      `UPDATE workspaces SET deleted_at = COALESCE(deleted_at, $3) WHERE tenant_id = $1 AND id = $2 RETURNING *`,
+      [tenantId, id, new Date()],
+    );
+    return rows[0] ? rowToWorkspace(rows[0]) : null;
   }
 
   async update(

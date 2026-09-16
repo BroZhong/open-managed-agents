@@ -302,3 +302,29 @@ describe("Skill directory file editing (issue #73)", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("Agent Skill name conflicts", () => {
+  it("confirms replacement of a same-name fork while preserving other Agents and the Library", async () => {
+    const { app, agentStore, skillStore, skillArtifactStore } = setup();
+    const agentId = await makeAgent(app);
+    const otherAgent = await makeAgent(app);
+    const libId = await makeLibrarySkill(skillStore, skillArtifactStore);
+    const fork = await skillStore.create({ tenantId: "dev", ownerType: "agent", ownerId: agentId, name: "greeter", description: "private", sourceSkillId: "old-source" });
+    await agentStore.update(agentId, { skills: [fork.id] });
+    await skillArtifactStore.put("dev", fork.id, "old.txt", "private");
+    const other = await skillStore.create({ tenantId: "dev", ownerType: "agent", ownerId: otherAgent, name: "greeter", description: "other" });
+    const send = (overwrite = false) => app.request(`/v1/agents/${agentId}/skills`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skillId: libId, overwrite }),
+    });
+    expect((await send()).status).toBe(409);
+    expect(await skillArtifactStore.list("dev", fork.id)).toEqual(["old.txt"]);
+    const replaced = await send(true);
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ id: fork.id, sourceSkillId: libId, description: "Greets warmly" });
+    expect(await skillArtifactStore.list("dev", fork.id)).toEqual(["SKILL.md"]);
+    expect((await agentStore.getById(agentId))?.skills).toEqual([fork.id]);
+    expect(await skillStore.listByOwner("dev", "agent", agentId)).toHaveLength(1);
+    expect((await skillStore.getById(other.id))?.description).toBe("other");
+    expect(await skillArtifactStore.list("dev", libId)).toEqual(["SKILL.md"]);
+  });
+});

@@ -55,6 +55,7 @@ export interface SkillStoreCreateInput {
 }
 
 export interface SkillStoreUpdateInput {
+  sourceSkillId?: string | null;
   name?: string;
   description?: string;
 }

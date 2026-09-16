@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ConversationView } from "@/components/conversation-view";
 import type { SessionDelta, SessionEvent } from "@/lib/types";
 
@@ -211,4 +211,65 @@ it("keeps the bubble's own prose overrides that the typography plugin would othe
   expect(classes).toContain("[&_code]:before:content-none");
   expect(classes).toContain("[&_code]:after:content-none");
   expect(classes).toContain("[&_code]:font-normal");
+});
+
+const activityEvents: SessionEvent[] = [
+  userMessage,
+  { seq: 11, type: "agent.thinking", data: { text: "Check the source first" }, ts: userMessage.ts },
+  { seq: 12, type: "agent.tool_use", data: { toolUseId: "read-1", name: "read", input: { path: "draft.md" } }, ts: userMessage.ts },
+  { seq: 13, type: "agent.tool_result", data: { toolUseId: "read-1", content: "File content" }, ts: userMessage.ts },
+  { seq: 14, type: "agent.message", data: { content: [{ type: "text", text: "Here is the answer" }] }, ts: userMessage.ts },
+];
+
+it("folds process details for the latest completed turn while keeping the answer visible", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  render(<ConversationView events={activityEvents} sessionStatus="idle" />);
+  const summary = screen.getByRole("button", { name: /Explored · reasoning · 1 tool call/ });
+  expect(summary.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.getByText("Here is the answer").closest("[hidden]")).toBeNull();
+  fireEvent.click(summary);
+  const tool = screen.getByRole("button", { name: /Read file/ });
+  fireEvent.click(tool);
+  expect(screen.getByText("File content").closest("[hidden]")).toBeNull();
+  fireEvent.click(summary);
+  expect(screen.getByText("File content").closest("[hidden]")).not.toBeNull();
+});
+
+it("keeps process expansion across new output and exposes failures", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const view = render(<ConversationView events={activityEvents.slice(0, 3)} sessionStatus="running" />);
+  const summary = screen.getByRole("button", { name: /Working · reasoning/ });
+  fireEvent.click(summary);
+  view.rerender(<ConversationView events={activityEvents} sessionStatus="idle" />);
+  expect(screen.getByRole("button", { name: /Explored · reasoning/ }).getAttribute("aria-expanded")).toBe("true");
+  const failed = activityEvents.map((event) => event.type === "agent.tool_result" ? { ...event, data: { toolUseId: "read-1", content: "Access denied", isError: true } } : event);
+  view.rerender(<ConversationView events={failed} sessionStatus="idle" />);
+  expect(screen.getByRole("button", { name: /Needs attention/ })).toBeTruthy();
+  expect(screen.getByText("Access denied").closest("[hidden]")).toBeNull();
+});
+
+it("does not label an interrupted tool as still running", () => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  render(<ConversationView events={activityEvents.slice(0, 3)} sessionStatus="idle" />);
+  fireEvent.click(screen.getByRole("button", { name: /Incomplete/ }));
+  expect(screen.getByLabelText("No result")).toBeTruthy();
+  expect(screen.queryByLabelText("Running")).toBeNull();
+});
+
+it("follows growing deltas but leaves the scroll position alone when reading history", () => {
+  const scroll = vi.fn();
+  HTMLElement.prototype.scrollIntoView = scroll;
+  const view = render(<ConversationView events={[userMessage]} activeDeltas={deltas} sessionStatus="running" />);
+  scroll.mockClear();
+  const grown = deltas.map((delta) => delta.type === "agent.message_chunk" ? { ...delta, data: { text: "Stable bubble growing" } } : delta);
+  view.rerender(<ConversationView events={[userMessage]} activeDeltas={grown} sessionStatus="running" />);
+  expect(scroll).toHaveBeenCalled();
+  const container = view.container.querySelector(".conversation-scroll")!;
+  Object.defineProperties(container, { scrollHeight: { value: 2000 }, clientHeight: { value: 400 }, scrollTop: { value: 0 } });
+  fireEvent.scroll(container);
+  scroll.mockClear();
+  view.rerender(<ConversationView events={activityEvents} sessionStatus="idle" />);
+  expect(scroll).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+  expect(scroll).toHaveBeenCalled();
 });

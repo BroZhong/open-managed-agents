@@ -1,3 +1,5 @@
+import { SkillNameConflictError } from "@oma-server/store";
+import { replaceSkillFiles } from "../skills/replace-files.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { AgentStore, SkillStore, SkillArtifactStore } from "@oma-server/store";
@@ -89,7 +91,20 @@ export function agentSkillRoutes(
     // the existing fork instead of creating a duplicate.
     const existingForks = await skillStore.listByOwner(agent.tenantId, "agent", agent.id);
     const already = existingForks.find((s) => s.sourceSkillId === library.id);
-    if (already) return c.json(already, 200);
+    if (already && !body.overwrite) return c.json(already, 200);
+    const sameName = existingForks.find((s) => s.name === library.name);
+    if (sameName && !body.overwrite) throw new SkillNameConflictError(library.name);
+    if (sameName || already) {
+      const target = sameName ?? already!;
+      const files = await skillArtifacts.getAll(agent.tenantId, library.id);
+      await replaceSkillFiles(skillArtifacts, agent.tenantId, target.id, files);
+      const updated = await skillStore.update(target.id, {
+        name: library.name,
+        description: library.description,
+        sourceSkillId: library.id,
+      });
+      return c.json(updated, 200);
+    }
 
     // Snapshot metadata → new Agent Skill, then copy the files.
     const fork = await skillStore.create({
@@ -100,7 +115,13 @@ export function agentSkillRoutes(
       ownerId: agent.id,
       sourceSkillId: library.id,
     });
-    await skillArtifacts.copyTree(agent.tenantId, library.id, fork.id);
+    try {
+      await skillArtifacts.copyTree(agent.tenantId, library.id, fork.id);
+    } catch (error) {
+      await skillArtifacts.deleteTree(agent.tenantId, fork.id);
+      await skillStore.delete(fork.id);
+      throw error;
+    }
 
     const nextSkills = [...(agent.skills ?? []), fork.id];
     await agentStore.update(agent.id, { skills: nextSkills });

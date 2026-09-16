@@ -2463,7 +2463,7 @@
       "post": {
         "operationId": "equipAgentSkill",
         "summary": "Equip a Library Skill by creating a Skill Fork",
-        "description": "Copies the Library Skill's current metadata and files into an independent Agent Skill. Re-equipping the same Library Skill returns the existing fork with 200; it does not refresh that fork from the Library.",
+        "description": "Copies the Library Skill's current metadata and files into an independent Agent Skill. Re-equipping the same Library Skill returns the existing fork with 200; it does not refresh that fork from the Library. A name collision returns 409. Set overwrite=true after confirmation to replace the existing Agent Skill, including its complete file tree.",
         "tags": [
           "Agents/Skills"
         ],
@@ -2486,6 +2486,9 @@
                 "properties": {
                   "skillId": {
                     "type": "string"
+                  },
+                  "overwrite": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -2538,6 +2541,16 @@
           },
           "404": {
             "description": "Agent or Library Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Skill name conflict; confirm overwrite before retrying",
             "content": {
               "application/json": {
                 "schema": {
@@ -2631,7 +2644,7 @@
       "post": {
         "operationId": "uploadSkills",
         "summary": "Upload one or more Library Skills",
-        "description": "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths.",
+        "description": "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths. Names are unique per owner. Conflicts return 409 before any writes; retry with overwrite=true after confirmation to replace the entire folder, retaining the Skill ID. For repeated names within one upload the last folder wins after confirmation.",
         "tags": [
           "Skills"
         ],
@@ -2642,6 +2655,13 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "overwrite": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "false"
+                    ]
+                  },
                   "paths": {
                     "type": "string",
                     "example": "[\"my-skill/SKILL.md\"]"
@@ -2697,6 +2717,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Skill name conflict; confirm overwrite before retrying",
             "content": {
               "application/json": {
                 "schema": {
@@ -2875,6 +2905,16 @@
           },
           "404": {
             "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Skill name already exists for this owner",
             "content": {
               "application/json": {
                 "schema": {
@@ -3116,6 +3156,16 @@
           },
           "404": {
             "description": "Skill not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Skill name already exists for this owner",
             "content": {
               "application/json": {
                 "schema": {
@@ -3532,6 +3582,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Workspace has been deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       },
@@ -3689,6 +3749,262 @@
             }
           }
         }
+      },
+      "delete": {
+        "operationId": "deleteWorkspace",
+        "summary": "Soft-delete a Workspace",
+        "description": "Marks the Workspace deleted. It and its Sessions disappear from lists; files, history, and running execution are retained.",
+        "tags": [
+          "Workspaces"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace hidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "post": {
+        "operationId": "updateSession",
+        "summary": "Rename or soft-delete a Session",
+        "description": "A title renames the Session. deleted=true hides it from lists without terminating execution or deleting any history or files. The DELETE endpoint retains its separate execution-termination semantics.",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "required": [
+                      "title"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "deleted": {
+                        "type": "boolean",
+                        "enum": [
+                          true
+                        ]
+                      }
+                    },
+                    "required": [
+                      "deleted"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session renamed or hidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DeletedResource"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Session update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getSession",
+        "summary": "Get a Session",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "terminateSession",
+        "summary": "Terminate a Session",
+        "description": "Permanently marks the Session terminated, stops its active execution, clears queued input, and releases its Sandbox. Retains the Session record, event history, and saved Workspace files. Further event submissions return 410. Use user.interrupt through POST /v1/sessions/{id}/events to stop only the active Turn while keeping the Session usable.",
+        "tags": [
+          "Sessions"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session terminated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedResource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/sessions": {
@@ -3768,6 +4084,16 @@
           },
           "404": {
             "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Workspace has been deleted",
             "content": {
               "application/json": {
                 "schema": {
@@ -3866,107 +4192,6 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sessions/{id}": {
-      "get": {
-        "operationId": "getSession",
-        "summary": "Get a Session",
-        "tags": [
-          "Sessions"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Session found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Session"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid tenant credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Session not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "operationId": "terminateSession",
-        "summary": "Terminate a Session",
-        "description": "Permanently marks the Session terminated, stops its active execution, clears queued input, and releases its Sandbox. Retains the Session record, event history, and saved Workspace files. Further event submissions return 410. Use user.interrupt through POST /v1/sessions/{id}/events to stop only the active Turn while keeping the Session usable.",
-        "tags": [
-          "Sessions"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Session terminated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeletedResource"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid tenant credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Session not found",
             "content": {
               "application/json": {
                 "schema": {

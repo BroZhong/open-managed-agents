@@ -51,7 +51,7 @@ export class InMemorySessionStore implements SessionStore {
     const loopId = opts?.loopId;
     const withoutLoop = opts?.withoutLoop;
 
-    let filtered = this.sessions.filter((s) => s.tenantId === tenantId);
+    let filtered = this.sessions.filter((s) => s.tenantId === tenantId && !s.deletedAt && !opts?.excludedWorkspaceIds?.includes(s.workspaceId));
     if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
@@ -102,6 +102,13 @@ export class InMemorySessionStore implements SessionStore {
     if (!session) return null;
     session.title = title;
     session.updatedAt = new Date();
+    return session;
+  }
+
+  async softDelete(id: string): Promise<Session | null> {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session) return null;
+    session.deletedAt ??= new Date();
     return session;
   }
 

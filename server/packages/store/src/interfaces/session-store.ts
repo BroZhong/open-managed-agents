@@ -9,6 +9,7 @@ export interface SessionStoreListOpts {
   loopId?: string;
   /** Exclude Loop-created Sessions so loose Agent navigation is not crowded out. */
   withoutLoop?: boolean;
+  excludedWorkspaceIds?: string[];
 }
 
 export interface SessionStoreCreateInput {
@@ -40,5 +41,6 @@ export interface SessionStore {
    * set it once, on the first message, only when it is currently unset.
    */
   setTitle(id: string, title: string): Promise<Session | null>;
+  softDelete(id: string): Promise<Session | null>;
   terminate(id: string): Promise<Session | null>;
 }

@@ -61,3 +61,15 @@ export function useUpdateWorkspace() {
     },
   });
 }
+
+/** Soft-delete: the server retains files and Sessions, but hides them from lists. */
+export function useDeleteWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/v1/workspaces/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+}

@@ -99,6 +99,9 @@ UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND own
 -- Preserve unknown upload times for legacy Skills; updated_at is not creation time.
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
 
+CREATE UNIQUE INDEX IF NOT EXISTS skills_owner_name_unique
+  ON ${s}.skills (tenant_id, owner_type, owner_id, name);
+
 -- Workspaces are tenant-owned; the OSS-backed home of a Session's
 -- artifacts. A user-supplied id is used as-is, else auto-generated. The
 -- (tenant_id, id) PK makes binding to a user-supplied id idempotent so many
@@ -124,6 +127,8 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   updated_at     TIMESTAMPTZ NOT NULL,
   terminated_at  TIMESTAMPTZ
 );
+ALTER TABLE ${s}.workspaces ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
