@@ -23,6 +23,8 @@ const SessionContext = createContext("");
 const OpenExecutionContext = createContext<((execution: DelegationExecution) => void) | undefined>(undefined);
 
 interface ConversationViewProps {
+  /** Noninteractive, clipped owner share preview. */
+  preview?: boolean;
   onOpenWorkspaceFile?: (path: string) => void;
   resources?: ConversationResources;
   onOpenExecution?: (execution: DelegationExecution) => void;
@@ -34,6 +36,7 @@ interface ConversationViewProps {
 }
 
 export function ConversationView({
+  preview = false,
   onOpenWorkspaceFile,
   resources,
   onOpenExecution,
@@ -77,18 +80,18 @@ export function ConversationView({
   }, []);
 
   useEffect(() => {
-    if (followBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "instant" });
-  }, [messages]);
+    if (!preview && followBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "instant" });
+  }, [messages, preview]);
 
   // Images, tables and streaming text can grow without adding a message.
   useEffect(() => {
-    if (!contentRef.current || typeof ResizeObserver === "undefined") return;
+    if (preview || !contentRef.current || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (followBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "instant" });
+      if (!preview && followBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "instant" });
     });
     observer.observe(contentRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [preview]);
 
   function scrollToBottom() {
     followBottomRef.current = true;
@@ -299,6 +302,7 @@ function AssistantBubble({
             which is why those need no separate override. */}
         <div className="prose prose-sm prose-neutral max-w-none text-[var(--color-fg)]! [&_p]:my-1.5 [&_pre]:rounded-lg [&_pre]:bg-[var(--color-bg-muted)] [&_pre]:text-[var(--color-fg)] [&_code]:text-[13px] [&_code]:font-normal [&_code]:before:content-none [&_code]:after:content-none [&_table]:my-2 [&_table]:block [&_table]:w-max [&_table]:max-w-full [&_table]:table-auto [&_table]:overflow-x-auto [&_table]:border-collapse [&_th]:border [&_th]:border-[var(--color-border)] [&_th]:px-2 [&_th]:py-1 [&_th]:font-semibold [&_td]:border [&_td]:border-[var(--color-border)] [&_td]:px-2 [&_td]:py-1">
           <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url, key) => key === "href" && resources && resolveResourcePath(url, resources.skills) ? url : defaultUrlTransform(url)} components={{
+            ...(resources?.shared ? { img: ({ src, alt }: { src?: string; alt?: string }) => <ConversationResourceLink href={src}>{alt || "Workspace image"}</ConversationResourceLink> } : {}),
             a: ({ href, children }) => <ConversationResourceLink href={href}>{children}</ConversationResourceLink>,
             pre: ({ children }) => <pre><CodeBlockContext.Provider value={true}>{children}</CodeBlockContext.Provider></pre>,
             code: ({ children, className }) => <ConversationResourceLink inlineCode href={typeof children === "string" ? children : undefined}><code className={className}>{children}</code></ConversationResourceLink>,

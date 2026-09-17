@@ -1,0 +1,336 @@
+{
+  "runId": "sharecheck_1789623562173",
+  "checks": [
+    {
+      "name": "16 concurrent PostgreSQL creates return one share",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "256-bit random share identifier",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mixed owner credentials get display-only projection",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "history page 1",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "history page 2",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "history page 3",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "all persisted history and trace types",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/sessions",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/workspaces",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/agents",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/skills",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/sessions/sess__tiDQi4g1WPEr6LkVx28C",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/sessions/sess_o5V0E9pODmqMpVPmpHgQQ",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/sessions/sess_2DKioyHZ0esfhvFmiIjxe/pending",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/agents/agent_Lxi8bHFAaKHYYXGO-jatK/files",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/workspaces/ws_b_aD3s6y9ZiyJSRIq1lxS/files",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "scope denial /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/preview-url?path=report.txt",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "SSE forbidden",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "forged share does not borrow owner",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "anonymous cannot create",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "different Tenant cannot create",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied POST /v1/sessions/sess_2DKioyHZ0esfhvFmiIjxe/share",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied POST /v1/sessions/sess_2DKioyHZ0esfhvFmiIjxe/events",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied POST /v1/sessions/sess_2DKioyHZ0esfhvFmiIjxe/events",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied DELETE /v1/sessions/sess_2DKioyHZ0esfhvFmiIjxe",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied PUT /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files/content",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied POST /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files/rename",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied POST /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files/upload",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied DELETE /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files/content?path=report.txt",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "mutation denied PUT /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files/content",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "no rejected message queued",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "file remains unchanged",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "path denied ?prefix=../",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "path denied ?prefix=%2e%2e%2f",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "path denied /%2e%2e%2fsecret",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "path denied /%252e%252e/secret",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "path denied /.oma-workspace-checks/probe",
+      "ok": true,
+      "phase": "init"
+    },
+    {
+      "name": "owner media upload",
+      "ok": true,
+      "phase": "media"
+    },
+    {
+      "name": "shared media Host read cover.png",
+      "ok": true,
+      "phase": "media"
+    },
+    {
+      "name": "shared media Host read tone.wav",
+      "ok": true,
+      "phase": "media"
+    },
+    {
+      "name": "shared media Host read clip.mp4",
+      "ok": true,
+      "phase": "media"
+    },
+    {
+      "name": "same link after independent process",
+      "ok": true,
+      "phase": "refresh"
+    },
+    {
+      "name": "updated file readable",
+      "ok": true,
+      "phase": "refresh"
+    },
+    {
+      "name": "download bytes and attachment",
+      "ok": true,
+      "phase": "refresh"
+    },
+    {
+      "name": "termination retains share",
+      "ok": true,
+      "phase": "refresh"
+    },
+    {
+      "name": "same link after Host replacement",
+      "ok": true,
+      "phase": "restart-check"
+    },
+    {
+      "name": "history after Host replacement",
+      "ok": true,
+      "phase": "restart-check"
+    },
+    {
+      "name": "Session deletion invalidates /v1/shares/Mmnd_2XABlDqEiz1mMhMmAPRUfuSdp_E_Vnx1yuOrn0",
+      "ok": true,
+      "phase": "delete-session"
+    },
+    {
+      "name": "Session deletion invalidates /v1/sessions/sess_2DKioyHZ0esfhvFmiIjxe/events",
+      "ok": true,
+      "phase": "delete-session"
+    },
+    {
+      "name": "Session deletion invalidates /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files",
+      "ok": true,
+      "phase": "delete-session"
+    },
+    {
+      "name": "Session deletion invalidates /v1/workspaces/ws_g77nGNDIImX-3U1PCJ60M/files/report.txt",
+      "ok": true,
+      "phase": "delete-session"
+    },
+    {
+      "name": "Workspace deletion invalidates all shares",
+      "ok": true,
+      "phase": "delete-workspace"
+    },
+    {
+      "name": "test Workspace objects removed ws_g77nGNDIImX-3U1PCJ60M",
+      "ok": true,
+      "phase": "cleanup"
+    },
+    {
+      "name": "test Workspace objects removed ws_b_aD3s6y9ZiyJSRIq1lxS",
+      "ok": true,
+      "phase": "cleanup"
+    },
+    {
+      "phase": "finalize",
+      "name": "fixture cleanup users",
+      "ok": true
+    },
+    {
+      "phase": "finalize",
+      "name": "fixture cleanup active_keys",
+      "ok": true
+    },
+    {
+      "phase": "finalize",
+      "name": "fixture cleanup agents",
+      "ok": true
+    },
+    {
+      "phase": "finalize",
+      "name": "fixture cleanup live_sessions",
+      "ok": true
+    },
+    {
+      "phase": "finalize",
+      "name": "fixture cleanup live_workspaces",
+      "ok": true
+    },
+    {
+      "phase": "finalize",
+      "name": "fixture cleanup pending_events",
+      "ok": true
+    }
+  ],
+  "sessions": [
+    "sess_2DKioyHZ0esfhvFmiIjxe",
+    "sess__tiDQi4g1WPEr6LkVx28C",
+    "sess__RI9BI2W31pcJ6eh0AMe5",
+    "sess_o5V0E9pODmqMpVPmpHgQQ"
+  ],
+  "workspaces": [
+    "ws_g77nGNDIImX-3U1PCJ60M",
+    "ws_b_aD3s6y9ZiyJSRIq1lxS"
+  ],
+  "agents": [
+    "agent_Lxi8bHFAaKHYYXGO-jatK"
+  ],
+  "tenant": "sharecheck_1789623562173",
+  "otherTenant": "sharecheck_1789623562173_other",
+  "userId": "user_rCQsYsKBWPLqvGJ-JZWSx",
+  "agentId": "agent_Lxi8bHFAaKHYYXGO-jatK",
+  "sessionId": "sess_2DKioyHZ0esfhvFmiIjxe",
+  "workspaceId": "ws_g77nGNDIImX-3U1PCJ60M",
+  "siblingId": "sess__tiDQi4g1WPEr6LkVx28C",
+  "otherWorkspaceId": "ws_b_aD3s6y9ZiyJSRIq1lxS",
+  "shareId": "Mmnd_2XABlDqEiz1mMhMmAPRUfuSdp_E_Vnx1yuOrn0",
+  "cleanup": {
+    "users": 0,
+    "active_keys": 0,
+    "agents": 0,
+    "live_sessions": 0,
+    "live_workspaces": 0,
+    "pending_events": 0
+  },
+  "completedAt": "2026-09-17T05:48:00.337Z"
+}

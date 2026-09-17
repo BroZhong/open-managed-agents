@@ -9,6 +9,9 @@ export function ConversationResourceLink({ href, children, inlineCode = false }:
   const resources = useContext(ConversationResourcesContext);
   const codeBlock = useContext(CodeBlockContext);
   const target = resources && href && !codeBlock ? resolveResourcePath(href, resources.skills) : null;
+  if (resources?.shared && target?.kind !== "workspace") {
+    return <span title="This link is outside the shared Workspace.">{children}</span>;
+  }
   if (resources && target?.kind === "skill") {
     return <Link to={`/agents/${resources.agentId}/skills/${target.skillId}`}>{children}</Link>;
   }

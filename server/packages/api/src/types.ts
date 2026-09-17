@@ -1,5 +1,6 @@
 export interface TenantContext {
   tenantId: string;
+  share?: { id: string; sessionId: string; workspaceId: string };
   /** Present only for x-api-key authentication, never browser Bearer tokens. */
   apiKeyId?: string;
 }

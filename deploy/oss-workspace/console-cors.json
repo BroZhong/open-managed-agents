@@ -1,0 +1,7 @@
+{
+  "allowedOrigin": ["https://agentry.welltop.tech"],
+  "allowedMethod": ["GET", "HEAD"],
+  "allowedHeader": ["Range", "If-Range", "If-Match", "If-None-Match"],
+  "exposeHeader": ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Content-Disposition"],
+  "maxAgeSeconds": 600
+}

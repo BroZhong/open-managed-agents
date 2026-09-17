@@ -14,6 +14,11 @@ export function schemaDdl(schema: string = DEFAULT_SCHEMA): string {
   return `
 CREATE SCHEMA IF NOT EXISTS ${s};
 
+CREATE TABLE IF NOT EXISTS ${s}.session_shares (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS ${s}.agents (
   id           TEXT PRIMARY KEY,
   tenant_id    TEXT NOT NULL,

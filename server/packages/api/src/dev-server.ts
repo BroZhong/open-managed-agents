@@ -405,6 +405,7 @@ async function main() {
   loopScheduler.start();
 
   const app = createApp({
+    sessionShareStore: stores.sessionShareStore,
     delegationStore: stores.delegationStore,
     apiKeyStore: stores.apiKeyStore,
     fullApiKeyStore: stores.apiKeyStore,

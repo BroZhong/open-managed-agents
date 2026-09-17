@@ -149,3 +149,6 @@ export type * from "./interfaces/delegation-store.js";
 export { TransactionalDelegationStore, delegationFenceLost } from "./delegation-store.js";
 export type { DelegationTransaction, DelegationRecord, DelegationTable } from "./delegation-store.js";
 export { PgDelegationStore } from "./postgres/delegation-store.js";
+
+export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";
+export { PgSessionShareStore } from "./postgres/session-share-store.js";

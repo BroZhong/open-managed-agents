@@ -85,13 +85,14 @@ fixtures are not evidence of an OSS production deployment.
 
 ## Direct browser reads
 
-ADR-0011 makes Workspace file reads return JSON metadata and a signed OSS GET
+ADR-0012 makes Workspace file reads return JSON metadata and a signed OSS GET
 URL through the single `/files/{path}` read endpoint. The Host does not
 buffer file content for browser or program downloads. The existing manifest
 keeps its public regional endpoint until an actual custom domain is provisioned;
 it does not create a domain, certificate or Bucket CORS rule.
 
-For browser previews, attach a dedicated file domain to the Bucket, enable HTTPS
+Use the regional OSS domain when actual browser tests pass. If its default-domain
+policies prevent the required previews, attach a dedicated file domain to the Bucket, enable HTTPS
 on it and set `WORKSPACE_OSS_PUBLIC_ENDPOINT` to that HTTPS origin. Use a domain
 separate from the console's origin so Workspace HTML does not run with console
 origin privileges. CNAME mode is selected automatically for an explicitly
@@ -102,7 +103,7 @@ signing preserves stored MIME.
 
 Browser text reads and media elements using anonymous CORS need a Bucket CORS
 rule for the actual console origin (currently `https://agentry.welltop.tech`),
-permitting `GET` and exposing
+permitting `GET`/`HEAD` and exposing
 the response headers needed by clients (`Content-Type`, `Content-Length`,
 `Content-Range`, `Accept-Ranges`, `ETag`, `Content-Disposition`). Allow `Range`
 and conditional headers if the client sends them; add development origins only

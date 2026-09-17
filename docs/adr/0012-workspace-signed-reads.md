@@ -1,4 +1,4 @@
-# ADR-0011: Direct Workspace reads through signed OSS URLs
+# ADR-0012: Direct Workspace reads through signed OSS URLs
 
 ## Status
 

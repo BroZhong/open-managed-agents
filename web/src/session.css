@@ -81,3 +81,18 @@
   .session-heading > span { flex-shrink: 0; }
   .session-heading > .session-title { flex-shrink: 1; }
 }
+
+/* Fixed-height, non-scrolling conversation preview in the owner's share dialog. */
+.share-preview {
+  height: 240px;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: 12px;
+  background: var(--color-bg-muted);
+  mask-image: linear-gradient(to bottom, #000 65%, transparent);
+}
+.share-preview .conversation-scroll {
+  overflow: hidden;
+  flex: none;
+}
+.share-preview * { scrollbar-width: none; }

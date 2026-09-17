@@ -93,6 +93,12 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "Tenant session token issued by POST /auth/register or POST /auth/login, valid for 30 days. Authorization: Bearer takes precedence over x-api-key when both are supplied; an invalid or expired Bearer token returns 401 without falling back to the API key."
+      },
+      "SessionShareAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-session-share",
+        "description": "Random share ID from the link. Grants only the named read operations on its Session and bound Workspace. Always narrows authority when combined with other credentials."
       }
     },
     "schemas": {
@@ -1142,6 +1148,47 @@
           "has_more"
         ]
       },
+      "SharedSession": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "agent": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp",
+            "example": "2026-07-14T00:00:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "workspaceId",
+          "status",
+          "agent",
+          "createdAt"
+        ]
+      },
       "SessionUsage": {
         "type": "object",
         "properties": {
@@ -1634,6 +1681,165 @@
     "parameters": {}
   },
   "paths": {
+    "/v1/shares/{id}": {
+      "get": {
+        "operationId": "resolveSessionShare",
+        "summary": "Resolve a live Session share",
+        "tags": [
+          "Sessions"
+        ],
+        "description": "Requires x-session-share matching the URL ID. Checks the Session and bound Workspace still exist and are not deleted on every request. Share credentials take precedence over all ordinary credentials, including development auth bypass. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
+        "security": [
+          {
+            "SessionShareAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "workspaceId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "workspaceId"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Share unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/share": {
+      "post": {
+        "operationId": "createSessionShare",
+        "summary": "Create or retrieve the Session's permanent share link",
+        "tags": [
+          "Sessions"
+        ],
+        "description": "Owner credentials required. Returns the same 256-bit random ID on every call. Does not snapshot history or Workspace files. No expiry, rotation or revocation API.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or Workspace unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Sharing unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "operationId": "healthCheck",
@@ -1901,6 +2107,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -1952,6 +2168,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       },
@@ -1995,6 +2221,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2074,6 +2310,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent not found",
             "content": {
@@ -2127,6 +2373,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2204,6 +2460,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent not found",
             "content": {
@@ -2245,6 +2511,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2296,6 +2572,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2373,6 +2659,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent not found",
             "content": {
@@ -2416,6 +2712,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2493,6 +2799,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Loop not found",
             "content": {
@@ -2537,6 +2853,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2596,6 +2922,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent not found",
             "content": {
@@ -2647,6 +2983,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2740,6 +3086,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent not found",
             "content": {
@@ -2816,6 +3172,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent or Agent File not found",
             "content": {
@@ -2877,6 +3243,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -2976,6 +3352,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Agent or Library Skill not found",
             "content": {
@@ -3056,6 +3442,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3162,6 +3558,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Skill name conflict; confirm overwrite before retrying",
             "content": {
@@ -3221,6 +3627,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -3255,6 +3671,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3340,6 +3766,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Skill not found",
             "content": {
@@ -3400,6 +3836,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Skill not found",
             "content": {
@@ -3443,6 +3889,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3521,6 +3977,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Skill or file not found",
             "content": {
@@ -3583,6 +4049,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3680,6 +4156,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3794,6 +4280,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Skill or source file not found",
             "content": {
@@ -3827,6 +4323,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -3903,6 +4409,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -3938,6 +4454,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4020,6 +4546,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Workspace has been deleted",
             "content": {
@@ -4052,6 +4588,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4093,6 +4639,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4175,6 +4731,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Workspace not found",
             "content": {
@@ -4217,6 +4783,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4332,6 +4908,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Session not found",
             "content": {
@@ -4350,6 +4936,18 @@
         "tags": [
           "Sessions"
         ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          },
+          {
+            "SessionShareAuth": []
+          }
+        ],
+        "description": " Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
         "parameters": [
           {
             "schema": {
@@ -4362,17 +4960,34 @@
         ],
         "responses": {
           "200": {
-            "description": "Session found",
+            "description": "Session found; share credentials receive display fields only",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Session"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SharedSession"
+                    }
+                  ]
                 }
               }
             }
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4423,6 +5038,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4511,6 +5136,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4650,6 +5285,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -4685,6 +5330,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -4820,6 +5475,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Session not found",
             "content": {
@@ -4845,9 +5510,20 @@
       "get": {
         "operationId": "listSessionEvents",
         "summary": "List Complete Events or open an SSE stream",
-        "description": "Defaults to a JSON page of durable events. Send exactly Accept: text/event-stream for SSE. Last-Event-ID or replay=1 enables replay of durable events followed by buffered Deltas from the active Turn, then live delivery. include=chunks additionally forwards live Deltas. The SSE connection remains open across Turns; it does not close when a Turn finishes. JSON pagination parameters after_seq and limit do not control SSE replay.",
+        "description": "Defaults to a JSON page of durable events. Send exactly Accept: text/event-stream for SSE. Last-Event-ID or replay=1 enables replay of durable events followed by buffered Deltas from the active Turn, then live delivery. include=chunks additionally forwards live Deltas. The SSE connection remains open across Turns; it does not close when a Turn finishes. JSON pagination parameters after_seq and limit do not control SSE replay. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
         "tags": [
           "Sessions/Events"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          },
+          {
+            "SessionShareAuth": []
+          }
         ],
         "parameters": [
           {
@@ -4959,6 +5635,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Session not found",
             "content": {
@@ -5047,6 +5733,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Session not found",
             "content": {
@@ -5122,6 +5818,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5215,6 +5921,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5328,6 +6044,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5470,6 +6196,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Workspace not found",
             "content": {
@@ -5497,9 +6233,20 @@
       "get": {
         "operationId": "listWorkspaceFiles",
         "summary": "List Workspace files",
-        "description": "Returns a flat list of file paths and metadata from the authenticated Tenant's Workspace, including files saved by the Agent. Directory placeholders and the reserved .oma-workspace-checks subtree are omitted. This endpoint is not paginated.",
+        "description": "Returns a flat list of file paths and metadata from the authenticated Tenant's Workspace, including files saved by the Agent. Directory placeholders and the reserved .oma-workspace-checks subtree are omitted. This endpoint is not paginated. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
         "tags": [
           "Workspaces/Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          },
+          {
+            "SessionShareAuth": []
+          }
         ],
         "parameters": [
           {
@@ -5552,6 +6299,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Workspace not found",
             "content": {
@@ -5579,9 +6336,20 @@
       "get": {
         "operationId": "getWorkspaceFile",
         "summary": "Get a Workspace file read URL",
-        "description": "Returns JSON file metadata and a short-lived OSS read URL after Tenant authorization and a metadata-only existence check. Fetch url directly without API credentials; OSS serves file bytes with streaming and Range support. path is Workspace-relative; URI-encode each segment. Request a new URL when it expires. Use download=1 for a signed attachment filename. Browser previews require a bound public HTTPS OSS custom domain and appropriate CORS.",
+        "description": "Returns JSON file metadata and a short-lived OSS read URL after Tenant authorization and a metadata-only existence check. Fetch url directly without API credentials; OSS serves file bytes with streaming and Range support. path is Workspace-relative; URI-encode each segment. Request a new URL when it expires. Use download=1 for a signed attachment filename. Browser reads require appropriate Bucket CORS. Regional OSS domains preserve stored MIME and may restrict previews; verify actual media behavior before choosing a custom domain. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
         "tags": [
           "Workspaces/Files"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          },
+          {
+            "SessionShareAuth": []
+          }
         ],
         "parameters": [
           {
@@ -5657,6 +6425,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5770,6 +6548,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Session not found",
             "content": {
@@ -5847,6 +6635,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {
@@ -5937,6 +6735,16 @@
               }
             }
           },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Session or related execution not found",
             "content": {
@@ -5980,6 +6788,16 @@
           },
           "401": {
             "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
             "content": {
               "application/json": {
                 "schema": {

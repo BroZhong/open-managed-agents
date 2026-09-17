@@ -271,7 +271,9 @@ async function readBoundedText(response: Response): Promise<string | null> {
   }
 }
 
-export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
+function createWorkspaceReader(workspaceId: string, access: {
+  json<T>(path: string, options?: { signal?: AbortSignal; cache?: RequestCache }): Promise<T>;
+}): WorkspaceFileSource {
   const apiPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}`;
   // Reuse metadata between read() and the initial media mount only. Fresh
   // selections and explicit refreshes always reauthorize and HEAD the object.
@@ -284,7 +286,7 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       && Date.parse(recentLink.link.expiresAt) > Date.now() + 30_000) {
       return recentLink.link;
     }
-    const link = await apiFetch<WorkspaceReadLink>(
+    const link = await access.json<WorkspaceReadLink>(
       `${apiPath}/files/${encodePath(path)}${download ? "?download=1" : ""}`,
       { signal: readSignal(options.signal), cache: "no-store" },
     );
@@ -303,7 +305,7 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
     capabilities: { hierarchy: "nested", idleGated: false },
 
     async list(): Promise<FileNode[]> {
-      const res = await apiFetch<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
+      const res = await access.json<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
       if (!Array.isArray(res?.data)) {
         throw new Error("File status is unconfirmed: the Workspace list response is incomplete. Retry Refresh.");
       }
@@ -349,6 +351,24 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       }
     },
 
+    async previewUrl(path: string, options?: FileReadOptions): Promise<string> {
+      return (await getLink(path, options)).url;
+    },
+
+    async downloadUrl(path: string, options?: FileReadOptions): Promise<string> {
+      return (await getLink(path, options, true)).url;
+    },
+  };
+}
+
+export function createSharedWorkspaceFileSource(workspaceId: string, access: import("./share-api").ShareAccess): WorkspaceFileSource {
+  return createWorkspaceReader(workspaceId, access);
+}
+
+export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
+  const apiPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}`;
+  return {
+    ...createWorkspaceReader(workspaceId, { json: apiFetch }),
     async write(path: string, content: string): Promise<void> {
       await apiFetch(`${apiPath}/files/content`, {
         method: "PUT",
@@ -383,13 +403,6 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       await apiUpload(`${apiPath}/files/upload`, form);
     },
 
-    async previewUrl(path: string, options?: FileReadOptions): Promise<string> {
-      return (await getLink(path, options)).url;
-    },
-
-    async downloadUrl(path: string, options?: FileReadOptions): Promise<string> {
-      return (await getLink(path, options, true)).url;
-    },
   };
 }
 
