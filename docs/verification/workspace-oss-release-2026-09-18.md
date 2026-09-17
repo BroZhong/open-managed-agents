@@ -6,8 +6,8 @@ to configure CORS, deploy and test production.
 ## Release
 
 - Application commit: `782b2be91561` on `codex/workspace-oss-direct-reads`.
-  Both server and web images use this immutable tag. Later commits only update
-  API inventory tests and release documentation, not the deployed application.
+  The initial server and web release used this immutable tag. The frontend
+  follow-up below uses a newer web image; the server remains on this tag.
 - Integrated `origin/main` at `c0989cf`, preserving the already deployed Session
   sharing feature. Owner and shared Workspaces use the same signed-read logic.
 - Built and pushed both images on `vfs-dev` with `build.sh --push server web`.
@@ -86,3 +86,27 @@ expiry even after application access is revoked.
 Disposable objects, Agent and Sessions were removed or soft-deleted, Workspaces
 soft-deleted, and temporary API keys revoked. The test share was invalidated.
 Only soft-deleted audit metadata remains. Temporary browser tabs were closed.
+
+## Frontend follow-up: immediate images and Session loading
+
+Application commit `128060d3c193` removes the large-image confirmation and adds
+explicit initial-history loading/error states. Welcome text appears only after
+all history pages load successfully. Initial history failure retries JSON history
+before SSE, rather than treating a live connection as proof of empty history.
+The main Session, child Sessions and owner share preview consume this state;
+Session metadata and initial anonymous-share loads also use a spinner.
+
+- 366 web tests pass, including delayed paginated existing/empty histories and
+  initial-history failure/retry. TypeScript, changed-file ESLint and web build pass.
+- Browser QA with actual application components: a valid 9.8 MiB PNG loads without
+  confirmation; historical messages delayed across two six-second pages show a
+  spinner then existing content; an empty Session delayed six seconds shows a
+  spinner then the welcome. Switching Sessions resets the loading state.
+- Built only web on `vfs-dev` from the committed tree. GitHub fetch stalled, so
+  the same commits were transferred in a Git bundle and checked out by SHA.
+- Web image tag: `128060d3c193`; manifest
+  `sha256:66405faa395ae78e4ee5ddb3407d15dba1bbc77ddd6ca052db21866e536a9a82`.
+- Image-only rollout retains server `782b2be91561` without restarting it.
+- Post-rollout browser check on the production share page showed the loading
+  spinner and directly rendered the 9.8 MiB OSS PNG at 1254×1254, with no large
+  image warning or Load anyway button. Both Deployments are ready and health is OK.
