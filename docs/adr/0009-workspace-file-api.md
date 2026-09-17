@@ -4,7 +4,7 @@
 
 Accepted, 2026-09-15. Supersedes ADR-0008's retained per-Session 423 write
 gate and the Session-based HTTP file routes. OSS storage semantics remain.
-ADR-0011 subsequently changes the read response from file bytes to a signed OSS
+ADR-0012 subsequently changes the read response from file bytes to a signed OSS
 URL descriptor; the ownership and write rules below still apply.
 
 ## Decision
