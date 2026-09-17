@@ -65,6 +65,8 @@ export function useSessionEvents(sessionId: string) {
   );
   const [status, setStatus] = useState<"idle" | "running" | "waiting">("idle");
   const [isConnected, setIsConnected] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string>();
   // Bumped on every Turn lifecycle transition. The Session's queued input can
   // only change when a Turn starts (an entry was consumed) or ends (the next one
   // may start), so this is the exact revalidation signal the pending-input read
@@ -111,6 +113,8 @@ export function useSessionEvents(sessionId: string) {
   // Session's messages or token usage is ever committed under the new URL.
   if (stateSessionId !== sessionId) {
     setStateSessionId(sessionId);
+    setIsHistoryLoading(true);
+    setHistoryError(undefined);
     dispatch({ type: "history.loaded", events: [] });
     setStatus("idle");
     setIsConnected(false);
@@ -230,6 +234,7 @@ export function useSessionEvents(sessionId: string) {
 
     const abortController = new AbortController();
     const { signal } = abortController;
+    let historyLoaded = false;
 
     // Reads the SSE stream to completion, parsing frames and feeding events
     // into durable history or the active Delta projection. Shared by both the
@@ -298,6 +303,8 @@ export function useSessionEvents(sessionId: string) {
     // conversation, calculate complete usage, and seed the resume anchor.
     async function connect() {
       if (!isCurrentGeneration()) return;
+      setIsHistoryLoading(true);
+      setHistoryError(undefined);
       const token = localStorage.getItem(STORAGE_KEY);
 
       // 1. Fetch every historical event page (JSON mode). The endpoint defaults
@@ -327,7 +334,8 @@ export function useSessionEvents(sessionId: string) {
 
         const historyData = await historyRes.json();
         if (signal.aborted || !isCurrentGeneration()) return;
-        const page: SessionEvent[] = historyData.data || historyData || [];
+        const page: SessionEvent[] = Array.isArray(historyData) ? historyData : historyData?.data;
+        if (!Array.isArray(page)) throw new Error("History response is incomplete");
         historicalEvents.push(...page);
         hasMore = Boolean(historyData.has_more);
         if (hasMore) {
@@ -340,6 +348,8 @@ export function useSessionEvents(sessionId: string) {
       }
       if (signal.aborted || !isCurrentGeneration()) return;
       dispatch({ type: "history.loaded", events: historicalEvents });
+      historyLoaded = true;
+      setIsHistoryLoading(false);
 
       // All pages are present, so the latest lifecycle transition is safe to
       // project into both this hook and the shared Session query caches.
@@ -387,6 +397,10 @@ export function useSessionEvents(sessionId: string) {
       if (closingRef.current) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
       setIsConnected(false);
+      if (!historyLoaded) {
+        setIsHistoryLoading(false);
+        setHistoryError("Could not load conversation history. Retrying…");
+      }
 
       // Exponential backoff with ±20% jitter, capped at 30s.
       const base = backoffRef.current;
@@ -401,7 +415,9 @@ export function useSessionEvents(sessionId: string) {
           closingRef.current ||
           !isCurrentGeneration()
         ) return;
-        connectSse().then(scheduleReconnect, scheduleReconnect);
+        // Initial history failures must retry JSON pagination before SSE;
+        // an SSE connection alone cannot confirm an empty history.
+        (historyLoaded ? connectSse() : connect()).then(scheduleReconnect, scheduleReconnect);
       }, delay);
     }
 
@@ -421,5 +437,5 @@ export function useSessionEvents(sessionId: string) {
     };
   }, [sessionId, addEvent, projectStatus]);
 
-  return { events, activeDeltas, status, isConnected, fileChange, turnLifecycleNonce };
+  return { events, activeDeltas, status, isConnected, isHistoryLoading, historyError, fileChange, turnLifecycleNonce };
 }

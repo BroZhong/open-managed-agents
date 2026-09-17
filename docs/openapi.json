@@ -1332,6 +1332,47 @@
           "updated_at"
         ]
       },
+      "WorkspaceFileRead": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Temporary read-only URL. Fetch without API credentials; request a new URL after expiry."
+          },
+          "expiresIn": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 900
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contentType": {
+            "type": "string",
+            "description": "Resolved file MIME. Regional OSS endpoints preserve stored response metadata; a bound custom domain supports MIME overrides."
+          },
+          "etag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "url",
+          "expiresIn",
+          "expiresAt",
+          "size",
+          "contentType"
+        ]
+      },
       "DelegationList": {
         "type": "object",
         "properties": {
@@ -6188,131 +6229,6 @@
         }
       }
     },
-    "/v1/workspaces/{id}/preview-url": {
-      "get": {
-        "operationId": "createWorkspacePreviewUrl",
-        "summary": "Create a signed Workspace file preview URL",
-        "description": "Returns a short-lived read-only OSS URL for an existing file. The signed URL can be fetched without the API authentication header and preserves stored Content-Type metadata. GET /v1/workspaces/{id}/files/{path} instead proxies authenticated file bytes through the Host and applies MIME fallback for generic metadata.",
-        "tags": [
-          "Workspaces/Files"
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "example": "src/index.ts"
-            },
-            "required": true,
-            "name": "path",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "example": 600,
-              "description": "Defaults to 600 seconds when omitted or non-numeric. Finite values are truncated to an integer and clamped to the inclusive range 60–900 seconds."
-            },
-            "required": false,
-            "description": "Defaults to 600 seconds when omitted or non-numeric. Finite values are truncated to an integer and clamped to the inclusive range 60–900 seconds.",
-            "name": "expiresIn",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Signed read URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "url": {
-                      "type": "string",
-                      "format": "uri"
-                    },
-                    "expiresIn": {
-                      "type": "integer"
-                    }
-                  },
-                  "required": [
-                    "url",
-                    "expiresIn"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid path",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid tenant credential",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Share operation or resource denied",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Workspace or file not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "501": {
-            "description": "The configured Workspace backend does not support signed reads",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Workspace storage is unavailable; saved files are retained",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/workspaces/{id}/files": {
       "get": {
         "operationId": "listWorkspaceFiles",
@@ -6419,8 +6335,8 @@
     "/v1/workspaces/{id}/files/{path}": {
       "get": {
         "operationId": "getWorkspaceFile",
-        "summary": "Preview or download a Workspace file",
-        "description": "Returns authenticated file bytes from the authenticated Tenant's Workspace. path is relative to the Workspace and may contain '/'; URI-encode each path segment. Responses are not cached. Use download=1 for Content-Disposition: attachment; otherwise the response is inline. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
+        "summary": "Get a Workspace file read URL",
+        "description": "Returns JSON file metadata and a short-lived OSS read URL after Tenant authorization and a metadata-only existence check. Fetch url directly without API credentials; OSS serves file bytes with streaming and Range support. path is Workspace-relative; URI-encode each segment. Request a new URL when it expires. Use download=1 for a signed attachment filename. Browser reads require appropriate Bucket CORS. Regional OSS domains preserve stored MIME and may restrict previews; verify actual media behavior before choosing a custom domain. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
         "tags": [
           "Workspaces/Files"
         ],
@@ -6458,38 +6374,41 @@
               "type": "string",
               "enum": [
                 "1"
-              ]
+              ],
+              "description": "Set to 1 to sign an attachment download with the original filename."
             },
             "required": false,
+            "description": "Set to 1 to sign an attachment download with the original filename.",
             "name": "download",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "example": 600,
+              "description": "Defaults to 600 seconds when omitted or non-numeric. Finite values are truncated to an integer and clamped to 60–900 seconds."
+            },
+            "required": false,
+            "description": "Defaults to 600 seconds when omitted or non-numeric. Finite values are truncated to an integer and clamped to 60–900 seconds.",
+            "name": "expiresIn",
             "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "File bytes. Content-Type preserves meaningful stored metadata and falls back to the filename extension when metadata is missing or generic.",
+            "description": "File metadata and signed read URL",
             "headers": {
-              "Content-Disposition": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Content-Length": {
-                "schema": {
-                  "type": "integer"
-                }
-              },
               "Cache-Control": {
                 "schema": {
-                  "type": "string"
+                  "type": "string",
+                  "example": "no-store"
                 }
               }
             },
             "content": {
-              "application/octet-stream": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "$ref": "#/components/schemas/WorkspaceFileRead"
                 }
               }
             }
@@ -6526,6 +6445,16 @@
           },
           "404": {
             "description": "Workspace or file not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "The configured Workspace backend does not support signed reads",
             "content": {
               "application/json": {
                 "schema": {

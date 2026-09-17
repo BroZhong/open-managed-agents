@@ -1,5 +1,6 @@
 import OSS from "ali-oss";
-import type { Artifact, ArtifactContent, ArtifactPutInput, ArtifactStore } from "../interfaces/artifact-store.js";
+import { isIP } from "node:net";
+import type { Artifact, ArtifactContent, ArtifactMetadata, ArtifactPutInput, ArtifactReadUrlOptions, ArtifactStore } from "../interfaces/artifact-store.js";
 import { validateArtifactPath, workspaceObjectPrefix } from "../workspace-path.js";
 import { resolveArtifactContentType } from "../artifact-content-type.js";
 
@@ -7,9 +8,20 @@ function isMissingObject(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "NoSuchKey";
 }
 
-function contentTypeFromHeaders(headers: object): string | undefined {
-  const value: unknown = Object.entries(headers).find(([name]) => name.toLowerCase() === "content-type")?.[1];
+function headerValue(headers: object, header: string): string | undefined {
+  const value: unknown = Object.entries(headers).find(([name]) => name.toLowerCase() === header)?.[1];
+  if (typeof value === "number") return String(value);
   return typeof value === "string" ? value : undefined;
+}
+
+function attachmentDisposition(path: string): string {
+  const filename = path.slice(path.lastIndexOf("/") + 1);
+  const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${fallback}"` +
+    (fallback !== filename ? `; filename*=UTF-8''${encoded}` : "");
 }
 
 /** The official SDK boundary; injected clients allow repeatable storage tests. */
@@ -33,7 +45,8 @@ export interface OSSArtifactStoreOptions {
   stsToken?: string;
   /** Host endpoint may use the Alibaba private network. */
   endpoint?: string;
-  /** Public regional HTTPS endpoint used only for browser GET signatures. */
+  /** Public regional HTTPS endpoint, or an HTTPS custom domain bound to this
+   * Bucket. Custom domains support inline preview and MIME response overrides. */
   publicEndpoint?: string;
   refreshSTSToken?: OSS.Options["refreshSTSToken"];
   /** Override only the external SDK boundary, e.g. a repeatable integration fixture. */
@@ -43,6 +56,7 @@ export interface OSSArtifactStoreOptions {
 export class OSSArtifactStore implements ArtifactStore {
   private readonly client: OSSObjectClient;
   private readonly signer: OSS;
+  private readonly usesCustomDomain: boolean;
 
   constructor(options: OSSArtifactStoreOptions) {
     const { client, publicEndpoint, ...sdkOptions } = options;
@@ -50,11 +64,21 @@ export class OSSArtifactStore implements ArtifactStore {
       throw new Error("Invalid OSS region");
     }
     const expectedPublicEndpoint = `https://${options.region}.aliyuncs.com`;
-    if (publicEndpoint && publicEndpoint.replace(/\/$/, "") !== expectedPublicEndpoint) {
-      throw new Error("Browser downloads require the public OSS endpoint for the configured region over HTTPS");
+    let publicUrl: URL;
+    try {
+      publicUrl = new URL(publicEndpoint ?? expectedPublicEndpoint);
+    } catch {
+      throw new Error("Invalid public OSS endpoint");
+    }
+    this.usesCustomDomain = publicUrl.origin !== expectedPublicEndpoint;
+    if (publicUrl.protocol !== "https:" || publicUrl.username || publicUrl.password || publicUrl.port ||
+      publicUrl.pathname !== "/" || publicUrl.search || publicUrl.hash ||
+      (this.usesCustomDomain && (isIP(publicUrl.hostname) || !publicUrl.hostname.includes(".") ||
+        /(?:^|\.)(?:aliyuncs\.com|localhost|local|internal)$/.test(publicUrl.hostname)))) {
+      throw new Error("The public OSS endpoint must be the regional HTTPS endpoint or a public HTTPS custom domain bound to the Bucket");
     }
     this.client = client ?? new OSS({ ...sdkOptions, secure: true, authorizationV4: true });
-    this.signer = new OSS({ ...sdkOptions, endpoint: expectedPublicEndpoint, secure: true, authorizationV4: true });
+    this.signer = new OSS({ ...sdkOptions, endpoint: publicUrl.origin, cname: this.usesCustomDomain, secure: true, authorizationV4: true });
   }
 
   private key(tenantId: string, workspaceId: string, path: string): string {
@@ -90,7 +114,27 @@ export class OSSArtifactStore implements ArtifactStore {
     try {
       const object = await this.client.get(key);
       if (!object.content) throw new Error("OSS returned no object body");
-      return { path, body: new Uint8Array(object.content), contentType: resolveArtifactContentType(path, contentTypeFromHeaders(object.res.headers)) };
+      return { path, body: new Uint8Array(object.content), contentType: resolveArtifactContentType(path, headerValue(object.res.headers, "content-type")) };
+    } catch (error) {
+      if (isMissingObject(error)) return null;
+      throw error;
+    }
+  }
+
+  async stat(tenantId: string, workspaceId: string, path: string): Promise<ArtifactMetadata | null> {
+    try {
+      const { res } = await this.headObject(this.key(tenantId, workspaceId, path));
+      const length = headerValue(res.headers, "content-length");
+      const size = Number(length);
+      if (length === undefined || !Number.isSafeInteger(size) || size < 0) {
+        throw new Error("OSS returned invalid object size");
+      }
+      const lastModified = headerValue(res.headers, "last-modified");
+      return { path, size,
+        contentType: resolveArtifactContentType(path, headerValue(res.headers, "content-type")),
+        etag: headerValue(res.headers, "etag"),
+        ...(lastModified ? { updatedAt: new Date(lastModified) } : {}),
+      };
     } catch (error) {
       if (isMissingObject(error)) return null;
       throw error;
@@ -139,16 +183,21 @@ export class OSSArtifactStore implements ArtifactStore {
     return true;
   }
 
-  async createSignedReadUrl(tenantId: string, workspaceId: string, path: string, expiresInSec: number): Promise<string> {
+  async createSignedReadUrl(tenantId: string, workspaceId: string, path: string, expiresInSec: number, options: ArtifactReadUrlOptions = {}): Promise<string> {
     const key = this.key(tenantId, workspaceId, path);
     if (!Number.isInteger(expiresInSec) || expiresInSec < 1 || expiresInSec > 900) {
       throw new Error("OSS read URL expiry must be an integer between 1 and 900 seconds");
     }
-    await this.headObject(key);
-    // Current OSS rejects response-content-type overrides (EC0017-00000902).
-    // Signed reads preserve stored metadata; Host-proxied reads infer MIME for
-    // ossfs objects whose metadata is absent or generic. Signing never mutates files.
-    return this.signer.signatureUrlV4("GET", expiresInSec, undefined, key);
+    const queries: Record<string, string> = {};
+    if (options.download) queries["response-content-disposition"] = attachmentDisposition(path);
+    else if (this.usesCustomDomain) queries["response-content-disposition"] = "inline";
+    // Regional OSS endpoints reject MIME overrides (EC0017-00000902).
+    // A bound custom domain permits them without rewriting existing objects.
+    if (this.usesCustomDomain && options.contentType) {
+      if (/[\r\n]/.test(options.contentType)) throw new Error("Invalid object Content-Type");
+      queries["response-content-type"] = options.contentType;
+    }
+    return this.signer.signatureUrlV4("GET", expiresInSec, { queries }, key);
   }
 
   /** Verify the mount's actual object destination after the probe is closed

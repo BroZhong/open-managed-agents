@@ -54,3 +54,7 @@ Apply `deploy/migrations/0013_session_shares.sql` before the Host release when
 `PG_ENSURE_SCHEMA=false`. Automatic development schema setup includes the same
 table. The production application role receives SELECT/INSERT/UPDATE only.
 Release the web console and Host together. No existing IDs or files migrate.
+
+Workspace reads follow ADR-0012: each API read rechecks share access before
+signing an OSS URL. Soft deletion prevents new URLs; an already issued URL
+remains usable until its short expiry (default 600 seconds).

@@ -6,6 +6,7 @@ beforeEach(() => { vi.stubEnv("AUTH_DISABLED", "false"); });
 
 async function setup() {
   const stores = createMemoryStores();
+  Object.assign(stores.artifactStore, { createSignedReadUrl: vi.fn(async (_tenant: string, _workspace: string, path: string) => `https://storage.example.test/${path}`) });
   const key = await stores.apiKeyStore.create("owner", "test");
   const headers = { "x-api-key": key.rawKey, "content-type": "application/json" };
   const app = createApp(stores);
@@ -94,7 +95,7 @@ describe("Session sharing HTTP boundary", () => {
         expect((await app.request(`/v1/workspaces/${workspace.id}/${suffix}`, { headers: access })).status).toBe(403);
       }
     }
-    expect(await (await app.request(`${base}/files/a.txt`, { headers: access })).text()).toBe("before");
+    expect(await (await app.request(`${base}/files/a.txt`, { headers: access })).json()).toMatchObject({ path: "a.txt", size: 6, url: "https://storage.example.test/a.txt" });
     for (const [method, path, body] of [
       ["PUT", "files/content", { path: "a.txt", content: "changed" }],
       ["PUT", "files/content", { path: "new/.oma-directory", content: "" }],
@@ -103,15 +104,15 @@ describe("Session sharing HTTP boundary", () => {
       ["POST", "files/upload", {}], ["PATCH", "files/a.txt", {}],
       ["POST", "", { deleted: true }], ["DELETE", "", {}],
     ] as const) expect((await app.request(`${base}/${path}`, { method, headers: access, body: JSON.stringify(body) })).status).toBe(403);
-    expect((await app.request(`${base}/preview-url?path=a.txt`, { headers: access })).status).toBe(403);
     for (const path of ["files?prefix=../", "files?prefix=%2e%2e%2f", "files/%252e%252e/secret", "files/%2e%2e%2fsecret", "files/%5c..%5csecret", "files/.oma-workspace-checks/probe"]) {
       expect((await app.request(`${base}/${path}`, { headers: access })).status, path).toBeGreaterThanOrEqual(400);
     }
-    expect(await (await app.request(`${base}/files/a.txt`, { headers: access })).text()).toBe("before");
+    expect(await (await app.request(`${base}/files/a.txt`, { headers: access })).json()).toMatchObject({ path: "a.txt", size: 6, url: "https://storage.example.test/a.txt" });
     expect((await (await app.request(`${base}/files`, { headers: access })).json()).data.map((f: {path: string}) => f.path)).toEqual(["a.txt"]);
     // Owner file operations remain available, and the same share reads updates.
     expect((await app.request(`${base}/files/content`, { method: "PUT", headers, body: JSON.stringify({ path: "a.txt", content: "after" }) })).status).toBe(200);
-    expect(await (await app.request(`${base}/files/a.txt?download=1`, { headers: access })).text()).toBe("after");
+    expect(await (await app.request(`${base}/files/a.txt?download=1`, { headers: access })).json()).toMatchObject({ path: "a.txt", size: 5 });
+    expect(stores.artifactStore.createSignedReadUrl).toHaveBeenLastCalledWith("owner", session.workspaceId, "a.txt", 600, expect.objectContaining({ download: true }));
   });
 
   it.each(["session", "workspace"])("keeps terminated history readable but invalidates all reads when the %s is deleted", async (deleted) => {

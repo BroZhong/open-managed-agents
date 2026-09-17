@@ -1,6 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { ArtifactStore, Workspace, WorkspaceMetadataStore } from "@oma-server/store";
-import { validateArtifactPath, resolveArtifactContentType } from "@oma-server/store";
+import { validateArtifactPath } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -35,15 +35,6 @@ function isSafePath(path: string): boolean {
 }
 
 /**
- * Derive a human filename (last path segment) for Content-Disposition.
- */
-function basename(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  const idx = trimmed.lastIndexOf("/");
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
-}
-
-/**
  * Join a directory and a filename into a workspace-relative path, tolerating a
  * missing or slash-suffixed directory. An empty dir yields the bare name.
  */
@@ -53,9 +44,9 @@ function joinPath(dir: string, name: string): string {
 }
 
 /**
- * Host proxy over a Tenant-owned Workspace Store. OSS is the source of truth,
+ * File management for a Tenant-owned Workspace Store. OSS is the source of truth,
  * so files created by any means (including shell/bash) show up in the listing.
- * Contents are proxied through the Host, with short-lived signed GET for media.
+ * File reads return short-lived signed GET URLs; clients read directly from OSS.
  */
 export function workspaceFileRoutes(deps: WorkspaceFileRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
@@ -211,53 +202,6 @@ export function workspaceFileRoutes(deps: WorkspaceFileRouteDeps): OpenAPIHono<E
     return c.json({ data: written });
   });
 
-  // GET /v1/workspaces/:id/preview-url?path=…&expiresIn=… — sign a
-  // short-lived, read-only GET URL for a media file (ADR-0006 §1). The path is a
-  // query param (not a route segment) so it never collides with the `files/*`
-  // wildcard, which would otherwise swallow `files/<x>/preview-url`. Only signs
-  // GET — writes are never presigned (ADR-0006 §2). The file must exist first, so
-  // we never sign a URL for an absent key (avoids leaking existence).
-  const MIN_EXPIRES = 60;
-  const MAX_EXPIRES = 900;
-  const DEFAULT_EXPIRES = 600;
-  registerContractRoute(router, getOpenApiRoute("createWorkspacePreviewUrl"), async (c) => {
-    const tenant = c.get("tenant");
-    const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
-    if (!workspace) return c.json({ error: "Workspace not found" }, 404);
-
-    const path = c.req.query("path");
-    if (!path || !isSafePath(path)) {
-      return c.json({ error: "Invalid file path" }, 400);
-    }
-
-    const exists = await deps.artifactStore.exists(
-      tenant.tenantId,
-      workspace.id,
-      path,
-    );
-    if (!exists) return c.json({ error: "File not found" }, 404);
-
-    if (!deps.artifactStore.createSignedReadUrl) {
-      return c.json(
-        { error: "Presigned reads not supported by this backend" },
-        501,
-      );
-    }
-
-    const raw = Number(c.req.query("expiresIn"));
-    const expiresIn = Number.isFinite(raw)
-      ? Math.min(MAX_EXPIRES, Math.max(MIN_EXPIRES, Math.trunc(raw)))
-      : DEFAULT_EXPIRES;
-
-    const url = await deps.artifactStore.createSignedReadUrl(
-      tenant.tenantId,
-      workspace.id,
-      path,
-      expiresIn,
-    );
-    return c.json({ url, expiresIn });
-  });
-
   // GET /v1/workspaces/:id/files — list the Workspace file tree.
   registerContractRoute(router, getOpenApiRoute("listWorkspaceFiles"), async (c) => {
     const tenant = c.get("tenant");
@@ -286,8 +230,8 @@ export function workspaceFileRoutes(deps: WorkspaceFileRouteDeps): OpenAPIHono<E
     });
   });
 
-  // GET /v1/workspaces/:id/files/* — preview / download a single file.
-  // `?download=1` sets Content-Disposition: attachment.
+  // GET /v1/workspaces/:id/files/* — metadata and a signed read URL.
+  // `?download=1` signs Content-Disposition: attachment on the OSS response.
   registerContractRoute(router, getOpenApiRoute("getWorkspaceFile"), async (c) => {
     const tenant = c.get("tenant");
     const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
@@ -311,38 +255,25 @@ export function workspaceFileRoutes(deps: WorkspaceFileRouteDeps): OpenAPIHono<E
       return c.json({ error: "Invalid file path" }, 400);
     }
 
-    const artifact = await deps.artifactStore.get(
-      tenant.tenantId,
-      workspace.id,
-      path,
+    // Verify existence and read metadata with HEAD; the Host never reads the body.
+    c.header("Cache-Control", "no-store");
+    const artifact = await deps.artifactStore.stat(tenant.tenantId, workspace.id, path);
+    if (!artifact) return c.json({ error: "File not found" }, 404);
+    if (!deps.artifactStore.createSignedReadUrl) {
+      return c.json({ error: "Presigned reads not supported by this backend" }, 501);
+    }
+    const expiresRaw = Number(c.req.query("expiresIn"));
+    const expiresIn = Number.isFinite(expiresRaw)
+      ? Math.min(900, Math.max(60, Math.trunc(expiresRaw)))
+      : 600;
+    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+    const url = await deps.artifactStore.createSignedReadUrl(
+      tenant.tenantId, workspace.id, path, expiresIn,
+      { download: c.req.query("download") === "1", contentType: artifact.contentType },
     );
-    if (!artifact) {
-      return c.json({ error: "File not found" }, 404);
-    }
-
-    const download = c.req.query("download") === "1";
-    const contentType = resolveArtifactContentType(path, artifact.contentType);
-    const headers: Record<string, string> = {
-      "content-type": contentType,
-      "content-length": String(artifact.body.byteLength),
-      "cache-control": "no-store",
-    };
-    if (download) {
-      // Strip quotes AND CR/LF so a crafted filename can't break out of the
-      // header value or inject a new header (defense-in-depth; path is already
-      // isSafePath-checked).
-      const filename = basename(path);
-      const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
-      const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (char) =>
-        `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-      );
-      headers["content-disposition"] = `attachment; filename="${fallback}"` +
-        (fallback !== filename ? `; filename*=UTF-8''${encoded}` : "");
-    } else {
-      headers["content-disposition"] = "inline";
-    }
-
-    return c.body(artifact.body as unknown as ArrayBuffer, 200, headers);
+    return c.json({ path, url, expiresIn, expiresAt, size: artifact.size,
+      contentType: artifact.contentType, ...(artifact.etag ? { etag: artifact.etag } : {}),
+    });
   }, { runtimePath: "/v1/workspaces/:id/files/:path{.+}" });
 
   return router;

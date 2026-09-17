@@ -2,15 +2,17 @@ import { createServer } from "node:http";
 
 /** A repeatable OSS wire fixture: the production SDK still serializes, signs,
  * sends and parses every request. No cloud credentials or live Bucket needed. */
-export async function createOSSHTTPHarness(options: { missingBucket?: boolean } = {}) {
+export async function createOSSHTTPHarness(options: { missingBucket?: boolean; customDomain?: boolean } = {}) {
   const objects = new Map<string, { body: Buffer; contentType: string }>();
+  const requests: Array<{ method: string; key: string }> = [];
   const xml = (value: string) => value.replace(/[<>&'\"]/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[char]!);
   const server = createServer(async (request, response) => {
     const url = new URL(request.url!, "http://localhost");
     const key = decodeURIComponent(url.pathname.slice(1));
+    requests.push({ method: request.method!, key });
     response.setHeader("x-oss-request-id", "repeatable-integration");
     // Current OSS rejects this override even on correctly signed GETs (EC0017-00000902).
-    if (request.method === "GET" && url.searchParams.has("response-content-type")) {
+    if (request.method === "GET" && url.searchParams.has("response-content-type") && !options.customDomain) {
       response.writeHead(400, { "content-type": "application/xml" });
       response.end("<Error><Code>InvalidRequest</Code><Message>Can not override response header on content-type</Message></Error>");
       return;
@@ -58,7 +60,28 @@ export async function createOSSHTTPHarness(options: { missingBucket?: boolean } 
       response.end("<Error><Code>NoSuchKey</Code><Message>Object absent</Message></Error>");
       return;
     }
-    response.writeHead(200, { "content-type": object.contentType, "content-length": object.body.length });
+    const headers: Record<string, string | number> = {
+      "content-type": url.searchParams.get("response-content-type") ?? object.contentType,
+      "content-length": object.body.length,
+      etag: '"fixture-etag"', "accept-ranges": "bytes",
+    };
+    const disposition = url.searchParams.get("response-content-disposition");
+    if (disposition) headers["content-disposition"] = disposition;
+    const range = request.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
+    if (request.method === "GET" && range) {
+      const start = Number(range[1]);
+      const end = Math.min(range[2] ? Number(range[2]) : object.body.length - 1, object.body.length - 1);
+      if (start > end) {
+        response.writeHead(416, { "content-range": `bytes */${object.body.length}` });
+        response.end();
+        return;
+      }
+      response.writeHead(206, { ...headers, "content-length": end - start + 1,
+        "content-range": `bytes ${start}-${end}/${object.body.length}` });
+      response.end(object.body.subarray(start, end + 1));
+      return;
+    }
+    response.writeHead(200, headers);
     response.end(request.method === "HEAD" ? undefined : object.body);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -66,6 +89,7 @@ export async function createOSSHTTPHarness(options: { missingBucket?: boolean } 
   if (!address || typeof address === "string") throw new Error("OSS fixture did not listen");
   return {
     endpoint: `http://127.0.0.1:${address.port}`,
+    requests,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

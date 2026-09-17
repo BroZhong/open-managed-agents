@@ -13,8 +13,9 @@ export function fakeOSS() {
       return { content: object.body, res: { headers: { "content-type": object.contentType } } };
     },
     async head(name) {
-      if (!objects.has(name)) throw missing();
-      return { res: { headers: { "content-type": objects.get(name)?.contentType } } };
+      const object = objects.get(name);
+      if (!object) throw missing();
+      return { res: { headers: { "content-type": object.contentType, "content-length": String(object.body.length), etag: '"fixture-etag"' } } };
     },
     async delete(name) { objects.delete(name); },
     async listV2(query) {
