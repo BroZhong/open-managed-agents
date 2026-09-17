@@ -1,3 +1,5 @@
+import { InMemorySessionShareStore } from "./session-share-store.js";
+export { InMemorySessionShareStore } from "./session-share-store.js";
 import { InMemoryDelegationStore } from "./delegation-store.js";
 export { InMemoryDelegationStore, MemoryDelegationStore } from "./delegation-store.js";
 import { InMemoryAgentStore } from "./agent-store.js";
@@ -32,6 +34,7 @@ export interface MemoryStores {
   skillStore: InMemorySkillStore;
   skillArtifactStore: InMemorySkillArtifactStore;
   artifactStore: InMemoryArtifactStore;
+  sessionShareStore: InMemorySessionShareStore;
   sessionStore: InMemorySessionStore;
   eventLogStore: InMemoryEventLogStore;
   pendingEventStore: InMemoryPendingEventStore;
@@ -71,6 +74,7 @@ export function createMemoryStores(): MemoryStores {
     skillStore: new InMemorySkillStore(),
     skillArtifactStore: new InMemorySkillArtifactStore(),
     artifactStore: new InMemoryArtifactStore(),
+    sessionShareStore: new InMemorySessionShareStore(),
     sessionStore,
     eventLogStore,
     pendingEventStore,

@@ -28,6 +28,11 @@ export function createOpenApiDocument(
       "Tenant session token issued by POST /auth/register or POST /auth/login, valid for 30 days. Authorization: Bearer takes precedence over x-api-key when both are supplied; an invalid or expired Bearer token returns 401 without falling back to the API key.",
   });
 
+  registry.openAPIRegistry.registerComponent("securitySchemes", "SessionShareAuth", {
+    type: "apiKey", in: "header", name: "x-session-share",
+    description: "Random share ID from the link. Grants only the named read operations on its Session and bound Workspace. Always narrows authority when combined with other credentials.",
+  });
+
   for (const route of openApiRoutes) {
     registry.openAPIRegistry.registerPath(route);
   }

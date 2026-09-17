@@ -180,3 +180,14 @@ Workspace files are accessed through `/v1/workspaces/{id}/files` and
 `/v1/workspaces/{id}/preview-url`, using the authenticated Tenant and Workspace
 metadata. A Session is not required. Running Sessions do not lock file writes;
 concurrent writes to the same path may overwrite each other. See ADR-0009.
+
+## Session sharing
+
+A **Session Share** is a permanent random read capability for exactly one
+Session and its entire bound Workspace. Owners create/retrieve the same link
+when copying it. Visitors need no login and read current persisted content on
+refresh, including files written by other Sessions sharing that Workspace.
+They receive no access to those other Sessions, Agent configuration, or execution
+controls. Session or Workspace soft deletion invalidates each subsequent read;
+termination alone does not. History is shared verbatim, not automatically
+redacted. See ADR-0011 and the `SessionShareAuth` OpenAPI security scheme.

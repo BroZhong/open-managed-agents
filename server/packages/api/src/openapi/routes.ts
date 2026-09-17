@@ -1,3 +1,4 @@
+import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
 import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
 import {
   DelegationListSchema,
@@ -23,6 +24,7 @@ import {
   PathResultSchema,
   SessionListSchema,
   SessionSchema,
+  SharedSessionSchema,
   SessionStatusSchema,
   SessionUsageSchema,
   SkillDetailSchema,
@@ -55,8 +57,13 @@ const errorResponse = (description: string) =>
 function protectedRoute<const R extends RouteConfig>(config: R) {
   return createRoute({
     ...config,
+    ...(SHARE_READ_OPERATIONS.has(config.operationId ?? "") ? {
+      security: config.security ?? [{ ApiKeyAuth: [] }, { BearerAuth: [] }, { SessionShareAuth: [] }],
+      description: (config.description ?? "") + " Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
+    } : {}),
     responses: {
       ...config.responses,
+      403: errorResponse("Share operation or resource denied"),
       ...(config.tags?.includes("Workspaces/Files") ? {
         503: errorResponse("Workspace storage is unavailable; saved files are retained"),
       } : {}),
@@ -142,6 +149,20 @@ export type RegisteredOpenApiRoute = RouteConfig & {
 };
 
 export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
+  protectedRoute({
+    method: "get", path: "/v1/shares/{id}", operationId: "resolveSessionShare",
+    summary: "Resolve a live Session share", tags: ["Sessions"],
+    description: "Requires x-session-share matching the URL ID. Checks the Session and bound Workspace still exist and are not deleted on every request. Share credentials take precedence over all ordinary credentials, including development auth bypass.",
+    security: [{ SessionShareAuth: [] }], request: { params: idParams },
+    responses: { 200: jsonResponse(z.object({ sessionId: z.string(), workspaceId: z.string() }), "Share scope"), 403: errorResponse("Share credential required"), 404: errorResponse("Share unavailable") },
+  }),
+  protectedRoute({
+    method: "post", path: "/v1/sessions/{id}/share", operationId: "createSessionShare",
+    summary: "Create or retrieve the Session's permanent share link", tags: ["Sessions"],
+    description: "Owner credentials required. Returns the same 256-bit random ID on every call. Does not snapshot history or Workspace files. No expiry, rotation or revocation API.",
+    request: { params: idParams },
+    responses: { 200: jsonResponse(z.object({ id: z.string() }), "Share ID"), 404: errorResponse("Session or Workspace unavailable"), 503: errorResponse("Sharing unavailable") },
+  }),
   publicRoute({
     method: "get",
     path: "/health",
@@ -904,7 +925,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Sessions"],
     request: { params: idParams },
     responses: {
-      200: jsonResponse(SessionSchema, "Session found"),
+      200: jsonResponse(z.union([SessionSchema, SharedSessionSchema]), "Session found; share credentials receive display fields only"),
       404: errorResponse("Session not found"),
     },
   }),

@@ -8,6 +8,7 @@ import { ConversationView } from "@/components/conversation-view";
 import { TimelineView } from "@/components/timeline-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { WorkspacePanel } from "@/components/workspace-panel";
+import { SessionShareDialog } from "@/components/session-share-dialog";
 import { MessageInput } from "@/components/message-input";
 import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
@@ -133,6 +134,7 @@ function SessionDetail({ id }: { id: string }) {
           )}
           <StatusBadge status={effectiveStatus as "idle" | "running" | "waiting" | "terminated"} />
         </div>
+        {session && <SessionShareDialog key={id} sessionId={id} title={session.title || id} events={events} />}
       </div>
 
       {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}

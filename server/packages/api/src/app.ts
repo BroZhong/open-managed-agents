@@ -1,5 +1,5 @@
 import { cors } from "hono/cors";
-import type { AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -33,6 +33,7 @@ type Env = {
 };
 
 export interface AppDeps {
+  sessionShareStore?: SessionShareStore;
   apiKeyStore: ApiKeyStore;
   fullApiKeyStore?: FullApiKeyStore;
   agentStore?: AgentStore;
@@ -78,6 +79,11 @@ export function createApp(deps: AppDeps) {
   // CORS middleware — allow all origins in dev
   app.use("*", cors());
 
+  // Recognize explicit shares before public routes as well. A share never
+  // falls back to login, API keys, or development authority.
+  const authenticate = authMiddleware(deps.apiKeyStore, deps, basePath);
+  app.use("*", (c, next) => c.req.header("x-session-share") !== undefined ? authenticate(c, next) : next());
+
   // Public machine-readable contract for documentation tools such as Apifox.
   registerContractRoute(app, getOpenApiRoute("getOpenApiDocument"), (c) => {
     c.header("Cache-Control", "public, max-age=300");
@@ -96,7 +102,7 @@ export function createApp(deps: AppDeps) {
   }
 
   // Auth middleware on all /v1/* routes
-  app.use("/v1/*", authMiddleware(deps.apiKeyStore));
+  app.use("/v1/*", (c, next) => c.get("tenant")?.share ? next() : authenticate(c, next));
 
   // Host-owned MCP catalog exposes metadata only; runtime definitions stay private.
   app.route("/", mcpCatalogRoutes());
@@ -147,6 +153,7 @@ export function createApp(deps: AppDeps) {
   // Mount session routes
   if (deps.sessionStore && deps.agentStore && deps.workspaceStore) {
     app.route("/", sessionRoutes({
+      sessionShareStore: deps.sessionShareStore,
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,
       workspaceStore: deps.workspaceStore,
