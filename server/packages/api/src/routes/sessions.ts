@@ -1,9 +1,9 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import { workspaceObjectPrefix } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
-import { publicSession } from "../lib/public-projection.js";
+import { publicSession, sharedSession } from "../lib/public-projection.js";
 import { tokenUsageToWire } from "../lib/token-usage.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -18,6 +18,7 @@ type Env = {
 };
 
 export interface SessionRouteDeps {
+  sessionShareStore?: SessionShareStore;
   sessionStore: SessionStore;
   agentStore: AgentStore;
   workspaceStore: WorkspaceMetadataStore;
@@ -27,6 +28,26 @@ export interface SessionRouteDeps {
 
 export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+
+  registerContractRoute(router, getOpenApiRoute("createSessionShare"), async (c) => {
+    const session = await deps.sessionStore.getById(c.req.param("id")!);
+    const tenant = c.get("tenant");
+    if (!session || session.tenantId !== tenant.tenantId || session.deletedAt) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    const workspace = await deps.workspaceStore.getById(session.tenantId, session.workspaceId);
+    if (!workspace || workspace.deletedAt) return c.json({ error: "Session not found" }, 404);
+    if (!deps.sessionShareStore) return c.json({ error: "Sharing unavailable" }, 503);
+    c.header("Cache-Control", "no-store");
+    const share = await deps.sessionShareStore.getOrCreate(session.id);
+    return c.json({ id: share.id });
+  });
+
+  registerContractRoute(router, getOpenApiRoute("resolveSessionShare"), (c) => {
+    const share = c.get("tenant").share;
+    if (!share || share.id !== c.req.param("id")) return c.json({ error: "Share credential required" }, 403);
+    return c.json({ sessionId: share.sessionId, workspaceId: share.workspaceId });
+  });
 
   // POST /v1/sessions — Create session
   registerContractRoute(router, getOpenApiRoute("createSession"), async (c) => {
@@ -167,7 +188,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
 
     const workspace = await deps.workspaceStore.getById(tenant.tenantId, session.workspaceId);
     if (workspace?.deletedAt) return c.json({ error: "Session not found" }, 404);
-    return c.json(publicSession(session));
+    return c.json(tenant.share ? sharedSession(session) : publicSession(session));
   });
 
   registerContractRoute(router, getOpenApiRoute("updateSession"), async (c) => {

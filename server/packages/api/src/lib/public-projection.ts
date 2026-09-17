@@ -16,3 +16,15 @@ export function publicSession(session: Session): Session {
     agent: publicAgent(session.agent),
   };
 }
+
+/** Closed display allowlist: never spread a Session or its Agent snapshot. */
+export function sharedSession(session: Session) {
+  return {
+    id: session.id,
+    title: session.title,
+    workspaceId: session.workspaceId,
+    status: session.status,
+    agent: { name: session.agent.name },
+    createdAt: session.createdAt,
+  };
+}

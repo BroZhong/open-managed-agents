@@ -315,6 +315,11 @@ export const SessionSchema = z
   })
   .openapi("Session");
 
+export const SharedSessionSchema = z.object({
+  id: z.string(), title: z.string().optional(), workspaceId: z.string(),
+  status: SessionStatusSchema, agent: z.object({ name: z.string() }), createdAt: DateTimeSchema,
+}).openapi("SharedSession");
+
 export const SessionListSchema = z
   .object({
     data: z.array(SessionSchema),

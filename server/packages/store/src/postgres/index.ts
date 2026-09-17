@@ -1,3 +1,5 @@
+import { PgSessionShareStore } from "./session-share-store.js";
+export { PgSessionShareStore } from "./session-share-store.js";
 import { PgDelegationStore } from "./delegation-store.js";
 import type { AgentStore } from "../interfaces/agent-store.js";
 import type { AgentFileStore } from "../interfaces/agent-file-store.js";
@@ -37,6 +39,7 @@ export interface PgStores {
   agentStore: AgentStore;
   agentFileStore: AgentFileStore;
   skillStore: SkillStore;
+  sessionShareStore: PgSessionShareStore;
   sessionStore: SessionStore;
   eventLogStore: PgEventLogStore;
   pendingEventStore: PgPendingEventStore;
@@ -68,6 +71,7 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     agentStore: new PgAgentStore(pool),
     agentFileStore: new PgAgentFileStore(pool),
     skillStore: new PgSkillStore(pool),
+    sessionShareStore: new PgSessionShareStore(pool),
     sessionStore: new PgSessionStore(pool),
     eventLogStore: new PgEventLogStore(pool),
     pendingEventStore: new PgPendingEventStore(pool),

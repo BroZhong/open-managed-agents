@@ -1,3 +1,5 @@
+import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
+import type { TenantContext } from "../types.js";
 import { SkillNameConflictError } from "@oma-server/store";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { RouteConfig, RouteHandler } from "@hono/zod-openapi";
@@ -50,8 +52,15 @@ export function registerContractRoute<E extends Env>(
   handler: Handler<E, string>,
   options: { runtimePath?: string } = {},
 ): void {
+  const authorizedHandler: Handler<E, string> = (c, next) => {
+    const tenant = (c.var as { tenant?: TenantContext }).tenant;
+    if (tenant?.share && !SHARE_READ_OPERATIONS.has(route.operationId ?? "")) {
+      return c.json({ error: "Share access denied" }, 403);
+    }
+    return handler(c, next);
+  };
   if (!options.runtimePath) {
-    router.openapi(route, handler as RouteHandler<RouteConfig, E>);
+    router.openapi(route, authorizedHandler as RouteHandler<RouteConfig, E>);
     return;
   }
 
@@ -65,6 +74,6 @@ export function registerContractRoute<E extends Env>(
       path: options.runtimePath,
       hide: true,
     } as RouteConfig,
-    handler as RouteHandler<RouteConfig, E>,
+    authorizedHandler as RouteHandler<RouteConfig, E>,
   );
 }

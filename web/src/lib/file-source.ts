@@ -232,15 +232,16 @@ const WS_TEXT_LIKE = /^(text\/|application\/(json|javascript|xml|x-yaml|yaml)|im
 const WORKSPACE_DIRECTORY_MARKER = "/.oma-directory";
 const WS_MAX_TEXT_PREVIEW = 512 * 1024; // 512 KiB — mirrors use-workspace-files.ts
 
-export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
-  const filesBase = `${BASE_URL}/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
+/** Same tree, text and Blob preview implementation for owner and share reads. */
+function createWorkspaceReader(workspaceId: string, access: {
+  json<T>(path: string): Promise<T>;
+  request(path: string): Promise<Response>;
+}): WorkspaceFileSource {
   const apiPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}`;
-
   return {
     capabilities: { hierarchy: "nested", idleGated: false },
-
     async list(): Promise<FileNode[]> {
-      const res = await apiFetch<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
+      const res = await access.json<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
       if (!Array.isArray(res?.data)) {
         throw new Error("File status is unconfirmed: the Workspace list response is incomplete. Retry Refresh.");
       }
@@ -256,9 +257,7 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
     },
 
     async read(path: string): Promise<FileContent> {
-      const res = await fetch(`${filesBase}/${encodePath(path)}`, {
-        headers: authHeaders(),
-      });
+      const res = await access.request(`${apiPath}/files/${encodePath(path)}`);
       if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
       const contentType = res.headers.get("content-type") ?? "application/octet-stream";
       const size = Number(res.headers.get("content-length") ?? "0");
@@ -272,6 +271,38 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       return { path, text: null, contentType, size: body?.byteLength ?? size, isBinary: true };
     },
 
+    async previewUrl(path: string): Promise<string> {
+      // Keep the console's authenticated Host preview path, including MIME
+      // fallback for ossfs files. Blob URLs let media and downloads consume
+      // the response without putting the API token in a URL. The separate
+      // short-lived OSS GET API always signs a public regional endpoint.
+      const res = await access.request(`${apiPath}/files/${encodePath(path)}`);
+      if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
+      const blob = await res.blob();
+      // Older sandbox artifacts may have a generic MIME. Give the audio
+      // element a useful type without changing the stored bytes.
+      const ext = extOf(path);
+      const audioType = Object.hasOwn(AUDIO_MIME_TYPES, ext) ? AUDIO_MIME_TYPES[ext] : undefined;
+      return URL.createObjectURL(
+        audioType && !blob.type.startsWith("audio/")
+          ? blob.slice(0, blob.size, audioType)
+          : blob,
+      );
+    },
+  };
+}
+
+export function createSharedWorkspaceFileSource(workspaceId: string, access: import("./share-api").ShareAccess): WorkspaceFileSource {
+  return createWorkspaceReader(workspaceId, access);
+}
+
+export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
+  const apiPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}`;
+  return {
+    ...createWorkspaceReader(workspaceId, {
+      json: apiFetch,
+      request: (path) => fetch(`${BASE_URL}${path}`, { headers: authHeaders() }),
+    }),
     async write(path: string, content: string): Promise<void> {
       await apiFetch(`${apiPath}/files/content`, {
         method: "PUT",
@@ -306,26 +337,6 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       await apiUpload(`${apiPath}/files/upload`, form);
     },
 
-    async previewUrl(path: string): Promise<string> {
-      // Keep the console's authenticated Host preview path, including MIME
-      // fallback for ossfs files. Blob URLs let media and downloads consume
-      // the response without putting the API token in a URL. The separate
-      // short-lived OSS GET API always signs a public regional endpoint.
-      const res = await fetch(`${filesBase}/${encodePath(path)}`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
-      const blob = await res.blob();
-      // Older sandbox artifacts may have a generic MIME. Give the audio
-      // element a useful type without changing the stored bytes.
-      const ext = extOf(path);
-      const audioType = Object.hasOwn(AUDIO_MIME_TYPES, ext) ? AUDIO_MIME_TYPES[ext] : undefined;
-      return URL.createObjectURL(
-        audioType && !blob.type.startsWith("audio/")
-          ? blob.slice(0, blob.size, audioType)
-          : blob,
-      );
-    },
   };
 }
 
