@@ -6,7 +6,7 @@ import { ConversationView } from "@/components/conversation-view";
 import { apiFetch } from "@/lib/api";
 import type { SessionEvent } from "@/lib/types";
 
-export function SessionShareDialog({ sessionId, title, events }: { sessionId: string; title: string; events: SessionEvent[] }) {
+export function SessionShareDialog({ sessionId, title, events, loading, loadError }: { sessionId: string; title: string; events: SessionEvent[]; loading?: boolean; loadError?: string }) {
   const [open, setOpen] = useState(false);
   const [shareId, setShareId] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -31,7 +31,7 @@ export function SessionShareDialog({ sessionId, title, events }: { sessionId: st
     <Dialog open={open} onOpenChange={setOpen} ariaLabel="分享 Session">
       <DialogHeader><h2 className="text-lg font-semibold">{title}</h2></DialogHeader>
       <div className="share-preview" inert aria-label="对话预览">
-        <ConversationView preview events={events} sessionStatus="idle" resources={{ shared: true, agentId: "", skills: [] }} />
+        <ConversationView preview loading={loading} loadError={loadError} events={events} sessionStatus="idle" resources={{ shared: true, agentId: "", skills: [] }} />
       </div>
       <p className="mt-4 text-sm text-[var(--color-fg-muted)]">任何拥有此链接的人都可以只读查看此 Session 和整个 Workspace。后续消息和文件更新也会在刷新后显示。</p>
       {error && <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">{error}</p>}

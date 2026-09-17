@@ -13,7 +13,6 @@ import {
   Image as ImageIcon,
   Film,
   Music,
-  AlertTriangle,
   Pencil,
   Trash2,
   FilePlus,
@@ -275,9 +274,6 @@ function MediaPreview({
   );
 }
 
-/** Large images use more bandwidth and decoded memory, so ask before loading. */
-const LARGE_IMAGE_ADVISORY = 8 * 1024 * 1024; // 8 MiB — advisory only, not a cap.
-
 function ImagePreview({
   content,
   getPreviewUrl,
@@ -287,28 +283,7 @@ function ImagePreview({
   getPreviewUrl: PreviewUrlLoader;
   onDownload: () => void;
 }) {
-  const isLarge = content.size >= LARGE_IMAGE_ADVISORY;
-  const [forceLoad, setForceLoad] = useState(!isLarge);
-  const { url, error, handleError, markLoaded, markRecovered } = useMediaPreviewUrl(content.path, getPreviewUrl, forceLoad);
-
-  if (isLarge && !forceLoad) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-        <AlertTriangle className="h-8 w-8 text-[var(--color-warning)]" />
-        <div className="text-sm text-[var(--color-fg-muted)]">
-          Large image ({formatSize(content.size)}). Loading may use significant bandwidth and memory.
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setForceLoad(true)}>
-            Load anyway
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => onDownload()}>
-            <Download className="h-3.5 w-3.5" /> Download instead
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const { url, error, handleError, markLoaded, markRecovered } = useMediaPreviewUrl(content.path, getPreviewUrl);
 
   if (error) {
     return (

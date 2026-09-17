@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { ConversationView } from "@/components/conversation-view";
+import { SessionLoading } from "@/components/session-loading";
 import { TimelineView } from "@/components/timeline-view";
 import { SplitWorkbench } from "@/components/split-workbench";
 import { FileManager } from "@/components/file-manager";
@@ -58,7 +59,7 @@ function SharedSessionContent({ shareId }: { shareId: string }) {
       <Button variant="outline" aria-label="Refresh share" disabled={loading} onClick={() => setRevision((value) => value + 1)}>刷新</Button>
     </header>
     {error && <p role="alert" className="p-4">加载失败：{error.message}。请重试刷新。</p>}
-    {!data && loading && <p role="status" className="p-6">正在加载分享…</p>}
+    {!data && loading && <SessionLoading />}
     {data && source && <SplitWorkbench revealWorkspaceKey={fileSelection?.nonce}
       workspace={<FileManager source={source} turnStatus="idle" presentation="workbench" rootLabel="Workspace" refreshKey={data.revision} fileSelection={fileSelection} selectionHint="Browse the shared Workspace. Files are read-only." />}
       session={<>
