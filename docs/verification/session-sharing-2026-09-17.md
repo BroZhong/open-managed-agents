@@ -3,6 +3,9 @@
 Scope: #154 and #155. Disposable local in-memory HTTP Host and Vite console;
 production services and existing user data were not modified.
 
+Subsequent authorized production deployment and real PostgreSQL verification
+are recorded separately in [the release report](session-sharing-release-2026-09-17.md).
+
 ## Automated checks
 
 - HTTP: concurrent idempotent creation; owner/API-key permissions; mixed
