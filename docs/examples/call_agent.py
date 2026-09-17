@@ -8,10 +8,32 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import time
-from urllib.error import HTTPError
-from urllib.parse import quote
+from http.client import HTTPException
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 import uuid
+
+
+def download_file(url, target, file_path):
+    """Stream a signed storage URL without forwarding the OMA API key."""
+    if not isinstance(url, str) or urlsplit(url).scheme not in ('http', 'https'):
+        raise RuntimeError(f'Download {file_path}: invalid download URL')
+    created = False
+    try:
+        with urlopen(Request(url, headers={'Accept': '*/*'}), timeout=30) as response:
+            if response.status != 200:
+                raise RuntimeError(f'Download {file_path}: HTTP {response.status}')
+            with target.open('xb') as destination:
+                created = True
+                shutil.copyfileobj(response, destination)
+    except HTTPError as error:
+        # Storage error bodies and URLs may contain signing credentials.
+        raise RuntimeError(f'Download {file_path}: HTTP {error.code}; retry to obtain a fresh URL') from None
+    except (URLError, OSError, HTTPException):
+        if created:
+            target.unlink(missing_ok=True)
+        raise RuntimeError(f'Download {file_path}: transfer failed; retry to obtain a fresh URL') from None
 
 
 def main():
@@ -32,9 +54,9 @@ def main():
     base = os.environ.get('OMA_API_URL', 'https://agentry.welltop.tech/api').rstrip('/')
     agent = os.environ.get('OMA_AGENT_ID', 'agent_Gm9zOmeyCQ6seu0O0XEwI')
 
-    def request(method, path, body=None, expected=200, accept='application/json'):
+    def request(method, path, body=None, expected=200):
         data = None if body is None else json.dumps(body).encode('utf-8')
-        headers = {'x-api-key': key, 'Accept': accept}
+        headers = {'x-api-key': key, 'Accept': 'application/json'}
         if data is not None:
             headers['Content-Type'] = 'application/json'
         req = Request(base + path, method=method, data=data, headers=headers)
@@ -124,9 +146,8 @@ def main():
         target = output.joinpath(*parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         encoded = '/'.join(quote(part, safe='') for part in parts)
-        with request('GET', workspace_path + '/files/' + encoded + '?download=1', accept='*/*') as response:
-            with target.open('xb') as destination:
-                shutil.copyfileobj(response, destination)
+        access = api('GET', workspace_path + '/files/' + encoded + '?download=1')
+        download_file(access['url'], target, path)
         print(f'Downloaded {path} -> {target}', flush=True)
     print('Complete. Workspace, Session and server artifacts are retained.')
 

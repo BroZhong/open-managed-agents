@@ -103,6 +103,8 @@ export type {
   ArtifactStore,
   Artifact,
   ArtifactContent,
+  ArtifactMetadata,
+  ArtifactReadUrlOptions,
   ArtifactPutInput,
 } from "./interfaces/artifact-store.js";
 

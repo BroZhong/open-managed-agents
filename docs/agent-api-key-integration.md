@@ -1,6 +1,6 @@
 # 通过 API Key 调用 Agent 并获取产物
 
-面向其他业务的后端服务。本文使用已在线上验证的 `test-gpt6`，演示创建 Workspace、创建 Session、发起任务、等待结束和下载文件。示例只使用 API key，不需要用户登录 token。
+面向其他业务的后端服务。本文使用 `test-gpt6` 演示创建 Workspace、创建 Session、发起任务、等待结束和下载文件。示例只使用 API key，不需要用户登录 token。文件读取采用 ADR-0011 的统一签名 URL 契约；此前验证记录见文末。
 
 ## 1. 接入信息
 
@@ -28,7 +28,8 @@
   │  POST /v1/sessions/{id}/events        提交任务，返回 202
   │  GET  /v1/sessions/{id}/events        轮询执行事件
   │  GET  /v1/workspaces/{id}/files       查询文件列表
-  └  GET  /v1/workspaces/{id}/files/{path} 下载文件
+  │  GET  /v1/workspaces/{id}/files/{path} 获取文件元数据和临时 OSS 链接
+  └  GET  <返回的 url>                   直接从 OSS 下载（不带 API key）
 ```
 
 - **Workspace** 存放输入文件、中间文件和输出文件，独立于 Session 存在。
@@ -168,25 +169,23 @@ curl --fail-with-body -sS \
 ### 2.7 下载文件
 
 ```bash
-curl --fail-with-body -sS \
+FILE_URL=$(curl --fail-with-body -sS \
   "$OMA_API_URL/v1/workspaces/$WORKSPACE_ID/files/outputs/result.md?download=1" \
   -H "x-api-key: $OMA_API_KEY" \
-  -o result.md
+  | jq -er '.url')
+
+# 不向 OSS 发送平台 API key；URL 已带临时签名。
+curl --fail -sS "$FILE_URL" -o result.md
+unset FILE_URL
 ```
 
-成功返回文件原始字节，而不是 JSON 或 Base64。`download=1` 设置附件下载响应头。中文、空格、`#` 等文件名需逐路径段 URL 编码，目录之间的 `/` 保留为分隔符。下载接口使用 **Workspace ID**，不要传 Session ID。
+第一个请求返回 JSON 描述，第二个请求才返回原始文件字节。描述包含 `path`、`url`、`expiresIn`、`expiresAt`、`size`、`contentType`，以及可用时的 `etag`。`download=1` 使签名 URL 请求附件下载响应头。中文、空格、`#` 等文件名需逐路径段 URL 编码，目录之间的 `/` 保留为分隔符。接口使用 **Workspace ID**，不要传 Session ID。
 
-若要让浏览器临时预览媒体而不接触 API key，可由业务后端获取签名链接：
+程序、SDK 和浏览器统一使用 `/files/{path}` 获取链接。程序应流式读取 URL 到文件，浏览器可把不带 `download=1` 获取的 URL 直接赋给图片或播放器。不要先下载成 Blob 再展示媒体。
 
-```bash
-curl --fail-with-body -sS -G \
-  "$OMA_API_URL/v1/workspaces/$WORKSPACE_ID/preview-url" \
-  -H "x-api-key: $OMA_API_KEY" \
-  --data-urlencode 'path=outputs/result.md' \
-  --data-urlencode 'expiresIn=600'
-```
+访问返回的 URL 不需要 API key；有效期为 60–900 秒，默认 600 秒。持久化保存 Workspace ID 和文件路径，使用时获取链接；链接过期后重新获取，不要无限重试失效链接，也不要把所有 403 都当成过期。不要记录完整签名 URL 或向 OSS 转发平台认证头。撤销业务权限会阻止签发新链接，但不保证已签发链接立即失效。同一路径可能被覆盖，断点续传需要校验 ETag 后再追加。
 
-返回 `{"url":"临时签名URL","expiresIn":600}`。访问该 URL 不需要 API key；有效期为 60–900 秒，默认 600 秒。仅向需要访问该文件的用户提供链接，不要把它当作永久地址。
+浏览器的跨域文本读取和媒体预览需要配置 OSS CORS；媒体预览域名、文件类型与附件行为见 [OSS 部署说明](oss-workspace-deployment.md#direct-browser-reads)。
 
 ## 3. 可运行的 Python 示例
 
@@ -263,9 +262,9 @@ Content-Type: application/json
 
 ## 6. 验证记录与契约
 
-2026-09-15 已使用上述 `test-gpt6` 与 API key 完成线上验证：创建 Workspace `201`、创建 Session `201`、提交输入 `202`、真实 Agent 工具写入、列表查询与下载 `200`，文件内容逐字节一致。
+2026-09-15 已使用上述 `test-gpt6` 与 API key 完成旧版文件字节接口的线上验证：创建 Workspace `201`、创建 Session `201`、提交输入 `202`、真实 Agent 工具写入、列表查询与下载 `200`，文件内容逐字节一致。该历史记录不代表 ADR-0011 签名读取已经部署或完成线上验收。
 
-本文附带的 Python 示例还通过了上述真实 Session 的恢复查询与下载验证，下载内容与原产物一致；本次未用该脚本重新发起模型任务。
+此前 Python 示例还通过了上述真实 Session 的恢复查询与下载验证，下载内容与原产物一致。当前示例已随签名 URL 契约更新，需要在对应服务端发布后进行新的线上验收。
 
 - [线上 OpenAPI 契约](https://agentry.welltop.tech/api/openapi.json)
 - [Workspace 迁移与测试记录](workspace-api-migration-2026-09-15.md)

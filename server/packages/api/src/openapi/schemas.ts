@@ -431,6 +431,16 @@ export const DeletedSchema = z
   .object({ type: z.string(), id: z.string() })
   .openapi("DeletedResource");
 
+export const WorkspaceFileReadSchema = z.object({
+  path: z.string(),
+  url: z.url().describe("Temporary read-only URL. Fetch without API credentials; request a new URL after expiry."),
+  expiresIn: z.number().int().min(60).max(900),
+  expiresAt: z.iso.datetime(),
+  size: z.number().int().nonnegative(),
+  contentType: z.string().describe("Resolved file MIME. Regional OSS endpoints preserve stored response metadata; a bound custom domain supports MIME overrides."),
+  etag: z.string().optional(),
+}).openapi("WorkspaceFileRead");
+
 export const PathResultSchema = z
   .object({ path: z.string() })
   .openapi("PathResult");

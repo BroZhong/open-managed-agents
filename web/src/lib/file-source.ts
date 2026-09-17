@@ -6,7 +6,7 @@
  * Agent's Files. It knows only a FileSource: "list me the tree, read me a file,
  * (maybe) let me write/rename/delete/upload, (maybe) hand me a signed preview
  * URL." The three domains are three implementations — `SkillFileSource`,
- * `WorkspaceFileSource`, `AgentFileSource` — each wrapping its existing hooks.
+ * `WorkspaceFileSource`, `AgentFileSource` — each using its domain API.
  *
  * NAMING: this is deliberately *not* called `Adapter`. The backend `Adapter`
  * (ADR-0002 — translates events into the Pi SDK) is an unrelated concept; reusing
@@ -36,7 +36,6 @@ export interface FileNode {
  * The result of {@link FileSource.read}. Text is returned inline for the editor;
  * binary content is NOT returned as a body — its bytes are fetched via
  * {@link FileSource.previewUrl} (a signed GET) or downloaded, never inlined.
- * Mirrors the existing `FilePreview` shape in `use-workspace-files.ts`.
  */
 export interface FileContent {
   path: string;
@@ -73,17 +72,21 @@ export interface FileSourceCapabilities {
   idleGated: boolean;
 }
 
-/**
- * The abstraction the unified component consumes. Required core + optional
- * capability methods (presence = capability).
- */
+/** Optional request cancellation and explicit signed-link refresh. */
+export interface FileReadOptions {
+  signal?: AbortSignal;
+  /** Bypass a recently signed preview link after an expiry or media failure. */
+  forceRefresh?: boolean;
+}
+
+/** Required file operations plus optional editing, preview, and download capabilities. */
 export interface FileSource {
   // ── required core (all three domains) ──────────────────────────────────────
 
   /** List the file tree (flat sources return depth-1 files only). */
   list(): Promise<FileNode[]>;
   /** Read one file: text body for the editor, or binary metadata (see previewUrl). */
-  read(path: string): Promise<FileContent>;
+  read(path: string, options?: FileReadOptions): Promise<FileContent>;
   /** Static traits driving the UI (see {@link FileSourceCapabilities}). */
   readonly capabilities: FileSourceCapabilities;
 
@@ -109,27 +112,19 @@ export interface FileSource {
    * object-store read (images/video), bypassing the Host proxy (ADR-0006 §1, #88). Writes
    * are NEVER presigned — only this downward read is.
    */
-  previewUrl?(path: string): Promise<string>;
+  previewUrl?(path: string, options?: FileReadOptions): Promise<string>;
+  /** Request a fresh signed attachment URL for a browser-native download. */
+  downloadUrl?(path: string, options?: FileReadOptions): Promise<string>;
 }
 
 // ─── the three domain implementations ─────────────────────────────────────────
 //
-// These wrap the same network paths as the existing hooks (use-skills.ts,
-// use-workspace-files.ts, use-agent-files.ts), but as plain objects the
-// component can hold and call imperatively — hooks can't be invoked outside a
-// render. Data-fetching hooks stay for list/read caching where a page wants
-// them; a FileSource is the imperative façade the unified component consumes.
+// These plain objects expose each domain's authenticated API without React.
+// Workspace bytes use signed object-store URLs; metadata and writes use the Host.
 
-import { apiFetch, apiUpload, BASE_URL } from "@/lib/api";
+import { apiFetch, apiUpload } from "@/lib/api";
 import { encodePath } from "@/lib/workspace-tree";
 import { AGENT_FILE_NAMES } from "@/lib/hooks/use-agent-files";
-
-const STORAGE_KEY = "oma_api_key";
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem(STORAGE_KEY);
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 // ── Skill ─────────────────────────────────────────────────────────────────────
 
@@ -221,8 +216,8 @@ export function createSkillFileSource(skillId: string, onChanged?: () => void): 
 
 /**
  * Tenant-owned Workspace files. Nested, writable during Turns and accessible
- * without a Session (ADR-0009). Reads and media previews use the Host proxy.
- * Same text/binary split + 512 KiB cap as `use-workspace-files.ts`.
+ * without a Session (ADR-0009). The Host authorizes reads and signs OSS URLs;
+ * clients fetch content directly from storage. Inline text is capped at 512 KiB.
  */
 export type WorkspaceFileSource = FileSource & {
   capabilities: { hierarchy: "nested"; idleGated: false };
@@ -230,11 +225,79 @@ export type WorkspaceFileSource = FileSource & {
 
 const WS_TEXT_LIKE = /^(text\/|application\/(json|javascript|xml|x-yaml|yaml)|image\/svg)/;
 const WORKSPACE_DIRECTORY_MARKER = "/.oma-directory";
-const WS_MAX_TEXT_PREVIEW = 512 * 1024; // 512 KiB — mirrors use-workspace-files.ts
+const WS_MAX_TEXT_PREVIEW = 512 * 1024;
+const WORKSPACE_READ_TIMEOUT_MS = 30_000;
+
+interface WorkspaceReadLink {
+  path: string;
+  url: string;
+  expiresIn: number;
+  expiresAt: string;
+  size: number;
+  contentType: string;
+  etag?: string;
+}
+
+function readSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(WORKSPACE_READ_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+/** Stop reading immediately if a changed object exceeds the inline-preview cap. */
+async function readBoundedText(response: Response): Promise<string | null> {
+  const declaredSize = Number(response.headers.get("content-length"));
+  if (declaredSize > WS_MAX_TEXT_PREVIEW) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return text + decoder.decode();
+      bytes += value.byteLength;
+      if (bytes > WS_MAX_TEXT_PREVIEW) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSource {
-  const filesBase = `${BASE_URL}/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
   const apiPath = `/v1/workspaces/${encodeURIComponent(workspaceId)}`;
+  // Reuse metadata between read() and the initial media mount only. Fresh
+  // selections and explicit refreshes always reauthorize and HEAD the object.
+  let recentLink: { link: WorkspaceReadLink; acquiredAt: number } | undefined;
+
+  async function getLink(path: string, options: FileReadOptions = {}, download = false): Promise<WorkspaceReadLink> {
+    options.signal?.throwIfAborted();
+    if (!download && !options.forceRefresh && recentLink?.link.path === path
+      && Date.now() - recentLink.acquiredAt < 10_000
+      && Date.parse(recentLink.link.expiresAt) > Date.now() + 30_000) {
+      return recentLink.link;
+    }
+    const link = await apiFetch<WorkspaceReadLink>(
+      `${apiPath}/files/${encodePath(path)}${download ? "?download=1" : ""}`,
+      { signal: readSignal(options.signal), cache: "no-store" },
+    );
+    if (!link || link.path !== path || typeof link.url !== "string" || !/^https?:\/\//.test(link.url)
+      || !Number.isSafeInteger(link.size) || link.size < 0 || typeof link.contentType !== "string" || !link.contentType
+      || !Number.isFinite(link.expiresIn) || link.expiresIn <= 0
+      || typeof link.expiresAt !== "string" || !Number.isFinite(Date.parse(link.expiresAt))) {
+      throw new Error("The file link response is incomplete. Refresh to retry.");
+    }
+    options.signal?.throwIfAborted();
+    if (!download) recentLink = { link, acquiredAt: Date.now() };
+    return link;
+  }
 
   return {
     capabilities: { hierarchy: "nested", idleGated: false },
@@ -255,21 +318,35 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       return nodes.map((node) => ({ ...node, isDir: node.isDir || nodes.some((child) => child.path.startsWith(`${node.path}/`)) }));
     },
 
-    async read(path: string): Promise<FileContent> {
-      const res = await fetch(`${filesBase}/${encodePath(path)}`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
-      const contentType = res.headers.get("content-type") ?? "application/octet-stream";
-      const size = Number(res.headers.get("content-length") ?? "0");
-      const isText = WS_TEXT_LIKE.test(contentType) || isTextByExtension(path);
-      if (isText && size <= WS_MAX_TEXT_PREVIEW) {
-        return { path, text: await res.text(), contentType, size, isBinary: false };
+    async read(path: string, options: FileReadOptions = {}): Promise<FileContent> {
+      let link = await getLink(path, { ...options, forceRefresh: true });
+      for (let attempt = 0; ; attempt++) {
+        const { contentType, size } = link;
+        const kind = classifyMedia(path, contentType);
+        const isMedia = kind === "image" || kind === "video" || kind === "audio";
+        const isText = !isMedia && (WS_TEXT_LIKE.test(contentType) || isTextByExtension(path));
+        if (!isText || size > WS_MAX_TEXT_PREVIEW) {
+          return { path, text: null, contentType, size, isBinary: true };
+        }
+        // Storage URLs carry their own temporary credential. Never forward the
+        // application's Authorization header or cookies to the object host.
+        const response = await fetch(link.url, {
+          signal: readSignal(options.signal), credentials: "omit", cache: "no-store",
+        });
+        if (response.status === 403 && attempt === 0) {
+          await response.body?.cancel();
+          link = await getLink(path, { ...options, forceRefresh: true });
+          // A path may be overwritten while a link expires. Reclassify its
+          // fresh metadata before requesting another body.
+          continue;
+        }
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw new Error(`Failed to load file: ${response.status}`);
+        }
+        const text = await readBoundedText(response);
+        return { path, text, contentType, size, isBinary: text === null };
       }
-      // Binary is rendered via previewUrl. Use the body we already drain for
-      // its size, since proxies can omit Content-Length or report compressed bytes.
-      const body = await res.arrayBuffer().catch(() => undefined);
-      return { path, text: null, contentType, size: body?.byteLength ?? size, isBinary: true };
     },
 
     async write(path: string, content: string): Promise<void> {
@@ -306,25 +383,12 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
       await apiUpload(`${apiPath}/files/upload`, form);
     },
 
-    async previewUrl(path: string): Promise<string> {
-      // Keep the console's authenticated Host preview path, including MIME
-      // fallback for ossfs files. Blob URLs let media and downloads consume
-      // the response without putting the API token in a URL. The separate
-      // short-lived OSS GET API always signs a public regional endpoint.
-      const res = await fetch(`${filesBase}/${encodePath(path)}`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
-      const blob = await res.blob();
-      // Older sandbox artifacts may have a generic MIME. Give the audio
-      // element a useful type without changing the stored bytes.
-      const ext = extOf(path);
-      const audioType = Object.hasOwn(AUDIO_MIME_TYPES, ext) ? AUDIO_MIME_TYPES[ext] : undefined;
-      return URL.createObjectURL(
-        audioType && !blob.type.startsWith("audio/")
-          ? blob.slice(0, blob.size, audioType)
-          : blob,
-      );
+    async previewUrl(path: string, options?: FileReadOptions): Promise<string> {
+      return (await getLink(path, options)).url;
+    },
+
+    async downloadUrl(path: string, options?: FileReadOptions): Promise<string> {
+      return (await getLink(path, options, true)).url;
     },
   };
 }

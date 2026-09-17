@@ -176,7 +176,10 @@ Deleted Workspace IDs cannot be reused to create new Sessions.
 
 ## Workspace file API
 
-Workspace files are accessed through `/v1/workspaces/{id}/files` and
-`/v1/workspaces/{id}/preview-url`, using the authenticated Tenant and Workspace
-metadata. A Session is not required. Running Sessions do not lock file writes;
-concurrent writes to the same path may overwrite each other. See ADR-0009.
+Workspace files are accessed through `/v1/workspaces/{id}/files`, using the
+authenticated Tenant and Workspace metadata. Reading a file returns a short-lived
+OSS GET URL and metadata; browsers and programs fetch its bytes directly from
+OSS without API credentials. This is the single read entry point for text,
+media previews and downloads. A Session is not required. Running Sessions do not lock file
+writes; concurrent writes to the same path may overwrite each other. See
+ADR-0009 and ADR-0011.

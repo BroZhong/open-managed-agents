@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileManager } from "./file-manager";
 import type { FileSource } from "@/lib/file-source";
 
+beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => undefined);
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -61,7 +66,7 @@ describe("FileManager capability UI", () => {
         size: 600 * 1024,
         isBinary: true,
       },
-      async () => "blob:large-text",
+      async () => "https://files.test/large-text",
     );
     const { container } = render(<FileManager source={source} turnStatus="idle" />);
     await openListedFile("large.md");
@@ -332,61 +337,30 @@ describe("FileManager uploads to a directory", () => {
   });
 });
 
-describe("FileManager Blob URL lifecycle", () => {
-  const revokeObjectURL = vi.fn();
-
-  beforeEach(() => {
-    revokeObjectURL.mockReset();
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: revokeObjectURL,
-    });
-  });
-
+describe("FileManager media refresh", () => {
   it("opens audio with native playback controls even when storage reports a generic MIME", async () => {
     const source = sourceFor(
       "recording.mp3",
       { path: "recording.mp3", text: null, contentType: "application/octet-stream", size: 10, isBinary: true },
-      async () => "blob:audio-preview",
+      async () => "https://files.test/audio-preview",
     );
     const view = render(<FileManager source={source} turnStatus="idle" />);
     await openListedFile("recording.mp3");
 
     const player = await screen.findByLabelText("recording.mp3");
     expect(player.tagName).toBe("AUDIO");
-    expect(player.getAttribute("src")).toBe("blob:audio-preview");
+    expect(player.getAttribute("src")).toBe("https://files.test/audio-preview");
     expect(player.hasAttribute("controls")).toBe(true);
     view.unmount();
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:audio-preview");
   });
 
-  it("revokes a loaded preview Blob URL when the pane unmounts", async () => {
-    const source = sourceFor(
-      "cover.png",
-      {
-        path: "cover.png",
-        text: null,
-        contentType: "image/png",
-        size: 10,
-        isBinary: true,
-      },
-      async () => "blob:cover-preview",
-    );
-    const view = render(<FileManager source={source} turnStatus="idle" />);
-    await openListedFile("cover.png");
-    await screen.findByRole("img", { name: "cover.png" });
-    expect(screen.getByRole("button", { name: /download/i })).toBeTruthy();
 
-    view.unmount();
 
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:cover-preview");
-  });
-
-  it("replaces and revokes the preview when refresh reloads the same path", async () => {
+  it("replaces the preview when refresh reloads the same path", async () => {
     const previewUrl = vi
       .fn<() => Promise<string>>()
-      .mockResolvedValueOnce("blob:cover-v1")
-      .mockResolvedValueOnce("blob:cover-v2");
+      .mockResolvedValueOnce("https://files.test/cover-v1")
+      .mockResolvedValueOnce("https://files.test/cover-v2");
     const source = sourceFor(
       "cover.png",
       {
@@ -401,21 +375,20 @@ describe("FileManager Blob URL lifecycle", () => {
     const view = render(<FileManager source={source} turnStatus="idle" refreshKey={0} />);
     await openListedFile("cover.png");
     expect((await screen.findByRole("img", { name: "cover.png" })).getAttribute("src"))
-      .toBe("blob:cover-v1");
+      .toBe("https://files.test/cover-v1");
 
     view.rerender(<FileManager source={source} turnStatus="idle" refreshKey={1} />);
 
     await waitFor(() => expect(previewUrl).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("img", { name: "cover.png" }).getAttribute("src"))
-      .toBe("blob:cover-v2");
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:cover-v1");
+      .toBe("https://files.test/cover-v2");
   });
 
   it("reloads the selected preview when the toolbar Refresh button is used", async () => {
     const previewUrl = vi
       .fn<() => Promise<string>>()
-      .mockResolvedValueOnce("blob:toolbar-v1")
-      .mockResolvedValueOnce("blob:toolbar-v2");
+      .mockResolvedValueOnce("https://files.test/toolbar-v1")
+      .mockResolvedValueOnce("https://files.test/toolbar-v2");
     const source = sourceFor(
       "cover.png",
       {
@@ -430,21 +403,20 @@ describe("FileManager Blob URL lifecycle", () => {
     render(<FileManager source={source} turnStatus="idle" />);
     await openListedFile("cover.png");
     expect((await screen.findByRole("img", { name: "cover.png" })).getAttribute("src"))
-      .toBe("blob:toolbar-v1");
+      .toBe("https://files.test/toolbar-v1");
 
     fireEvent.click(screen.getByTitle("Refresh"));
 
     await waitFor(() => expect(previewUrl).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("img", { name: "cover.png" }).getAttribute("src"))
-      .toBe("blob:toolbar-v2");
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:toolbar-v1");
+      .toBe("https://files.test/toolbar-v2");
   });
 
   it("reloads the selected preview after uploading over the same path", async () => {
     const previewUrl = vi
       .fn<() => Promise<string>>()
-      .mockResolvedValueOnce("blob:upload-v1")
-      .mockResolvedValueOnce("blob:upload-v2");
+      .mockResolvedValueOnce("https://files.test/upload-v1")
+      .mockResolvedValueOnce("https://files.test/upload-v2");
     const source = sourceFor(
       "cover.png",
       {
@@ -460,7 +432,7 @@ describe("FileManager Blob URL lifecycle", () => {
     const { container } = render(<FileManager source={source} turnStatus="idle" />);
     await openListedFile("cover.png");
     expect((await screen.findByRole("img", { name: "cover.png" })).getAttribute("src"))
-      .toBe("blob:upload-v1");
+      .toBe("https://files.test/upload-v1");
 
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
@@ -473,56 +445,81 @@ describe("FileManager Blob URL lifecycle", () => {
     await waitFor(() => expect(source.upload).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(previewUrl).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("img", { name: "cover.png" }).getAttribute("src"))
-      .toBe("blob:upload-v2");
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:upload-v1");
+      .toBe("https://files.test/upload-v2");
   });
 
-  it("revokes a Blob URL that resolves after the pane has unmounted", async () => {
-    let resolvePreview!: (url: string) => void;
-    const preview = new Promise<string>((resolve) => {
-      resolvePreview = resolve;
-    });
-    const previewUrl = vi.fn(() => preview);
-    const source = sourceFor(
-      "late.png",
-      {
-        path: "late.png",
-        text: null,
-        contentType: "image/png",
-        size: 10,
-        isBinary: true,
-      },
-      previewUrl,
-    );
-    const view = render(<FileManager source={source} turnStatus="idle" />);
-    await openListedFile("late.png");
-    await waitFor(() => expect(previewUrl).toHaveBeenCalledTimes(1));
 
-    view.unmount();
-    await act(async () => resolvePreview("blob:late-preview"));
 
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:late-preview");
+
+});
+
+describe("FileManager storage links", () => {
+  it("downloads through a fresh attachment URL rather than the mounted preview", async () => {
+    let anchor: Pick<HTMLAnchorElement, "href" | "target" | "rel"> | undefined;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { anchor = { href: this.href, target: this.target, rel: this.rel }; });
+    const source = sourceFor("poster.jpg", { path: "poster.jpg", text: null, contentType: "image/jpeg", size: 1024, isBinary: true }, vi.fn(async () => "https://files.test/preview"));
+    source.downloadUrl = vi.fn(async () => "https://files.test/attachment");
+    render(<FileManager source={source} turnStatus="idle" />);
+    await openListedFile("poster.jpg");
+    await screen.findByRole("img");
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(source.downloadUrl).toHaveBeenCalledWith("poster.jpg"));
+    expect(anchor?.href).toBe("https://files.test/attachment");
+    expect(anchor?.target).toBe("_blank");
+    expect(anchor?.rel).toBe("noopener noreferrer");
+    expect(source.previewUrl).toHaveBeenCalledTimes(1);
   });
 
-  it("revokes a fresh one-shot download Blob URL", async () => {
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
-    const previewUrl = vi.fn(async () => "blob:archive-download");
-    const source = sourceFor(
-      "archive.zip",
-      {
-        path: "archive.zip",
-        text: null,
-        contentType: "application/zip",
-        size: 10,
-        isBinary: true,
-      },
-      previewUrl,
-    );
+  it("shows a download-link failure", async () => {
+    const source = sourceFor("archive.zip", { path: "archive.zip", text: null, contentType: "application/zip", size: 1024, isBinary: true }, async () => "https://files.test/preview");
+    source.downloadUrl = vi.fn(async () => { throw new Error("Storage unavailable"); });
     render(<FileManager source={source} turnStatus="idle" />);
     await openListedFile("archive.zip");
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Storage unavailable");
+  });
 
-    fireEvent.click(await screen.findByRole("button", { name: /download/i }));
+  it("preloads video metadata and preserves its position after one fresh URL", async () => {
+    const previewUrl = vi.fn().mockResolvedValueOnce("https://files.test/old").mockResolvedValueOnce("https://files.test/fresh");
+    const source = sourceFor("movie.mp4", { path: "movie.mp4", text: null, contentType: "video/mp4", size: 50 * 1024 * 1024, isBinary: true }, previewUrl);
+    const view = render(<FileManager source={source} turnStatus="idle" />);
+    const { container } = view;
+    await openListedFile("movie.mp4");
+    await waitFor(() => expect(container.querySelector("video")).not.toBeNull());
+    const old = container.querySelector("video")!;
+    expect(old.preload).toBe("metadata");
+    expect(old.crossOrigin).toBe("anonymous");
+    old.currentTime = 23;
+    fireEvent.error(old);
+    await waitFor(() => expect(container.querySelector("video")?.src).toBe("https://files.test/fresh"));
+    const fresh = container.querySelector("video")!;
+    fireEvent.loadedMetadata(fresh);
+    expect(fresh.currentTime).toBe(23);
+    expect(old.hasAttribute("src")).toBe(false);
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(1);
+    expect(previewUrl.mock.calls[1][1]).toMatchObject({ forceRefresh: true });
+    fireEvent.error(fresh);
+    expect(await screen.findByText("Failed to load video.")).toBeTruthy();
+    expect(previewUrl).toHaveBeenCalledTimes(2);
+    expect(fresh.hasAttribute("src")).toBe(false);
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(2);
+  });
 
-    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:archive-download"));
+  it("cancels the previous read when a different file is selected", async () => {
+    const read = vi.fn<FileSource["read"]>((path, options) => path === "slow.txt"
+      ? new Promise((_resolve, reject) => options?.signal?.addEventListener("abort", () => reject(options.signal?.reason)))
+      : Promise.resolve({ path, text: "fast", contentType: "text/plain", size: 4, isBinary: false }));
+    const source: FileSource = {
+      capabilities: { hierarchy: "nested", idleGated: false },
+      list: async () => [{ path: "slow.txt", isDir: false }, { path: "fast.txt", isDir: false }],
+      read,
+    };
+    render(<FileManager source={source} turnStatus="idle" />);
+    await openListedFile("slow.txt");
+    await openListedFile("fast.txt");
+    expect(await screen.findByText("fast")).toBeTruthy();
+    expect(read.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(read.mock.calls[1][1]?.signal?.aborted).toBe(false);
   });
 });

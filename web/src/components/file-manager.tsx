@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TextFileEditor } from "@/components/text-file-editor";
 import { AudioPreview } from "@/components/audio-preview";
+import { useMediaPreviewUrl, usePlayableMediaPreview, type PreviewUrlLoader } from "@/lib/hooks/use-media-preview-url";
 import { buildTree, formatSize, isDirectoryPath, type TreeNode } from "@/lib/workspace-tree";
 import { collectUploadFiles, type UploadInput } from "@/lib/upload-files";
 import {
@@ -214,8 +215,8 @@ function MediaPreview({
 }: {
   content: FileContent;
   actions: FileActions;
-  getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: (readyUrl?: string) => void;
+  getPreviewUrl: PreviewUrlLoader;
+  onDownload: () => void;
 }) {
   const kind = classifyMedia(content.path, content.contentType);
   const presentation = resolveFilePresentation(content, actions.mediaMode);
@@ -274,17 +275,7 @@ function MediaPreview({
   );
 }
 
-/** Blob URLs are owned by this component; signed http(s) URLs are not. */
-function revokePreviewUrl(url: string | null | undefined): void {
-  if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
-}
-
-/**
- * Image preview. Images have NO Range — a large one downloads fully before it
- * paints — so per the #93 verdict there is no hard byte cap: a large-image
- * warning with an opt-in "Load anyway" (plus a Download escape) IS the boundary.
- * "Large" is a soft advisory heuristic on the reported size, not a gate.
- */
+/** Large images use more bandwidth and decoded memory, so ask before loading. */
 const LARGE_IMAGE_ADVISORY = 8 * 1024 * 1024; // 8 MiB — advisory only, not a cap.
 
 function ImagePreview({
@@ -293,38 +284,19 @@ function ImagePreview({
   onDownload,
 }: {
   content: FileContent;
-  getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: (readyUrl?: string) => void;
+  getPreviewUrl: PreviewUrlLoader;
+  onDownload: () => void;
 }) {
   const isLarge = content.size >= LARGE_IMAGE_ADVISORY;
   const [forceLoad, setForceLoad] = useState(!isLarge);
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!forceLoad) return;
-    let alive = true;
-    let acquiredUrl: string | null = null;
-    void getPreviewUrl(content.path)
-      .then((u) => {
-        acquiredUrl = u;
-        if (alive) setUrl(u);
-        else revokePreviewUrl(u);
-      })
-      .catch(() => alive && setError(true));
-    return () => {
-      alive = false;
-      revokePreviewUrl(acquiredUrl);
-    };
-  }, [forceLoad, content.path, getPreviewUrl]);
+  const { url, error, handleError, markLoaded, markRecovered } = useMediaPreviewUrl(content.path, getPreviewUrl, forceLoad);
 
   if (isLarge && !forceLoad) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
         <AlertTriangle className="h-8 w-8 text-[var(--color-warning)]" />
         <div className="text-sm text-[var(--color-fg-muted)]">
-          Large image ({formatSize(content.size)}). Images can't stream — loading pulls the
-          whole file and may hang the pane.
+          Large image ({formatSize(content.size)}). Loading may use significant bandwidth and memory.
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setForceLoad(true)}>
@@ -346,7 +318,7 @@ function ImagePreview({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => onDownload(url ?? undefined)}
+          onClick={() => onDownload()}
         >
           <Download className="h-3.5 w-3.5" /> Download instead
         </Button>
@@ -368,67 +340,33 @@ function ImagePreview({
         variant="outline"
         size="sm"
         className="absolute right-3 top-3 z-10"
-        onClick={() => onDownload(url)}
+        onClick={() => onDownload()}
       >
         <Download className="h-3.5 w-3.5" /> Download
       </Button>
       <img
+        crossOrigin="anonymous"
         src={url}
         alt={content.path}
-        onError={() => setError(true)}
+        onError={handleError}
+        onLoad={() => { markLoaded(); markRecovered(); }}
         className="max-h-full max-w-full rounded-md border border-[var(--color-border)] object-contain"
       />
     </div>
   );
 }
 
-/**
- * Video preview. Range → 206 streaming (proven in #88) means size is not the
- * gate; the signed-URL lifetime is. On an `onError` (403 / expiry) we silently
- * re-sign — fetch a fresh previewUrl and retry — per the "Re-sign & resume"
- * verdict. A second failure surfaces a download fallback.
- */
+/** Native Range playback with signed-URL recovery and bounded consecutive failures. */
 function VideoPreview({
   content,
   getPreviewUrl,
   onDownload,
 }: {
   content: FileContent;
-  getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: (readyUrl?: string) => void;
+  getPreviewUrl: PreviewUrlLoader;
+  onDownload: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const [retry, setRetry] = useState(0);
-  // Guard against an infinite re-sign loop when the URL is genuinely broken.
-  const resignedRef = useRef(false);
-
-  useEffect(() => {
-    let alive = true;
-    let acquiredUrl: string | null = null;
-    void getPreviewUrl(content.path)
-      .then((u) => {
-        acquiredUrl = u;
-        if (alive) setUrl(u);
-        else revokePreviewUrl(u);
-      })
-      .catch(() => alive && setError(true));
-    return () => {
-      alive = false;
-      revokePreviewUrl(acquiredUrl);
-    };
-  }, [content.path, getPreviewUrl, retry]);
-
-  const handleError = useCallback(() => {
-    // First error → assume an expired signature and silently re-sign once.
-    if (!resignedRef.current) {
-      resignedRef.current = true;
-      setUrl(null);
-      setRetry((value) => value + 1);
-    } else {
-      setError(true);
-    }
-  }, []);
+  const { url, error, mediaEvents, mediaRef } = usePlayableMediaPreview(content.path, getPreviewUrl);
 
   if (error) {
     return (
@@ -438,7 +376,7 @@ function VideoPreview({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => onDownload(url ?? undefined)}
+          onClick={() => onDownload()}
         >
           <Download className="h-3.5 w-3.5" /> Download instead
         </Button>
@@ -458,11 +396,19 @@ function VideoPreview({
         variant="outline"
         size="sm"
         className="absolute right-3 top-3 z-10"
-        onClick={() => onDownload(url)}
+        onClick={() => onDownload()}
       >
         <Download className="h-3.5 w-3.5" /> Download
       </Button>
-      <video src={url} controls onError={handleError} className="max-h-full max-w-full rounded-md" />
+      <video
+        ref={mediaRef}
+        crossOrigin="anonymous"
+        src={url}
+        controls
+        preload="metadata"
+        {...mediaEvents}
+        className="max-h-full max-w-full rounded-md"
+      />
     </div>
   );
 }
@@ -495,8 +441,8 @@ function FilePane({
   saving: boolean;
   saved: boolean;
   onSave: (text: string, onSuccess: () => void) => void;
-  getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: (readyUrl?: string) => void;
+  getPreviewUrl: PreviewUrlLoader;
+  onDownload: () => void;
 }) {
   if (loading) {
     return (
@@ -696,7 +642,12 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
 
   const nodesRef = useRef<FileNode[]>([]);
   const readVersion = useRef(0);
-  const invalidateRead = useCallback(() => { ++readVersion.current; }, []);
+  const readAbortRef = useRef<AbortController | null>(null);
+  const invalidateRead = useCallback(() => {
+    ++readVersion.current;
+    readAbortRef.current?.abort();
+  }, []);
+  useEffect(() => () => invalidateRead(), [source, invalidateRead]);
   const scrolledRequest = useRef<number | undefined>(undefined);
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -708,6 +659,7 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
   const [contentRevision, setContentRevision] = useState(0);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -755,10 +707,14 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
 
   const openFile = useCallback(
     async (requestedPath: string, selectUploadDir = true) => {
-      const version = ++readVersion.current;
+      invalidateRead();
+      const version = readVersion.current;
+      const controller = new AbortController();
+      readAbortRef.current = controller;
       const directory = nested && isDirectoryPath(requestedPath, nodesRef.current);
       const path = requestedPath.replace(/\/+$/, "");
       setContentError(null);
+      setDownloadError(null);
       setWriteError(undefined);
       setSaved(false);
       if (directory) {
@@ -775,7 +731,7 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
       if (selectUploadDir) setUploadDir(currentDir(path) ?? "");
       setContentLoading(true);
       try {
-        const nextContent = await source.read(path);
+        const nextContent = await source.read(path, { signal: controller.signal });
         if (version !== readVersion.current) return;
         setContent(nextContent);
         setContentRevision((revision) => revision + 1);
@@ -787,7 +743,7 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
         if (version === readVersion.current) setContentLoading(false);
       }
     },
-    [source, nested, revealPath],
+    [source, nested, revealPath, invalidateRead],
   );
 
   useEffect(() => {
@@ -886,37 +842,22 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
   );
 
   const getPreviewUrl = useCallback(
-    (path: string) => {
+    (...args: Parameters<PreviewUrlLoader>) => {
       if (!source.previewUrl) return Promise.reject(new Error("No preview URL"));
-      return source.previewUrl(path);
+      return source.previewUrl(...args);
     },
     [source],
   );
 
-  const handleDownload = useCallback(async (readyUrl?: string) => {
+  const handleDownload = useCallback(async () => {
     if (!selectedPath) return;
-    // Media preview has already fetched a Blob URL. Reusing it keeps the
-    // anchor click inside the original user gesture; fetching again here would
-    // cross an await boundary and browsers may block the resulting download.
-    if (readyUrl) {
-      triggerDownload(readyUrl, selectedPath);
-      return;
-    }
+    setDownloadError(null);
     try {
-      const url = source.previewUrl
-        ? await source.previewUrl(selectedPath)
-        : null;
-      if (url) {
-        triggerDownload(url, selectedPath);
-        // This fresh URL belongs only to this download. URLs already mounted
-        // in a preview arrive via readyUrl and are released by that preview's
-        // effect on replacement/unmount.
-        if (url.startsWith("blob:")) {
-          window.setTimeout(() => revokePreviewUrl(url), 0);
-        }
-      }
-    } catch {
-      // best-effort; the preview pane already surfaces load errors.
+      if (!source.downloadUrl) throw new Error("Download is unavailable for this file.");
+      const url = await source.downloadUrl(selectedPath);
+      triggerDownload(url, selectedPath);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Failed to download file.");
     }
   }, [source, selectedPath]);
 
@@ -1295,10 +1236,11 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
                 }}><FolderOpen /></button>
                 {actions.canRename && <button type="button" className="workspace-tool" title="Rename" aria-label="Rename file" disabled={!selectedPath || writeGated || busy} onClick={handleRename}><Pencil /></button>}
                 {actions.canDelete && <button type="button" className="workspace-tool" title="Delete" aria-label="Delete file" disabled={!selectedPath || writeGated || busy} onClick={handleDelete}><Trash2 /></button>}
-                {source.previewUrl && <button type="button" className="workspace-tool" title="Download" aria-label="Download file" disabled={!selectedPath || contentLoading} onClick={() => void handleDownload()}><Download /></button>}
+                {source.downloadUrl && <button type="button" className="workspace-tool" title="Download" aria-label="Download file" disabled={!selectedPath || contentLoading} onClick={() => void handleDownload()}><Download /></button>}
               </div>
             </div>
           )}
+          {downloadError && <p role="alert" className="p-3 text-sm text-[var(--color-danger)]">Download failed: {downloadError}</p>}
           <div className="file-preview-content">
           <FilePane
             workbench={workbench}
@@ -1313,7 +1255,7 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
             saved={saved}
             onSave={handleSave}
             getPreviewUrl={getPreviewUrl}
-            onDownload={(readyUrl) => void handleDownload(readyUrl)}
+            onDownload={() => void handleDownload()}
           />
           </div>
         </div>
@@ -1333,6 +1275,10 @@ function triggerDownload(url: string, path: string): void {
   const a = document.createElement("a");
   a.href = url;
   a.download = path.split("/").pop() ?? path;
+  // Attachment response headers drive storage downloads. A separate target
+  // also keeps errors or an unexpected inline response out of the application.
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
   document.body.appendChild(a);
   a.click();
   a.remove();

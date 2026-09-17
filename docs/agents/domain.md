@@ -17,6 +17,8 @@ dispatch and its Session ownership semantics, ADR-0007 is authoritative.
 For mounted Workspace storage and Sandbox paths, ADR-0008 supersedes the
 former storage portions of ADR-0002 and ADR-0005. ADR-0009 defines the direct
 Workspace file API and supersedes ADR-0008’s per-Session write gate.
+ADR-0011 changes file reads to signed OSS URL descriptors and permits a configured
+public HTTPS preview domain.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The producer skill (`/grill-with-docs`) creates them lazily when terms or decisions actually get resolved.
 

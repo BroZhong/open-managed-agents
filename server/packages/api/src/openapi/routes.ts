@@ -34,6 +34,7 @@ import {
   UpdateLoopInputSchema,
   UserEventSchema,
   WorkspaceArtifactListSchema,
+  WorkspaceFileReadSchema,
   WorkspaceListSchema,
   WorkspaceSchema,
 } from "./schemas.js";
@@ -1165,38 +1166,6 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   }),
   protectedRoute({
     method: "get",
-    path: "/v1/workspaces/{id}/preview-url",
-    operationId: "createWorkspacePreviewUrl",
-    summary: "Create a signed Workspace file preview URL",
-    description: "Returns a short-lived read-only OSS URL for an existing file. The signed URL can be fetched without the API authentication header and preserves stored Content-Type metadata. GET /v1/workspaces/{id}/files/{path} instead proxies authenticated file bytes through the Host and applies MIME fallback for generic metadata.",
-    tags: ["Workspaces/Files"],
-    request: {
-      params: idParams,
-      query: pathQuery.extend({
-        expiresIn: z
-          .string()
-          .optional()
-          .openapi({
-            type: "integer",
-            param: { name: "expiresIn", in: "query" },
-            example: 600,
-            description: "Defaults to 600 seconds when omitted or non-numeric. Finite values are truncated to an integer and clamped to the inclusive range 60–900 seconds.",
-          }),
-      }),
-    },
-    responses: {
-      200: jsonResponse(
-        z.object({ url: z.url(), expiresIn: z.number().int() }),
-        "Signed read URL",
-      ),
-      400: errorResponse("Invalid path"),
-      404: errorResponse("Workspace or file not found"),
-      501: errorResponse("The configured Workspace backend does not support signed reads"),
-      503: errorResponse("Workspace storage is unavailable"),
-    },
-  }),
-  protectedRoute({
-    method: "get",
     path: "/v1/workspaces/{id}/files",
     operationId: "listWorkspaceFiles",
     summary: "List Workspace files",
@@ -1224,9 +1193,9 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     method: "get",
     path: "/v1/workspaces/{id}/files/{path}",
     operationId: "getWorkspaceFile",
-    summary: "Preview or download a Workspace file",
+    summary: "Get a Workspace file read URL",
     description:
-      "Returns authenticated file bytes from the authenticated Tenant's Workspace. path is relative to the Workspace and may contain '/'; URI-encode each path segment. Responses are not cached. Use download=1 for Content-Disposition: attachment; otherwise the response is inline.",
+      "Returns JSON file metadata and a short-lived OSS read URL after Tenant authorization and a metadata-only existence check. Fetch url directly without API credentials; OSS serves file bytes with streaming and Range support. path is Workspace-relative; URI-encode each segment. Request a new URL when it expires. Use download=1 for a signed attachment filename. Browser previews require a bound public HTTPS OSS custom domain and appropriate CORS.",
     tags: ["Workspaces/Files"],
     request: {
       params: z.object({
@@ -1237,27 +1206,24 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         }),
       }),
       query: z.object({
-        download: z
-          .literal("1")
-          .optional()
-          .openapi({
-            param: { name: "download", in: "query" },
-          }),
+        download: z.literal("1").optional().openapi({
+          param: { name: "download", in: "query" },
+          description: "Set to 1 to sign an attachment download with the original filename.",
+        }),
+        expiresIn: z.string().optional().openapi({
+          type: "integer", param: { name: "expiresIn", in: "query" }, example: 600,
+          description: "Defaults to 600 seconds when omitted or non-numeric. Finite values are truncated to an integer and clamped to 60–900 seconds.",
+        }),
       }),
     },
     responses: {
       200: {
-        description:
-          "File bytes. Content-Type preserves meaningful stored metadata and falls back to the filename extension when metadata is missing or generic.",
-        headers: {
-          "Content-Disposition": { schema: { type: "string" } },
-          "Content-Length": { schema: { type: "integer" } },
-          "Cache-Control": { schema: { type: "string" } },
-        },
-        content: { "application/octet-stream": { schema: binaryFileSchema } },
+        ...jsonResponse(WorkspaceFileReadSchema, "File metadata and signed read URL"),
+        headers: { "Cache-Control": { schema: { type: "string", example: "no-store" } } },
       },
       400: errorResponse("Invalid file path"),
       404: errorResponse("Workspace or file not found"),
+      501: errorResponse("The configured Workspace backend does not support signed reads"),
     },
   }),
   ...[false, true].map((origin) => protectedRoute({

@@ -252,47 +252,8 @@ describe("WorkspaceFileSource", () => {
     });
   });
 
-  it.each([
-    { name: "non-empty", bytes: Uint8Array.from([0x00, 0xff, 0x80, 0x01]) },
-    { name: "empty", bytes: new Uint8Array() },
-  ])("reads the actual size of a $name binary without Content-Length", async ({ bytes }) => {
-    const response = new Response(bytes, { headers: { "content-type": "audio/wav" } });
-    expect(response.headers.has("content-length")).toBe(false);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
-    vi.stubGlobal("localStorage", { getItem: () => "test-token" });
-
-    expect(await s.read("voice.wav")).toEqual({
-      path: "voice.wav",
-      text: null,
-      contentType: "audio/wav",
-      size: bytes.byteLength,
-      isBinary: true,
-    });
-  });
-
-  it.each([
-    ["voice.mp3", "application/octet-stream", "audio/mpeg"],
-    ["voice.M4A", "text/plain", "audio/mp4"],
-    ["voice.m4b", "application/octet-stream", "audio/mp4"],
-    ["voice.weba", "application/octet-stream", "audio/webm"],
-    ["voice.ogg", "audio/ogg; codecs=opus", "audio/ogg;codecs=opus"],
-  ])("previews %s with an audio Blob MIME and unchanged bytes", async (path, storedType, expectedType) => {
-    const bytes = Uint8Array.from([0x00, 0xff, 0x80, 0x01]);
-    const fetchFile = vi.fn().mockResolvedValue(new Response(bytes, {
-      headers: { "content-type": storedType },
-    }));
-    vi.stubGlobal("fetch", fetchFile);
-    vi.stubGlobal("localStorage", { getItem: () => "test-token" });
-    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:audio");
-
-    expect(await s.previewUrl!(path)).toBe("blob:audio");
-    expect(fetchFile).toHaveBeenCalledWith(expect.stringContaining(path), {
-      headers: { Authorization: "Bearer test-token" },
-    });
-    const blob = createObjectURL.mock.calls[0][0];
-    if (!(blob instanceof Blob)) throw new Error("Expected a preview Blob");
-    expect(blob.type).toBe(expectedType);
-    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
+  it("exposes a dedicated attachment URL capability", () => {
+    expect(typeof s.downloadUrl).toBe("function");
   });
 });
 

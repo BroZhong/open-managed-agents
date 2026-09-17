@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OSSArtifactStore } from "../src/oss/artifact-store.js";
 
 import { fakeOSS, ossTestOptions as options } from "./oss-harness.js";
@@ -20,6 +20,7 @@ describe("OSS Workspace artifact storage", () => {
     const { client } = fakeOSS();
     const store = new OSSArtifactStore({ ...options, client });
     expect(await store.get("t1", "w1", "missing.txt")).toBeNull();
+    expect(await store.stat("t1", "w1", "missing.txt")).toBeNull();
     expect(await store.exists("t1", "w1", "missing.txt")).toBe(false);
     expect(await store.delete("t1", "w1", "missing.txt")).toBe(false);
     await store.put({ tenantId: "t1", workspaceId: "w1", path: "a.txt", body: "first" });
@@ -39,6 +40,7 @@ describe("OSS Workspace artifact storage", () => {
       client.head = async () => { throw error; };
       await expect(store.get("t1", "w1", "a.txt")).rejects.toBe(error);
       await expect(store.exists("t1", "w1", "a.txt")).rejects.toBe(error);
+      await expect(store.stat("t1", "w1", "a.txt")).rejects.toBe(error);
       await expect(store.delete("t1", "w1", "a.txt")).rejects.toBe(error);
     }
   });
@@ -76,6 +78,7 @@ describe("OSS Workspace artifact storage", () => {
     for (const path of [".oma-workspace-checks/probe", ".oma-workspace-checks", "../w2/secret", "a/../../secret", "/secret", "a//b", "a/./b", "a\\..\\secret", "a\u0000b", "a\nb", "\ud800"]) {
       await expect(store.get("t1", "w1", path)).rejects.toThrow(/Invalid artifact path/);
       await expect(store.exists("t1", "w1", path)).rejects.toThrow(/Invalid artifact path/);
+      await expect(store.stat("t1", "w1", path)).rejects.toThrow(/Invalid artifact path/);
       await expect(store.put({ tenantId: "t1", workspaceId: "w1", path, body: "attack" })).rejects.toThrow(/Invalid artifact path/);
       await expect(store.delete("t1", "w1", path)).rejects.toThrow(/Invalid artifact path/);
       await expect(store.list("t1", "w1", path)).rejects.toThrow(/Invalid artifact path/);
@@ -126,6 +129,29 @@ describe("OSS Workspace artifact storage", () => {
     for (const publicEndpoint of ["http://oss-cn-shanghai.aliyuncs.com", "https://oss-cn-shanghai-internal.aliyuncs.com", "https://localhost", "https://oss-cn-beijing.aliyuncs.com"]) {
       expect(() => new OSSArtifactStore({ ...options, publicEndpoint, client })).toThrow(/public OSS endpoint/);
     }
+  });
+
+  it("reads HEAD metadata and signs a CNAME URL without GETs, extra HEADs or writes", async () => {
+    const { client, objects } = fakeOSS();
+    const path = "素材/片 段%2f.mp4";
+    objects.set(`t1/w1/${path}`, { body: Buffer.from("media"), contentType: "application/octet-stream" });
+    const head = vi.spyOn(client, "head");
+    const get = vi.spyOn(client, "get");
+    const put = vi.spyOn(client, "put");
+    const store = new OSSArtifactStore({ ...options, client, publicEndpoint: "https://files.example.com/" });
+    const metadata = await store.stat("t1", "w1", path);
+    expect(metadata).toMatchObject({ path, size: 5, contentType: "video/mp4", etag: '"fixture-etag"' });
+    const url = new URL(await store.createSignedReadUrl("t1", "w1", path, 600, { contentType: metadata!.contentType }));
+    expect(url.origin).toBe("https://files.example.com");
+    expect(decodeURIComponent(url.pathname)).toBe(`/t1/w1/${path}`);
+    expect(url.searchParams.get("response-content-type")).toBe("video/mp4");
+    expect(url.searchParams.get("response-content-disposition")).toBe("inline");
+    const download = new URL(await store.createSignedReadUrl("t1", "w1", path, 600, { download: true }));
+    expect(download.searchParams.get("response-content-disposition")).toContain("attachment;");
+    expect(download.searchParams.get("response-content-disposition")).toContain(`filename*=UTF-8''${encodeURIComponent("片 段%2f.mp4")}`);
+    expect(head).toHaveBeenCalledExactlyOnceWith(`t1/w1/${path}`);
+    expect(get).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
   });
 
   it("signs extensionless uploads without overriding or changing stored MIME", async () => {
