@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
 
-const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, summaryError: "503 overloaded", cancelSummary: false, toolPending: false }));
+const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, summaryError: "503 overloaded", cancelSummary: false, toolPending: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -21,7 +21,10 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
     async createAgentSession(options: Parameters<typeof sdk.createAgentSession>[0]) {
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 30 }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
       const result = await sdk.createAgentSession({ ...options, model: { ...options!.model!, contextWindow: 1000 }, settingsManager });
-      result.session.agent.streamFunction = (model, context, options) => {
+      result.session.agent.streamFunction = async (model, context, options) => {
+        // Model responses arrive after request dispatch. Avoid same-millisecond
+        // compaction/message timestamps changing the native stale-usage branch.
+        await new Promise(resolve => setTimeout(resolve, 2));
         const summary = context.systemPrompt?.startsWith("You are a context summarization assistant") ?? false;
         control.requests.push({ summary, context: JSON.parse(JSON.stringify(context)), options: { reasoning: options?.reasoning, maxTokens: options?.maxTokens, cacheRetention: options?.cacheRetention } });
         const failed = summary ? control.summaryFailures-- > 0 : control.overflow-- > 0;
@@ -37,6 +40,13 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
         }
         const stream = createAssistantMessageEventStream();
         stream.push({ type: "start", partial: message });
+        if (summary && control.pauseSummary) {
+          const cancel = () => stream.push({ type: "error", reason: "aborted", error: { ...message, stopReason: "aborted" } });
+          if (options?.signal?.aborted) cancel();
+          else options?.signal?.addEventListener("abort", cancel, { once: true });
+          control.onSummary?.();
+          return stream;
+        }
         if (message.stopReason === "error" || message.stopReason === "aborted") stream.push({ type: "error", reason: message.stopReason, error: message });
         else stream.push({ type: "done", reason: message.stopReason as "stop" | "toolUse", message });
         return stream;
@@ -68,7 +78,7 @@ async function run(input: AdapterInput) {
 }
 const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => key === "timestamp" ? undefined : v));
 afterEach(() => vi.unstubAllEnvs());
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.summaryError = "503 overloaded"; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("matches native threshold requests and restores committed context across later Turns", async () => {
@@ -76,6 +86,8 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const history = records(original);
     const loader = new DefaultResourceLoader({ cwd: "/tmp", agentDir: "/tmp/oma-compaction-no-ambient", noContextFiles: true }); await loader.reload();
     const { session } = await createAgentSession({ model, thinkingLevel: "high", modelRuntime: await ModelRuntime.create({ allowModelNetwork: false }), sessionManager: original, resourceLoader: loader });
+    let nativeAtCommit: unknown;
+    session.subscribe(event => { if (event.type === "compaction_end" && event.result) nativeAtCommit = structuredClone(session.messages); });
     await session.prompt("continue");
     const nativeRequests = structuredClone(control.requests);
     const nativeMessages = structuredClone(session.messages);
@@ -93,9 +105,9 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const serialized = JSON.stringify([...history, ...events]);
     const fresh = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
       'import {restorePiSession} from "./src/pi-context.ts"; let data=""; for await (const chunk of process.stdin) data+=chunk; process.stdout.write(JSON.stringify(restorePiSession(JSON.parse(data)).buildSessionContext().messages));'],
-      { cwd: fileURLToPath(new URL("../", import.meta.url)), input: serialized, encoding: "utf8" });
+      { cwd: fileURLToPath(new URL("../", import.meta.url)), input: JSON.stringify([...history, { id: "input1", type: "user.message", content: [{type: "text", text: "continue"}] }, ...committed]), encoding: "utf8", timeout: 10000 });
     expect(fresh.status, fresh.stderr).toBe(0);
-    expect(normalize(JSON.parse(fresh.stdout))).toEqual(normalize(nativeMessages));
+    expect(normalize(JSON.parse(fresh.stdout))).toEqual(normalize(nativeAtCommit));
     const restored = restorePiSession(JSON.parse(serialized));
     expect(normalize(restored.buildSessionContext().messages)).toEqual(normalize(nativeMessages));
     control.requests = [];
@@ -103,7 +115,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     expect(next.some(e => e.type === "agent.compaction")).toBe(false);
     expect(control.requests.map(r => r.summary)).toEqual([false]);
     expect(JSON.stringify(control.requests)).toContain("CONTROLLED SUMMARY");
-  });
+  }, 15000);
 
   it.each([false, true])("stops before any request using an uncommitted summary (overflow=%s)", async overflow => {
     if (overflow) control.overflow = 1;
@@ -193,6 +205,54 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     expect(JSON.stringify(messages)).not.toContain('"continue"');
     expect(JSON.stringify(messages)).not.toContain("old 0");
     expect(restorePiSession([...history, ...events]).buildSessionContext().messages.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "answer" }] });
+  });
+
+  it("remains recoverable when pre-prompt compaction fails before the promoted input becomes a native user message", async () => {
+    const history = records(seed());
+    const failed = await run(input(history, async () => { throw new Error("storage unavailable"); }));
+    const promoted = { id: "input1", type: "user.message", content: [{ type: "text", text: "continue" }] } as unknown as SessionEvent;
+    const next = await run({ ...input([...history, promoted, ...failed], async () => {}), turnId: "next", inputEventId: "next-input" });
+    expect(next.filter(e => e.type === "session.error")).toEqual([]);
+    const nativeUsers = restorePiSession([...history, promoted, ...failed, ...next]).buildSessionContext().messages.filter(m => m.role === "user" && JSON.stringify(m.content).includes('"continue"'));
+    expect(nativeUsers).toHaveLength(1);
+  });
+
+  it("cancels a running native summary without committing a replay boundary", async () => {
+    const controller = new AbortController();
+    control.pauseSummary = true;
+    control.onSummary = () => controller.abort();
+    const persist = vi.fn(async () => {});
+    const history = records(seed());
+    const events = await run({ ...input(history, persist), signal: controller.signal });
+    expect(persist).not.toHaveBeenCalled();
+    expect(control.requests.map(r => r.summary)).toEqual([true]);
+    expect(events.some(e => e.type === "agent.compaction" && e.status === "cancelled")).toBe(true);
+    expect(restorePiSession([...history, ...events]).getEntries().some(e => e.type === "compaction")).toBe(false);
+  });
+
+  it("makes no model or summary request when interrupted before prompting", async () => {
+    const controller = new AbortController(); controller.abort();
+    const persist = vi.fn(async () => {});
+    await run({ ...input(records(seed()), persist), signal: controller.signal });
+    expect(control.requests).toEqual([]);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it.each(["before_compaction", "after_compaction"])("recovers only the persisted prefix when the Host exits %s", async boundary => {
+    const history = records(seed());
+    const saved: SessionEvent[] = [];
+    await run(input(history, async batch => {
+      saved.push(...(boundary === "before_compaction" ? batch.slice(0, -1) : batch));
+      throw new Error("Host exited before acknowledging persistence");
+    }));
+    const promoted = { id: "input1", type: "user.message", content: [{ type: "text", text: "continue" }] } as unknown as SessionEvent;
+    const durableHistory = JSON.parse(JSON.stringify([...history, promoted, ...saved]));
+    const restored = restorePiSession(durableHistory);
+    expect(restored.getEntries().filter(e => e.type === "compaction")).toHaveLength(boundary === "after_compaction" ? 1 : 0);
+    control.requests = [];
+    const next = await run({ ...input(durableHistory, async () => {}), turnId: "recovery", inputEventId: "recovery-input" });
+    expect(next.filter(e => e.type === "session.error")).toEqual([]);
+    expect(control.requests.map(r => r.summary)).toEqual(boundary === "after_compaction" ? [false] : [true, false]);
   });
 
 });

@@ -21,3 +21,14 @@ it("does not report unmatched failures or abandoned starts as success", () => {
   ]).messages.filter(m => m.role === "compaction");
   expect(messages.map(m => m.status)).toEqual(["interrupted", "failed"]);
 });
+it.each(["failed", "cancelled"])("keeps a committed summary completed after a later %s acknowledgement", status => {
+  const messages = processEventsToMessages([
+    event(1, "agent.compaction", { compactionId: "c1", status: "started", reason: "threshold", turnId: "t1" }),
+    event(2, "agent.context_entry", { compactionId: "c1", entry: { id: "entry1", type: "compaction", summary: "Durable summary", tokensBefore: 123 } }),
+    event(3, "agent.compaction", { compactionId: "c1", status, errorMessage: "acknowledgement lost" }),
+  ]).messages;
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({ role: "compaction", status: "completed", text: "Durable summary" });
+  expect(messages[0].compaction?.errorMessage).toBeUndefined();
+  expect(messages[0].compaction?.completionWarning).toBe("acknowledgement lost");
+});

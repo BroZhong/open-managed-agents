@@ -55,4 +55,23 @@ describe("Pi event-log reconstruction through the native SessionManager", () => 
     expect(restored.getEntries().filter(e => e.type === "compaction")).toHaveLength(2);
   });
 
+  it("does not replay display-only results for an Interrupted Turn's unexecuted partial tool", () => {
+    const manager = SessionManager.inMemory();
+    manager.appendMessage({ ...assistant("partial", 20), stopReason: "aborted", content: [{ type: "toolCall", id: "partial", name: "read", arguments: {} }] });
+    const history = [...manager.getEntries().map(record),
+      { id: "partial-call", type: "agent.tool_use", turnId: "t1", toolUseId: "partial", name: "read", input: {}, inputIncomplete: true },
+      { id: "partial-result", type: "agent.tool_result", turnId: "t1", toolUseId: "partial", isError: true, content: [{ type: "text", text: "Tool was not executed" }] },
+    ] as SessionEvent[];
+    expect(restorePiSession(history).buildSessionContext().messages).toEqual(manager.buildSessionContext().messages);
+  });
+
+  it("recovers a Host-created tool result with the native requesting tool's name", () => {
+    const manager = SessionManager.inMemory();
+    manager.appendMessage({ ...assistant("", 20), stopReason: "toolUse", content: [{ type: "toolCall", id: "delegated", name: "Agent", arguments: {} }] });
+    const history = [...manager.getEntries().map(record),
+      { id: "recovered", type: "agent.tool_result", toolUseId: "delegated", content: [{ type: "text", text: "durable result" }] },
+    ] as SessionEvent[];
+    expect(restorePiSession(history).buildSessionContext().messages.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "delegated", toolName: "Agent" });
+  });
+
 });

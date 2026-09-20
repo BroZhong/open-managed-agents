@@ -2,8 +2,8 @@ import type { SessionEvent } from "./types";
 
 export interface CompactionView {
   compactionId: string;
-  status: string;
-  reason?: string;
+  status: "started" | "retrying" | "completed" | "failed" | "cancelled" | "interrupted";
+  reason?: "manual" | "threshold" | "overflow";
   summary?: string;
   tokensBefore?: number;
   tokensBeforeSource?: "usage" | "estimate";
@@ -11,6 +11,7 @@ export interface CompactionView {
   usage?: unknown;
   willRetry?: boolean;
   errorMessage?: string;
+  completionWarning?: string;
   retryErrors?: string[];
   attempt?: number;
   maxAttempts?: number;
@@ -22,6 +23,7 @@ export interface CompactionView {
 export function projectCompactions(events: SessionEvent[]): Map<number, CompactionView> {
   const records = new Map<string, CompactionView>();
   const seen = new Set<number>();
+  const committed = new Set<string>();
   for (const event of events) {
     if (seen.has(event.seq)) continue;
     seen.add(event.seq);
@@ -30,9 +32,16 @@ export function projectCompactions(events: SessionEvent[]): Map<number, Compacti
       const id = data.compactionId ?? data.entry?.id;
       if (!id) continue;
       const previous = records.get(id);
-      const next = { ...previous, ...data, compactionId: id, seq: previous?.seq ?? event.seq, status: data.status ?? "completed" };
+      const next: CompactionView = { ...previous, ...data, compactionId: id, seq: previous?.seq ?? event.seq, status: data.status ?? "completed" };
       if (data.status === "retrying" && data.errorMessage) next.retryErrors = [...(previous?.retryErrors ?? []), data.errorMessage];
-      if (data.entry) Object.assign(next, { status: "completed", summary: data.entry.summary, tokensBefore: data.entry.tokensBefore, usage: data.entry.usage });
+      if (data.entry) {
+        committed.add(id);
+        Object.assign(next, { summary: data.entry.summary, tokensBefore: data.entry.tokensBefore, usage: data.entry.usage });
+      }
+      if (committed.has(id)) {
+        if (data.status === "failed" || data.status === "cancelled") next.completionWarning = data.errorMessage ?? `Subsequent processing ${data.status}.`;
+        next.status = "completed";
+      }
       // Retry diagnostics stay visible, but a completed result has no failure.
       if (next.status === "completed") delete next.errorMessage;
       records.set(id, next);

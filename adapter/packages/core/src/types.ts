@@ -188,6 +188,13 @@ interface BaseEvent {
 }
 
 /** Versioned runtime records are opaque to the Host; the Pi Adapter validates/replays them. */
+export interface AgentContextStartEvent extends BaseEvent {
+  type: "agent.context_start";
+  sdk: "pi@0.83.0";
+  turnId: string;
+  inputEventId?: string;
+}
+
 export interface AgentContextEntryEvent extends BaseEvent {
   type: "agent.context_entry";
   sdk: "pi@0.83.0";
@@ -321,6 +328,7 @@ export interface AgentToolUseEvent extends BaseEvent {
 export interface AgentToolResultEvent extends BaseEvent {
   type: "agent.tool_result";
   toolUseId: string;
+  name?: string;
   content: ContentBlock[];
   isError?: boolean;
 }
@@ -408,6 +416,7 @@ export type StreamEvent =
 // ─── Union ───────────────────────────────────────────────────────────────────
 
 export type SessionEvent =
+  | AgentContextStartEvent
   | AgentContextEntryEvent
   | AgentCompactionEvent
   | LifecycleEvent

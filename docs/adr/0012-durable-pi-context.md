@@ -18,6 +18,9 @@ journal inside the existing platform event log. `agent.context_entry` records
 carry a version discriminator (`pi@0.83.0`), the native entry and its original
 identity, parent, timestamp, message structure, model origin, usage and supported
 signatures. They also record the promoted input identity where applicable.
+`agent.context_start` records attempted-input ownership before SDK initialization
+or prompting. A pre-prompt failure or crash must not turn the unmatched display
+input into a legacy message inserted ahead of an already-persisted native chain.
 Native entry IDs are preserved on replay rather than regenerated: compaction
 `firstKeptEntryId` therefore references a durable identity. No Pi JSONL is used.
 
@@ -47,6 +50,10 @@ no request can use an uncommitted summary. Native summary failures and retries
 retain their upstream behavior. This callback adds durability, not a second
 compaction policy. Standalone Adapter users must provide `persistContext` to
 allow successful compaction.
+
+Interrupt invokes both Pi's `abortCompaction()` and its general `abort()`; the
+latter alone does not cancel a summary request. Aborted operations are checked
+before subsequent model requests and before committing the compaction boundary.
 
 The compaction entry itself is commit evidence. A crash after its write and
 before the SDK end event does not lose the summary or require reapplying it.

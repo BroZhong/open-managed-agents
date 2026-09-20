@@ -364,6 +364,7 @@ describe("Host-owned delegation through the Session Router", () => {
   it("restores a persisted wait checkpoint into the original parent Turn without rerunning its tool", async () => {
     let continuation: AdapterInput | undefined;
     const compacted = event("agent.context_entry", { sdk: "pi@0.83.0", turnId: "original", entry: { type: "compaction", id: "summary1", summary: "checkpoint summary", firstKeptEntryId: "kept" } });
+    const contextStart = event("agent.context_start", { sdk: "pi@0.83.0", inputEventId: "promoted", turnId: "original" });
     const started = event("agent.compaction", { compactionId: "compact1", status: "started", reason: "threshold" });
     const h = await harness({ async *run(input) {
       if (input.execution?.isChild) { yield text("recovered queued child"); return; }
@@ -378,11 +379,12 @@ describe("Host-owned delegation through the Session Router", () => {
     const promoted = await h.stores.eventLogStore.append(h.parent.id, { type: pending.type, data: pending.data, sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pending.id}`, pendingFence: fence });
     const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
     const call = tool("restored-call");
-    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [started, compacted, compacted, call] } }, fence);
+    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [contextStart, started, compacted, compacted, call] } }, fence);
     await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
     await h.router.recoverPendingEvents();
     expect(await h.router.waitForIdle(4000)).toBe(true);
     expect(continuation?.turnId).toBe(originalTurn);
+    expect(continuation?.history.filter(e => e.type === "agent.context_start")).toHaveLength(1);
     expect(continuation?.history.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
     expect(continuation?.history.find(e => e.type === "agent.context_entry")).toMatchObject({ entry: { summary: "checkpoint summary" } });
     expect(continuation?.history.filter(e => e.type === "agent.compaction")).toHaveLength(1);

@@ -14,6 +14,7 @@ export type {
   // Input
   AdapterInput,
   AgentContextEntryEvent,
+  AgentContextStartEvent,
   AgentCompactionEvent,
   AdapterExecution,
   DelegationInstruction,

@@ -328,6 +328,7 @@ export class PiAgentAdapter implements Adapter {
         },
         compactionInfo: () => translator.activeCompaction,
         async beforeModelStep() {
+          input.signal?.throwIfAborted();
           if (maxSteps !== undefined && steps >= maxSteps) {
             budgetExceeded = true;
             throw new Error(`Model step budget exhausted (${maxSteps})`);
@@ -339,7 +340,9 @@ export class PiAgentAdapter implements Adapter {
       // Translate synchronously, before a following tool execute callback can
       // register a durable wait. The snapshot and emitted events share IDs.
       const unsubscribe = session.subscribe((event) => {
-        for (const translated of translator.processEvent(event)) {
+        const observed = event.type === "compaction_end" && !event.result && input.signal?.aborted
+          ? { ...event, aborted: true } : event;
+        for (const translated of translator.processEvent(observed)) {
           if (!translated.type.includes("_stream_") && !translated.type.endsWith("_chunk")) checkpointEvents.push(translated);
           queue.push(translated);
         }
@@ -369,6 +372,7 @@ export class PiAgentAdapter implements Adapter {
       }
 
       try {
+        if (signal?.aborted) return;
         // Fire the turn. prompt() resolves after Pi has finished the whole
         // operation, including automatic retries and overflow compaction /
         // continuation; output arrives via the subscription. A rejection here
@@ -504,6 +508,10 @@ export class PiAgentAdapter implements Adapter {
       // The in-memory manager writes no JSONL. Its Session id also preserves
       // provider cache routing affinity across Turns.
       const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
+      // Ownership must survive auth failure, compaction, or process loss before
+      // Pi appends the prompted user message. Display input is not native input.
+      args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
+        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
       let inputRecorded = false;
       sessionManager.onEntryAppended = (entry) => {
         // Compaction entries pass an awaited Host commit barrier below.
@@ -542,11 +550,16 @@ export class PiAgentAdapter implements Adapter {
           ...args.compactionInfo(),
           tokensBeforeSource: measured !== undefined && measured === entry.tokensBefore ? "usage" : "estimate",
         };
-        const context = args.checkpoint().filter(e => e.type === "agent.context_entry" || e.type === "agent.compaction");
+        const context = args.checkpoint().filter(e => e.type === "agent.context_start" || e.type === "agent.context_entry" || e.type === "agent.compaction");
         await args.input.persistContext([...context, event]);
         args.emitContext(event);
       };
-      session.agent.streamFunction = withGatewayErrors(session.agent.streamFunction);
+      const streamFunction = withGatewayErrors(session.agent.streamFunction);
+      session.agent.streamFunction = (model, context, options) => {
+        // Also gates native summary requests, which bypass transformContext.
+        args.input.signal?.throwIfAborted();
+        return streamFunction(model, context, options);
+      };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
       const transformContext = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {
@@ -585,7 +598,12 @@ export class PiAgentAdapter implements Adapter {
         subscribe: active.subscribe.bind(active),
         prompt: active.prompt.bind(active),
         continue: session.continue.bind(session),
-        abort: active.abort.bind(active),
+        abort() {
+          // Pi exposes separate cancellation for summary requests. Its general
+          // abort waits for idle but does not cancel a running compaction.
+          session.abortCompaction();
+          return active.abort();
+        },
         async dispose() {
           if (disposed) return;
           disposed = true;

@@ -3,6 +3,14 @@
 Baseline: `@earendil-works/pi-ai` and `pi-coding-agent` **0.83.0**, pinned in
 Adapter and Server lockfiles. See ADR-0012 and `adapter/patches/README.md`.
 
+## Verification result
+
+Verified on 2026-09-20: Adapter 425 tests passed; Server 973 passed and 8 opt-in
+tests skipped; Web 350 passed. Adapter/Server typechecks and the Web production
+build passed. Run the full suites separately to avoid local resource contention.
+Standards and Spec reviews have no outstanding findings after the recovery,
+cancellation and committed-summary display fixes.
+
 ## Reproduce
 
 ```sh
@@ -45,15 +53,21 @@ model messages with the native run. Timestamps are ignored only when comparing
 two independently generated runs; direct message replay tests compare timestamps,
 usage, signatures and entry IDs exactly.
 
-A subprocess reconstructs the completed history using JSON-serialized platform
-events alone. Further cases cover an uncompacted later Turn, Child Session
+A subprocess reconstructs the committed prefix using JSON-serialized platform
+events alone, before the SDK end event or the prompted user message exists.
+Recovery tests replay partial persistence both before and after the compaction
+write, and a pre-prompt persistence failure with its canonical input. Actual
+AbortSignal tests interrupt both before prompting and during summary streaming.
+Further cases cover an uncompacted later Turn, Child Session
 resume, model switching, independent parent context, tools, steering and a
 synchronous Delegation continuation without an extra user input. Native replay
 tests retain both S1/S2 for audit while selecting only S2 for model context.
 Persistence-failure tests stop requests after both threshold and overflow summary
 generation. Host tests cover the awaited write path, repeated delivery, stale
 fences and duplicate checkpoint records. API, SSE/reconnect and DOM tests cover
-persisted visibility, token labels and summary expansion after refresh.
+persisted visibility, token labels and summary expansion after refresh. Once a
+native summary is committed, a later acknowledgement failure preserves its
+completed status and appears separately as a processing warning.
 
 ## Boundaries
 

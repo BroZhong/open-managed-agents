@@ -7,13 +7,22 @@ import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 export function restorePiSession(history: SessionEvent[], cwd?: string, id?: string): SessionManager {
   const manager = SessionManager.inMemory(cwd, id ? { id } : undefined);
   const native = history.filter(e => e.type === "agent.context_entry");
-  const inputs = new Set(native.map(e => e.inputEventId).filter(Boolean));
+  const inputs = new Set(history.filter(e => e.type === "agent.context_entry" || e.type === "agent.context_start").map(e => e.inputEventId).filter(Boolean));
   const assistantTurns = new Set<string>();
   const toolResults = new Set<string>();
+  const toolNames = new Map<string, string>();
+  const unexecutedTools = new Set<string>();
   const instructions = new Set<string>();
   for (const event of native) {
     const entry = event.entry as SessionEntry;
-    if (entry.type === "message" && entry.message.role === "assistant") assistantTurns.add(event.turnId);
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      assistantTurns.add(event.turnId);
+      for (const block of entry.message.content) {
+        if (block.type !== "toolCall") continue;
+        toolNames.set(block.id, block.name);
+        if (entry.message.stopReason === "aborted" || entry.message.stopReason === "error") unexecutedTools.add(block.id);
+      }
+    }
     if (entry.type === "message" && entry.message.role === "toolResult") toolResults.add(entry.message.toolCallId);
     if (entry.type === "custom_message" && entry.customType === "subagent.instruction") {
       instructions.add((entry.details as { instructionId: string }).instructionId);
@@ -40,9 +49,12 @@ export function restorePiSession(history: SessionEvent[], cwd?: string, id?: str
       const data = event as SessionEvent & { turnId?: string; toolUseId?: string; instructionId?: string };
       if (inputs.has(event.id)) continue;
       if (["agent.message", "agent.tool_use", "agent.mcp_tool_use"].includes(event.type) && data.turnId && assistantTurns.has(data.turnId)) continue;
-      if (data.toolUseId && toolResults.has(data.toolUseId) && ["agent.tool_result", "agent.mcp_tool_result"].includes(event.type)) continue;
+      if (data.toolUseId && (toolResults.has(data.toolUseId) || unexecutedTools.has(data.toolUseId)) && ["agent.tool_result", "agent.mcp_tool_result"].includes(event.type)) continue;
       if (data.instructionId && instructions.has(data.instructionId)) continue;
-      if (["user.message", "delegation.input", "subagent.result_claimed", "subagent.instruction", "agent.message", "agent.tool_use", "agent.mcp_tool_use", "agent.tool_result", "agent.mcp_tool_result"].includes(event.type)) legacy.push(event);
+      if (["user.message", "delegation.input", "subagent.result_claimed", "subagent.instruction", "agent.message", "agent.tool_use", "agent.mcp_tool_use", "agent.tool_result", "agent.mcp_tool_result"].includes(event.type)) {
+        legacy.push(event.type === "agent.tool_result" && !event.name && toolNames.has(event.toolUseId)
+          ? { ...event, name: toolNames.get(event.toolUseId) } : event);
+      }
     }
   }
   flushLegacy();
