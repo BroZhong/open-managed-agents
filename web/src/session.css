@@ -50,7 +50,7 @@
 .session-send-button { cursor: pointer; }
 .session-composer-help { margin: 7px 0 0; text-align: center; font-size: 10px; color: var(--color-fg-subtle); }
 .session-usage-footer { flex-shrink: 0; border-top: 1px solid var(--color-border); padding: 8px 16px; }
-.session-usage-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; width: min(100%, 760px); margin-inline: auto; border: 0; border-radius: 0; background: transparent; }
+.session-usage-metrics { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr); gap: 8px 12px; width: min(100%, 760px); margin-inline: auto; border: 0; border-radius: 0; background: transparent; }
 .session-usage-metrics > div { min-width: 0; padding: 0; border: 0; }
 .session-usage-metrics dd { overflow-wrap: anywhere; }
 .session-queued-input { display: grid; gap: 5px; max-height: 140px; overflow-y: auto; margin-bottom: 8px; }

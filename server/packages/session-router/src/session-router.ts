@@ -1532,7 +1532,7 @@ export class SessionRouter {
           ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
           idempotencyKey: this.turnKey(
             pendingEvent.id,
-            this.delegations || event.type === "agent.context_start" || event.type === "agent.context_entry" || event.type === "agent.compaction"
+            this.delegations || event.type === "agent.context_start" || event.type === "agent.context_entry" || event.type === "agent.context_usage" || event.type === "agent.compaction"
               ? `event:${event.id}` : `event:${durableEventIndex++}`,
           ),
           pendingFence,

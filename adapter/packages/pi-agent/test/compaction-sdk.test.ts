@@ -81,6 +81,30 @@ afterEach(() => vi.unstubAllEnvs());
 beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
+  it("reports the resolved window, rebuilt post-compaction estimate, and fresh model usage", async () => {
+    const history = records(seed());
+    const committed: SessionEvent[] = [];
+    const events = await run(input(history, async batch => { committed.push(...batch); }));
+    expect(events.filter(event => event.type === "session.error")).toEqual([]);
+    const snapshots = events.filter(event => event.type === "agent.context_usage");
+    expect(snapshots[0]).toMatchObject({ contextWindow: 1000, tokens: 935, source: "sdk", model: `${model.provider}/${model.id}` });
+    const completedIndex = events.findIndex(event => event.type === "agent.compaction" && event.status === "completed");
+    const completed = events[completedIndex];
+    const after = events.slice(completedIndex + 1).find(event => event.type === "agent.context_usage");
+    expect(completed.type === "agent.compaction").toBe(true);
+    expect(after).toMatchObject({ contextWindow: 1000, source: "estimate",
+      tokens: completed.type === "agent.compaction" ? completed.estimatedTokensAfter : undefined });
+    expect(snapshots.at(-1)).toMatchObject({ contextWindow: 1000, tokens: 13, source: "sdk" });
+    expect(committed.findIndex(event => event.id === snapshots[0].id)).toBeGreaterThanOrEqual(0);
+    expect(committed.findIndex(event => event.id === snapshots[0].id)).toBeLessThan(committed.findIndex(event => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "compaction"));
+
+    // Reconnect after the durable compact boundary, before another response.
+    const boundary = events.findIndex(event => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "compaction");
+    const resumed = await run({ ...input([...history, ...events.slice(0, boundary + 1)], async () => {}), turnId: "resume", inputEventId: "resume" });
+    expect(resumed.filter(event => event.type === "session.error")).toEqual([]);
+    expect(resumed.find(event => event.type === "agent.context_usage")).toMatchObject({ contextWindow: 1000, source: "estimate" });
+    expect(resumed.filter(event => event.type === "agent.context_usage").at(-1)).toMatchObject({ tokens: 13, source: "sdk" });
+  });
   it("commits each new boundary when the native extension reports an older entry with equal summary text", async () => {
     const history = records(seed());
     const first = await run(input(history, async () => {}));
