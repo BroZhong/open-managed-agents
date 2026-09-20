@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SessionEvent } from "@open-managed-agents/adapter-core";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
@@ -6,6 +9,19 @@ import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 /** Rebuild the native tree using durable identities, with a legacy-only fallback. */
 export function restorePiSession(history: SessionEvent[], cwd?: string, id?: string): SessionManager {
   const manager = SessionManager.inMemory(cwd, id ? { id } : undefined);
+  const entries: SessionEntry[] = [];
+  const byId = new Map<string, SessionEntry>();
+  const append = (entry: SessionEntry) => {
+    const existing = byId.get(entry.id);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(entry)) throw new Error(`Conflicting Pi entry: ${entry.id}`);
+      return;
+    }
+    if (entry.parentId !== (entries.at(-1)?.id ?? null)) throw new Error(`Broken Pi entry chain: ${entry.id}`);
+    if (entry.type === "compaction" && !byId.has(entry.firstKeptEntryId)) throw new Error("Missing Pi compaction boundary");
+    entries.push(entry);
+    byId.set(entry.id, entry);
+  };
   const native = history.filter(e => e.type === "agent.context_entry");
   const inputs = new Set(history.filter(e => e.type === "agent.context_entry" || e.type === "agent.context_start").map(e => e.inputEventId).filter(Boolean));
   const assistantTurns = new Set<string>();
@@ -34,8 +50,8 @@ export function restorePiSession(history: SessionEvent[], cwd?: string, id?: str
     // These are compatibility messages, not evidence of missing native metadata.
     const key = createHash("sha256").update(JSON.stringify(legacy, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
       ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value)).digest("hex").slice(0, 24);
-    eventLogToAgentMessages(legacy).forEach((message, index) => manager.restoreEntry({
-      type: "message", id: `legacy_${key}_${index}`, parentId: manager.getLeafId(),
+    eventLogToAgentMessages(legacy).forEach((message, index) => append({
+      type: "message", id: `legacy_${key}_${index}`, parentId: entries.at(-1)?.id ?? null,
       timestamp: new Date(0).toISOString(), message,
     }));
     legacy = [];
@@ -44,7 +60,7 @@ export function restorePiSession(history: SessionEvent[], cwd?: string, id?: str
     if (event.type === "agent.context_entry") {
       flushLegacy();
       if (event.sdk !== "pi@0.83.0") throw new Error("Unsupported Pi context record version");
-      manager.restoreEntry(event.entry as SessionEntry);
+      append(event.entry as SessionEntry);
     } else {
       const data = event as SessionEvent & { turnId?: string; toolUseId?: string; instructionId?: string };
       if (inputs.has(event.id)) continue;
@@ -58,5 +74,17 @@ export function restorePiSession(history: SessionEvent[], cwd?: string, id?: str
     }
   }
   flushLegacy();
+  if (entries.length) {
+    // Public file import also works on an in-memory manager. The private,
+    // short-lived JSONL is only an import bridge; platform events own durability.
+    const directory = mkdtempSync(join(tmpdir(), "oma-pi-import-"));
+    try {
+      const path = join(directory, "session.jsonl");
+      writeFileSync(path, [manager.getHeader(), ...entries].map(entry => JSON.stringify(entry)).join("\n") + "\n", { mode: 0o600 });
+      manager.setSessionFile(path);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
   return manager;
 }

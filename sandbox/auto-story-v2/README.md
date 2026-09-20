@@ -1,6 +1,6 @@
 # auto-story-v2 sandbox image
 
-This recipe builds the sole maintained `auto-story-v2` template (auto-story 0.2.1) for the Shanghai `agent-platform` cluster
+This recipe builds the sole maintained `auto-story-v2` template (auto-story 0.2.2) for the Shanghai `agent-platform` cluster
 from the original ACS `code-interpreter` image, pinned by digest. It does not
 derive from the OpenMontage image: OpenMontage, Whisper, their source trees,
 and model weights are absent from every added layer. FFmpeg is compiled with
@@ -54,10 +54,12 @@ and executable hashes are recorded alongside it. A later build can receive
 updated transitive Python/Debian dependencies; the source archive hashes and
 the component versions and verified upstream inputs remain pinned.
 
-Pi's native `grep` and `find` run these sandbox binaries through the pinned
-[Pi process hooks](../../adapter/patches/README.md). The adapter and Server
-workspaces both need the patch. Missing rg/fd is a tool error; there is no
-Host search or Python matching fallback, and no runtime tool download.
+Pi 0.83.0 is installed unmodified at `/opt/oma-pi-tools` using the committed npm
+lockfile. The Host registers public custom tools and invokes these native tool
+factories through ToolExecutor; model inference stays on Host. Image acceptance
+executes all seven tools as the ordinary user. Upgrade/rebuild Sandboxes before
+releasing the matching Host version; older Sandboxes lack the required runtime.
+See [ADR-0013](../../docs/adr/0013-public-pi-sdk-boundary.md).
 
 FFmpeg includes H.264 (x264 and OpenH264)/H.265, VP8/VP9, AV1, AAC, MP3, Opus, Vorbis and WebP
 support, plus text/subtitle filters and DejaVu/Noto CJK fonts. The compiler and
@@ -90,7 +92,7 @@ helpers, `prepare-search-binaries.py` and `prepare-ossutil.py`, must remain besi
 the auto-story-v2 directory. Python wheels and Debian
 packages still need a reachable package mirror during the build.
 
-The default tag is `auto-story-v2-0.2.1` in
+The default tag is `auto-story-v2-0.2.2` in
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 `REGISTRY`, `TAG`, `VERSION`, `BUILD_JOBS`, `BASE_IMAGE`, and `PIP_INDEX_URL`
 may be overridden. A base override must retain the clean ACS runtime contract

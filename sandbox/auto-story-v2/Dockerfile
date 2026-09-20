@@ -30,7 +30,7 @@ RUN echo 'cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  /tmp
 
 FROM ${BASE_IMAGE} AS runtime
 USER root
-ARG IMAGE_VERSION=0.2.1
+ARG IMAGE_VERSION=0.2.2
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV HOME=/home/user \
     WORKSPACE_DIR=/home/user/workspace \
@@ -62,6 +62,8 @@ RUN sed -i \
     install -d -o user -g user /home/user/.cache/npm /home/user/.cache/pip \
       /home/user/.local/npm /home/user/.local/oma-node \
       /home/user/.local/oma-python /home/user/.local/venvs
+COPY pi-tools/package.json pi-tools/package-lock.json /opt/oma-pi-tools/
+RUN cd /opt/oma-pi-tools && npm ci --omit=dev --no-audit --no-fund
 COPY requirements.txt versions.json /opt/auto-story/
 # Install Gemini independently; expose scientific packages from the clean ACS
 # base after this venv's packages, without modifying Jupyter's environment.
@@ -88,6 +90,7 @@ RUN chmod 0755 /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin
     sha256sum /usr/local/bin/rg /usr/local/bin/fd > /opt/pi-search/tool-sha256.txt && \
     sha256sum /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin/ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ossutil > /opt/auto-story/tool-sha256.txt && \
     dpkg-query -W > /opt/auto-story/debian-packages.txt
+COPY pi-tools/smoke.mjs /opt/oma-pi-tools/smoke.mjs
 COPY smoke.py /usr/local/bin/auto-story-smoke
 RUN chmod 0755 /usr/local/bin/auto-story-smoke && \
     su -s /bin/sh user -c 'cd /home/user && env -i HOME=/home/user PATH=/usr/local/bin:/usr/bin:/bin auto-story-smoke'

@@ -12,7 +12,8 @@ ADR-0001 records a historical deployment proposal, not a supported release
 path. Current Sandbox templates live under root `sandbox/`; shared deployment
 infrastructure lives under `deploy/`.
 
-For Pi message fidelity and automatic compaction, ADR-0012 is authoritative.
+For Pi SDK integration and Sandbox tool execution, ADR-0013 is authoritative;
+ADR-0012 retains the message fidelity and automatic compaction requirements.
 For Host-managed MCP work, ADR-0006 is authoritative. For recurring Loop
 dispatch and its Session ownership semantics, ADR-0007 is authoritative.
 For mounted Workspace storage and Sandbox paths, ADR-0008 supersedes the

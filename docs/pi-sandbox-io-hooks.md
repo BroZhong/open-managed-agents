@@ -1,74 +1,32 @@
-# Pi native I/O forwarding
+# Pi tools through the public SDK
 
-The seven managed Pi tools retain the factories, schemas, matching, image
-processing, pagination, edit algorithms and result rendering from pinned Pi
-0.83.0. `buildCustomTools` supplies only their execution and filesystem hooks.
-This is the Tool-mode boundary described by ADR-0005, not a general plugin or
-filesystem virtualization layer.
+The seven managed tools use Pi 0.83.0's public `customTools` interface. Host
+reuses their schema and prompt metadata; actual native execution occurs in a
+short-lived Node process inside the ToolExecutor's Sandbox. No native tool
+execute or filesystem-aware TUI preview runs on Host. There is no Pi SDK patch.
 
-## Filesystem boundary
+`custom-tools.ts` carries a versioned JSON request and streaming response through
+the existing ToolExecutor. `sandbox-tool-runtime.ts` calls only public SDK tool
+factories. Pi owns paths, matching, image processing, pagination, edit algorithms,
+search arguments, truncation and tool results using the Sandbox's own OS.
 
-`ToolExecutor.fileSystem` provides exact bytes, access checks, `stat`, `lstat`,
-`realpath`, immediate directory entries, recursive directory creation and
-temporary output files. Pi requires this capability; it never substitutes the
-recursive, regular-file-only Workspace persistence `list` for filesystem
-metadata. Legacy text read/write and persistence methods retain their existing
-contracts.
+Workspace remains `/home/user/workspace`, home is `/home/user`, and absolute
+Skill projection and temporary output paths remain accessible inside Sandbox.
+Bash full output lives in Sandbox and is readable by the same native read tool.
+The Adapter keeps remote canonical-path locks across write/edit processes and
+separate queues per executor filesystem.
 
-The Local executor uses Node filesystem operations. The Sandbox backend executes
-Node filesystem operations inside the sandbox and carries byte payloads and
-structured errors across the transport. This preserves soft links, empty
-directories, invalid UTF-8, BOMs and native error codes without trying to infer
-them from a file inventory. Mutation cancellation settles the backend operation
-before releasing the mutation queue.
+The image installs a lockfile-pinned, unmodified SDK at `/opt/oma-pi-tools`.
+Runtime version mismatch and missing installation fail closed. Build/verify the
+new Sandbox image and rebuild existing bindings before shipping the Host change;
+old images do not silently fall back to Host execution. For LocalToolExecutor
+experiments, set `OMA_PI_TOOL_MODULE` in its child environment to an installed Pi
+0.83.0 `dist/index.js` (the test suite does this explicitly).
 
-Paths resolve against `/home/user`; all tool `~` expansion uses that same home.
-Absolute Read-only Projection paths and sandbox temporary files remain usable.
-The sandbox itself is the production isolation boundary. Workspace persistence
-still syncs only the Workspace; temporary output outside it is ephemeral.
+Tests compare native tool results across in-process and executor-process paths,
+and separately forbid Host I/O during every registered tool and renderer.
+Equivalent OS, binaries and environment are required for exact output parity.
+The E2B byte-stream patch remains a transport concern; no third-party extension
+fs/child_process code is virtualized by this protocol.
 
-## Supplementary Pi hooks
-
-The pinned dependency patch adds the seams that upstream operations do not
-cover:
-
-| Native tool behavior | Injected hook |
-| --- | --- |
-| Read path and Unicode candidate probes | `ReadOperations.exists`, with an injected access fallback |
-| Home expansion | `homeDir` on all path tools |
-| Write/edit serialization and symlink aliases | `mutationScope` plus `operations.realpath` |
-| Bash full output files | asynchronous `createOutputSink` with `write` and `close` |
-| Bash environment | explicit `env`, leaving backend environment ownership with the Sandbox |
-| Grep/find child processes | `spawn`, preserving native rg/fd arguments and result parsing |
-
-Mutation queues are scoped by the stable filesystem object, shared across tool
-instances in a Session and isolated from other executors. Canonical paths are
-resolved by that filesystem, never by Host `realpath`. For a new file, the queue
-key resolves its nearest existing ancestor, keeping the key stable while a
-pending write makes the file visible, including through symlinked parents.
-
-Bash uses `/bin/bash`, observed exit status, and Pi's timeout validation. A
-deadline aborts the executor and waits for its process completion report before
-returning Pi's timeout result. Both timeout and user cancellation retain prior
-command output. An uncertain transport failure is not converted into a claimed
-successful process termination. Full output is saved through the injected
-filesystem and can be opened by the same `read` tool.
-
-The E2B patch exposes original stdout/stderr bytes alongside its existing text
-callbacks. Pi consumes bytes; other executor consumers can still consume text.
-Small spill writes are coalesced, but upstream synchronous output callbacks do
-not provide backpressure and a slow sink can accumulate pending buffers.
-
-## Scope of parity
-
-These hooks forward the built-in tool operations. They do not intercept arbitrary
-`fs` or `child_process` calls made by third-party extensions, nor remove native
-macOS/Linux differences in rg, shell utilities, locale or permissions. The E2B
-command transport also retains its login-shell setup and backend process-kill
-contract. Equivalent OS, binaries, environment and permissions remain necessary
-for exact native output comparisons.
-
-Regression tests compare native factories with the injected tools on the same
-fixtures, trap Host filesystem bypasses, verify queue isolation and symlink
-aliases, and read back full Bash output. Backend tests separately exercise the
-filesystem transport and process output/exit lifecycle.
+See [ADR-0013](adr/0013-public-pi-sdk-boundary.md).

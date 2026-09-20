@@ -81,6 +81,22 @@ afterEach(() => vi.unstubAllEnvs());
 beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
+  it("commits each new boundary when the native extension reports an older entry with equal summary text", async () => {
+    const history = records(seed());
+    const first = await run(input(history, async () => {}));
+    const manager = restorePiSession([...history, ...first]);
+    for (const entry of seed().getEntries()) {
+      if (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) manager.appendMessage({ ...entry.message, timestamp: Date.now() + 1000 });
+    }
+    const replay = records(manager);
+    const second = await run({ ...input(replay, async () => {}), turnId: "second", inputEventId: "second" });
+    expect(second.filter(event => event.type === "session.error")).toEqual([]);
+    const restored = restorePiSession([...replay, ...second]);
+    const summaries = restored.getEntries().filter(entry => entry.type === "compaction");
+    expect(summaries).toHaveLength(2);
+    expect(summaries[0].summary).toBe(summaries[1].summary);
+    expect(summaries[0].id).not.toBe(summaries[1].id);
+  });
   it("matches native threshold requests and restores committed context across later Turns", async () => {
     const original = seed();
     const history = records(original);
@@ -183,6 +199,27 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
       expect(JSON.stringify(control.requests)).not.toContain("CONTROLLED SUMMARY");
       expect(JSON.stringify(control.requests)).not.toContain("verify result");
     } finally { await dispose(); }
+  });
+
+  it("continues with steering without a synthetic compaction boundary or broken replay chain", async () => {
+    const history = records(seed(false));
+    let delivered = false;
+    const events = await run({ ...input(history, async () => {}), continuation: { toolResults: [] },
+      execution: { isChild: true, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "continue-steer", message: "verify continuation" }]), applied: async () => {} } } });
+    expect(events.filter(e => e.type === "session.error")).toEqual([]);
+    const restored = restorePiSession([...history, ...events]);
+    expect(restored.getBranch().some(entry => entry.type === "custom_message" && entry.customType === "oma.continuation")).toBe(false);
+    expect(JSON.stringify(restored.buildSessionContext().messages)).toContain("verify continuation");
+    for (const entry of seed().getEntries()) {
+      if (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) restored.appendMessage({ ...entry.message, timestamp: Date.now() + 1000 });
+    }
+    control.requests = [];
+    const replay = records(restored);
+    const next = await run({ ...input(replay, async () => {}), turnId: "after-continuation", inputEventId: "next" });
+    expect(next.filter(e => e.type === "session.error")).toEqual([]);
+    expect(control.requests.some(r => r.summary)).toBe(true);
+    expect(JSON.stringify(control.requests)).not.toContain("oma.continuation");
+    expect(() => restorePiSession([...replay, ...next])).not.toThrow();
   });
 
   it("continues a recovered synchronous Delegation from its committed summary without another input", async () => {

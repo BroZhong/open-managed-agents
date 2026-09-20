@@ -3,6 +3,3 @@ packages:
 
 onlyBuiltDependencies:
   - esbuild
-
-patchedDependencies:
-  '@earendil-works/pi-coding-agent@0.83.0': patches/@earendil-works__pi-coding-agent@0.83.0.patch

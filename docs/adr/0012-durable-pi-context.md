@@ -2,6 +2,10 @@
 
 ## Status
 
+Implementation superseded by [ADR-0013](0013-public-pi-sdk-boundary.md): public
+SDK hooks, temporary import bridge and Adapter request gate replace the patch.
+The durability and replay requirements below remain applicable.
+
 Accepted. Supersedes ADR-0003's lossy reconstruction for newly produced Pi
 messages and its deferred compaction persistence decision. Extends ADR-0010's
 checkpoint protocol without adding automatic recovery of uncertain executions.

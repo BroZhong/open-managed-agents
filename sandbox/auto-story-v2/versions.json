@@ -1,5 +1,5 @@
 {
-  "imageVersion": "0.2.1",
+  "imageVersion": "0.2.2",
   "verifiedAt": "2026-09-09",
   "platform": "linux/amd64",
   "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
@@ -26,5 +26,9 @@
     "url": "https://github.com/volcengine/mediakit-cli/releases/download/v0.2.1/mediakit-cli_0.2.1_linux_amd64.tar.gz",
     "sha256": "8c25ebd7c9446813dabb27700a9d4357c7d2325e528fe9caab31696aa1326987",
     "binarySha256": "2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca"
+  },
+  "pi-coding-agent": {
+    "version": "0.83.0",
+    "lockfile": "pi-tools/package-lock.json"
   }
 }

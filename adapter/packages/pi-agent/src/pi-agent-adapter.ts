@@ -39,6 +39,8 @@ import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 import { withGatewayErrors } from "./gateway-error-stream.js";
 import { restorePiSession } from "./pi-context.js";
+import { PiContextJournal } from "./pi-context-journal.js";
+import { installContinuation } from "./pi-continuation.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -474,6 +476,17 @@ export class PiAgentAdapter implements Adapter {
     const mcpConfig = materializeMcpConfig(args.input.agent.mcpServers);
     let createdSession: { dispose(): Promise<void> | void } | undefined;
     try {
+      // Replay durable native identities into Pi's own context builder (ADR-0012).
+      // The import bridge removes its temporary JSONL. Its Session id preserves
+      // provider cache routing affinity across Turns.
+      const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
+      // Ownership must survive auth failure, compaction, or process loss before
+      // Pi appends the prompted user message. Display input is not native input.
+      args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
+        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
+      const journal = new PiContextJournal({ manager: sessionManager, input: args.input,
+        emit: args.emitContext, checkpoint: args.checkpoint, compactionInfo: args.compactionInfo });
+
       const resourceLoader = new DefaultResourceLoader({
         cwd,
         agentDir,
@@ -486,7 +499,7 @@ export class PiAgentAdapter implements Adapter {
         // never compete with the Host-owned tools, including in local dev.
         extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter(extension =>
           !["Agent", "get_subagent_result", "steer_subagent"].some(name => extension.tools.has(name))) }),
-        ...(customTools ? { extensionFactories: [createManagedSkillCommandExtension(skillDescriptors)] } : {}),
+        extensionFactories: [journal.extension, ...(customTools ? [createManagedSkillCommandExtension(skillDescriptors)] : [])],
         // When we inject the skills section ourselves (custom-tool path), skip
         // Pi's own skill loading so the section is not duplicated / re-gated.
         ...(injectSkillsIntoPrompt || args.input.execution?.isChild
@@ -504,26 +517,6 @@ export class PiAgentAdapter implements Adapter {
         .getExtensions()
         .runtime.flagValues.set("mcp-config", mcpConfig.path);
 
-      // Replay durable native identities into Pi's own context builder (ADR-0012).
-      // The in-memory manager writes no JSONL. Its Session id also preserves
-      // provider cache routing affinity across Turns.
-      const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
-      // Ownership must survive auth failure, compaction, or process loss before
-      // Pi appends the prompted user message. Display input is not native input.
-      args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
-        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
-      let inputRecorded = false;
-      sessionManager.onEntryAppended = (entry) => {
-        // Compaction entries pass an awaited Host commit barrier below.
-        if (entry.type === "compaction") return;
-        const isInput = entry.type === "message" && entry.message.role === "user" && !inputRecorded;
-        if (isInput) inputRecorded = true;
-        args.emitContext({
-          id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
-          sdk: "pi@0.83.0", turnId: args.input.turnId,
-          ...(isInput ? { inputEventId: args.input.inputEventId } : {}), entry: structuredClone(entry),
-        });
-      };
 
       const { session } = await createAgentSession({
         cwd,
@@ -537,27 +530,11 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
-      session.commitCompaction = async (entry) => {
-        if (!args.input.persistContext) throw new Error("Pi compaction requires a Host persistence barrier");
-        args.input.signal?.throwIfAborted();
-        const last = session.messages.at(-1);
-        const measured = last?.role === "assistant" && last.stopReason !== "error" && last.stopReason !== "aborted"
-          ? last.usage.totalTokens || last.usage.input + last.usage.output + last.usage.cacheRead + last.usage.cacheWrite
-          : undefined;
-        const event: SessionEvent = {
-          id: `pi_entry_${entry.id}`, timestamp: entry.timestamp, type: "agent.context_entry",
-          sdk: "pi@0.83.0", turnId: args.input.turnId, entry: structuredClone(entry),
-          ...args.compactionInfo(),
-          tokensBeforeSource: measured !== undefined && measured === entry.tokensBefore ? "usage" : "estimate",
-        };
-        const context = args.checkpoint().filter(e => e.type === "agent.context_start" || e.type === "agent.context_entry" || e.type === "agent.compaction");
-        await args.input.persistContext([...context, event]);
-        args.emitContext(event);
-      };
+      const continueSession = installContinuation(session);
       const streamFunction = withGatewayErrors(session.agent.streamFunction);
-      session.agent.streamFunction = (model, context, options) => {
+      session.agent.streamFunction = async (model, context, options) => {
         // Also gates native summary requests, which bypass transformContext.
-        args.input.signal?.throwIfAborted();
+        await journal.ready();
         return streamFunction(model, context, options);
       };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
@@ -595,9 +572,22 @@ export class PiAgentAdapter implements Adapter {
       const active = session as PiSessionLike;
       let disposed = false;
       return {
-        subscribe: active.subscribe.bind(active),
-        prompt: active.prompt.bind(active),
-        continue: session.continue.bind(session),
+        subscribe(listener) {
+          return active.subscribe(event => {
+            if (event.type === "compaction_end" && journal.failure) {
+              listener({ ...event, result: undefined, aborted: !!args.input.signal?.aborted,
+                errorMessage: journal.failure.message, willRetry: false });
+            } else listener(event);
+          });
+        },
+        async prompt(text, options) {
+          try { await active.prompt(text, options); await journal.ready(); }
+          finally { journal.capture(); }
+        },
+        async continue() {
+          try { await continueSession(); await journal.ready(); }
+          finally { journal.capture(); }
+        },
         abort() {
           // Pi exposes separate cancellation for summary requests. Its general
           // abort waits for idle but does not cancel a running compaction.

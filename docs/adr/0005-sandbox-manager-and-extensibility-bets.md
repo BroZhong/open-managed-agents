@@ -2,6 +2,9 @@
 
 ## Status
 
+Tool execution is further superseded by [ADR-0013](0013-public-pi-sdk-boundary.md):
+public SDK tools run inside Sandbox instead of patching their Host I/O.
+
 **Partially superseded by [ADR-0008](0008-oss-mounted-workspaces.md).** Workspace root, hydrate/sync/Baseline, checkpoint and file-change event decisions in sections 1–3 and 5 are superseded by ADR-0008. Sandbox Manager ownership, Tool-mode boundaries and Skills Read-only Projections remain accepted. The original decision below records history, not the current storage contract.
 
 Accepted. Extends ADR-0002 (Sandbox-as-Tool for Pi) — it names the lifecycle owner ADR-0002 left implicit and pins down which seams are real versus hypothetical.
