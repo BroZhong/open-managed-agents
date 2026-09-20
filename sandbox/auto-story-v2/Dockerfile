@@ -1,6 +1,7 @@
 # Clean ACS base: no OpenMontage layers, Whisper packages, or model weights.
 # Preserve the base's Jupyter entrypoint/CMD for ACK agent-runtime / E2B envd.
 ARG BASE_IMAGE=registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb
+FROM registry-vpc.cn-shanghai.aliyuncs.com/welltop/node-base@sha256:95e4ecefbd22c078698f15a5d979d0d3af5cfbdc464301fc11eb2ed6203244ba AS pi-node
 FROM ${BASE_IMAGE} AS ffmpeg-build
 USER root
 ARG BUILD_JOBS=6
@@ -62,6 +63,8 @@ RUN sed -i \
     install -d -o user -g user /home/user/.cache/npm /home/user/.cache/pip \
       /home/user/.local/npm /home/user/.local/oma-node \
       /home/user/.local/oma-python /home/user/.local/venvs
+# Pi 0.83 requires Node >=22.19; the clean ACS base still contains Node 20.
+COPY --from=pi-node /usr/local/bin/node /usr/local/bin/node
 COPY pi-tools/package.json pi-tools/package-lock.json /opt/oma-pi-tools/
 RUN cd /opt/oma-pi-tools && npm ci --omit=dev --no-audit --no-fund
 COPY requirements.txt versions.json /opt/auto-story/

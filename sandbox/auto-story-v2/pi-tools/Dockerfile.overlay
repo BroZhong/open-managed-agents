@@ -1,0 +1,11 @@
+FROM registry-vpc.cn-shanghai.aliyuncs.com/welltop/node-base@sha256:95e4ecefbd22c078698f15a5d979d0d3af5cfbdc464301fc11eb2ed6203244ba AS pi-node
+FROM registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:4595630a998eec424ca73c3d2842797177ac94459345d4c1f42c971d0ad30f1f
+USER root
+COPY --from=pi-node /usr/local/bin/node /usr/local/bin/node
+COPY package.json package-lock.json /opt/oma-pi-tools/
+RUN cd /opt/oma-pi-tools && npm ci --omit=dev --no-audit --no-fund
+COPY smoke.mjs /opt/oma-pi-tools/smoke.mjs
+RUN su -s /bin/sh user -c 'cd /home/user && node /opt/oma-pi-tools/smoke.mjs'
+LABEL org.opencontainers.image.version="0.3.0-pi0.83.0" \
+      org.opencontainers.image.revision="b597846f3abc" \
+      tech.welltop.pi-sdk.version="0.83.0"

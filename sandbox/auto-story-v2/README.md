@@ -7,10 +7,15 @@ and model weights are absent from every added layer. FFmpeg is compiled with
 `--disable-whisper`.
 
 The deployed image digest is recorded in [sandboxset.yaml](sandboxset.yaml).
+The September 21 test release uses `pi-tools/Dockerfile.overlay` to retain the
+existing live 0.3.0 image (including offline Whisper) while appending Node 22 and
+Pi. This is distinct from the clean recipe below; see the
+[release record](../../docs/verification/pi-public-sdk-release-2026-09-21.md).
 `versions.json` pins the inputs for future builds; build verification runs
 again for each release and is not implied by historical reports.
 
-The ACS Jupyter runtime, Node.js, and E2B startup contract are retained. Agent
+The ACS Jupyter runtime and E2B startup contract are retained. Node.js is upgraded
+to the Host's pinned 22.23.2 runtime because Pi 0.83 requires Node >=22.19. Agent
 commands use the mounted `/home/user/workspace`; Python on a minimal PATH runs the Gemini environment
 at `/opt/auto-story/venv`. Its packages take precedence, with `acs-base.pth`
 providing access to scientific packages from the clean ACS `/opt/venv` after
@@ -28,6 +33,8 @@ parity tests:
 
 | Component | Version | Source |
 | --- | --- | --- |
+| Node.js | 22.23.2 | Pinned Host node-base image in `versions.json` |
+| Pi Coding Agent SDK | 0.83.0 | `pi-tools/package-lock.json` |
 | vfs-cli | 0.3.15 | [Official distribution](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.15) |
 | FFmpeg / ffprobe | 9.0.1 | [Official releases](https://ffmpeg.org/download.html) |
 | Gemini Python SDK (`google-genai`) | 2.22.0 | [Official SDK release](https://github.com/googleapis/python-genai/releases/tag/v2.22.0) |
