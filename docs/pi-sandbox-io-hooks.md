@@ -2,7 +2,7 @@
 
 The seven managed Pi tools retain the factories, schemas, matching, image
 processing, pagination, edit algorithms and result rendering from pinned Pi
-0.80.10. `buildCustomTools` supplies only their execution and filesystem hooks.
+0.83.0. `buildCustomTools` supplies only their execution and filesystem hooks.
 This is the Tool-mode boundary described by ADR-0005, not a general plugin or
 filesystem virtualization layer.
 

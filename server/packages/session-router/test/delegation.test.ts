@@ -46,6 +46,30 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
 }
 
 describe("Host-owned delegation through the Session Router", () => {
+  it("commits runtime context before continuation, deduplicates delivery and fences late writes", async () => {
+    const context = event("agent.context_entry", { sdk: "pi@0.83.0", turnId: "first", entry: { type: "compaction", id: "durable", summary: "saved" } });
+    let persist: AdapterInput["persistContext"];
+    let runs = 0;
+    let nextHistory: SessionEvent[] = [];
+    const h = await harness({ async *run(input) {
+      if (++runs === 1) {
+        persist = input.persistContext;
+        await persist!([context]);
+        yield context;
+      } else nextHistory = input.history;
+      yield text("completed after context commit");
+    } });
+    const published = vi.spyOn(h.hub, "publish");
+    await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    expect((await h.log()).filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(published.mock.calls.some(([, e]) => e.type === "agent.context_entry")).toBe(true);
+    await h.enqueue("next Turn"); await h.router.handleNewEvent(h.parent.id, h.agent);
+    expect(nextHistory.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    await expect(persist!([{ ...context, id: "late-write" }])).rejects.toThrow();
+    expect((await h.log()).filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  });
+
   it.each([false, true])("publishes result arrival before the parent finishes (background=%s)", async (runInBackground) => {
     const parentGate = gate();
     let parentTurns = 0;
@@ -339,6 +363,8 @@ describe("Host-owned delegation through the Session Router", () => {
 
   it("restores a persisted wait checkpoint into the original parent Turn without rerunning its tool", async () => {
     let continuation: AdapterInput | undefined;
+    const compacted = event("agent.context_entry", { sdk: "pi@0.83.0", turnId: "original", entry: { type: "compaction", id: "summary1", summary: "checkpoint summary", firstKeptEntryId: "kept" } });
+    const started = event("agent.compaction", { compactionId: "compact1", status: "started", reason: "threshold" });
     const h = await harness({ async *run(input) {
       if (input.execution?.isChild) { yield text("recovered queued child"); return; }
       continuation = input;
@@ -352,11 +378,14 @@ describe("Host-owned delegation through the Session Router", () => {
     const promoted = await h.stores.eventLogStore.append(h.parent.id, { type: pending.type, data: pending.data, sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pending.id}`, pendingFence: fence });
     const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
     const call = tool("restored-call");
-    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [call] } }, fence);
+    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [started, compacted, compacted, call] } }, fence);
     await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
     await h.router.recoverPendingEvents();
     expect(await h.router.waitForIdle(4000)).toBe(true);
     expect(continuation?.turnId).toBe(originalTurn);
+    expect(continuation?.history.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(continuation?.history.find(e => e.type === "agent.context_entry")).toMatchObject({ entry: { summary: "checkpoint summary" } });
+    expect(continuation?.history.filter(e => e.type === "agent.compaction")).toHaveLength(1);
     const log = await h.log();
     expect(log.filter((e) => e.type === "agent.tool_use")).toHaveLength(1);
     expect(log.filter((e) => e.type === "agent.tool_result")).toHaveLength(1);

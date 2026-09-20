@@ -30,7 +30,7 @@ describe("structured SDK continuation", () => {
     for (const message of history) sessionManager.appendMessage(message);
     const { session } = await createAgentSession({ cwd: "/tmp", model, modelRuntime: await ModelRuntime.create({ allowModelNetwork: false }), resourceLoader, sessionManager, settingsManager, noTools: "all" });
     let requests = 0;
-    session.agent.streamFn = withGatewayErrors((_model, context) => {
+    session.agent.streamFunction = withGatewayErrors((_model, context) => {
       requests++;
       expect(context.messages.filter(m => m.role === "user")).toHaveLength(1);
       expect(context.messages.filter(m => m.role === "toolResult")).toHaveLength(1);

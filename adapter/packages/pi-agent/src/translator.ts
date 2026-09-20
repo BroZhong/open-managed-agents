@@ -17,6 +17,8 @@ import { identifyMcpInvocation } from "./mcp-gateway.js";
  * correlates tool-call ids to their emitted event ids).
  */
 export class PiEventTranslator {
+  private compaction: { compactionId: string; reason: "manual" | "threshold" | "overflow" } | undefined;
+  get activeCompaction() { return this.compaction; }
   private spanStarted = false;
   private currentModel = "";
   private currentProvider = "";
@@ -47,6 +49,34 @@ export class PiEventTranslator {
     const events: SessionEvent[] = [];
 
     switch (event.type) {
+      case "compaction_start": {
+        this.compaction = { compactionId: generateEventId(), reason: event.reason };
+        events.push({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.compaction", ...this.compaction, status: "started" });
+        break;
+      }
+      case "summarization_retry_scheduled": {
+        if (this.compaction) events.push({
+          id: generateEventId(), timestamp: generateTimestamp(), type: "agent.compaction", ...this.compaction,
+          status: "retrying", attempt: event.attempt, maxAttempts: event.maxAttempts,
+          delayMs: event.delayMs, errorMessage: event.errorMessage,
+        });
+        break;
+      }
+      case "compaction_end": {
+        // Overflow recovery can produce an end without a new start.
+        const identity = this.compaction ?? { compactionId: generateEventId(), reason: event.reason };
+        this.compaction = undefined;
+        events.push({
+          id: generateEventId(), timestamp: generateTimestamp(), type: "agent.compaction", ...identity,
+          status: event.aborted ? "cancelled" : event.result ? "completed" : "failed",
+          willRetry: event.willRetry,
+          ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+          ...(event.result ? { summary: event.result.summary, tokensBefore: event.result.tokensBefore,
+            estimatedTokensAfter: event.result.estimatedTokensAfter,
+            ...(event.result.usage ? { usage: event.result.usage } : {}) } : {}),
+        });
+        break;
+      }
       case "message_start": {
         if (event.message.role === "assistant") {
           if (!this.spanStarted) {

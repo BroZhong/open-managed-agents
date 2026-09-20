@@ -38,6 +38,7 @@ import { PiEventTranslator } from "./translator.js";
 import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 import { withGatewayErrors } from "./gateway-error-stream.js";
+import { restorePiSession } from "./pi-context.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -115,6 +116,8 @@ export interface SessionFactoryArgs {
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
   checkpoint(): SessionEvent[];
+  emitContext(event: SessionEvent): void;
+  compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
 }
 
@@ -319,6 +322,11 @@ export class PiAgentAdapter implements Adapter {
       session = await this.createSession({
         input, prompt, historyMessages, model, thinkingLevel, modelRuntime, hasToolExecutor, resourceLoaderOptions,
         checkpoint: () => structuredClone(checkpointEvents),
+        emitContext(event) {
+          checkpointEvents.push(event);
+          queue.push(event);
+        },
+        compactionInfo: () => translator.activeCompaction,
         async beforeModelStep() {
           if (maxSteps !== undefined && steps >= maxSteps) {
             budgetExceeded = true;
@@ -492,21 +500,22 @@ export class PiAgentAdapter implements Adapter {
         .getExtensions()
         .runtime.flagValues.set("mcp-config", mcpConfig.path);
 
-      // Seed the rebuilt structured history into an in-memory SessionManager
-      // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
-      // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
-      // at construction, loading this history into the LLM context before the
-      // first `prompt()`. `persist = false`, so nothing is written to disk — the
-      // event log stays the sole authoritative store. Derive a stable id from
-      // the Host Session so provider-level prompt caching keeps routing
-      // affinity across Turns even though each Turn still gets a fresh
-      // in-memory manager.
-      const sessionManager = SessionManager.inMemory(cwd, {
-        id: derivePiSessionId(args.input.sessionId),
-      });
-      for (const message of args.historyMessages) {
-        sessionManager.appendMessage(message);
-      }
+      // Replay durable native identities into Pi's own context builder (ADR-0012).
+      // The in-memory manager writes no JSONL. Its Session id also preserves
+      // provider cache routing affinity across Turns.
+      const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
+      let inputRecorded = false;
+      sessionManager.onEntryAppended = (entry) => {
+        // Compaction entries pass an awaited Host commit barrier below.
+        if (entry.type === "compaction") return;
+        const isInput = entry.type === "message" && entry.message.role === "user" && !inputRecorded;
+        if (isInput) inputRecorded = true;
+        args.emitContext({
+          id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
+          sdk: "pi@0.83.0", turnId: args.input.turnId,
+          ...(isInput ? { inputEventId: args.input.inputEventId } : {}), entry: structuredClone(entry),
+        });
+      };
 
       const { session } = await createAgentSession({
         cwd,
@@ -520,7 +529,24 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
-      session.agent.streamFn = withGatewayErrors(session.agent.streamFn);
+      session.commitCompaction = async (entry) => {
+        if (!args.input.persistContext) throw new Error("Pi compaction requires a Host persistence barrier");
+        args.input.signal?.throwIfAborted();
+        const last = session.messages.at(-1);
+        const measured = last?.role === "assistant" && last.stopReason !== "error" && last.stopReason !== "aborted"
+          ? last.usage.totalTokens || last.usage.input + last.usage.output + last.usage.cacheRead + last.usage.cacheWrite
+          : undefined;
+        const event: SessionEvent = {
+          id: `pi_entry_${entry.id}`, timestamp: entry.timestamp, type: "agent.context_entry",
+          sdk: "pi@0.83.0", turnId: args.input.turnId, entry: structuredClone(entry),
+          ...args.compactionInfo(),
+          tokensBeforeSource: measured !== undefined && measured === entry.tokensBefore ? "usage" : "estimate",
+        };
+        const context = args.checkpoint().filter(e => e.type === "agent.context_entry" || e.type === "agent.compaction");
+        await args.input.persistContext([...context, event]);
+        args.emitContext(event);
+      };
+      session.agent.streamFunction = withGatewayErrors(session.agent.streamFunction);
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
       const transformContext = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {
@@ -537,6 +563,8 @@ export class PiAgentAdapter implements Adapter {
           };
           // The Host has already persisted this instruction with its stable ID.
           // Keep both live transcript and this request's context in agreement.
+          const instructionEntryId = sessionManager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details);
+          message.timestamp = Date.parse(sessionManager.getEntry(instructionEntryId)!.timestamp);
           session.agent.state.messages = [...session.agent.state.messages, message];
           messages = [...messages, message];
           appliedInstructions.add(instruction.id);

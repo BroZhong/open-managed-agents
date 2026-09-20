@@ -30,6 +30,9 @@ afterEach(async () => {
 });
 
 function native(name: Name): ToolDefinition {
+  // Match the managed tool's explicit environment policy; this direct factory
+  // harness has no AgentSession from which to expose PI_SESSION_* variables.
+  if (name === "bash") return defineTool(createBashToolDefinition(root, { exposeSessionEnvironment: false }));
   const factories = { bash: createBashToolDefinition, read: createReadToolDefinition,
     write: createWriteToolDefinition, edit: createEditToolDefinition, ls: createLsToolDefinition, find: createFindToolDefinition };
   return defineTool(factories[name](root) as ToolDefinition);

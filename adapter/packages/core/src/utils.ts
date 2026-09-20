@@ -30,6 +30,8 @@ const SPAN_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const CANONICAL_TYPES: ReadonlySet<string> = new Set([
+  "agent.context_entry",
+  "agent.compaction",
   "agent.message",
   "agent.thinking",
   "agent.tool_use",

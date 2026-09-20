@@ -16,7 +16,7 @@ The runtime always selects the highest thinking level supported by that model,
 including for the managed Storyboard Stage subagent when no explicit subagent
 thinking override is supplied.
 
-The Host uses Pi SDK 0.80.10, matching the local Pi installation. Earlier 0.80.3
+The Host uses Pi SDK 0.83.0, matching the local Pi installation. Earlier 0.80.3
 releases cannot express the `max` thinking level. Each Turn creates one Pi
 `ModelRuntime` that both resolves the model and authenticates its requests.
 Custom providers and model overrides are loaded from the Host Pi agent

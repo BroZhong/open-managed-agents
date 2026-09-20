@@ -30,6 +30,20 @@ async function fixture() {
 }
 
 describe("Delegation trace API", () => {
+  it("returns persisted compaction outcomes and native records for parent and Child Sessions", async () => {
+    const { app, parent, child, eventLogStore } = await fixture();
+    for (const session of [parent, child]) {
+      const data = { turnId: "child-turn-1", compactionId: "compact1", status: "completed", reason: "threshold", summary: "saved context", tokensBefore: 123, estimatedTokensAfter: 40, usage: { input: 10, output: 5 } };
+      await eventLogStore.append(session.id, { type: "agent.compaction", data, sessionThreadId: "primary" });
+      const response = await app.request(`/v1/sessions/${session.id}/events`, { headers: { Accept: "application/json" } });
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data.find((e: {type: string}) => e.type === "agent.compaction").data).toEqual(data);
+    }
+    const trace = await (await app.request(`/v1/sessions/${parent.id}/delegations/exec-1/events`)).json();
+    expect(trace.data.find((e: {type: string}) => e.type === "agent.compaction").data.summary).toBe("saved context");
+  });
+
   it("reads child-owned deltas through either parent or child trace URL when Turn IDs collide", async () => {
     const { app, parent, child, unrelated, turnStreamStore } = await fixture();
     const turnId = "child-turn-1";

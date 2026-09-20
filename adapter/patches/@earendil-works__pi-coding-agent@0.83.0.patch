@@ -1,5 +1,146 @@
+diff --git a/dist/core/agent-session.d.ts b/dist/core/agent-session.d.ts
+index 30e90c1..4b74141 100644
+--- a/dist/core/agent-session.d.ts
++++ b/dist/core/agent-session.d.ts
+@@ -362,6 +362,8 @@ export declare class AgentSession {
+      * @throws Error if no model selected or no API key available (when not streaming)
+      */
+     prompt(text: string, options?: PromptOptions): Promise<void>;
++    /** Continue the current structured transcript, retaining SDK retries and compaction. */
++    continue(): Promise<void>;
+     private _tryExecuteExtensionCommand;
+     /**
+      * Expand skill commands (/skill:name args) to their full content.
+@@ -493,6 +495,8 @@ export declare class AgentSession {
+      * Aborts current agent operation first.
+      * @param customInstructions Optional instructions for the compaction summary
+      */
++    /** Await Host durability before exposing a newly compacted context. Failure stops this run. */
++    commitCompaction?: (entry: import("./session-manager.ts").CompactionEntry) => Promise<void>;
+     compact(customInstructions?: string): Promise<CompactionResult>;
+     /**
+      * Cancel in-progress compaction (manual or auto).
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+index 02c3567..5b32eeb 100644
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -741,10 +741,17 @@ export class AgentSession {
+     // =========================================================================
+     // Prompting
+     // =========================================================================
++    /** Continue a Host-restored structured transcript with normal SDK recovery. */
++    async continue() {
++        if (!this.isIdle) throw new Error("Agent session is already processing");
++        if (!this.model) throw new Error("No model selected");
++        await this._runAgentPrompt(undefined);
++    }
+     async _runAgentPrompt(messages) {
+         this._isAgentRunActive = true;
+         try {
+-            await this.agent.prompt(messages);
++            if (messages === undefined) await this.agent.continue();
++            else await this.agent.prompt(messages);
+             while (await this._handlePostAgentRun()) {
+                 await this.agent.continue();
+             }
+@@ -1365,6 +1372,7 @@ export class AgentSession {
+      * @param customInstructions Optional instructions for the compaction summary
+      */
+     async compact(customInstructions) {
++        let commitFailed = false;
+         this._disconnectFromAgent();
+         await this.abort();
+         this._compactionAbortController = new AbortController();
+@@ -1430,7 +1438,13 @@ export class AgentSession {
+             if (this._compactionAbortController.signal.aborted) {
+                 throw new Error("Compaction cancelled");
+             }
+-            this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
++            const committedId = this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
++            try {
++                await this.commitCompaction?.(this.sessionManager.getEntry(committedId));
++            } catch (error) {
++                commitFailed = true;
++                throw error;
++            }
+             const newEntries = this.sessionManager.getEntries();
+             const sessionContext = this.sessionManager.buildSessionContext();
+             this.agent.state.messages = sessionContext.messages;
+@@ -1589,6 +1603,7 @@ export class AgentSession {
+      * Internal: Run auto-compaction with events.
+      */
+     async _runAutoCompaction(reason, willRetry) {
++        let commitFailed = false;
+         const settings = this.settingsManager.getCompactionSettings();
+         let started = false;
+         try {
+@@ -1671,7 +1686,13 @@ export class AgentSession {
+                 });
+                 return false;
+             }
+-            this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
++            const committedId = this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
++            try {
++                await this.commitCompaction?.(this.sessionManager.getEntry(committedId));
++            } catch (error) {
++                commitFailed = true;
++                throw error;
++            }
+             const newEntries = this.sessionManager.getEntries();
+             const sessionContext = this.sessionManager.buildSessionContext();
+             this.agent.state.messages = sessionContext.messages;
+@@ -1722,6 +1743,7 @@ export class AgentSession {
+                         : `Auto-compaction failed: ${errorMessage}`,
+                 });
+             }
++            if (commitFailed) throw error;
+             return false;
+         }
+         finally {
+diff --git a/dist/core/session-manager.d.ts b/dist/core/session-manager.d.ts
+index 8cdfbde..1bbd6ac 100644
+--- a/dist/core/session-manager.d.ts
++++ b/dist/core/session-manager.d.ts
+@@ -207,6 +207,8 @@ export declare class SessionManager {
+     getSessionId(): string;
+     getSessionFile(): string | undefined;
+     _persist(entry: SessionEntry): void;
++    onEntryAppended?: (entry: SessionEntry) => void;
++    restoreEntry(entry: SessionEntry): void;
+     private _appendEntry;
+     /** Append a message as child of current leaf, then advance leaf. Returns entry id.
+      * Does not allow writing CompactionSummaryMessage and BranchSummaryMessage directly.
+diff --git a/dist/core/session-manager.js b/dist/core/session-manager.js
+index e535f0f..79ae087 100644
+--- a/dist/core/session-manager.js
++++ b/dist/core/session-manager.js
+@@ -751,11 +751,24 @@ export class SessionManager {
+             appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+         }
+     }
++    /** Restore a Host-owned entry without regenerating its identity or timestamp. */
++    restoreEntry(entry) {
++        if (this.persist) throw new Error("Host entry replay requires an in-memory session");
++        const existing = this.byId.get(entry.id);
++        if (existing) {
++            if (JSON.stringify(existing) !== JSON.stringify(entry)) throw new Error("Conflicting Pi entry: " + entry.id);
++            return;
++        }
++        if (entry.parentId !== this.leafId) throw new Error("Broken Pi entry chain: " + entry.id);
++        if (entry.type === "compaction" && !this.byId.has(entry.firstKeptEntryId)) throw new Error("Missing Pi compaction boundary");
++        this._appendEntry(structuredClone(entry));
++    }
+     _appendEntry(entry) {
+         this.fileEntries.push(entry);
+         this.byId.set(entry.id, entry);
+         this.leafId = entry.id;
+         this._persist(entry);
++        this.onEntryAppended?.(entry);
+     }
+     /** Append a message as child of current leaf, then advance leaf. Returns entry id.
+      * Does not allow writing CompactionSummaryMessage and BranchSummaryMessage directly.
 diff --git a/dist/core/tools/bash.d.ts b/dist/core/tools/bash.d.ts
-index 18f6bd6..b5303e0 100644
+index ab40b66..d318859 100644
 --- a/dist/core/tools/bash.d.ts
 +++ b/dist/core/tools/bash.d.ts
 @@ -1,6 +1,8 @@
@@ -23,34 +164,43 @@ index 18f6bd6..b5303e0 100644
      operations?: BashOperations;
      /** Command prefix prepended to every command (for example shell setup commands) */
 diff --git a/dist/core/tools/bash.js b/dist/core/tools/bash.js
-index 36de477..a65c3f3 100644
+index 8028dbf..11c23fc 100644
 --- a/dist/core/tools/bash.js
 +++ b/dist/core/tools/bash.js
 @@ -111,8 +111,8 @@ export function createLocalBashOperations(options) {
          },
      };
  }
--function resolveSpawnContext(command, cwd, spawnHook) {
--    const baseContext = { command, cwd, env: { ...getShellEnv() } };
-+function resolveSpawnContext(command, cwd, spawnHook, env) {
-+    const baseContext = { command, cwd, env: { ...(env ?? getShellEnv()) } };
-     return spawnHook ? spawnHook(baseContext) : baseContext;
- }
- const BASH_PREVIEW_LINES = 5;
-@@ -210,9 +210,10 @@ export function createBashToolDefinition(cwd, options) {
-         promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+-function resolveSpawnContext(command, cwd, spawnHook, exposeSessionEnvironment, ctx) {
+-    const env = { ...getShellEnv() };
++function resolveSpawnContext(command, cwd, spawnHook, exposeSessionEnvironment, ctx, environment) {
++    const env = { ...(environment ?? getShellEnv()) };
+     delete env.PI_SESSION_ID;
+     delete env.PI_SESSION_FILE;
+     delete env.PI_PROVIDER;
+@@ -221,7 +221,7 @@ function rebuildBashResultRenderComponent(component, result, options, showImages
+ export function createBashToolDefinition(cwd, options) {
+     const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
+     const commandPrefix = options?.commandPrefix;
+-    const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
++    const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? (options?.env === undefined);
+     const spawnHook = options?.spawnHook;
+     return {
+         name: "bash",
+@@ -233,9 +233,10 @@ export function createBashToolDefinition(cwd, options) {
+             : undefined,
          parameters: bashSchema,
-         async execute(_toolCallId, { command, timeout }, signal, onUpdate, _ctx) {
+         async execute(_toolCallId, { command, timeout }, signal, onUpdate, ctx) {
 +            resolveTimeoutMs(timeout);
              const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
--            const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
+-            const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
 -            const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
-+            const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, options?.env);
++            const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx, options?.env);
 +            const output = new OutputAccumulator({ tempFilePrefix: "pi-bash", createOutputSink: options?.createOutputSink });
              let acceptingOutput = true;
              let updateTimer;
              let updateDirty = false;
-@@ -266,9 +267,9 @@ export function createBashToolDefinition(cwd, options) {
+@@ -289,9 +290,9 @@ export function createBashToolDefinition(cwd, options) {
                  output.finish();
                  clearUpdateTimer();
                  emitOutputUpdate();
@@ -706,7 +856,7 @@ index 21d889d..46c6438 100644
      autoResizeImages?: boolean;
      /** Custom operations for file reading. Default: local filesystem */
 diff --git a/dist/core/tools/read.js b/dist/core/tools/read.js
-index d97dffc..6ae16a3 100644
+index 863dec5..abac0d6 100644
 --- a/dist/core/tools/read.js
 +++ b/dist/core/tools/read.js
 @@ -151,7 +151,18 @@ export function createReadToolDefinition(cwd, options) {
@@ -799,7 +949,7 @@ index a80b81d..0e8e578 100644
          renderCall(args, theme, context) {
              const renderArgs = args;
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index ea5cd61..8eb8214 100644
+index e91e38f..16190ff 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -21,7 +21,7 @@ export { type CompactionSettings, type DefaultProjectTrust, type ImageSettings,
@@ -819,7 +969,7 @@ index ea5cd61..8eb8214 100644
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/dist/index.js b/dist/index.js
-index 624a3da..4d975fc 100644
+index a2ee192..1fa2e1f 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -44,4 +44,5 @@ export { convertToPng } from "./utils/image-convert.js";
@@ -829,37 +979,3 @@ index 624a3da..4d975fc 100644
 +export { detectSupportedImageMimeType } from "./utils/mime.js";
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
-diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
---- a/dist/core/agent-session.js
-+++ b/dist/core/agent-session.js
-@@ -747,10 +747,17 @@
-     // =========================================================================
-     // Prompting
-     // =========================================================================
-+    /** Continue a Host-restored structured transcript with normal SDK recovery. */
-+    async continue() {
-+        if (!this.isIdle) throw new Error("Agent session is already processing");
-+        if (!this.model) throw new Error("No model selected");
-+        await this._runAgentPrompt(undefined);
-+    }
-     async _runAgentPrompt(messages) {
-         this._isAgentRunActive = true;
-         try {
--            await this.agent.prompt(messages);
-+            if (messages === undefined) await this.agent.continue();
-+            else await this.agent.prompt(messages);
-             while (await this._handlePostAgentRun()) {
-                 await this.agent.continue();
-             }
-diff --git a/dist/core/agent-session.d.ts b/dist/core/agent-session.d.ts
---- a/dist/core/agent-session.d.ts
-+++ b/dist/core/agent-session.d.ts
-@@ -340,6 +340,8 @@
-      * @throws Error if no model selected or no API key available (when not streaming)
-      */
-     prompt(text: string, options?: PromptOptions): Promise<void>;
-+    /** Continue the current structured transcript, retaining SDK retries and compaction. */
-+    continue(): Promise<void>;
-     private _tryExecuteExtensionCommand;
-     /**
-      * Expand skill commands (/skill:name args) to their full content.
