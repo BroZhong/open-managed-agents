@@ -206,6 +206,17 @@ export interface AgentContextEntryEvent extends BaseEvent {
   reason?: "manual" | "threshold" | "overflow";
 }
 
+/** Latest runtime context snapshot, not cumulative token billing. */
+export interface AgentContextUsageEvent extends BaseEvent {
+  type: "agent.context_usage";
+  turnId: string;
+  model: string;
+  contextWindow: number | null;
+  tokens: number | null;
+  /** SDK usage plus estimated tail, or a text estimate without valid usage. */
+  source: "sdk" | "estimate" | "unknown";
+}
+
 export interface AgentCompactionEvent extends BaseEvent {
   type: "agent.compaction";
   compactionId: string;
@@ -418,6 +429,7 @@ export type StreamEvent =
 export type SessionEvent =
   | AgentContextStartEvent
   | AgentContextEntryEvent
+  | AgentContextUsageEvent
   | AgentCompactionEvent
   | LifecycleEvent
   | SpanEvent

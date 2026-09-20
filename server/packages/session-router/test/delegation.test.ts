@@ -47,6 +47,7 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
 
 describe("Host-owned delegation through the Session Router", () => {
   it("commits runtime context before continuation, deduplicates delivery and fences late writes", async () => {
+    const usage = event("agent.context_usage", { turnId: "first", model: "test", tokens: 900, contextWindow: 1000, source: "sdk" });
     const context = event("agent.context_entry", { sdk: "pi@0.83.0", turnId: "first", entry: { type: "compaction", id: "durable", summary: "saved" } });
     let persist: AdapterInput["persistContext"];
     let runs = 0;
@@ -54,7 +55,8 @@ describe("Host-owned delegation through the Session Router", () => {
     const h = await harness({ async *run(input) {
       if (++runs === 1) {
         persist = input.persistContext;
-        await persist!([context]);
+        await persist!([usage, context]);
+        yield usage;
         yield context;
       } else nextHistory = input.history;
       yield text("completed after context commit");
@@ -62,9 +64,11 @@ describe("Host-owned delegation through the Session Router", () => {
     const published = vi.spyOn(h.hub, "publish");
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     expect((await h.log()).filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect((await h.log()).filter(e => e.type === "agent.context_usage" || e.type === "agent.context_entry").map(e => e.type)).toEqual(["agent.context_usage", "agent.context_entry"]);
     expect(published.mock.calls.some(([, e]) => e.type === "agent.context_entry")).toBe(true);
     await h.enqueue("next Turn"); await h.router.handleNewEvent(h.parent.id, h.agent);
     expect(nextHistory.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(nextHistory.filter(e => e.type === "agent.context_usage")).toHaveLength(1);
     await expect(persist!([{ ...context, id: "late-write" }])).rejects.toThrow();
     expect((await h.log()).filter(e => e.type === "agent.context_entry")).toHaveLength(1);
     expect(h.errors).toEqual([]);

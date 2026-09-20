@@ -177,7 +177,7 @@ function TurnBlock({ turn, running, focusToolUseId, timings }: { turn: Conversat
           hidden={collapsible && !open && index < segments.length - 1}>
           {segment.activity
           ? <ProcessGroup key={focused ? focusToolUseId : "process"} messages={segment.messages} running={running && index === segments.length - 1} focused={focused} timing={timings.get(segment.messages[0].id)} />
-          : <MessageBubble message={segment.messages[0]} />}
+          : <MessageBubble message={segment.messages[0]} running={running} />}
         </div>;
       })}
     </div>

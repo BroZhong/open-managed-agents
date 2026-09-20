@@ -74,7 +74,7 @@ export class PiContextJournal {
     const event: SessionEvent = { id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
       sdk: "pi@0.83.0", turnId: input.turnId, entry: structuredClone(entry), ...compactionInfo(),
       tokensBeforeSource: measured !== undefined && measured === entry.tokensBefore ? "usage" : "estimate" };
-    const preceding = checkpoint().filter(event => ["agent.context_start", "agent.context_entry", "agent.compaction"].includes(event.type));
+    const preceding = checkpoint().filter(event => ["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"].includes(event.type));
     await input.persistContext([...preceding, event]);
     emit(event);
     this.cursor++;

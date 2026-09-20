@@ -2,6 +2,7 @@ import {
   createAgentSession,
   createEventBus,
   DefaultResourceLoader,
+  estimateTokens,
   formatSkillsForPrompt,
   getAgentDir,
   ModelRuntime,
@@ -530,11 +531,30 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
+      let lastContextUsage = "";
+      const captureContextUsage = () => {
+        const usage = session.getContextUsage();
+        // Pi intentionally returns null after compaction until a new assistant
+        // usage is persisted. Estimate only the rebuilt messages in that case;
+        // never reuse pre-compaction usage. Both APIs are public SDK exports.
+        const snapshot = {
+          model: session.model ? `${session.model.provider}/${session.model.id}` : args.input.agent.model,
+          contextWindow: usage?.contextWindow ?? null,
+          tokens: usage ? usage.tokens ?? session.messages.reduce((sum, message) => sum + estimateTokens(message), 0) : null,
+          source: !usage ? "unknown" as const : usage.tokens === null ? "estimate" as const : "sdk" as const,
+        };
+        const key = JSON.stringify(snapshot);
+        if (key === lastContextUsage) return;
+        lastContextUsage = key;
+        args.emitContext({ type: "agent.context_usage", id: generateEventId(), timestamp: generateTimestamp(),
+          turnId: args.input.turnId, ...snapshot });
+      };
       const continueSession = installContinuation(session);
       const streamFunction = withGatewayErrors(session.agent.streamFunction);
       session.agent.streamFunction = async (model, context, options) => {
         // Also gates native summary requests, which bypass transformContext.
         await journal.ready();
+        captureContextUsage();
         return streamFunction(model, context, options);
       };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
@@ -568,6 +588,7 @@ export class PiAgentAdapter implements Adapter {
       // `session_start`; extensions such as pi-mcp-adapter therefore register a
       // tool but remain uninitialized until the Host explicitly binds them.
       await session.bindExtensions({ mode: "print" });
+      captureContextUsage();
 
       const active = session as PiSessionLike;
       let disposed = false;
@@ -578,15 +599,18 @@ export class PiAgentAdapter implements Adapter {
               listener({ ...event, result: undefined, aborted: !!args.input.signal?.aborted,
                 errorMessage: journal.failure.message, willRetry: false });
             } else listener(event);
+            // At turn_end, message_end persistence has finished. Reading on
+            // message_end would still see an old compaction boundary in Pi.
+            if (event.type === "turn_end" || event.type === "compaction_end") captureContextUsage();
           });
         },
         async prompt(text, options) {
           try { await active.prompt(text, options); await journal.ready(); }
-          finally { journal.capture(); }
+          finally { journal.capture(); captureContextUsage(); }
         },
         async continue() {
           try { await continueSession(); await journal.ready(); }
-          finally { journal.capture(); }
+          finally { journal.capture(); captureContextUsage(); }
         },
         abort() {
           // Pi exposes separate cancellation for summary requests. Its general

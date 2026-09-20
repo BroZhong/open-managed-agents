@@ -76,6 +76,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
       return {
         session: {
           agent,
+          getContextUsage: () => undefined,
           async continue() {},
           async bindExtensions() {
             if (sdkSeam.failBindExtensions) {

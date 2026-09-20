@@ -75,6 +75,21 @@ are always estimates. Missing values remain unavailable, not zero. Terminal Turn
 markers or an inactive Session prevent an unfinished start from looking active
 forever. A committed entry remains successful even when its end event was lost.
 
+`agent.context_usage` stores a deduplicated snapshot of the resolved model,
+context window, current tokens and source, independently of cumulative request
+usage. The adapter uses public `AgentSession.getContextUsage()` at startup,
+request dispatch, turn end, compaction end and operation settlement. SDK counts
+may combine the latest provider usage with estimated messages since that usage.
+When Pi returns null after compaction, the adapter sums public `estimateTokens()`
+over the rebuilt messages and marks the source `estimate`; this fallback excludes
+system prompt and tool definitions. Neither value is presented as an exact meter.
+An unavailable window remains null. Snapshots share event-ID idempotency and the
+compaction persistence barrier, so queued pre-compaction snapshots cannot be
+appended after the committed boundary. The footer displays the latest snapshot
+beside Total tokens, including its limit and percentage. Old histories without
+these snapshots display unavailable until another run emits one; reloads require
+no live runtime and do not infer context size from cumulative usage.
+
 ## Legacy compatibility
 
 Old display events use the existing compatibility translator. It cannot recover

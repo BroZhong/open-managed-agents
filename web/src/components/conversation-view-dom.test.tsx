@@ -396,6 +396,33 @@ it("folds every earlier message only once the final output finishes, preserving 
   expect(screen.getByText("Verified").closest("[hidden]")).not.toBeNull();
 });
 
+it.each(["started", "retrying"])("shows %s compaction as active until completion", (status) => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const event: SessionEvent = { seq: 12, type: "agent.compaction", ts: "2026-09-20T00:00:00Z", data: {
+    compactionId: "compact1", status, reason: "threshold", turnId: "turn_10",
+  } };
+  const view = render(<ConversationView events={[userMessage, event]} sessionStatus="running" />);
+  expect(screen.getByText(`· ${status} · threshold`)).toBeTruthy();
+  expect(screen.queryByText(/interrupted/)).toBeNull();
+
+  const completed: SessionEvent = { ...event, seq: 13, data: {
+    ...event.data as object, status: "completed", summary: "Retained task context",
+  } };
+  view.rerender(<ConversationView events={[userMessage, event, completed]} sessionStatus="idle" />);
+  expect(screen.getByText("· completed · threshold")).toBeTruthy();
+  expect(screen.queryByText(/interrupted/)).toBeNull();
+});
+
+it("shows an unfinished compaction as interrupted after its turn ends", () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const event: SessionEvent = { seq: 12, type: "agent.compaction", ts: "2026-09-20T00:00:00Z", data: {
+    compactionId: "compact1", status: "started", reason: "threshold", turnId: "turn_10",
+  } };
+  const ended: SessionEvent = { seq: 13, type: "session.turn_completed", ts: "2026-09-20T00:00:01Z", data: { turnId: "turn_10" } };
+  render(<ConversationView events={[userMessage, event, ended]} sessionStatus="idle" />);
+  expect(screen.getByText("· interrupted · threshold")).toBeTruthy();
+});
+
 it("keeps compaction summary and token provenance available after reload", () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const event: SessionEvent = { seq: 12, type: "agent.compaction", ts: "2026-09-20T00:00:00Z", data: {
