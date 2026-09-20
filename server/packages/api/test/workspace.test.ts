@@ -2,16 +2,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { InMemoryArtifactStore, createMemoryStores } from "@oma-server/store-memory";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
-import type { WorkspaceMetadataStore } from "@oma-server/store";
+import type { ArtifactReadUrlOptions, WorkspaceMetadataStore } from "@oma-server/store";
 
 function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
   return { async findByKeyHash(hash) { return entries.get(hash) ?? null; } };
 }
 
-function createTestApp() {
+function createTestApp(signing = true) {
   process.env.AUTH_DISABLED = "true";
   const { workspaceStore } = createMemoryStores();
-  const artifactStore = new InMemoryArtifactStore();
+  const artifactStore = signing ? new SigningArtifactStore() : new InMemoryArtifactStore();
   const app = createApp({
     apiKeyStore: makeApiKeyStore(new Map()),
     workspaceStore,
@@ -19,7 +19,6 @@ function createTestApp() {
   });
   return { app, workspaceStore, artifactStore };
 }
-
 async function seedWorkspace(
   workspaceStore: WorkspaceMetadataStore,
   tenantId = "dev",
@@ -82,20 +81,90 @@ describe("GET /v1/workspaces/:id/files", () => {
 });
 
 describe("GET /v1/workspaces/:id/files/*", () => {
+  it("reports signing failures as storage errors without leaking SDK diagnostics", async () => {
+    const { app, workspaceStore, artifactStore } = createSigningTestApp();
+    const workspace = await seedWorkspace(workspaceStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: "x" });
+    vi.spyOn(artifactStore, "createSignedReadUrl").mockRejectedValue(new Error("secret in SDK request"));
+    const res = await app.request(`/v1/workspaces/${workspace.id}/files/a.png`);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "Workspace storage is unavailable. Retry the file operation.", code: "workspace_storage_error",
+    });
+  });
+
+  it("only signs GET requests", async () => {
+    const { app, workspaceStore, artifactStore } = createSigningTestApp();
+    await seedWorkspace(workspaceStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: "image" });
+    const sign = vi.spyOn(artifactStore, "createSignedReadUrl");
+    for (const method of ["PUT", "POST"]) {
+      const response = await app.request("/v1/workspaces/ws_1/files/a.png", { method });
+      expect([404, 405]).toContain(response.status);
+    }
+    expect(sign).not.toHaveBeenCalled();
+  });
+  it("decodes Unicode, percent and reserved characters exactly once before signing", async () => {
+    const { app, workspaceStore, artifactStore } = createSigningTestApp();
+    await seedWorkspace(workspaceStore);
+    const path = "素材/%2e%2e/100% #ready?.mp4";
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path, body: "video" });
+    const sign = vi.spyOn(artifactStore, "createSignedReadUrl");
+    const response = await app.request(`/v1/workspaces/ws_1/files/${path.split("/").map(encodeURIComponent).join("/")}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ path, size: 5, contentType: "video/mp4" });
+    expect(sign).toHaveBeenCalledExactlyOnceWith("dev", "ws_1", path, 600, { download: false, contentType: "video/mp4" });
+    expect(artifactStore.getCalls).toBe(0);
+  });
+
+  it("clamps access URL expiry and does not sign absent objects", async () => {
+    const { app, workspaceStore, artifactStore } = createSigningTestApp();
+    await seedWorkspace(workspaceStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "empty", body: "" });
+    for (const [query, expiresIn] of [["", 600], ["?expiresIn=9999", 900], ["?expiresIn=-1", 60], ["?expiresIn=abc", 600], ["?expiresIn=61.9", 61]] as const) {
+      const response = await app.request(`/v1/workspaces/ws_1/files/empty${query}`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ size: 0, expiresIn });
+    }
+    const sign = vi.spyOn(artifactStore, "createSignedReadUrl");
+    expect((await app.request("/v1/workspaces/ws_1/files/missing")).status).toBe(404);
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("reports unavailable storage without leaking SDK request details", async () => {
+    const { app, workspaceStore, artifactStore } = createSigningTestApp();
+    await seedWorkspace(workspaceStore);
+    vi.spyOn(artifactStore, "stat").mockRejectedValue(new Error("secret in HEAD request"));
+    const sign = vi.spyOn(artifactStore, "createSignedReadUrl");
+    const response = await app.request("/v1/workspaces/ws_1/files/video.mp4");
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Workspace storage is unavailable. Retry the file operation.", code: "workspace_storage_error" });
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("returns 501 for a backend without signed reads", async () => {
+    const { app, workspaceStore, artifactStore } = createTestApp(false);
+    await seedWorkspace(workspaceStore);
+    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.txt", body: "text" });
+    const get = vi.spyOn(artifactStore, "get");
+    expect((await app.request("/v1/workspaces/ws_1/files/a.txt")).status).toBe(501);
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("reads nested paths when the Workspace ID itself is files", async () => {
     const { app, workspaceStore, artifactStore } = createTestApp();
     await seedWorkspace(workspaceStore, "dev", "files");
     await artifactStore.put({ tenantId: "dev", workspaceId: "files", path: "files/nested.txt", body: "correct file" });
     const response = await app.request("/v1/workspaces/files/files/files/nested.txt");
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe("correct file");
+    expect(await response.json()).toMatchObject({ path: "files/nested.txt", size: 12 });
   });
 
   beforeEach(() => {
     process.env.AUTH_DISABLED = "true";
   });
 
-  it("previews a file's content through the Host proxy", async () => {
+  it("returns metadata and a signed URL without fetching file bytes", async () => {
     const { app, workspaceStore, artifactStore } = createTestApp();
     const workspace = await seedWorkspace(workspaceStore);
     await artifactStore.put({
@@ -106,11 +175,18 @@ describe("GET /v1/workspaces/:id/files/*", () => {
       contentType: "text/markdown",
     });
 
+    const get = vi.spyOn(artifactStore, "get");
+    const stat = vi.spyOn(artifactStore, "stat");
     const res = await app.request(`/v1/workspaces/${workspace.id}/files/notes.md`);
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("text/markdown");
-    expect(res.headers.get("content-disposition")).toBe("inline");
-    expect(await res.text()).toBe("# hi");
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const body = await res.json();
+    expect(body).toMatchObject({ path: "notes.md", contentType: "text/markdown", size: 4, expiresIn: 600 });
+    expect(body.url).toContain("/dev/ws_1/notes.md");
+    expect(Date.parse(body.expiresAt)).toBeGreaterThan(Date.now() + 599_000);
+    expect(stat).toHaveBeenCalledExactlyOnceWith("dev", "ws_1", "notes.md");
+    expect(get).not.toHaveBeenCalled();
   });
 
   it("previews a nested file path", async () => {
@@ -120,10 +196,10 @@ describe("GET /v1/workspaces/:id/files/*", () => {
 
     const res = await app.request(`/v1/workspaces/${workspace.id}/files/src/deep/x.txt`);
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe("deep");
+    expect(await res.json()).toMatchObject({ path: "src/deep/x.txt", size: 4 });
   });
 
-  it("sets Content-Disposition attachment when download=1", async () => {
+  it("requests an attachment URL when download=1", async () => {
     const { app, workspaceStore, artifactStore } = createTestApp();
     const workspace = await seedWorkspace(workspaceStore);
     await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "src/report.csv", body: "a,b" });
@@ -132,8 +208,7 @@ describe("GET /v1/workspaces/:id/files/*", () => {
       `/v1/workspaces/${workspace.id}/files/src/report.csv?download=1`,
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toBe('attachment; filename="report.csv"');
-    expect(await res.text()).toBe("a,b");
+    expect((await res.json()).url).toContain("download=1");
   });
 
   it("returns 404 for a missing file", async () => {
@@ -151,9 +226,7 @@ describe("GET /v1/workspaces/:id/files/*", () => {
     await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path, body: bytes, contentType: "application/octet-stream" });
     const res = await app.request(`/v1/workspaces/${workspace.id}/files/${encodeURIComponent(path)}?download=1`);
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("content-disposition")).toContain(`filename*=UTF-8''${encodeURIComponent(path)}`);
-    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+    expect(await res.json()).toMatchObject({ path, contentType: "image/png", size: bytes.length });
   });
 
   it("returns 400 for malformed URL encoding", async () => {
@@ -212,7 +285,7 @@ describe("PUT /v1/workspaces/:id/files/content", () => {
 
     const get = await app.request(`/v1/workspaces/${workspace.id}/files/notes.md`);
     expect(get.status).toBe(200);
-    expect(await get.text()).toBe("# hi");
+    expect(await get.json()).toMatchObject({ path: "notes.md", size: 4 });
   });
 
   it("rejects a traversal path with 400", async () => {
@@ -317,7 +390,7 @@ describe("POST /v1/workspaces/:id/files/rename", () => {
       body: JSON.stringify({ from: "same.txt", to: "same.txt" }),
     });
     expect(res.status).toBe(200);
-    expect(await (await app.request(`/v1/workspaces/${workspace.id}/files/same.txt`)).text()).toBe("keep");
+    expect(new TextDecoder().decode((await artifactStore.get("dev", "ws_1", "same.txt"))!.body)).toBe("keep");
   });
 
   it("moves the file to the new path and preserves contentType", async () => {
@@ -351,8 +424,8 @@ describe("POST /v1/workspaces/:id/files/rename", () => {
 
     const newGet = await app.request(`/v1/workspaces/${workspace.id}/files/new.md`);
     expect(newGet.status).toBe(200);
-    expect(newGet.headers.get("content-type")).toBe("text/markdown");
-    expect(await newGet.text()).toBe("# doc");
+    expect(await newGet.json()).toMatchObject({ path: "new.md", contentType: "text/markdown", size: 5 });
+    expect(new TextDecoder().decode((await artifactStore.get("dev", "ws_1", "new.md"))!.body)).toBe("# doc");
   });
 
   it("returns 404 when the source file is missing", async () => {
@@ -430,7 +503,7 @@ describe("POST /v1/workspaces/:id/files/upload", () => {
   });
 
   it("uploads a folder beneath the destination without flattening nested names or changing audio", async () => {
-    const { app, workspaceStore } = createTestApp();
+    const { app, workspaceStore, artifactStore } = createTestApp();
     const workspace = await seedWorkspace(workspaceStore);
     const fixtures = [
       {
@@ -485,8 +558,10 @@ describe("POST /v1/workspaces/:id/files/upload", () => {
       const encodedPath = fixture.storedPath.split("/").map(encodeURIComponent).join("/");
       const read = await app.request(`/v1/workspaces/${workspace.id}/files/${encodedPath}`);
       expect(read.status).toBe(200);
-      expect(read.headers.get("content-type")?.split(";")[0]).toBe(fixture.contentType);
-      expect(new Uint8Array(await read.arrayBuffer())).toEqual(fixture.bytes);
+      const descriptor = await read.json();
+      expect(descriptor.contentType.split(";")[0]).toBe(fixture.contentType);
+      expect(descriptor.size).toBe(fixture.bytes.length);
+      expect((await artifactStore.get("dev", "ws_1", fixture.storedPath))!.body).toEqual(fixture.bytes);
     }
   });
 
@@ -508,10 +583,9 @@ describe("POST /v1/workspaces/:id/files/upload", () => {
 });
 
 // The production in-memory fake (store-memory) intentionally has no signing —
-// presigned reads are an S3 feature. We extend it locally so the route can be
-// tested against a backend that DOES advertise createSignedReadUrl, mirroring
-// the real S3 store's "internal-sign, public-base" shape (research #88 §3).
-const PUBLIC_BASE = "http://public.example/storage/v1";
+// signed reads need an external storage server. Unit tests use a URL-only fake;
+// workspace-oss.test.ts verifies actual bytes using the official OSS SDK fixture.
+const PUBLIC_BASE = "https://files.example.com";
 class SigningArtifactStore extends InMemoryArtifactStore {
   public getCalls = 0;
 
@@ -525,9 +599,9 @@ class SigningArtifactStore extends InMemoryArtifactStore {
     workspaceId: string,
     path: string,
     expiresInSec: number,
+    options: ArtifactReadUrlOptions = {},
   ): Promise<string> {
-    // Shape mirrors the real relative signedURL prefixed with the public base.
-    return `${PUBLIC_BASE}/object/sign/workspace/${tenantId}/${workspaceId}/${path}?token=fake&exp=${expiresInSec}`;
+    return `${PUBLIC_BASE}/object/sign/workspace/${tenantId}/${workspaceId}/${path.split("/").map(encodeURIComponent).join("/")}?token=fake&exp=${expiresInSec}${options.download ? "&download=1" : ""}`;
   }
 }
 
@@ -542,148 +616,3 @@ function createSigningTestApp() {
   });
   return { app, workspaceStore, artifactStore };
 }
-
-describe("GET /v1/workspaces/:id/preview-url", () => {
-  it("reports signing failures as storage errors without leaking SDK diagnostics", async () => {
-    const { app, workspaceStore, artifactStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: "x" });
-    vi.spyOn(artifactStore, "createSignedReadUrl").mockRejectedValue(new Error("secret in SDK request"));
-    const res = await app.request(`/v1/workspaces/${workspace.id}/preview-url?path=a.png`);
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({
-      error: "Workspace storage is unavailable. Retry the file operation.", code: "workspace_storage_error",
-    });
-  });
-
-  beforeEach(() => {
-    process.env.AUTH_DISABLED = "true";
-  });
-
-  it("signs a short-lived read-only GET URL for an existing file", async () => {
-    const { app, workspaceStore, artifactStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore, "dev", "ws_1");
-    await artifactStore.put({
-      tenantId: "dev",
-      workspaceId: "ws_1",
-      path: "media/clip.mp4",
-      body: new Uint8Array([1, 2, 3]),
-      contentType: "video/mp4",
-    });
-
-    const res = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=media/clip.mp4`,
-    );
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    // Absolute public base, the /object/sign/ path, a token query, and scoped to
-    // the current tenant + workspace prefix.
-    expect(body.url).toContain(PUBLIC_BASE);
-    expect(body.url).toContain("/object/sign/");
-    expect(body.url).toContain("token=");
-    expect(body.url).toContain("/dev/ws_1/media/clip.mp4");
-    expect(body.expiresIn).toBe(600);
-    expect(artifactStore.getCalls).toBe(0);
-  });
-
-  it("clamps expiresIn into the allowed range", async () => {
-    const { app, workspaceStore, artifactStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
-
-    const tooBig = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png&expiresIn=99999`,
-    );
-    expect((await tooBig.json()).expiresIn).toBe(900);
-
-    const tooSmall = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png&expiresIn=1`,
-    );
-    expect((await tooSmall.json()).expiresIn).toBe(60);
-  });
-
-  it("preserves fallback and truncation for legacy expiresIn values", async () => {
-    const { app, workspaceStore, artifactStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
-
-    const invalid = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png&expiresIn=abc`,
-    );
-    expect(invalid.status).toBe(200);
-    expect((await invalid.json()).expiresIn).toBe(600);
-
-    const decimal = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png&expiresIn=61.9`,
-    );
-    expect(decimal.status).toBe(200);
-    expect((await decimal.json()).expiresIn).toBe(61);
-  });
-
-  it("returns 404 for a non-existent file (never signs an absent key)", async () => {
-    const { app, workspaceStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    const res = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=ghost.png`,
-    );
-    expect(res.status).toBe(404);
-  });
-
-  it("returns 404 for a Workspace belonging to another tenant", async () => {
-    const { app, workspaceStore, artifactStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore, "other-tenant", "ws_1");
-    await artifactStore.put({ tenantId: "other-tenant", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
-    const res = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png`,
-    );
-    // Auth-disabled tenant is "dev"; Workspace belongs to "other-tenant".
-    expect(res.status).toBe(404);
-  });
-
-  it("rejects a traversal path with 400", async () => {
-    const { app, workspaceStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    const res = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=../ws_2/secret.png`,
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it("rejects a missing path with 400", async () => {
-    const { app, workspaceStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    const res = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url`,
-    );
-    expect(res.status).toBe(400);
-  });
-
-  it("returns 501 when the backend does not support presigned reads", async () => {
-    // The default test app uses the plain InMemoryArtifactStore (no signing).
-    const { app, workspaceStore, artifactStore } = createTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: "x" });
-    const res = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png`,
-    );
-    expect(res.status).toBe(501);
-  });
-
-  it("only signs GET — PUT/POST to preview-url do not match the route", async () => {
-    const { app, workspaceStore, artifactStore } = createSigningTestApp();
-    const workspace = await seedWorkspace(workspaceStore);
-    await artifactStore.put({ tenantId: "dev", workspaceId: "ws_1", path: "a.png", body: new Uint8Array([1]) });
-
-    const put = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png`,
-      { method: "PUT" },
-    );
-    expect([404, 405]).toContain(put.status);
-
-    const post = await app.request(
-      `/v1/workspaces/${workspace.id}/preview-url?path=a.png`,
-      { method: "POST" },
-    );
-    expect([404, 405]).toContain(post.status);
-  });
-});

@@ -573,7 +573,7 @@ DELETE /v1/api-keys/{id}               吊销 API key，保留用量历史
 
 2. **`GET /v1/sessions/{id}/pending` 存在，本身就是一个立场。** 排队输入是**服务端状态**，所以它必须可查询。如果它是前端的乐观猜测，就不会有这个端点 —— 刷新一次就没了（这正是 issue #114 修的东西）。**一个端点的存在或不存在，是在回答"这个状态归谁"。**
 
-3. **Workspace 的文件接口已收录在 OpenAPI**：`/v1/workspaces/{id}/files` 提供列表，其下还有读取、写入、删除、重命名和上传接口；`/workspace/preview-url?path=...&expiresIn=600` 返回短期 OSS 签名 GET 链接（60–900 秒，默认 600 秒）。Host 和沙箱访问同一个 OSS 前缀，因此 `/home/user/workspace` 下由 shell 成功写入并关闭的文件也能列出。文件接口直接使用 Workspace ID，无需先创建 Session；运行中的 Session 不阻止文件写入，同一路径的并发写入可能互相覆盖。
+3. **Workspace 的文件接口已收录在 OpenAPI**：`/v1/workspaces/{id}/files` 提供列表，其下还有读取、写入、删除、重命名和上传接口；`/files/{path}` 统一返回文件元数据与短期 OSS 签名 GET 链接（60–900 秒，默认 600 秒），客户端直接从 OSS 读取内容。Host 和沙箱访问同一个 OSS 前缀，因此 `/home/user/workspace` 下由 shell 成功写入并关闭的文件也能列出。文件接口直接使用 Workspace ID，无需先创建 Session；运行中的 Session 不阻止文件写入，同一路径的并发写入可能互相覆盖。
 
 ### 4.2 三条典型用法（对应 part1 §1.2 的"被系统调用"）
 

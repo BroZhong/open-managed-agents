@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileSource } from "@/lib/file-source";
 
 const mockedSources = vi.hoisted(() => new Map<string, unknown>());
@@ -27,16 +27,6 @@ afterEach(() => {
 });
 
 describe("WorkspacePanel Workspace isolation", () => {
-  const revokeObjectURL = vi.fn();
-
-  beforeEach(() => {
-    revokeObjectURL.mockReset();
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: revokeObjectURL,
-    });
-  });
-
   it("retains the last file tree and preview when a Turn-end refresh fails, and retries only the list", async () => {
     let unavailable = false;
     const list = vi.fn(async () => {
@@ -63,7 +53,7 @@ describe("WorkspacePanel Workspace isolation", () => {
     expect(list).toHaveBeenCalledTimes(3);
   });
 
-  it("drops Workspace A content and revokes its Blob when switching to Workspace B", async () => {
+  it("drops Workspace A content when switching to Workspace B", async () => {
     const sourceA: FileSource = {
       capabilities: { hierarchy: "nested", idleGated: false },
       list: async () => [{ path: "a.png", isDir: false, size: 3 }],
@@ -74,7 +64,7 @@ describe("WorkspacePanel Workspace isolation", () => {
         size: 3,
         isBinary: true,
       }),
-      previewUrl: async () => "blob:workspace-a",
+      previewUrl: async () => "https://files.test/workspace-a",
     };
     const sourceB: FileSource = {
       capabilities: { hierarchy: "nested", idleGated: false },
@@ -95,7 +85,7 @@ describe("WorkspacePanel Workspace isolation", () => {
     );
     fireEvent.click(await screen.findByText("a.png"));
     expect((await screen.findByRole("img", { name: "a.png" })).getAttribute("src"))
-      .toBe("blob:workspace-a");
+      .toBe("https://files.test/workspace-a");
 
     view.rerender(
       <WorkspacePanel workspaceId="workspace-b" refreshKey={0} />,
@@ -104,7 +94,6 @@ describe("WorkspacePanel Workspace isolation", () => {
     expect(screen.queryByRole("img", { name: "a.png" })).toBeNull();
     expect(await screen.findByText("b.txt")).toBeTruthy();
     expect(screen.queryByText("a.png")).toBeNull();
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:workspace-a");
   });
 });
 

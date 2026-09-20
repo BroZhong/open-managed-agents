@@ -64,12 +64,11 @@ PUT    /v1/workspaces/{id}/files/content
 DELETE /v1/workspaces/{id}/files/content?path=...
 POST   /v1/workspaces/{id}/files/rename
 POST   /v1/workspaces/{id}/files/upload
-GET    /v1/workspaces/{id}/preview-url?path=...&expiresIn=600
 ```
 
 产物是怎么出现的值得说明白：Host 列出 Session 绑定的 Workspace 的 OSS 前缀，沙箱在 `/home/user/workspace` 直接挂载同一前缀。**Agent 在这个目录里用 `bash` 生成的文件，成功写入并关闭后也会出现在文件树里。** 挂载缓存可能影响跨客户端的可见时间，Turn 结束时控制台会刷新列表。
 
-文件内容可以通过 Host 读取或下载（`?download=1`）；`preview-url` 返回短期有效的 OSS 签名 GET 链接，`expiresIn` 为 60–900 秒，默认 600 秒。文件接口直接使用 Workspace ID，无需先创建 Session；读写均验证 Tenant 归属。运行中的 Session 不阻止文件写入，同一路径的并发写入可能互相覆盖。终止 Session 会释放执行资源，并保留已经保存的 Workspace 文件。
+`/files/{path}` 是统一的文件读取入口，返回 JSON 元数据及短期 OSS 签名 GET 链接；客户端再直接访问该链接获取内容，不向 OSS 发送平台认证头。`?download=1` 请求附件下载链接；`expiresIn` 为 60–900 秒，默认 600 秒。文件接口直接使用 Workspace ID，无需先创建 Session；读写均验证 Tenant 归属。运行中的 Session 不阻止文件写入，同一路径的并发写入可能互相覆盖。终止 Session 会释放执行资源，并保留已经保存的 Workspace 文件。见 [ADR-0012](../adr/0012-workspace-signed-reads.md)。
 
 对照 Managed Agents 的做法：Agent 写到 `/mnt/session/outputs/` 的文件被 Files API 自动捕获，之后用 `files.list({scope_id: session.id})` 列出、`files.download(id)` 下载。这是一个**约定目录**方案 —— 比"全盘扫描"便宜，代价是模型必须知道并遵守那个约定（如果它把文件写在别处，你就看不到）。
 

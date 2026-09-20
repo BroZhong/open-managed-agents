@@ -71,3 +71,12 @@ Those snapshots describe their original versions. The former isolated
 application probe used Session file routes and a write gate superseded by
 ADR-0009, and has been removed. Current file behavior is covered by the API's
 Workspace route tests and [the file API contract](../../docs/adr/0009-workspace-file-api.md).
+
+## Console read CORS
+
+`console-cors.json` records the read rule applied to the private `agentry` Bucket.
+It permits only `https://agentry.welltop.tech` with GET/HEAD, Range and conditional
+read headers; it grants no object access without a valid signature. Keep other
+Bucket rules when updating CORS. Verify with `getBucketCORS("agentry")` and a
+signed GET carrying the console Origin; the SDK requires the explicit Bucket
+argument. See `docs/oss-workspace-deployment.md` for browser checks.

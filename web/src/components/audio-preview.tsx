@@ -1,65 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, FileWarning, Music } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { FileContent } from "@/lib/file-source";
+import { usePlayableMediaPreview, type PreviewUrlLoader } from "@/lib/hooks/use-media-preview-url";
 import { formatSize } from "@/lib/workspace-tree";
 
-/** Audio uses the same authenticated preview URL path as images and video. */
+/** Audio uses the same signed storage URL flow as images and video. */
 export function AudioPreview({
   content,
   getPreviewUrl,
   onDownload,
 }: {
   content: FileContent;
-  getPreviewUrl: (path: string) => Promise<string>;
-  onDownload: (readyUrl?: string) => void;
+  getPreviewUrl: PreviewUrlLoader;
+  onDownload: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const [retry, setRetry] = useState(0);
-  const retriedRef = useRef(false);
-
-  useEffect(() => {
-    let alive = true;
-    let acquiredUrl: string | null = null;
-    const release = (value: string | null) => {
-      if (value?.startsWith("blob:")) URL.revokeObjectURL(value);
-    };
-
-    void getPreviewUrl(content.path)
-      .then((value) => {
-        acquiredUrl = value;
-        if (alive) setUrl(value);
-        else release(value);
-      })
-      .catch(() => {
-        if (alive) setError(true);
-      });
-
-    return () => {
-      alive = false;
-      release(acquiredUrl);
-    };
-  }, [content.path, getPreviewUrl, retry]);
-
-  const handleError = useCallback(() => {
-    // Refresh a potentially expired URL once; unsupported codecs then fall
-    // back to download instead of repeatedly trying the same file.
-    if (!retriedRef.current) {
-      retriedRef.current = true;
-      setUrl(null);
-      setRetry((value) => value + 1);
-    } else {
-      setError(true);
-    }
-  }, []);
+  const { url, error, mediaEvents, mediaRef } = usePlayableMediaPreview(content.path, getPreviewUrl);
 
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-sm text-[var(--color-danger)]">
         <FileWarning className="h-5 w-5" />
         Failed to load audio. The file may be unavailable or its format unsupported.
-        <Button variant="outline" size="sm" onClick={() => onDownload(url ?? undefined)}>
+        <Button variant="outline" size="sm" onClick={() => onDownload()}>
           <Download className="h-3.5 w-3.5" /> Download instead
         </Button>
       </div>
@@ -83,14 +45,16 @@ export function AudioPreview({
         <div className="mt-1 text-xs text-[var(--color-fg-subtle)]">{formatSize(content.size)}</div>
       </div>
       <audio
+        ref={mediaRef}
+        crossOrigin="anonymous"
         aria-label={content.path}
         src={url}
         controls
         preload="metadata"
-        onError={handleError}
+        {...mediaEvents}
         className="w-full max-w-md"
       />
-      <Button variant="outline" size="sm" onClick={() => onDownload(url)}>
+      <Button variant="outline" size="sm" onClick={() => onDownload()}>
         <Download className="h-3.5 w-3.5" /> Download
       </Button>
     </div>

@@ -33,7 +33,7 @@ it("opens a real file from a conversation link", async () => {
   const { read } = setup("[Chapter](novels/73995/chapters/EP1.txt)");
   fireEvent.click(screen.getByRole("link", { name: "Chapter" }));
   expect(await screen.findByText("Chapter content")).toBeTruthy();
-  expect(read).toHaveBeenCalledWith("novels/73995/chapters/EP1.txt");
+  expect(read).toHaveBeenCalledWith("novels/73995/chapters/EP1.txt", { signal: expect.any(AbortSignal) });
 });
 it("links Skill directories and inline Skill paths to the Agent copy, keeping code blocks literal", () => {
   const { read } = setup("[Skill](/skills/research/) and `/skills/research/SKILL.md`\n\n```\n/skills/research/SKILL.md\n```\n\n[Missing](/skills/missing)");
