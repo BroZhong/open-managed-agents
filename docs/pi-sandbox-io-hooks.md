@@ -29,4 +29,4 @@ Equivalent OS, binaries and environment are required for exact output parity.
 The E2B byte-stream patch remains a transport concern; no third-party extension
 fs/child_process code is virtualized by this protocol.
 
-See [ADR-0013](adr/0013-public-pi-sdk-boundary.md).
+See [ADR-0014](adr/0014-public-pi-sdk-boundary.md).

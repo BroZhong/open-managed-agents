@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; amended by ADR-0012 for native message fidelity and durable automatic
+Accepted; amended by ADR-0013 for native message fidelity and durable automatic
 compaction. Extends (does not supersede) ADR-0002 — refines how the stateless Pi
 Adapter obtains conversation history for each `run()`, without changing the
 Adapter contract or the Host-owns-infrastructure rule.
@@ -86,7 +86,7 @@ other Session-snapshot semantics (e.g. the agent identity) are unchanged.
 
 ### 4. Native automatic compaction is durable
 
-ADR-0012 supersedes the former deferred persistence decision. Pi 0.83.0 still
+ADR-0013 supersedes the former deferred persistence decision. Pi 0.83.0 still
 owns compaction policy; the Host persists native messages and compaction entries
 before a dependent model request. Next-Turn reconstruction uses the native
 SessionManager context builder with preserved entry IDs and timestamps.
@@ -113,7 +113,7 @@ SessionManager context builder with preserved entry IDs and timestamps.
 - KV cache is prefix-stable within a single model across turns (tool ids
   round-trip unchanged); it necessarily misses when the provider changes or when
   compaction rewrites the prefix — both unavoidable and unrelated to id handling.
-- ADR-0012 keeps compaction policy in the SDK and makes the event log authoritative
+- ADR-0013 keeps compaction policy in the SDK and makes the event log authoritative
   for both messages and committed compaction boundaries.
 - The Adapter remains a pure per-`run()` translator (ADR-0002 §1); this ADR only
   changes *what* it translates (structured history vs. flat text), not the

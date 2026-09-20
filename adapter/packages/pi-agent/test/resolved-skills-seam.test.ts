@@ -72,7 +72,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
         sdkSeam.mcpConfigMode = statSync(configPath).mode & 0o777;
       }
       let listener: ((event: Record<string, unknown>) => void) | undefined;
-      const agent = { state: { messages: [] as unknown[] }, transformContext: undefined as ((messages: unknown[]) => Promise<unknown[]>) | undefined };
+      const agent = { subscribe: () => () => {}, state: { messages: [] as unknown[] }, transformContext: undefined as ((messages: unknown[]) => Promise<unknown[]>) | undefined };
       return {
         session: {
           agent,

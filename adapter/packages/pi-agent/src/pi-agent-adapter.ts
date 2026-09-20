@@ -476,7 +476,7 @@ export class PiAgentAdapter implements Adapter {
     const mcpConfig = materializeMcpConfig(args.input.agent.mcpServers);
     let createdSession: { dispose(): Promise<void> | void } | undefined;
     try {
-      // Replay durable native identities into Pi's own context builder (ADR-0012).
+      // Replay durable native identities into Pi's own context builder (ADR-0013).
       // The import bridge removes its temporary JSONL. Its Session id preserves
       // provider cache routing affinity across Turns.
       const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));

@@ -1,7 +1,7 @@
 # Pi 0.83.0 automatic compaction verification
 
 Baseline: `@earendil-works/pi-ai` and `pi-coding-agent` **0.83.0**, pinned in
-Adapter and Server lockfiles. See ADR-0012 and `adapter/patches/README.md`.
+Adapter and Server lockfiles. See ADR-0013 and `adapter/patches/README.md`.
 
 ## Verification result
 

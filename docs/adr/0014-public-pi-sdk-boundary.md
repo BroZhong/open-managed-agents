@@ -1,10 +1,10 @@
-# ADR-0013: Integrate Pi through public SDK mechanisms
+# ADR-0014: Integrate Pi through public SDK mechanisms
 
 ## Status
 
 Accepted. Supersedes ADR-0005's requirement to execute native tool factories on
 Host through injected I/O, ADR-0010's patched continuation entry point, and
-ADR-0012's SDK patch and no-JSONL-import implementation decisions. Their Session,
+ADR-0013's SDK patch and no-JSONL-import implementation decisions. Their Session,
 Delegation, event-log durability and sandbox isolation contracts remain in force.
 
 ## Decision

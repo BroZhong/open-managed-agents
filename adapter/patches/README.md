@@ -9,5 +9,5 @@ been removed; neither workspace declares a Pi `patchedDependencies` entry.
   `sendCustomMessage` implement context persistence, import and continuation.
 - Gateway errors use the public per-Agent `streamFunction` wrapper.
 
-See [ADR-0013](../../docs/adr/0013-public-pi-sdk-boundary.md) for boundaries and
+See [ADR-0014](../../docs/adr/0014-public-pi-sdk-boundary.md) for boundaries and
 tradeoffs. The Server's E2B raw-output transport patch remains independent.

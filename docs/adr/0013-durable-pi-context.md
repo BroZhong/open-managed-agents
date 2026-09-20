@@ -1,8 +1,8 @@
-# ADR-0012: Durable Pi messages and automatic compaction
+# ADR-0013: Durable Pi messages and automatic compaction
 
 ## Status
 
-Implementation superseded by [ADR-0013](0013-public-pi-sdk-boundary.md): public
+Implementation superseded by [ADR-0014](0014-public-pi-sdk-boundary.md): public
 SDK hooks, temporary import bridge and Adapter request gate replace the patch.
 The durability and replay requirements below remain applicable.
 

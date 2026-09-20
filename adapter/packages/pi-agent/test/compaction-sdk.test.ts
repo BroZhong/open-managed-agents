@@ -205,7 +205,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const history = records(seed(false));
     let delivered = false;
     const events = await run({ ...input(history, async () => {}), continuation: { toolResults: [] },
-      execution: { isChild: true, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "continue-steer", message: "verify continuation" }]), applied: async () => {} } } });
+      execution: { isChild: false, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "continue-steer", message: "verify continuation" }]), applied: async () => {} } } });
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     const restored = restorePiSession([...history, ...events]);
     expect(restored.getBranch().some(entry => entry.type === "custom_message" && entry.customType === "oma.continuation")).toBe(false);

@@ -59,7 +59,7 @@ lockfile. The Host registers public custom tools and invokes these native tool
 factories through ToolExecutor; model inference stays on Host. Image acceptance
 executes all seven tools as the ordinary user. Upgrade/rebuild Sandboxes before
 releasing the matching Host version; older Sandboxes lack the required runtime.
-See [ADR-0013](../../docs/adr/0013-public-pi-sdk-boundary.md).
+See [ADR-0014](../../docs/adr/0014-public-pi-sdk-boundary.md).
 
 FFmpeg includes H.264 (x264 and OpenH264)/H.265, VP8/VP9, AV1, AAC, MP3, Opus, Vorbis and WebP
 support, plus text/subtitle filters and DejaVu/Noto CJK fonts. The compiler and
