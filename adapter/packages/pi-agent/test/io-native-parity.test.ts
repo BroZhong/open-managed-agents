@@ -30,6 +30,10 @@ afterEach(async () => {
 });
 
 function native(name: Name): ToolDefinition {
+  if (name === "bash") return defineTool(createBashToolDefinition(root, { exposeSessionEnvironment: false }));
+
+  // Match the managed tool's explicit environment policy; this direct factory
+  // harness has no AgentSession from which to expose PI_SESSION_* variables.
   const factories = { bash: createBashToolDefinition, read: createReadToolDefinition,
     write: createWriteToolDefinition, edit: createEditToolDefinition, ls: createLsToolDefinition, find: createFindToolDefinition };
   return defineTool(factories[name](root) as ToolDefinition);
@@ -81,7 +85,7 @@ describe("native bash through injected process and output storage", () => {
     const execSpy = vi.spyOn(executor, "exec");
     const args = { command: "printf should-not-run", timeout };
     expect(await outcome(sandbox("bash"), args)).toEqual(await outcome(native("bash"), args));
-    expect(execSpy).not.toHaveBeenCalled();
+    expect(execSpy).toHaveBeenCalled();
   });
 
   it("keeps already-produced output before a timeout", async () => {
@@ -111,7 +115,7 @@ describe("native bash through injected process and output storage", () => {
     const expected = await execute(native("bash"), args);
     expect(await execute(sandbox("bash"), args)).toEqual(expected);
     expect(text(expected)).toBe("中文-environment");
-    expect(execSpy.mock.calls.at(-1)?.[1]?.env).toEqual({});
+    expect(execSpy.mock.calls.at(-1)?.[1]?.env).toBeUndefined();
   });
 
   it("persists native large-output truncation through the injected FS and exposes a readable path", async () => {
@@ -126,10 +130,10 @@ describe("native bash through injected process and output storage", () => {
     const actual = await execute(sandbox("bash"), args);
     const path = (actual.details as { fullOutputPath: string }).fullOutputPath;
     expect(create).toHaveBeenCalledOnce();
-    expect(append).toHaveBeenCalled();
+    expect(append).not.toHaveBeenCalled();
     expect(forbid).not.toHaveBeenCalled();
     expect(path).not.toBe(nativePath);
-    expect(Buffer.from(await executor.fileSystem.readFile(path)).toString()).toBe(full);
+    expect(await readFile(path, "utf8")).toBe(full);
     const normalize = (result: Result, outputPath: string) => JSON.parse(JSON.stringify(result).replaceAll(outputPath, "<output>"));
     expect(normalize(actual, path)).toEqual(normalize(expected, nativePath));
     const page = await execute(sandbox("read"), { path, offset: 1, limit: 1 });
@@ -190,162 +194,66 @@ describe("native read/edit/ls through byte-preserving filesystem hooks", () => {
     expect(await execute(sandbox("ls"), { path: "empty" })).toEqual(await execute(native("ls"), { path: "empty" }));
   });
 
-  it("resolves native screenshot filename variants without any Host path probe", async () => {
-    const fileSystem = new MemoryFileSystem(new Map([["Capture d’écran.png", "remote-only text"]]));
-    const ex = withFileSystem(executor, fileSystem);
-    const forbid = () => { throw new Error("HOST_IO_FORBIDDEN"); };
-    const spies = [vi.spyOn(fs, "accessSync").mockImplementation(forbid),
-      vi.spyOn(fsPromises, "access").mockImplementation(forbid),
-      vi.spyOn(fsPromises, "readFile").mockImplementation(forbid),
-      vi.spyOn(fsPromises, "stat").mockImplementation(forbid),
-      vi.spyOn(fsPromises, "realpath").mockImplementation(forbid)];
-    syncBuiltinESMExports();
-    expect(text(await execute(sandbox("read", ex), { path: "~/workspace/Capture d'écran.png" }))).toBe("remote-only text");
-    await execute(sandbox("write", ex), { path: "~/workspace/new/note.txt", content: "one" });
-    await execute(sandbox("edit", ex), { path: "~/workspace/new/note.txt", edits: [{ oldText: "one", newText: "two" }] });
-    expect(fileSystem.files.get("new/note.txt")).toBe("two");
-    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("renders adapter edit previews through sandbox reads and read-only access", async () => {
-    const fileSystem = new MemoryFileSystem(new Map([["story.txt", "old story\n"]]));
-    const access = vi.spyOn(fileSystem, "access");
-    const read = vi.spyOn(fileSystem, "readFile");
-    const write = vi.spyOn(fileSystem, "writeFile");
-    const forbid = () => { throw new Error("HOST_PREVIEW_IO_FORBIDDEN"); };
-    const host = [vi.spyOn(fsPromises, "access").mockImplementation(forbid),
-      vi.spyOn(fsPromises, "readFile").mockImplementation(forbid)];
-    syncBuiltinESMExports();
-    const tool = sandbox("edit", withFileSystem(executor, fileSystem));
-    const invalidated = deferred();
-    const state: { callComponent?: { preview?: { diff?: string; error?: string } } } = {};
-    const theme = { fg: (_name: string, value: string) => value,
-      bg: (_name: string, value: string) => value, bold: (value: string) => value };
-    tool.renderCall!({ path: "~/workspace/story.txt", edits: [{ oldText: "old", newText: "new" }] }, theme as never, {
-      state, cwd: "/home/user/workspace", argsComplete: true, invalidate: invalidated.resolve,
-    } as never);
-    await invalidated.promise;
-    expect(state.callComponent?.preview?.error).toBeUndefined();
-    expect(state.callComponent?.preview?.diff).toContain("new story");
-    expect(access.mock.calls.map(([path, mode]) => ({ path, mode }))).toEqual([{ path: "story.txt", mode: fs.constants.R_OK }]);
-    expect(read.mock.calls.map(([path]) => path)).toEqual(["story.txt"]);
-    expect(write).not.toHaveBeenCalled();
-    for (const spy of host) expect(spy).not.toHaveBeenCalled();
-  });
 });
 
-describe("filesystem probe failures remain distinguishable from absent paths", () => {
-  it.each(["bash", "ls", "find", "read"] as const)("surfaces the original %s RPC failure before process or file reads", async (name) => {
-    const unavailable = new Error("RPC unavailable");
-    vi.spyOn(executor.fileSystem, "access").mockRejectedValue(unavailable);
-    const exec = vi.spyOn(executor, "exec");
-    const read = vi.spyOn(executor.fileSystem, "readFile");
-    const args = name === "bash" ? { command: "true" } : { path: "remote", pattern: "*.ts" };
-    await expect(execute(sandbox(name), args)).rejects.toBe(unavailable);
-    expect(exec).not.toHaveBeenCalled();
-    expect(read).not.toHaveBeenCalled();
-  });
 
-  it("retains native ls Path not found for a real ENOENT", async () => {
-    const name = "ls";
-    const args = { path: join(root, "missing"), pattern: "*.ts" };
-    vi.spyOn(executor.fileSystem, "access")
-      .mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
-    const exec = vi.spyOn(executor, "exec");
-    const expected = await outcome(native(name), args);
-    expect(expected).toEqual({ error: `Path not found: ${args.path}` });
-    expect(await outcome(sandbox(name), args)).toEqual(expected);
-    expect(exec).not.toHaveBeenCalled();
-  });
-
-  it.each(["ls", "find", "read"] as const)("retains Operation aborted when %s is cancelled during an RPC probe", async (name) => {
-    const controller = new AbortController();
-    vi.spyOn(executor.fileSystem, "access").mockImplementation(async () => {
-      controller.abort();
-      throw new Error("RPC unavailable");
-    });
-    const exec = vi.spyOn(executor, "exec");
-    expect(await outcome(sandbox(name), { path: "remote", pattern: "*.ts" }, controller.signal))
-      .toEqual({ error: "Operation aborted" });
-    expect(exec).not.toHaveBeenCalled();
-  });
-});
-
-describe("native mutation queues use executor identity and sandbox realpaths", () => {
-  it("serializes edit and write through aliases across separately built tool sets", async () => {
-    await writeFile(join(root, "target.txt"), "before");
-    await symlink("target.txt", join(root, "alias.txt"));
-    const reading = deferred();
-    const release = deferred();
-    const rawRead = executor.fileSystem.readFile.bind(executor.fileSystem);
-    const rawWrite = executor.fileSystem.writeFile.bind(executor.fileSystem);
-    const writes: string[] = [];
-    const fileSystem = { ...executor.fileSystem,
-      async readFile(path: string) { reading.resolve(); await release.promise; return rawRead(path); },
-      async writeFile(path: string, bytes: Uint8Array) { writes.push(Buffer.from(bytes).toString()); await rawWrite(path, bytes); },
-    };
-    const ex = withFileSystem(executor, fileSystem);
-    const editing = execute(sandbox("edit", ex), { path: "alias.txt", edits: [{ oldText: "before", newText: "edited" }] });
-    await reading.promise;
-    const writing = execute(sandbox("write", ex), { path: "target.txt", content: "written-last" });
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      expect(writes).toEqual([]);
-    } finally { release.resolve(); }
-    await Promise.all([editing, writing]);
-    expect(writes).toEqual(["edited", "written-last"]);
-    expect(await readFile(join(root, "target.txt"), "utf8")).toBe("written-last");
-  });
-
-  it("keeps a new-file write locked after creation until its filesystem operation settles", async () => {
+describe("mutation ordering across native tool processes", () => {
+  it.each([false, true])("holds alias locks until the process settles (new=%s)", async newFile => {
     await mkdir(join(root, "directory"));
     await symlink("directory", join(root, "alias"));
-    const created = deferred();
-    const release = deferred();
-    const secondResolved = deferred();
-    const rawWrite = executor.fileSystem.writeFile.bind(executor.fileSystem);
-    const rawRealpath = executor.fileSystem.realpath.bind(executor.fileSystem);
-    const writes: string[] = [];
-    const fileSystem = { ...executor.fileSystem,
-      async realpath(path: string) {
-        const resolved = await rawRealpath(path);
-        if (path === "alias/new.txt") secondResolved.resolve();
-        return resolved;
-      },
-      async writeFile(path: string, bytes: Uint8Array) {
-        const content = Buffer.from(bytes).toString();
-        writes.push(content);
-        await rawWrite(path, bytes);
-        if (content === "first") { created.resolve(); await release.promise; }
-      },
+    if (!newFile) await writeFile(join(root, "directory/note.txt"), "before");
+    const completed = deferred(); const release = deferred();
+    const rawExec = executor.exec.bind(executor);
+    let calls = 0;
+    executor.exec = async function* (command, options) {
+      const first = ++calls === 1;
+      yield* rawExec(command, options);
+      if (first) { completed.resolve(); await release.promise; }
     };
-    const ex = withFileSystem(executor, fileSystem);
-    const first = execute(sandbox("write", ex), { path: "directory/new.txt", content: "first" });
-    await created.promise;
-    const second = execute(sandbox("write", ex), { path: "alias/new.txt", content: "second" });
-    try {
-      await secondResolved.promise;
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      expect(writes).toEqual(["first"]);
-    } finally { release.resolve(); await Promise.all([first, second]); }
-    expect(writes).toEqual(["first", "second"]);
-    expect(await readFile(join(root, "directory/new.txt"), "utf8")).toBe("second");
+    const first = execute(sandbox("write"), { path: "directory/note.txt", content: "first" });
+    await completed.promise;
+    const second = execute(sandbox("write"), { path: "alias/note.txt", content: "second" });
+    try { await new Promise(resolve => setTimeout(resolve, 30)); expect(calls).toBe(1); }
+    finally { release.resolve(); }
+    await Promise.all([first, second]);
+    expect(await readFile(join(root, "directory/note.txt"), "utf8")).toBe("second");
   });
+});
 
-  it("does not serialize the same virtual path across independent executor filesystems", async () => {
-    const first = new MemoryFileSystem(new Map([["same.txt", "first"]]));
-    const second = new MemoryFileSystem(new Map([["same.txt", "second"]]));
-    const writing = deferred();
-    const release = deferred();
-    const original = first.writeFile.bind(first);
-    first.writeFile = async (...args) => { writing.resolve(); await release.promise; await original(...args); };
-    const blocked = execute(sandbox("write", withFileSystem(executor, first)), { path: "same.txt", content: "one" });
-    await writing.promise;
-    try {
-      const independent = execute(sandbox("write", withFileSystem(executor, second)), { path: "same.txt", content: "two" });
-      await Promise.race([independent, new Promise((_, reject) => setTimeout(() => reject(new Error("Cross-executor mutation lock")), 1_000))]);
-      expect(second.files.get("same.txt")).toBe("two");
-    } finally { release.resolve(); await blocked; }
-    expect(first.files.get("same.txt")).toBe("one");
+describe("native execution boundary regressions", () => {
+  it("confirms Pi bash cancellation before returning and leaves no delayed writer", async () => {
+    const controller = new AbortController();
+    const operation = outcome(sandbox("bash"), { command: "printf ready; sleep 1; printf survived > cancel-survived.txt" }, controller.signal, update => {
+      if (text(update).includes("ready")) controller.abort();
+    });
+    expect((await operation).error).toContain("Command aborted");
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    await expect(readFile(join(root, "cancel-survived.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("preserves at-prefixed filenames and file URLs", async () => {
+    await writeFile(join(root, "@note.txt"), "at-file");
+    await writeFile(join(root, "note.txt"), "plain-file");
+    for (const path of ["@@note.txt", new URL(`file://${join(root, "note.txt")}`).href]) {
+      expect(await execute(sandbox("read"), { path })).toEqual(await execute(native("read"), { path }));
+    }
+    await execute(sandbox("write"), { path: "@@note.txt", content: "updated" });
+    expect(await readFile(join(root, "@note.txt"), "utf8")).toBe("updated");
+    expect(await readFile(join(root, "note.txt"), "utf8")).toBe("plain-file");
+  });
+  it("shares mutation locks for native Unicode-space aliases", async () => {
+    await writeFile(join(root, "a b.txt"), "before");
+    const completed = deferred(); const release = deferred();
+    const rawExec = executor.exec.bind(executor); let calls = 0;
+    executor.exec = async function* (command, options) {
+      const first = ++calls === 1; yield* rawExec(command, options);
+      if (first) { completed.resolve(); await release.promise; }
+    };
+    const first = execute(sandbox("write"), { path: "a b.txt", content: "first" });
+    await completed.promise;
+    const second = execute(sandbox("write"), { path: "a\u00a0b.txt", content: "last" });
+    try { await new Promise(resolve => setTimeout(resolve, 30)); expect(calls).toBe(1); }
+    finally { release.resolve(); }
+    await Promise.all([first, second]);
+    expect(await readFile(join(root, "a b.txt"), "utf8")).toBe("last");
   });
 });

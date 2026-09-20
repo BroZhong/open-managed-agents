@@ -304,3 +304,12 @@ describe("sessionEventStreamUrl", () => {
     );
   });
 });
+
+it("deduplicates durable compaction frames across reconnect and history refresh", () => {
+  const parsed = parseSessionSseFrame('event: agent.compaction\nid: 12\ndata: {"type":"agent.compaction","compactionId":"c1","status":"completed","summary":"saved"}');
+  if (parsed?.kind !== "event") throw new Error("Expected durable compaction");
+  let state = sessionEventStreamReducer(initialSessionEventStreamState, { type: "history.loaded", events: [parsed.event] });
+  state = sessionEventStreamReducer(state, { type: "event.received", event: parsed.event });
+  expect(state.events).toHaveLength(1);
+  expect(state.events[0].data).toMatchObject({ summary: "saved" });
+});

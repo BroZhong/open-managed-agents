@@ -1,4 +1,5 @@
 import type { SessionDelta, SessionEvent } from "@/lib/types";
+import { projectCompactions, type CompactionView } from "./compaction";
 import { outputBlockKey } from "@/lib/output-block";
 
 interface ToolResultData {
@@ -12,11 +13,13 @@ export interface DisplayMessage {
     | "user"
     | "assistant"
     | "assistant_streaming"
+    | "compaction"
     | "thinking"
     | "notification"
     | "instruction"
     | "tool_use"
     | "error";
+  compaction?: CompactionView;
   text: string;
   streaming?: boolean;
   name?: string;
@@ -80,10 +83,13 @@ export function processEventsToMessages(
 
   // Durable Events project first. Incomplete Delta blocks are projected below
   // as independent aligned blocks, so starting block N+1 cannot erase block N.
-  const projectionEvents: SessionEvent[] = events;
+  const projectionEvents: SessionEvent[] = [...new Map(events.map(e => [e.seq, e])).values()];
+  const compactions = projectCompactions(events);
 
   for (const event of projectionEvents) {
     const seq = "seq" in event ? event.seq : undefined;
+    const compaction = compactions.get(event.seq);
+    if (compaction) messages.push({ id: `compaction-${compaction.compactionId}`, role: "compaction", text: compaction.summary ?? "", status: compaction.status, seq, turnId: compaction.turnId, compaction });
     switch (event.type) {
       case "delegation.input":
       case "subagent.instruction":

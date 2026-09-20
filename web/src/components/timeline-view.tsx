@@ -55,6 +55,7 @@ function TimelineRow({ event }: { event: SessionEvent }) {
           )}
         >
           {event.type}
+          {event.type === "agent.compaction" && ` · ${(event.data as { status?: string }).status ?? "unknown"}` }
         </span>
       </button>
       {expanded && (

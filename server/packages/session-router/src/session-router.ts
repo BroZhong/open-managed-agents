@@ -1516,8 +1516,8 @@ export class SessionRouter {
           ? undefined
           : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
         const alignedEvent = pendingBlock
-          ? { ...event, turnId, blockIndex: pendingBlock.blockIndex }
-          : { ...event, turnId };
+          ? { ...event, turnId: turnId!, blockIndex: pendingBlock.blockIndex }
+          : { ...event, turnId: turnId! };
         const completeEvent = delegationExecution ? { ...alignedEvent,
           callerSessionId: delegationExecution.callerSessionId,
           callerTurnId: delegationExecution.callerTurnId,
@@ -1532,7 +1532,8 @@ export class SessionRouter {
           ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
           idempotencyKey: this.turnKey(
             pendingEvent.id,
-            this.delegations ? `event:${event.id}` : `event:${durableEventIndex++}`,
+            this.delegations || event.type === "agent.context_start" || event.type === "agent.context_entry" || event.type === "agent.compaction"
+              ? `event:${event.id}` : `event:${durableEventIndex++}`,
           ),
           pendingFence,
         });
@@ -1542,6 +1543,17 @@ export class SessionRouter {
           seq: stored.seq,
           data: stored.data,
         });
+      };
+
+      // The SDK must await this before using a newly compacted context. Writes
+      // use the same fence and event IDs as ordinary iteration and checkpoints.
+      adapterInput.persistContext = async (contextEvents) => {
+        for (const event of contextEvents) {
+          if (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type === "compaction") {
+            turnController.signal.throwIfAborted();
+          }
+          await persistCompleteEvent(event);
+        }
       };
 
       try {
@@ -1946,6 +1958,7 @@ export class SessionRouter {
     return {
       sessionId,
       turnId,
+      inputEventId: `${sessionId}:${promotedEvent.seq}`,
       message,
       agent: {
         model,
@@ -1980,7 +1993,7 @@ export class SessionRouter {
 
   private adapterHistory(events: StoredEvent[]): SessionEvent[] {
     return events.filter((event) => event.type !== "subagent.result")
-      .map((event) => ({ ...(event.data as object), type: event.type }) as SessionEvent);
+      .map((event) => ({ id: `${event.sessionId}:${event.seq}`, timestamp: event.ts.toISOString(), ...(event.data as object), type: event.type }) as SessionEvent);
   }
 
   /**

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. Extends (does not supersede) ADR-0002 — refines how the stateless Pi
+Accepted; amended by ADR-0013 for native message fidelity and durable automatic
+compaction. Extends (does not supersede) ADR-0002 — refines how the stateless Pi
 Adapter obtains conversation history for each `run()`, without changing the
 Adapter contract or the Host-owns-infrastructure rule.
 
@@ -83,11 +84,12 @@ their own origin `provider`/`api`/`model` metadata, so the provider layer
 normalizes tool ids correctly across the switch. Only the model is resolved live;
 other Session-snapshot semantics (e.g. the agent identity) are unchanged.
 
-### 4. Compaction stays with the Pi SDK for now; Host-side compaction is future
+### 4. Native automatic compaction is durable
 
-The seeded-`SessionManager` path retains Pi's automatic compaction. A Host-owned
-compaction driven off the event log (decide when/what to compact, write the
-summary back as an event) is a later optimization, out of scope here.
+ADR-0013 supersedes the former deferred persistence decision. Pi 0.83.0 still
+owns compaction policy; the Host persists native messages and compaction entries
+before a dependent model request. Next-Turn reconstruction uses the native
+SessionManager context builder with preserved entry IDs and timestamps.
 
 ## Consequences
 
@@ -111,8 +113,8 @@ summary back as an event) is a later optimization, out of scope here.
 - KV cache is prefix-stable within a single model across turns (tool ids
   round-trip unchanged); it necessarily misses when the provider changes or when
   compaction rewrites the prefix — both unavoidable and unrelated to id handling.
-- Host-side compaction, if later adopted, would move that concern out of the SDK
-  and onto the event log, consistent with ADR-0002's "Host owns infrastructure".
+- ADR-0013 keeps compaction policy in the SDK and makes the event log authoritative
+  for both messages and committed compaction boundaries.
 - The Adapter remains a pure per-`run()` translator (ADR-0002 §1); this ADR only
   changes *what* it translates (structured history vs. flat text), not the
   contract.

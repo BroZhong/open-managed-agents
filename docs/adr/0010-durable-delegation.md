@@ -104,8 +104,8 @@ The Host retains the original pending input and Turn identity through waiting.
 On recovery it commits the result for the original tool, reconstructs complete
 structured history and asks Pi to continue without adding another user prompt.
 The Adapter refuses continuation with any unresolved tool request and never
-re-executes completed tools. The pinned SDK patch exposes `AgentSession.continue`
-through the same retry/compaction settlement loop used by normal prompts.
+re-executes completed tools. ADR-0014 uses a non-model custom control message through the public SDK to enter
+the same retry/compaction settlement loop used by normal prompts.
 The Host restores the model-step count for that same Turn.
 
 Result consumption and the durable parent tool result share one transaction.

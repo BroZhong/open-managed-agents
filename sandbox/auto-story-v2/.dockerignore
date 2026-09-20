@@ -11,3 +11,8 @@
 !bin/rg
 !bin/fd
 !bin/ossutil
+
+!pi-tools/
+!pi-tools/package.json
+!pi-tools/package-lock.json
+!pi-tools/smoke.mjs

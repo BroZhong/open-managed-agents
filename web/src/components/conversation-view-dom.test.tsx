@@ -395,3 +395,21 @@ it("folds every earlier message only once the final output finishes, preserving 
   fireEvent.click(summary);
   expect(screen.getByText("Verified").closest("[hidden]")).not.toBeNull();
 });
+
+it("keeps compaction summary and token provenance available after reload", () => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const event: SessionEvent = { seq: 12, type: "agent.compaction", ts: "2026-09-20T00:00:00Z", data: {
+    compactionId: "compact1", status: "completed", reason: "overflow", summary: "Retained task context",
+    tokensBefore: 1200, tokensBeforeSource: "usage", estimatedTokensAfter: 100, willRetry: true,
+    usage: { input: 55, output: 20 },
+  } };
+  const view = render(<ConversationView events={[userMessage, event]} sessionStatus="idle" />);
+  fireEvent.click(screen.getByText("Context compaction"));
+  expect(screen.getByText("Retained task context")).toBeTruthy();
+  expect(screen.getByText(/Before: 1200 tokens \(measured usage\).*100 tokens \(estimated\)/)).toBeTruthy();
+  view.unmount();
+  render(<ConversationView events={JSON.parse(JSON.stringify([userMessage, event]))} sessionStatus="idle" />);
+  fireEvent.click(screen.getByText("Context compaction"));
+  expect(screen.getByText("Retained task context")).toBeTruthy();
+  expect(screen.getByText(/Summary usage \(measured\)/)).toBeTruthy();
+});

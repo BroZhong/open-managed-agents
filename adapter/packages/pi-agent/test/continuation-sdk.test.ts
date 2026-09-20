@@ -3,6 +3,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { eventLogToAgentMessages } from "../src/event-log-to-messages.js";
+import { installContinuation } from "../src/pi-continuation.js";
 import { withGatewayErrors } from "../src/gateway-error-stream.js";
 import type { SessionEvent } from "@open-managed-agents/adapter-core";
 
@@ -30,7 +31,7 @@ describe("structured SDK continuation", () => {
     for (const message of history) sessionManager.appendMessage(message);
     const { session } = await createAgentSession({ cwd: "/tmp", model, modelRuntime: await ModelRuntime.create({ allowModelNetwork: false }), resourceLoader, sessionManager, settingsManager, noTools: "all" });
     let requests = 0;
-    session.agent.streamFn = withGatewayErrors((_model, context) => {
+    session.agent.streamFunction = withGatewayErrors((_model, context) => {
       requests++;
       expect(context.messages.filter(m => m.role === "user")).toHaveLength(1);
       expect(context.messages.filter(m => m.role === "toolResult")).toHaveLength(1);
@@ -43,13 +44,15 @@ describe("structured SDK continuation", () => {
       return stream;
     });
     try {
-      await session.continue();
+      await installContinuation(session)();
       expect(requests).toBe(scenario.requests);
       expect(session.messages.at(-1)).toMatchObject({
         role: "assistant", stopReason: scenario.recovered ? "stop" : "error",
         ...(scenario.recovered ? { content: [{ text: "recovered" }] } : { errorMessage: expect.stringContaining(scenario.error) }),
       });
       expect(session.isIdle).toBe(true);
+      expect(sessionManager.getBranch().some(entry => entry.type === "custom_message" && entry.customType === "oma.continuation")).toBe(false);
+      expect(session.messages.some(message => message.role === "custom" && message.customType === "oma.continuation")).toBe(false);
     } finally { await session.dispose(); }
   });
 });

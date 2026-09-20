@@ -38,6 +38,9 @@ import { PiEventTranslator } from "./translator.js";
 import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 import { withGatewayErrors } from "./gateway-error-stream.js";
+import { restorePiSession } from "./pi-context.js";
+import { PiContextJournal } from "./pi-context-journal.js";
+import { installContinuation } from "./pi-continuation.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -115,6 +118,8 @@ export interface SessionFactoryArgs {
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
   checkpoint(): SessionEvent[];
+  emitContext(event: SessionEvent): void;
+  compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
 }
 
@@ -319,7 +324,13 @@ export class PiAgentAdapter implements Adapter {
       session = await this.createSession({
         input, prompt, historyMessages, model, thinkingLevel, modelRuntime, hasToolExecutor, resourceLoaderOptions,
         checkpoint: () => structuredClone(checkpointEvents),
+        emitContext(event) {
+          checkpointEvents.push(event);
+          queue.push(event);
+        },
+        compactionInfo: () => translator.activeCompaction,
         async beforeModelStep() {
+          input.signal?.throwIfAborted();
           if (maxSteps !== undefined && steps >= maxSteps) {
             budgetExceeded = true;
             throw new Error(`Model step budget exhausted (${maxSteps})`);
@@ -331,7 +342,9 @@ export class PiAgentAdapter implements Adapter {
       // Translate synchronously, before a following tool execute callback can
       // register a durable wait. The snapshot and emitted events share IDs.
       const unsubscribe = session.subscribe((event) => {
-        for (const translated of translator.processEvent(event)) {
+        const observed = event.type === "compaction_end" && !event.result && input.signal?.aborted
+          ? { ...event, aborted: true } : event;
+        for (const translated of translator.processEvent(observed)) {
           if (!translated.type.includes("_stream_") && !translated.type.endsWith("_chunk")) checkpointEvents.push(translated);
           queue.push(translated);
         }
@@ -361,6 +374,7 @@ export class PiAgentAdapter implements Adapter {
       }
 
       try {
+        if (signal?.aborted) return;
         // Fire the turn. prompt() resolves after Pi has finished the whole
         // operation, including automatic retries and overflow compaction /
         // continuation; output arrives via the subscription. A rejection here
@@ -462,6 +476,17 @@ export class PiAgentAdapter implements Adapter {
     const mcpConfig = materializeMcpConfig(args.input.agent.mcpServers);
     let createdSession: { dispose(): Promise<void> | void } | undefined;
     try {
+      // Replay durable native identities into Pi's own context builder (ADR-0013).
+      // The import bridge removes its temporary JSONL. Its Session id preserves
+      // provider cache routing affinity across Turns.
+      const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
+      // Ownership must survive auth failure, compaction, or process loss before
+      // Pi appends the prompted user message. Display input is not native input.
+      args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
+        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
+      const journal = new PiContextJournal({ manager: sessionManager, input: args.input,
+        emit: args.emitContext, checkpoint: args.checkpoint, compactionInfo: args.compactionInfo });
+
       const resourceLoader = new DefaultResourceLoader({
         cwd,
         agentDir,
@@ -474,7 +499,7 @@ export class PiAgentAdapter implements Adapter {
         // never compete with the Host-owned tools, including in local dev.
         extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter(extension =>
           !["Agent", "get_subagent_result", "steer_subagent"].some(name => extension.tools.has(name))) }),
-        ...(customTools ? { extensionFactories: [createManagedSkillCommandExtension(skillDescriptors)] } : {}),
+        extensionFactories: [journal.extension, ...(customTools ? [createManagedSkillCommandExtension(skillDescriptors)] : [])],
         // When we inject the skills section ourselves (custom-tool path), skip
         // Pi's own skill loading so the section is not duplicated / re-gated.
         ...(injectSkillsIntoPrompt || args.input.execution?.isChild
@@ -492,21 +517,6 @@ export class PiAgentAdapter implements Adapter {
         .getExtensions()
         .runtime.flagValues.set("mcp-config", mcpConfig.path);
 
-      // Seed the rebuilt structured history into an in-memory SessionManager
-      // (ADR-0003 §2). `appendMessage` auto-generates entry ids/parentId, so we
-      // build no tree by hand; `createAgentSession` calls `buildSessionContext()`
-      // at construction, loading this history into the LLM context before the
-      // first `prompt()`. `persist = false`, so nothing is written to disk — the
-      // event log stays the sole authoritative store. Derive a stable id from
-      // the Host Session so provider-level prompt caching keeps routing
-      // affinity across Turns even though each Turn still gets a fresh
-      // in-memory manager.
-      const sessionManager = SessionManager.inMemory(cwd, {
-        id: derivePiSessionId(args.input.sessionId),
-      });
-      for (const message of args.historyMessages) {
-        sessionManager.appendMessage(message);
-      }
 
       const { session } = await createAgentSession({
         cwd,
@@ -520,7 +530,13 @@ export class PiAgentAdapter implements Adapter {
           : {}),
       });
       createdSession = session;
-      session.agent.streamFn = withGatewayErrors(session.agent.streamFn);
+      const continueSession = installContinuation(session);
+      const streamFunction = withGatewayErrors(session.agent.streamFunction);
+      session.agent.streamFunction = async (model, context, options) => {
+        // Also gates native summary requests, which bypass transformContext.
+        await journal.ready();
+        return streamFunction(model, context, options);
+      };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
       const transformContext = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {
@@ -537,6 +553,8 @@ export class PiAgentAdapter implements Adapter {
           };
           // The Host has already persisted this instruction with its stable ID.
           // Keep both live transcript and this request's context in agreement.
+          const instructionEntryId = sessionManager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details);
+          message.timestamp = Date.parse(sessionManager.getEntry(instructionEntryId)!.timestamp);
           session.agent.state.messages = [...session.agent.state.messages, message];
           messages = [...messages, message];
           appliedInstructions.add(instruction.id);
@@ -554,10 +572,28 @@ export class PiAgentAdapter implements Adapter {
       const active = session as PiSessionLike;
       let disposed = false;
       return {
-        subscribe: active.subscribe.bind(active),
-        prompt: active.prompt.bind(active),
-        continue: session.continue.bind(session),
-        abort: active.abort.bind(active),
+        subscribe(listener) {
+          return active.subscribe(event => {
+            if (event.type === "compaction_end" && journal.failure) {
+              listener({ ...event, result: undefined, aborted: !!args.input.signal?.aborted,
+                errorMessage: journal.failure.message, willRetry: false });
+            } else listener(event);
+          });
+        },
+        async prompt(text, options) {
+          try { await active.prompt(text, options); await journal.ready(); }
+          finally { journal.capture(); }
+        },
+        async continue() {
+          try { await continueSession(); await journal.ready(); }
+          finally { journal.capture(); }
+        },
+        abort() {
+          // Pi exposes separate cancellation for summary requests. Its general
+          // abort waits for idle but does not cancel a running compaction.
+          session.abortCompaction();
+          return active.abort();
+        },
         async dispose() {
           if (disposed) return;
           disposed = true;

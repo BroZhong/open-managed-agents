@@ -236,6 +236,24 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
         </>}>
         <AssistantBubble text={message.text} />
       </SessionDisclosure>;
+    case "compaction": {
+      const data = message.compaction!;
+      const status = !running && ["started", "retrying"].includes(data.status) ? "interrupted" : data.status;
+      return <SessionDisclosure className="session-tool" summary={<>
+        <span className="session-tool-label">Context compaction</span>
+        <span className="session-tool-detail"> · {status} · {data.reason ?? "unknown trigger"}</span>
+      </>}>
+        <div className="space-y-2 text-sm">
+          <p>Before: {data.tokensBefore ?? "unavailable"} tokens ({data.tokensBeforeSource === "usage" ? "measured usage" : "SDK estimate"}) · After: {data.estimatedTokensAfter ?? "unavailable"} tokens (estimated)</p>
+          <p>Model retry: {data.willRetry === undefined ? "unavailable" : data.willRetry ? "yes" : "no"}{data.attempt ? ` · Summary retries: ${data.attempt}/${data.maxAttempts}` : ""}</p>
+          {data.retryErrors?.map((error, index) => <p key={index}>Summary retry {index + 1}: {error}</p>)}
+          {data.errorMessage && <p role="alert">{data.errorMessage}</p>}
+          {data.completionWarning && <p role="alert">Summary saved. {data.completionWarning}</p>}
+          {data.summary && <p className="whitespace-pre-wrap">{data.summary}</p>}
+          {data.usage !== undefined ? <div>Summary usage (measured)<pre className="overflow-auto text-xs">{JSON.stringify(data.usage, null, 2)}</pre></div> : <p>Summary usage: unavailable</p>}
+        </div>
+      </SessionDisclosure>;
+    }
     case "thinking":
       return (
         <ThinkingBlock

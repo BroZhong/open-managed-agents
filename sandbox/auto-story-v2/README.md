@@ -1,16 +1,21 @@
 # auto-story-v2 sandbox image
 
-This recipe builds the sole maintained `auto-story-v2` template (auto-story 0.2.1) for the Shanghai `agent-platform` cluster
+This recipe builds the sole maintained `auto-story-v2` template (auto-story 0.2.2) for the Shanghai `agent-platform` cluster
 from the original ACS `code-interpreter` image, pinned by digest. It does not
 derive from the OpenMontage image: OpenMontage, Whisper, their source trees,
 and model weights are absent from every added layer. FFmpeg is compiled with
 `--disable-whisper`.
 
 The deployed image digest is recorded in [sandboxset.yaml](sandboxset.yaml).
+The September 21 test release uses `pi-tools/Dockerfile.overlay` to retain the
+existing live 0.3.0 image (including offline Whisper) while appending Node 22 and
+Pi. This is distinct from the clean recipe below; see the
+[release record](../../docs/verification/pi-public-sdk-release-2026-09-21.md).
 `versions.json` pins the inputs for future builds; build verification runs
 again for each release and is not implied by historical reports.
 
-The ACS Jupyter runtime, Node.js, and E2B startup contract are retained. Agent
+The ACS Jupyter runtime and E2B startup contract are retained. Node.js is upgraded
+to the Host's pinned 22.23.2 runtime because Pi 0.83 requires Node >=22.19. Agent
 commands use the mounted `/home/user/workspace`; Python on a minimal PATH runs the Gemini environment
 at `/opt/auto-story/venv`. Its packages take precedence, with `acs-base.pth`
 providing access to scientific packages from the clean ACS `/opt/venv` after
@@ -28,6 +33,8 @@ parity tests:
 
 | Component | Version | Source |
 | --- | --- | --- |
+| Node.js | 22.23.2 | Pinned Host node-base image in `versions.json` |
+| Pi Coding Agent SDK | 0.83.0 | `pi-tools/package-lock.json` |
 | vfs-cli | 0.3.15 | [Official distribution](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.15) |
 | FFmpeg / ffprobe | 9.0.1 | [Official releases](https://ffmpeg.org/download.html) |
 | Gemini Python SDK (`google-genai`) | 2.22.0 | [Official SDK release](https://github.com/googleapis/python-genai/releases/tag/v2.22.0) |
@@ -54,10 +61,12 @@ and executable hashes are recorded alongside it. A later build can receive
 updated transitive Python/Debian dependencies; the source archive hashes and
 the component versions and verified upstream inputs remain pinned.
 
-Pi's native `grep` and `find` run these sandbox binaries through the pinned
-[Pi process hooks](../../adapter/patches/README.md). The adapter and Server
-workspaces both need the patch. Missing rg/fd is a tool error; there is no
-Host search or Python matching fallback, and no runtime tool download.
+Pi 0.83.0 is installed unmodified at `/opt/oma-pi-tools` using the committed npm
+lockfile. The Host registers public custom tools and invokes these native tool
+factories through ToolExecutor; model inference stays on Host. Image acceptance
+executes all seven tools as the ordinary user. Upgrade/rebuild Sandboxes before
+releasing the matching Host version; older Sandboxes lack the required runtime.
+See [ADR-0014](../../docs/adr/0014-public-pi-sdk-boundary.md).
 
 FFmpeg includes H.264 (x264 and OpenH264)/H.265, VP8/VP9, AV1, AAC, MP3, Opus, Vorbis and WebP
 support, plus text/subtitle filters and DejaVu/Noto CJK fonts. The compiler and
@@ -90,7 +99,7 @@ helpers, `prepare-search-binaries.py` and `prepare-ossutil.py`, must remain besi
 the auto-story-v2 directory. Python wheels and Debian
 packages still need a reachable package mirror during the build.
 
-The default tag is `auto-story-v2-0.2.1` in
+The default tag is `auto-story-v2-0.2.2` in
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 `REGISTRY`, `TAG`, `VERSION`, `BUILD_JOBS`, `BASE_IMAGE`, and `PIP_INDEX_URL`
 may be overridden. A base override must retain the clean ACS runtime contract

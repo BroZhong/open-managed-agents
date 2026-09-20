@@ -13,6 +13,9 @@ export type {
   SkillDescriptor,
   // Input
   AdapterInput,
+  AgentContextEntryEvent,
+  AgentContextStartEvent,
+  AgentCompactionEvent,
   AdapterExecution,
   DelegationInstruction,
   HostSubagentCapability,

@@ -350,6 +350,7 @@ def main():
     check("required_environment", required_environment)
     check("binary_versions", binary_versions)
     check("gemini_sdk", gemini_sdk)
+    check("pi_native_tools", lambda: json.loads(run(["node", "/opt/oma-pi-tools/smoke.mjs"])))
     check("minimal_path_python_and_base_science", python_entrypoint)
     check("excluded_software", excluded_software)
 

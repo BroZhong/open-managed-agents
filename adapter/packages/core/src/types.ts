@@ -145,6 +145,10 @@ export interface AdapterInput {
     skillDescriptors?: SkillDescriptor[];
   };
   history: SessionEvent[];
+  /** Durable identity of the promoted input, used to pair native/runtime history. */
+  inputEventId?: string;
+  /** Host persistence barrier. Rejecting must stop requests using new context. */
+  persistContext?: (events: SessionEvent[]) => Promise<void>;
   subagents?: HostSubagentCapability;
   execution?: AdapterExecution;
   /** Resume the existing Turn from history, after Host persists these results. */
@@ -181,6 +185,41 @@ export interface AdapterInput {
 interface BaseEvent {
   id: string;
   timestamp: string;
+}
+
+/** Versioned runtime records are opaque to the Host; the Pi Adapter validates/replays them. */
+export interface AgentContextStartEvent extends BaseEvent {
+  type: "agent.context_start";
+  sdk: "pi@0.83.0";
+  turnId: string;
+  inputEventId?: string;
+}
+
+export interface AgentContextEntryEvent extends BaseEvent {
+  type: "agent.context_entry";
+  sdk: "pi@0.83.0";
+  turnId: string;
+  inputEventId?: string;
+  entry: unknown;
+  compactionId?: string;
+  tokensBeforeSource?: "usage" | "estimate";
+  reason?: "manual" | "threshold" | "overflow";
+}
+
+export interface AgentCompactionEvent extends BaseEvent {
+  type: "agent.compaction";
+  compactionId: string;
+  status: "started" | "retrying" | "completed" | "failed" | "cancelled";
+  reason: "manual" | "threshold" | "overflow";
+  summary?: string;
+  tokensBefore?: number;
+  estimatedTokensAfter?: number;
+  usage?: unknown;
+  willRetry?: boolean;
+  errorMessage?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
 }
 
 // ─── Lifecycle events ────────────────────────────────────────────────────────
@@ -289,6 +328,7 @@ export interface AgentToolUseEvent extends BaseEvent {
 export interface AgentToolResultEvent extends BaseEvent {
   type: "agent.tool_result";
   toolUseId: string;
+  name?: string;
   content: ContentBlock[];
   isError?: boolean;
 }
@@ -376,6 +416,9 @@ export type StreamEvent =
 // ─── Union ───────────────────────────────────────────────────────────────────
 
 export type SessionEvent =
+  | AgentContextStartEvent
+  | AgentContextEntryEvent
+  | AgentCompactionEvent
   | LifecycleEvent
   | SpanEvent
   | CanonicalEvent

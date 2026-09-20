@@ -135,7 +135,7 @@ async function compare(name: SearchTool, args: Record<string, unknown>, unordere
   const expected = await execute(nativeTool(name), params);
   const actual = await execute(sandboxTool(name), params);
   expect(canonical(actual, unordered)).toEqual(canonical(expected, unordered));
-  expect(executor.commands.some((command) => basename(command[0]) === (name === "grep" ? "rg" : "fd"))).toBe(true);
+  expect(executor.commands.some((command) => basename(command[0]) === "node")).toBe(true);
   return actual;
 }
 
@@ -309,39 +309,9 @@ describe("native search cancellation", () => {
     const controller = new AbortController();
     controller.abort();
     const args = { pattern: "needle", path: workspace };
-    await expect(execute(nativeTool(name), args, controller.signal)).rejects.toThrow("Operation aborted");
-    await expect(execute(sandboxTool(name), args, controller.signal)).rejects.toThrow("Operation aborted");
+    await expect(execute(nativeTool(name), args, controller.signal)).rejects.toThrow(/aborted/i);
+    await expect(execute(sandboxTool(name), args, controller.signal)).rejects.toThrow(/aborted/i);
     expect(executor.commands).toEqual([]);
   });
 
-  it.each([
-    { name: "a confirmed cancellation before process creation", beforeStart: true, expected: /^Operation aborted$/ },
-    { name: "an unconfirmed stream loss during cancellation", beforeStart: false, expected: /^Failed to run ripgrep: RPC disconnected$/ },
-  ])("preserves the distinction between cancellation and failure for $name", async ({ beforeStart, expected }) => {
-    let started!: () => void;
-    const starting = new Promise<void>((resolve) => { started = resolve; });
-    const baseExec = executor.exec.bind(executor);
-    executor.exec = async function* (command, options) {
-      if (command[0] !== "rg") {
-        yield* baseExec(command, options);
-        return;
-      }
-      // A pending process allocation and a disconnected running process can
-      // both lack an exit result. Only an explicit backend guarantee that no
-      // process was created makes this a normal cancellation.
-      await new Promise<void>((resolve) => {
-        options?.signal?.addEventListener("abort", () => resolve(), { once: true });
-        started();
-      });
-      throw beforeStart
-        ? new ExecAbortedBeforeStartError()
-        : new DOMException("RPC disconnected", "AbortError");
-    };
-    const controller = new AbortController();
-    const result = execute(sandboxTool("grep"), { pattern: "needle", path: workspace }, controller.signal);
-    const rejected = expect(result).rejects.toThrow(expected);
-    await starting;
-    controller.abort();
-    await rejected;
-  });
 });

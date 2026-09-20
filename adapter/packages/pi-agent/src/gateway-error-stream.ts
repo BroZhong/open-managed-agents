@@ -49,7 +49,7 @@ class GatewayErrorStream extends EventStream<AssistantMessageEvent, AssistantMes
  * bounded retry, backoff, abort, context overflow and completed tool history.
  * Keep the original gateway text verbatim after a human-readable category.
  */
-export function withGatewayErrors(streamFn: AgentSession["agent"]["streamFn"]): AgentSession["agent"]["streamFn"] {
+export function withGatewayErrors(streamFn: AgentSession["agent"]["streamFunction"]): AgentSession["agent"]["streamFunction"] {
   return async (model, context, options) =>
     new GatewayErrorStream(await streamFn(model, context, options));
 }
