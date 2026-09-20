@@ -5,6 +5,8 @@ Adapter and Server lockfiles. See ADR-0013 and `adapter/patches/README.md`.
 
 ## Verification result
 
+The public SDK implementation is covered by the [2026-09-21 release report](verification/pi-public-sdk-release-2026-09-21.md). The counts below describe the earlier patched implementation.
+
 Verified on 2026-09-20: Adapter 425 tests passed; Server 973 passed and 8 opt-in
 tests skipped; Web 350 passed. Adapter/Server typechecks and the Web production
 build passed. Run the full suites separately to avoid local resource contention.
