@@ -693,3 +693,32 @@ describe("useSessionEvents history replay", () => {
     }
   });
 });
+
+it("retries failed initial history before declaring it loaded or opening SSE", async () => {
+  vi.useFakeTimers();
+  let historyAttempts = 0;
+  const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (new Headers(init?.headers).get("Accept") === "application/json") {
+      historyAttempts++;
+      return historyAttempts === 1 ? new Response("Unavailable", { status: 503 }) : Response.json({ data: [], has_more: false });
+    }
+    return new Response(new ReadableStream({ start(controller) {
+      init?.signal?.addEventListener("abort", () => controller.close(), { once: true });
+    } }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result, unmount } = renderHook(() => useSessionEvents("failed-history"), { wrapper: queryWrapper(queryClient) });
+  try {
+    expect(result.current.isHistoryLoading).toBe(true);
+    await act(async () => {});
+    expect(result.current.historyError).toMatch(/Could not load conversation history/);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
+    expect(historyAttempts).toBe(2);
+    expect(result.current.historyError).toBeUndefined();
+    expect(result.current.isHistoryLoading).toBe(false);
+    expect(result.current.isConnected).toBe(true);
+    expect(result.current.events).toEqual([]);
+  } finally { unmount(); queryClient.clear(); vi.useRealTimers(); }
+});

@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from "react-router";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SessionLoading } from "@/components/session-loading";
 import { ConversationView } from "@/components/conversation-view";
 import { TimelineView } from "@/components/timeline-view";
 import { SplitWorkbench } from "@/components/split-workbench";
@@ -43,10 +43,10 @@ function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
-  const { data: session, isLoading: sessionLoading } = useSession(id);
+  const { data: session, isLoading: sessionLoading, isError: sessionError, refetch: refetchSession } = useSession(id);
   const { data: workspaces = [] } = useWorkspaces();
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
-  const { events, activeDeltas, status, fileChange, turnLifecycleNonce } =
+  const { events, activeDeltas, status, fileChange, turnLifecycleNonce, isHistoryLoading, historyError } =
     useSessionEvents(id);
   const { send, isPending } = useSendMessage(id);
   const { interrupt, isPending: isInterrupting, requestAccepted: interruptRequested } = useInterrupt(id);
@@ -92,19 +92,10 @@ function SessionDetail({ id }: { id: string }) {
   const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
   const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" || status === "waiting" ? status : (session?.status ?? "idle");
 
-  if (sessionLoading) {
-    return (
-      <div className="flex h-full flex-col">
-        <div className="flex items-center gap-4 border-b border-neutral-200 px-6 py-4">
-          <Skeleton className="h-6 w-6" />
-          <Skeleton className="h-5 w-48" />
-        </div>
-        <div className="flex-1 px-6 py-8">
-          <Skeleton className="mx-auto h-64 max-w-3xl" />
-        </div>
-      </div>
-    );
-  }
+  if (sessionLoading) return <SessionLoading />;
+  if (sessionError || !session) return <div role="alert" className="p-6 text-center">
+    Could not load Session. <button className="underline" onClick={() => void refetchSession()}>Retry</button>
+  </div>;
 
   return (
     <div className="flex h-full flex-col">
@@ -134,7 +125,7 @@ function SessionDetail({ id }: { id: string }) {
           )}
           <StatusBadge status={effectiveStatus as "idle" | "running" | "waiting" | "terminated"} />
         </div>
-        {session && <SessionShareDialog key={id} sessionId={id} title={session.title || id} events={events} />}
+        {session && <SessionShareDialog key={id} sessionId={id} title={session.title || id} events={events} loading={isHistoryLoading} loadError={historyError} />}
       </div>
 
       {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
@@ -153,7 +144,7 @@ function SessionDetail({ id }: { id: string }) {
             </div>
             <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ConversationView resources={session ? { agentId: session.agentId, skills: equippedSkills, onOpenWorkspacePath: openWorkspaceFile } : undefined} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+                <ConversationView loading={isHistoryLoading} loadError={historyError} resources={session ? { agentId: session.agentId, skills: equippedSkills, onOpenWorkspacePath: openWorkspaceFile } : undefined} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
               </div>
               <MessageInput
                 onSend={send}
@@ -169,7 +160,7 @@ function SessionDetail({ id }: { id: string }) {
               <SessionUsageFooter events={events} />
             </div>
             <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
-              <TimelineView events={events} />
+              {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TimelineView events={events} />}
             </div>
             {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
               <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />

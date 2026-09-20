@@ -1,9 +1,11 @@
 import type {
   Artifact,
   ArtifactContent,
+  ArtifactMetadata,
   ArtifactPutInput,
   ArtifactStore,
 } from "@oma-server/store";
+import { resolveArtifactContentType } from "@oma-server/store";
 
 /**
  * In-memory {@link ArtifactStore} for dev + tests. Keyed the same way as the
@@ -41,6 +43,13 @@ export class InMemoryArtifactStore implements ArtifactStore {
 
   async exists(tenantId: string, workspaceId: string, path: string): Promise<boolean> {
     return this.objects.has(this.key(tenantId, workspaceId, path));
+  }
+
+  async stat(tenantId: string, workspaceId: string, path: string): Promise<ArtifactMetadata | null> {
+    const object = this.objects.get(this.key(tenantId, workspaceId, path));
+    if (!object) return null;
+    return { path, size: object.body.byteLength, updatedAt: object.updatedAt,
+      contentType: resolveArtifactContentType(path, object.contentType) };
   }
 
   async put(input: ArtifactPutInput): Promise<Artifact> {

@@ -10,6 +10,7 @@ import {
 } from "@/lib/conversation-projection";
 import { ConversationResourceLink } from "@/components/conversation-resource-link";
 import { ConversationResourcesContext, CodeBlockContext, type ConversationResources } from "@/lib/conversation-resources";
+import { SessionLoading } from "@/components/session-loading";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { SessionDisclosure } from "@/components/session-disclosure";
 import { ToolCard } from "@/components/tool-card";
@@ -25,6 +26,8 @@ const OpenExecutionContext = createContext<((execution: DelegationExecution) => 
 interface ConversationViewProps {
   /** Noninteractive, clipped owner share preview. */
   preview?: boolean;
+  loading?: boolean;
+  loadError?: string;
   onOpenWorkspaceFile?: (path: string) => void;
   resources?: ConversationResources;
   onOpenExecution?: (execution: DelegationExecution) => void;
@@ -37,6 +40,8 @@ interface ConversationViewProps {
 
 export function ConversationView({
   preview = false,
+  loading = false,
+  loadError,
   onOpenWorkspaceFile,
   resources,
   onOpenExecution,
@@ -109,7 +114,9 @@ export function ConversationView({
     <ConversationResourcesContext.Provider value={resources ?? (onOpenWorkspaceFile ? { agentId: "", skills: [], onOpenWorkspacePath: onOpenWorkspaceFile } : undefined)}><SessionContext.Provider value={sessionId}><OpenExecutionContext.Provider value={onOpenExecution}><div className="relative flex h-full flex-col">
       <div ref={scrollContainerRef} className="conversation-scroll flex-1 overflow-y-auto px-6 py-6">
         <div ref={contentRef} className="session-thread">
-          {messages.length === 0 && (
+          {loading && <SessionLoading />}
+          {loadError && <p role="alert" className="py-8 text-center text-sm text-[var(--color-fg-muted)]">{loadError}</p>}
+          {!loading && !loadError && messages.length === 0 && (
             <div className="session-welcome"><h2>What would you like to work on?</h2><p>Send a message to start the conversation.</p></div>
           )}
           {turns.map((turn) => (

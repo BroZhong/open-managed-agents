@@ -9,11 +9,6 @@ afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.res
 it("reads all pages without owner credentials, opens Workspace links read-only and refreshes current content", async () => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   localStorage.setItem("oma_api_key", "owner-secret");
-  const createObjectURL = vi.fn(() => "blob:shared-download");
-  vi.stubGlobal("URL", class extends URL {
-    static createObjectURL = createObjectURL;
-    static revokeObjectURL = vi.fn();
-  });
   const downloads: Array<{ href: string; filename: string }> = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
     downloads.push({ href: this.href, filename: this.download });
@@ -23,6 +18,11 @@ it("reads all pages without owner credentials, opens Workspace links read-only a
   const fetcher = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const url = new URL(String(input));
     expect(options?.credentials).toBe("omit");
+    if (url.hostname === "storage.example.test") {
+      expect(new Headers(options?.headers).has("x-session-share")).toBe(false);
+      expect(new Headers(options?.headers).has("authorization")).toBe(false);
+      return new Response(`Report v${version}`);
+    }
     expect(new Headers(options?.headers).get("x-session-share")).toBe("share-one");
     expect(new Headers(options?.headers).has("authorization")).toBe(false);
     expect(new Headers(options?.headers).get("accept")).not.toBe("text/event-stream");
@@ -30,7 +30,7 @@ it("reads all pages without owner credentials, opens Workspace links read-only a
     if (url.pathname === "/v1/sessions/s1") return Response.json({ id: "s1", title: "Shared work", workspaceId: "w1", agent: { name: "Writer" }, status: "idle" });
     if (url.pathname.endsWith("/events")) return Response.json(url.searchParams.has("after_seq") ? { data: [event(2, `Last page ${version}\n\n[Report](/home/user/workspace/report.txt) [Child](/sessions/child) [Skill](/skills/private/SKILL.md) [Missing](/home/user/workspace/missing.txt)`)], has_more: false } : { data: [event(1, "[Report](/home/user/workspace/report.txt) [Child](/sessions/child) [Skill](/skills/private/SKILL.md)")], has_more: true });
     if (url.pathname.endsWith("/files")) return Response.json({ data: [{ path: "report.txt", size: 9 }] });
-    if (url.pathname.endsWith("/files/report.txt")) return new Response(`Report v${version}`, { headers: { "Content-Type": "text/plain" } });
+    if (url.pathname.endsWith("/files/report.txt")) return Response.json({ path: "report.txt", url: "https://storage.example.test/report.txt", size: 9, contentType: "text/plain", expiresIn: 600, expiresAt: new Date(Date.now() + 600_000).toISOString() });
     if (url.pathname.endsWith("/files/missing.txt")) return Response.json({ error: "File not found" }, { status: 404 });
     throw new Error(`Unexpected request ${url}`);
   });
@@ -50,8 +50,7 @@ it("reads all pages without owner credentials, opens Workspace links read-only a
   await screen.findByText("Last page 2");
   await screen.findByText("Report v2");
   fireEvent.click(screen.getByRole("button", { name: "Download file" }));
-  await waitFor(() => expect(downloads).toEqual([{ href: "blob:shared-download", filename: "report.txt" }]));
-  expect(createObjectURL.mock.calls.length).toBeGreaterThan(0);
+  await waitFor(() => expect(downloads).toEqual([{ href: "https://storage.example.test/report.txt", filename: "report.txt" }]));
   fireEvent.click(screen.getByRole("link", { name: "Missing" }));
   await screen.findByText("File not found");
   expect(screen.queryByRole("heading", { name: "分享已失效" })).toBeNull();

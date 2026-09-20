@@ -39,7 +39,7 @@ Supabase fallback, local filesystem fallback or dual-write mode.
 | `WORKSPACE_OSS_ACCESS_KEY_SECRET` | Required Host credential from the same secret source. Never pass it to an Agent or Sandbox. |
 | `WORKSPACE_OSS_STS_TOKEN` | Optional token when the Host uses temporary credentials. |
 | `WORKSPACE_OSS_ENDPOINT` | Host API endpoint. This manifest uses `https://oss-cn-shanghai.aliyuncs.com` to share the verified regional Host SDK configuration. CSI uses the internal endpoint. |
-| `WORKSPACE_OSS_PUBLIC_ENDPOINT` | Browser signing endpoint: `https://oss-cn-shanghai.aliyuncs.com`. It must be the public regional HTTPS endpoint; internal endpoints and custom domains are rejected. |
+| `WORKSPACE_OSS_PUBLIC_ENDPOINT` | Public HTTPS signing endpoint. The manifest retains `https://oss-cn-shanghai.aliyuncs.com`; set an explicitly configured HTTPS custom domain attached to this Bucket for inline previews where default-domain policies restrict them. Internal/private endpoints and mismatched OSS regions are rejected. |
 | `WORKSPACE_OSS_AGENT_NAME` | `agentry-workspace`; optional in code, explicit in the deployment. |
 | `WORKSPACE_OSS_PV_NAME` | `agentry-workspace-oss`; optional in code, explicit in the deployment. |
 | `WORKSPACE_OSS_CREDENTIAL_PROVIDER` | `agentry-oss-rw`; optional in code, explicit in the deployment. |
@@ -82,6 +82,44 @@ contains placeholders only for credentials. The full Host does not load `.env`
 automatically; supply variables through the process supervisor or an explicit
 shell environment. Keep local `.env` files untracked. Memory-only development
 fixtures are not evidence of an OSS production deployment.
+
+## Direct browser reads
+
+ADR-0012 makes Workspace file reads return JSON metadata and a signed OSS GET
+URL through the single `/files/{path}` read endpoint. The Host does not
+buffer file content for browser or program downloads. The existing manifest
+keeps its public regional endpoint until an actual custom domain is provisioned;
+it does not create a domain, certificate or Bucket CORS rule.
+
+Use the regional OSS domain when actual browser tests pass. If its default-domain
+policies prevent the required previews, attach a dedicated file domain to the Bucket, enable HTTPS
+on it and set `WORKSPACE_OSS_PUBLIC_ENDPOINT` to that HTTPS origin. Use a domain
+separate from the console's origin so Workspace HTML does not run with console
+origin privileges. CNAME mode is selected automatically for an explicitly
+configured custom domain. Default OSS-domain preview restrictions and generic
+ossfs MIME metadata must be checked with real files before release. Custom-domain
+signing can apply MIME inference without modifying object metadata; regional
+signing preserves stored MIME.
+
+Browser text reads and media elements using anonymous CORS need a Bucket CORS
+rule for the actual console origin (currently `https://agentry.welltop.tech`),
+permitting `GET`/`HEAD` and exposing
+the response headers needed by clients (`Content-Type`, `Content-Length`,
+`Content-Range`, `Accept-Ranges`, `ETag`, `Content-Disposition`). Allow `Range`
+and conditional headers if the client sends them; add development origins only
+to the appropriate development environment. An authorized API response does not
+prove that a browser can read the OSS response. OSS requests must not include
+the platform's Authorization or x-api-key headers.
+
+Before rollout, verify text preview through CORS, real JPG/PNG/audio/video,
+generic MIME objects, Range/206 seeking, attachment downloads with Unicode
+names, refreshing an expired URL and cancelling a superseded file selection.
+Compare the browser network trace: media selection must request metadata once
+and then load from OSS, with no full media GET through the Host. Run
+`node server/test-workspace-api.mjs` with the target environment's authorized
+configuration for file lifecycle checks; this script writes temporary fixtures
+and is not a read-only production check. Local tests alone do not establish
+live Bucket configuration.
 
 ## Host credentials and CSI identity are separate
 

@@ -20,6 +20,8 @@ export type {
   ArtifactStore,
   Artifact,
   ArtifactContent,
+  ArtifactMetadata,
+  ArtifactReadUrlOptions,
   ArtifactPutInput,
 } from "./artifact-store.js";
 export type * from "./delegation-store.js";

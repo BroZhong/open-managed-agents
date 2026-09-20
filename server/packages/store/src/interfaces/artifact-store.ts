@@ -17,6 +17,18 @@ export interface ArtifactContent {
   contentType?: string;
 }
 
+/** Object metadata obtained without downloading its body. */
+export interface ArtifactMetadata extends Artifact {
+  contentType: string;
+  etag?: string;
+}
+
+export interface ArtifactReadUrlOptions {
+  download?: boolean;
+  /** Resolved from trusted object metadata; supported by custom OSS domains. */
+  contentType?: string;
+}
+
 export interface ArtifactPutInput {
   tenantId: string;
   workspaceId: string;
@@ -39,6 +51,8 @@ export interface ArtifactStore {
   list(tenantId: string, workspaceId: string, prefix?: string): Promise<Artifact[]>;
   /** Fetch a single artifact's content. Returns null if absent. */
   get(tenantId: string, workspaceId: string, path: string): Promise<ArtifactContent | null>;
+  /** Read metadata only (HEAD). Returns null if absent. */
+  stat(tenantId: string, workspaceId: string, path: string): Promise<ArtifactMetadata | null>;
   /** Check whether an artifact exists without fetching its body. */
   exists(tenantId: string, workspaceId: string, path: string): Promise<boolean>;
   /** Write (create or overwrite) an artifact. */
@@ -48,12 +62,14 @@ export interface ArtifactStore {
   /**
    * Sign a short-lived, read-only GET URL for a file. Returns an absolute,
    * publicly-reachable URL. Optional: only backends that support presigned
-   * reads implement it. Never signs writes (ADR-0006).
+   * reads implement it. Never signs writes (ADR-0006). The caller must check
+   * access and existence with stat first; signing does not read the object.
    */
   createSignedReadUrl?(
     tenantId: string,
     workspaceId: string,
     path: string,
     expiresInSec: number,
+    options?: ArtifactReadUrlOptions,
   ): Promise<string>;
 }

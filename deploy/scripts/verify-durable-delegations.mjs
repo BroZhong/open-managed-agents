@@ -30,7 +30,7 @@ const pool = new Pool({connectionString:process.env.PG_URL ?? process.env.DATABA
 const keys = new PgApiKeyStore(pool);
 let temporaryKey;
 let rawKey;
-async function api(path,body,raw=false,method=body===undefined?'GET':'POST') { const response = await fetch(`${base}${path}`,{method,headers:{'x-api-key':rawKey,'content-type':'application/json'},...(body === undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)}); const text = await response.text(); if (!response.ok) throw new Error(`API ${method} ${path} returned ${response.status}: ${text.slice(0,500).replace(/omak_[A-Za-z0-9_-]+/g,'[redacted]')}`); return raw?text:JSON.parse(text); }
+async function api(path,body,method=body===undefined?'GET':'POST') { const response = await fetch(`${base}${path}`,{method,headers:{'x-api-key':rawKey,'content-type':'application/json'},...(body === undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)}); const text = await response.text(); if (!response.ok) throw new Error(`API ${method} ${path} returned ${response.status}: ${text.slice(0,500).replace(/omak_[A-Za-z0-9_-]+/g,'[redacted]')}`); return JSON.parse(text); }
 async function events(id) { let after=0; const result=[]; for(let page=0;page<100;page++) { const data=await api(`/v1/sessions/${id}/events?after_seq=${after}&limit=200`); result.push(...data.data); if(!data.has_more || !data.data.length) return result; after=data.data.at(-1).seq; } throw new Error('Event pagination exceeded'); }
 async function executions(id) { const page=await api(`/v1/sessions/${id}/delegations?limit=100`); return page.data; }
 const terminal = new Set(['completed','failed','interrupted','budget_exhausted','recovery_required']);
@@ -64,7 +64,13 @@ async function assertNotification(s) {
   check('notification callback actually called model',modelSpans.length>0,{spans:modelSpans.map(e=>({seq:e.seq,model:e.data.model}))}); check('notification callback emitted acknowledgement',acknowledgements.length>0,{messages:acknowledgements.map(e=>({seq:e.seq,content:e.data.content}))}); check('final notification status processed',snap.trace.execution.notificationStatus==='processed',{status:snap.trace.execution.notificationStatus}); assertUsage(snap); return snap;
 }
 
-async function file(s,name) { return api(`/v1/workspaces/${s.workspaceId}/files/${name.split('/').map(encodeURIComponent).join('/')}`,undefined,true); }
+async function file(s,name) {
+  const access = await api(`/v1/workspaces/${s.workspaceId}/files/${name.split('/').map(encodeURIComponent).join('/')}`);
+  // The signed storage request must not carry the OMA API key.
+  const response = await fetch(access.url,{signal:AbortSignal.timeout(60000)});
+  if (!response.ok) throw new Error(`File ${name}: storage returned HTTP ${response.status}`);
+  return response.text();
+}
 function filePath(name) { return `/home/user/workspace/oma-release/${evidence.runId}/${name}`; }
 function directive(name,token) { return `CHILD DIRECTIVE: Use Sandbox bash to create parent directories and write EXACT text ${token} (no newline) to ${filePath(name)}. Then use a second tool invocation to read it back and verify exact bytes. Do not delegate. Final answer: ${token}.`; }
 function parent(args,final='PARENT_DONE') { return `PARENT: Call Agent exactly once with these exact arguments: ${JSON.stringify(args)}. Do not add arguments. Do not perform the child task yourself. After Agent returns, reply exactly ${final}. Do not call get_subagent_result unless explicitly instructed.`; }
@@ -151,7 +157,7 @@ try {
       for(const id of parents) { const xs=await executions(id);for(const x of xs) {check('cleanup execution terminal',terminal.has(x.status),{executionId:x.id,status:x.status});children.add(x.childId);} }
       const ids=[...new Set([...children,...parents])];
       for(const id of ids) {const [session,pending]=await Promise.all([api(`/v1/sessions/${id}`),api(`/v1/sessions/${id}/pending`)]);check('cleanup Session has no active or queued work',['idle','terminated'].includes(session.status)&&pending.count===0,{sessionId:id,status:session.status,pendingCount:pending.count});}
-      evidence.cleanup??=[];for(const id of ids) {const result=await api(`/v1/sessions/${id}`,undefined,false,'DELETE');evidence.cleanup.push({id,result,at:new Date().toISOString()});await save();const session=await api(`/v1/sessions/${id}`);check('cleanup Session terminated',session.status==='terminated',{sessionId:id,status:session.status});}
+      evidence.cleanup??=[];for(const id of ids) {const result=await api(`/v1/sessions/${id}`,undefined,'DELETE');evidence.cleanup.push({id,result,at:new Date().toISOString()});await save();const session=await api(`/v1/sessions/${id}`);check('cleanup Session terminated',session.status==='terminated',{sessionId:id,status:session.status});}
     }
   }
   assertNoSecrets(); evidence.lastSuccess={phase,at:new Date().toISOString()}; await save(); log({ok:true,evidencePath,runId:evidence.runId,agentId:evidence.agentId,sessions:Object.fromEntries(Object.entries(evidence.phases).map(([name,s])=>[name,{sessionId:s.sessionId,childId:s.childId,executionId:s.executionId,status:s.status}]))});

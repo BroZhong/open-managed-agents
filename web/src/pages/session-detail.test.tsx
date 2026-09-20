@@ -124,3 +124,40 @@ describe("SessionDetailPage status", () => {
     expect(document.querySelector(".animate-bounce")).toBeNull();
   });
 });
+
+it.each([false, true])("waits for complete history before showing the empty welcome (has messages: %s)", async (hasMessages) => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  const history = deferred<Response>();
+  const session: Session = {
+    id: "loading-session", agentId: "agent_1", workspaceId: "workspace_1", status: "idle",
+    agent: { id: "agent_1", name: "Test Agent", model: "test/model", runtime: "mock" },
+    createdAt: "2026-09-18T00:00:00Z", updatedAt: "2026-09-18T00:00:00Z",
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const accept = new Headers(init?.headers).get("Accept");
+    if (accept === "application/json") {
+      if (String(input).includes("after_seq")) return history.promise;
+      return Response.json({ data: [{ seq: 1, type: "session.status_idle", data: {}, ts: session.createdAt }], has_more: true });
+    }
+    if (accept === "text/event-stream") return new Response(new ReadableStream({ start(controller) {
+      init?.signal?.addEventListener("abort", () => controller.close(), { once: true });
+    } }));
+    if (String(input).endsWith("/v1/sessions/loading-session")) return Response.json(session);
+    return Response.json({ data: [] });
+  }));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={["/sessions/loading-session"]}><Routes>
+    <Route path="/sessions/:id" element={<SessionDetailPage />} />
+  </Routes></MemoryRouter></QueryClientProvider>);
+  expect(screen.getByRole("status", { name: "Loading Session" })).toBeTruthy();
+  expect(screen.queryByText("What would you like to work on?")).toBeNull();
+  await screen.findByRole("button", { name: "Conversation" });
+  expect(screen.getAllByRole("status", { name: "Loading Session" }).length).toBeGreaterThan(0);
+  expect(screen.queryByText("What would you like to work on?")).toBeNull();
+  history.resolve(Response.json({ data: hasMessages ? [{ seq: 2, type: "user.message", data: { content: [{ type: "text", text: "Existing conversation" }] }, ts: session.createdAt }] : [], has_more: false }));
+  await screen.findByText(hasMessages ? "Existing conversation" : "What would you like to work on?");
+  expect(screen.queryByRole("status", { name: "Loading Session" })).toBeNull();
+  if (hasMessages) expect(screen.queryByText("What would you like to work on?")).toBeNull();
+  view.unmount();
+  queryClient.clear();
+});

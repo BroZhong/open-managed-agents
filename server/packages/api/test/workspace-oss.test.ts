@@ -41,7 +41,16 @@ async function harness() {
     expect(response.status).toBe(201);
     return await response.json() as { id: string; tenantId: string; workspaceId: string };
   }
-  return { app, oss, turnStreamStore, json, login, session };
+  async function fetchFile(response: Response, range?: string) {
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const descriptor = await response.json();
+    const signed = new URL(descriptor.url);
+    return fetch(`${oss.endpoint}${signed.pathname}${signed.search}`, {
+      headers: { host: signed.host, ...(range ? { range } : {}) },
+    });
+  }
+  return { app, oss, artifactStore, turnStreamStore, json, login, session, fetchFile };
 }
 
 describe("authenticated Host file management backed by OSS", () => {
@@ -55,13 +64,12 @@ describe("authenticated Host file management backed by OSS", () => {
       method: "PUT", headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({ path: "standalone.txt", content: "persisted" }),
     })).status).toBe(200);
-    expect(await (await h.app.request("/v1/workspaces/unbound/files/standalone.txt", { headers })).text()).toBe("persisted");
+    expect(await (await h.fetchFile(await h.app.request("/v1/workspaces/unbound/files/standalone.txt", { headers }))).text()).toBe("persisted");
     const session = await h.session(token, "unbound");
     for (const [method, suffix] of [
       ["GET", "files"], ["GET", "files/standalone.txt"],
       ["PUT", "files/content"], ["DELETE", "files/content?path=standalone.txt"],
       ["POST", "files/rename"], ["POST", "files/upload"],
-      ["GET", "preview-url?path=standalone.txt"],
     ]) {
       const response = await h.app.request(`/v1/sessions/${session.id}/workspace/${suffix}`, { method, headers });
       expect(response.status, `${method} ${suffix}`).toBe(404);
@@ -83,20 +91,27 @@ describe("authenticated Host file management backed by OSS", () => {
     }
     const listing = await h.app.request(`${base}/files`, { headers });
     expect((await listing.json()).data.map((f: { path: string }) => f.path).sort()).toEqual([".hidden", "empty.txt", "中文 图片.png"]);
+    const beforeReads = h.oss.requests.length;
     const preview = await h.app.request(`${base}/files/${encodeURIComponent("中文 图片.png")}`, { headers });
-    expect(preview.headers.get("content-type")).toBe("image/png");
-    expect(new Uint8Array(await preview.arrayBuffer())).toEqual(bytes);
-    const download = await h.app.request(`${base}/files/${encodeURIComponent("中文 图片.png")}?download=1`, { headers });
+    expect(h.oss.requests.slice(beforeReads)).toEqual([{ method: "HEAD", key: `${session.tenantId}/${session.workspaceId}/中文 图片.png` }]);
+    const previewBytes = await h.fetchFile(preview);
+    expect(previewBytes.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await previewBytes.arrayBuffer())).toEqual(bytes);
+    const download = await h.fetchFile(await h.app.request(`${base}/files/${encodeURIComponent("中文 图片.png")}?download=1`, { headers }));
     expect(download.headers.get("content-disposition")).toContain("filename*=UTF-8''");
     expect(new Uint8Array(await download.arrayBuffer())).toEqual(bytes);
-    const signed = await h.app.request(`${base}/preview-url?path=${encodeURIComponent("中文 图片.png")}`, { headers });
+    const range = await h.fetchFile(await h.app.request(`${base}/files/${encodeURIComponent("中文 图片.png")}`, { headers }), "bytes=1-3");
+    expect(range.status).toBe(206);
+    expect(range.headers.get("content-range")).toBe(`bytes 1-3/${bytes.length}`);
+    expect(new Uint8Array(await range.arrayBuffer())).toEqual(bytes.slice(1, 4));
+    const signed = await h.app.request(`${base}/files/${encodeURIComponent("中文 图片.png")}`, { headers });
     expect(signed.status).toBe(200);
     const { url, expiresIn } = await signed.json();
     expect(new URL(url).hostname).toBe("agentry.oss-cn-shanghai.aliyuncs.com");
     expect(expiresIn).toBe(600);
     expect(url).not.toContain(ossTestOptions.accessKeySecret);
     expect((await h.json(`${base}/files/rename`, { from: "中文 图片.png", to: "empty.txt" }, token)).status).toBe(200);
-    const overwritten = await h.app.request(`${base}/files/empty.txt`, { headers });
+    const overwritten = await h.fetchFile(await h.app.request(`${base}/files/empty.txt`, { headers }));
     expect(new Uint8Array(await overwritten.arrayBuffer())).toEqual(bytes);
     expect((await h.app.request(`${base}/files/content?path=empty.txt`, { method: "DELETE", headers })).status).toBe(200);
     expect((await h.app.request(`${base}/files/empty.txt`, { headers })).status).toBe(404);
@@ -126,7 +141,7 @@ describe("authenticated Host file management backed by OSS", () => {
     expect((await h.app.request(`${base}/files/private.txt`, { headers: { authorization: `Bearer ${bob}` } })).status).toBe(404);
     const other = await h.app.request(`/v1/workspaces/${sibling.workspaceId}/files`, { headers });
     expect((await other.json()).data).toEqual([]);
-    for (const suffix of ["files", "files/private.txt", "preview-url?path=private.txt"]) {
+    for (const suffix of ["files", "files/private.txt"]) {
       expect((await h.app.request(`/v1/workspaces/${foreign.workspaceId}/${suffix}`, { headers })).status).toBe(404);
     }
     expect((await write(`/v1/workspaces/${foreign.workspaceId}`, "evil.txt")).status).toBe(404);
@@ -141,7 +156,7 @@ describe("authenticated Host file management backed by OSS", () => {
     expect((await write(`/v1/workspaces/${concurrent.workspaceId}`, "parallel.txt")).status).toBe(200);
     expect((await h.app.request(`/v1/sessions/${owner.id}`, { method: "DELETE", headers })).status).toBe(200);
     expect((await h.app.request(`/v1/sessions/${concurrent.id}`, { method: "DELETE", headers })).status).toBe(200);
-    expect(await (await h.app.request(`${base}/files/parallel.txt`, { headers })).text()).toBe("private");
+    expect(await (await h.fetchFile(await h.app.request(`${base}/files/parallel.txt`, { headers }))).text()).toBe("private");
     expect((await write(base, "after-termination.txt")).status).toBe(200);
   });
 });

@@ -27,9 +27,32 @@ async function request(method, path, body, expected = 200, authenticated = true)
 }
 const json = async (...args) => (await request(...args)).json();
 const encoded = (path) => path.split("/").map(encodeURIComponent).join("/");
+async function fileAccess(path, download = false) {
+  const response = await request("GET", `${root}/files/${encoded(path)}${download ? "?download=1" : ""}`);
+  assert.match(response.headers.get("content-type"), /application\/json/);
+  const access = await response.json();
+  assert.equal(access.path, path);
+  assert.equal(typeof access.url, "string");
+  assert.equal(new URL(access.url).protocol, "https:");
+  assert(access.expiresIn >= 60 && access.expiresIn <= 900);
+  assert(Date.parse(access.expiresAt) > Date.now());
+  assert(Number.isInteger(access.size) && access.size >= 0);
+  assert.equal(typeof access.contentType, "string");
+  if (access.etag !== undefined) assert.equal(typeof access.etag, "string");
+  return access;
+}
+async function storageRead(access, headers) {
+  // This is a separate, unauthenticated HTTP request to the signed URL.
+  const response = await fetch(access.url, { headers, signal: AbortSignal.timeout(30000) });
+  assert.equal(response.status, headers?.Range ? 206 : 200, `Storage read: HTTP ${response.status}`);
+  checks++;
+  return response;
+}
 async function read(path, expected) {
-  assert.deepEqual(new Uint8Array(await (await request("GET", `${root}/files/${encoded(path)}`)).arrayBuffer()),
-    typeof expected === "string" ? new TextEncoder().encode(expected) : expected);
+  const access = await fileAccess(path);
+  const expectedBytes = typeof expected === "string" ? new TextEncoder().encode(expected) : expected;
+  assert.equal(access.size, expectedBytes.byteLength);
+  assert.deepEqual(new Uint8Array(await (await storageRead(access)).arrayBuffer()), expectedBytes);
 }
 try {
   const spec = await json("GET", "/openapi.json", undefined, 200, false);
@@ -37,7 +60,7 @@ try {
   assert(!spec.paths["/v1/sessions/{id}/messages"]);
   assert(spec.paths["/v1/workspaces/{id}/files"]);
   assert.equal(spec.servers[0].url.replace(/\/$/, ""), base);
-  await json("POST", "/v1/workspaces", { id, name: "Workspace migration E2E" }, 201);
+  await json("POST", "/v1/workspaces", { id, name: "Workspace signed read E2E" }, 201);
   created = true;
   assert.deepEqual((await json("GET", `${root}/files`)).data, []);
   console.log("PASS contract and unbound Workspace");
@@ -57,19 +80,19 @@ try {
   multiple.append("files", new File(["two"], "b.txt"));
   assert.equal((await json("POST", `${root}/files/upload`, multiple)).data.length, 2);
   assert.deepEqual((await json("GET", `${root}/files?prefix=outputs/`)).data.map((f) => f.path).sort(), ["outputs/a.txt", "outputs/b.txt"]);
-  const download = await request("GET", `${root}/files/${encoded("media/中文.bin")}?download=1`);
+  const downloadAccess = await fileAccess("media/中文.bin", true);
+  assert.equal(downloadAccess.contentType, "application/octet-stream");
+  const download = await storageRead(downloadAccess);
   assert.match(download.headers.get("content-disposition"), /attachment/);
   assert.deepEqual(new Uint8Array(await download.arrayBuffer()), binary);
-  const signed = await json("GET", `${root}/preview-url?path=${encodeURIComponent("media/中文.bin")}&expiresIn=60`);
-  assert.equal(signed.expiresIn, 60);
-  const preview = await fetch(signed.url, { signal: AbortSignal.timeout(30000) });
-  assert.equal(preview.status, 200);
-  assert.deepEqual(new Uint8Array(await preview.arrayBuffer()), binary);
-  checks++;
+  const access = await fileAccess("media/中文.bin");
+  const partial = await storageRead(access, { Range: "bytes=1-3" });
+  assert.equal(partial.headers.get("content-range"), `bytes 1-3/${binary.byteLength}`);
+  assert.deepEqual(new Uint8Array(await partial.arrayBuffer()), binary.slice(1, 4));
   await json("POST", `${root}/files/rename`, { from: "outputs/a.txt", to: "outputs/result.txt" });
   await read("outputs/result.txt", "one");
   await request("GET", `${root}/files/outputs/a.txt`, undefined, 404);
-  console.log("PASS real OSS file lifecycle, Unicode, binary download and signed preview");
+  console.log("PASS real OSS file lifecycle, Unicode, file descriptors, signed downloads and byte ranges");
   await request("GET", `${root}/files`, undefined, 401, false);
   await request("GET", `/v1/workspaces/missing_${id}/files`, undefined, 404);
   await request("PUT", `${root}/files/content`, { path: "../escape", content: "blocked" }, 400);
@@ -89,7 +112,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert(answered, "Mock Turn must produce a durable agent.message");
-  for (const [method, suffix] of [["GET", "files"], ["GET", "files/empty.txt"], ["PUT", "files/content"], ["DELETE", "files/content?path=empty.txt"], ["POST", "files/rename"], ["POST", "files/upload"], ["GET", "preview-url?path=empty.txt"]]) {
+  for (const [method, suffix] of [["GET", "files"], ["GET", "files/empty.txt"], ["PUT", "files/content"], ["DELETE", "files/content?path=empty.txt"], ["POST", "files/rename"], ["POST", "files/upload"]]) {
     await request(method, `/v1/sessions/${sessions[0]}/workspace/${suffix}`, undefined, 404);
   }
   await request("POST", `/v1/sessions/${sessions[0]}/messages`, {}, 404);

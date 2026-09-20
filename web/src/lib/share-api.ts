@@ -12,8 +12,9 @@ export interface SharedSession {
 
 /** Separate request context: never read or mutate login storage or query caches. */
 export function createShareAccess(shareId: string, onUnavailable?: () => void) {
-  async function request(path: string): Promise<Response> {
+  async function request(path: string, options?: { signal?: AbortSignal }): Promise<Response> {
     const response = await fetch(`${BASE_URL}${path}`, {
+      signal: options?.signal,
       headers: { "x-session-share": shareId, Accept: "application/json" },
       credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
     });
@@ -24,7 +25,7 @@ export function createShareAccess(shareId: string, onUnavailable?: () => void) {
     }
     return response;
   }
-  async function json<T>(path: string): Promise<T> { return (await request(path)).json(); }
+  async function json<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> { return (await request(path, options)).json(); }
   return { request, json };
 }
 
