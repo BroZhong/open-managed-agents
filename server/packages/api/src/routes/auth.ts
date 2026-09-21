@@ -53,7 +53,7 @@ export function authRoutes(userStore: UserStore): OpenAPIHono<Env> {
       return c.json(
         {
           error:
-            "username must be 3-32 chars (letters, digits, underscore, hyphen)",
+            "Username must be 3–32 characters and contain only English letters, numbers, underscores (_) or hyphens (-). Periods (.) and spaces are not allowed.",
           code: "validation_error",
         },
         400,
@@ -61,7 +61,7 @@ export function authRoutes(userStore: UserStore): OpenAPIHono<Env> {
     }
     if (password.length < 8) {
       return c.json(
-        { error: "password must be at least 8 characters", code: "validation_error" },
+        { error: "Password must be at least 8 characters.", code: "validation_error" },
         400,
       );
     }

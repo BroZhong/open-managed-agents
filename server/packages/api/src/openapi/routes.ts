@@ -202,8 +202,11 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     request: {
       body: jsonBody(
         z.object({
-          username: z.string().regex(/^[a-zA-Z0-9_-]{3,32}$/),
-          password: z.string().min(8),
+          username: z.string().regex(
+            /^[a-zA-Z0-9_-]{3,32}$/,
+            "Username must be 3–32 characters and contain only English letters, numbers, underscores (_) or hyphens (-). Periods (.) and spaces are not allowed.",
+          ),
+          password: z.string().min(8, "Password must be at least 8 characters."),
           inviteCode: z.string(),
         }),
       ),
