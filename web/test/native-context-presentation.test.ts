@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
-import { presentEvent } from "../../../server/packages/store/src/event-presentation";
-import { processEventsToMessages } from "./conversation-projection";
-import { initialSessionEventStreamState, sessionEventStreamReducer } from "./session-event-stream";
-import type { SessionEvent } from "./types";
+import { presentEvent } from "../../server/packages/store/src/event-presentation";
+import { processEventsToMessages } from "../src/lib/conversation-projection";
+import { initialSessionEventStreamState, sessionEventStreamReducer } from "../src/lib/session-event-stream";
+import type { SessionEvent } from "../src/lib/types";
 
 const ts = "2026-09-21T00:00:00Z";
 const native: SessionEvent[] = [

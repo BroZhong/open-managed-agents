@@ -20,6 +20,8 @@ on:
       - "server/packages/redis/**"
       - "server/pnpm-lock.yaml"
       - "web/src/**"
+      - "web/test/**"
+      - "web/vitest.config.ts"
       - "web/pnpm-lock.yaml"
       - ".github/workflows/usage-accounting.yml"
   push:
@@ -42,6 +44,8 @@ on:
       - "server/packages/redis/**"
       - "server/pnpm-lock.yaml"
       - "web/src/**"
+      - "web/test/**"
+      - "web/vitest.config.ts"
       - "web/pnpm-lock.yaml"
       - ".github/workflows/usage-accounting.yml"
   workflow_dispatch:
