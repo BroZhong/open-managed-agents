@@ -41,6 +41,7 @@ import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 import { withGatewayErrors } from "./gateway-error-stream.js";
 import { restorePiSession } from "./pi-context.js";
 import { PiContextJournal } from "./pi-context-journal.js";
+import { PI_DISPLAY_TYPES, PiStreamAlignment } from "./pi-presentation.js";
 import { installContinuation } from "./pi-continuation.js";
 
 /**
@@ -50,6 +51,8 @@ import { installContinuation } from "./pi-continuation.js";
  * unit tests drive the adapter without a real model / network.
  */
 export interface PiSessionLike {
+  /** Real Pi sessions persist complete content through their native journal. */
+  nativeContext?: boolean;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: PromptOptions): Promise<void>;
   /** Continue the original Turn after its durable pending tool results are supplied. */
@@ -317,6 +320,7 @@ export class PiAgentAdapter implements Adapter {
       const queue = new EventQueue<SessionEvent>();
       const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
       const checkpointEvents: SessionEvent[] = [];
+      const streamAlignment = new PiStreamAlignment();
       const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 500 : undefined);
       if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
       let steps = input.execution?.completedModelSteps ?? 0;
@@ -326,6 +330,7 @@ export class PiAgentAdapter implements Adapter {
         input, prompt, historyMessages, model, thinkingLevel, modelRuntime, hasToolExecutor, resourceLoaderOptions,
         checkpoint: () => structuredClone(checkpointEvents),
         emitContext(event) {
+          event = streamAlignment.attach(event);
           checkpointEvents.push(event);
           queue.push(event);
         },
@@ -346,6 +351,8 @@ export class PiAgentAdapter implements Adapter {
         const observed = event.type === "compaction_end" && !event.result && input.signal?.aborted
           ? { ...event, aborted: true } : event;
         for (const translated of translator.processEvent(observed)) {
+          streamAlignment.observe(translated);
+          if (session!.nativeContext && PI_DISPLAY_TYPES.has(translated.type)) continue;
           if (!translated.type.includes("_stream_") && !translated.type.endsWith("_chunk")) checkpointEvents.push(translated);
           queue.push(translated);
         }
@@ -400,7 +407,9 @@ export class PiAgentAdapter implements Adapter {
         if (budgetExceeded) {
           yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.error", error: { message: `Model step budget exhausted (${maxSteps})`, code: "model_step_budget_exhausted" } };
         } else {
-          for (const e of translator.finalize()) yield e;
+          for (const e of translator.finalize()) {
+            if (!session.nativeContext || !PI_DISPLAY_TYPES.has(e.type)) yield e;
+          }
         }
       } finally {
         unsubscribe();
@@ -593,6 +602,7 @@ export class PiAgentAdapter implements Adapter {
       const active = session as PiSessionLike;
       let disposed = false;
       return {
+        nativeContext: true,
         subscribe(listener) {
           return active.subscribe(event => {
             if (event.type === "compaction_end" && journal.failure) {
@@ -601,6 +611,7 @@ export class PiAgentAdapter implements Adapter {
             } else listener(event);
             // At turn_end, message_end persistence has finished. Reading on
             // message_end would still see an old compaction boundary in Pi.
+            if (event.type === "turn_end") journal.capture();
             if (event.type === "turn_end" || event.type === "compaction_end") captureContextUsage();
           });
         },

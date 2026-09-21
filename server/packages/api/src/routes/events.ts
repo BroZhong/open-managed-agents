@@ -1,5 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { EventLogIngressStore, PendingEventIngressStore, SessionStore } from "@oma-server/store";
+import { lazyEventData, presentEvent, presentEventPage, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import { alignedChunkData } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
@@ -32,6 +33,7 @@ const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 10_000;
 const PENDING_PREVIEW_LIMIT = 20;
 
 export interface EventRouteDeps {
+  workspaceStore?: WorkspaceMetadataStore;
   eventLogStore: EventLogIngressStore;
   pendingEventStore: PendingEventIngressStore;
   sessionStore: SessionStore;
@@ -71,6 +73,25 @@ const PENDING_USER_TYPES = new Set<AllowedUserType>([
 
 export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+
+  registerContractRoute(router, getOpenApiRoute("getSessionEventData"), async (c) => {
+    const sessionId = c.req.param("id")!;
+    const seq = Number(c.req.param("seq"));
+    const session = await deps.sessionStore.getById(sessionId);
+    if (!session || session.tenantId !== c.get("tenant").tenantId || session.deletedAt) return c.json({ error: "Session not found" }, 404);
+    const workspace = await deps.workspaceStore?.getById(session.tenantId, session.workspaceId);
+    if (workspace?.deletedAt) return c.json({ error: "Session not found" }, 404);
+    if (!Number.isSafeInteger(seq) || seq < 1) return c.json({ error: "Invalid event sequence" }, 400);
+    c.header("Cache-Control", "no-store");
+    try {
+      const page = await deps.eventLogStore.getEvents(sessionId, { afterSeq: seq - 1, limit: 1 });
+      const event = page.data.flatMap(event => presentEvent(event)).find(event => event.seq === seq);
+      if (!event) return c.json({ error: "Event not found" }, 404);
+      return c.json({ data: event.data });
+    } catch {
+      return c.json({ error: "Could not load Session result. Please retry." }, 503);
+    }
+  });
 
   // POST /v1/sessions/:id/events — Append user events
   registerContractRoute(router, getOpenApiRoute("appendSessionEvents"), async (c) => {
@@ -357,15 +378,16 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
               let hasMore = true;
               while (hasMore) {
                 const result = await deps.eventLogStore.getEvents(sessionId, {
+                  payload: "reference",
                   afterSeq: cursorSeq,
                   limit: 1000,
                 });
                 if (responseClosed) return;
 
-                for (const event of result.data) {
+                for (const event of result.data.flatMap(event => presentEvent(event)).filter(event => event.seq > (cursorSeq ?? 0))) {
                   let frame = `event: ${event.type}\n`;
                   frame += `id: ${event.seq}\n`;
-                  frame += `data: ${JSON.stringify(event.data)}\n\n`;
+                  frame += `data: ${JSON.stringify(lazyEventData(event.type, event.data))}\n\n`;
                   if (!enqueue(frame)) return;
                   cursorSeq = event.seq;
                 }
@@ -483,13 +505,15 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
     }
 
     const result = await deps.eventLogStore.getEvents(sessionId, {
+      payload: "reference",
       afterSeq,
       limit,
     });
 
+    const displayed = presentEventPage(result, afterSeq, limit);
     return c.json({
-      data: result.data,
-      has_more: result.hasMore,
+      data: displayed.data.map(event => ({ ...event, data: lazyEventData(event.type, event.data) })),
+      has_more: displayed.hasMore,
     });
   });
 

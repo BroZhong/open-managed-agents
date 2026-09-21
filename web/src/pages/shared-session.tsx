@@ -26,6 +26,11 @@ function SharedSessionContent({ shareId }: { shareId: string }) {
   const [tab, setTab] = useState("conversation");
   const [fileSelection, setFileSelection] = useState<{ path: string; nonce: number }>();
   const access = useMemo(() => createShareAccess(shareId, () => setUnavailable(true)), [shareId]);
+  const sharedSessionId = data?.session.id;
+  const loadEventData = useCallback(async (seq: number, signal: AbortSignal) => {
+    const response = await access.json<{ data: unknown }>(`/v1/sessions/${encodeURIComponent(sharedSessionId ?? "")}/events/${seq}/data`, { signal });
+    return response.data;
+  }, [access, sharedSessionId]);
   const workspaceId = data?.session.workspaceId;
   const source = useMemo(() => workspaceId ? createSharedWorkspaceFileSource(workspaceId, access) : undefined, [workspaceId, access]);
   const openFile = useCallback((path: string) => setFileSelection((previous) => ({ path, nonce: (previous?.nonce ?? 0) + 1 })), []);
@@ -68,7 +73,7 @@ function SharedSessionContent({ shareId }: { shareId: string }) {
           <Button variant="ghost" aria-pressed={tab === "trajectory"} onClick={() => setTab("trajectory")}>Trajectory ({data.events.length})</Button>
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">
-          {tab === "conversation" ? <ConversationView events={data.events} sessionStatus="idle" resources={{ shared: true, agentId: "", skills: [], onOpenWorkspacePath: openFile }} /> : <TimelineView events={data.events} />}
+          {tab === "conversation" ? <ConversationView sessionId={data.session.id} events={data.events} sessionStatus="idle" resources={{ loadEventData, shared: true, agentId: "", skills: [], onOpenWorkspacePath: openFile }} /> : <TimelineView events={data.events} sessionId={data.session.id} loadEventData={loadEventData} />}
         </div>
       </>}
     />}

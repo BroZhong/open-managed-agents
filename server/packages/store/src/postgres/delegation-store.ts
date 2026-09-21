@@ -1,3 +1,5 @@
+import { EventPayloadCodec } from "../event-payload.js";
+import { eventSequenceWidth } from "../event-presentation.js";
 import type { Pool, PoolClient } from "./connection.js";
 import { PgSessionStore } from "./session-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
@@ -5,11 +7,16 @@ import { TransactionalDelegationStore, delegationFenceLost, type DelegationTrans
 import type { EventLogStoreAppendInput } from "../interfaces/event-log-store.js";
 import type { DelegationExecution, DelegationCommand, DelegationWait } from "../interfaces/delegation-store.js";
 import type { StoredEvent } from "../types.js";
+import type { PendingEventFence } from "../interfaces/pending-event-store.js";
 
 const tables: Record<DelegationTable, string> = { executions: "delegation_executions", waits: "delegation_waits", commands: "delegation_commands", resource_uses: "delegation_resource_uses" };
 /** All writes use the same SQL transaction as existing Sessions and event queues. */
 export class PgDelegationStore extends TransactionalDelegationStore {
-  constructor(private readonly pool: Pool) { super(); }
+  constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) { super(); }
+  private async checkpointRecord<R extends DelegationRecord>(record: R, decode: boolean): Promise<R> {
+    if (!this.payloads || !("checkpoint" in record)) return record;
+    return { ...record, checkpoint: await this.payloads.checkpoint(record.callerSessionId, record.checkpoint, decode) };
+  }
   protected override async terminatedExecutionIds(sessionId: string | undefined, limit: number): Promise<string[]> {
     const result = await this.pool.query<{ id: string }>(`SELECT execution.id FROM delegation_executions execution
       JOIN sessions child ON child.id = execution.record->>'childId'
@@ -66,9 +73,10 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     const result = await this.pool.query<{ record: DelegationCommand }>("SELECT record FROM delegation_commands WHERE record->>'executionId' = $1 ORDER BY record->>'createdAt', id", [executionId]);
     return result.rows.map((row) => row.record);
   }
-  override async listWaits(parentSessionId: string, parentPendingEventId: string) {
+  override async listWaits(parentSessionId: string, parentPendingEventId: string, options?: { checkpoint: "reference" }) {
     const result = await this.pool.query<{ record: DelegationWait }>("SELECT record FROM delegation_waits WHERE record->>'callerSessionId' = $1 AND record->>'parentPendingEventId' = $2", [parentSessionId, parentPendingEventId]);
-    return result.rows.map((row) => row.record);
+    return options?.checkpoint === "reference" ? result.rows.map(row => row.record)
+      : Promise.all(result.rows.map((row) => this.checkpointRecord(row.record, true)));
   }
   protected async transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -81,6 +89,7 @@ export class PgDelegationStore extends TransactionalDelegationStore {
       const queryPool = client as unknown as Pool;
       const sessions = new PgSessionStore(queryPool);
       const pending = new PgPendingEventStore(queryPool);
+      const checkedFences = new Map<string, PendingEventFence>();
       pending.ownsClaim = async (sessionId, eventId, fence) => {
         const result = await client.query("SELECT id FROM pending_events WHERE session_id = $1 AND id = $2 AND claim_owner = $3 AND claim_generation = $4 AND claim_expires_at > clock_timestamp()", [sessionId, eventId, fence.ownerId, fence.generation]);
         return result.rows.length > 0;
@@ -95,9 +104,10 @@ export class PgDelegationStore extends TransactionalDelegationStore {
           const params: unknown[] = [];
           const predicates = Object.entries(filters).map(([key, value]) => { params.push(key, value); return `record ->> $${params.length - 1} = $${params.length}`; });
           const rows = await client.query<{ record: R }>(`SELECT record FROM ${tables[table]}${predicates.length ? ` WHERE ${predicates.join(" AND ")}` : ""}`, params);
+          // Transactional state transitions do not inspect checkpoint bytes.
           return rows.rows.map((row) => row.record);
         },
-        put: async (table, id, record) => { await client.query(`INSERT INTO ${tables[table]} (id, record) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET record = EXCLUDED.record`, [id, JSON.stringify(record)]); },
+        put: async (table, id, record) => { await client.query(`INSERT INTO ${tables[table]} (id, record) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET record = EXCLUDED.record`, [id, JSON.stringify(await this.checkpointRecord(record, false))]); },
         remove: async (table, id) => { await client.query(`DELETE FROM ${tables[table]} WHERE id = $1`, [id]); },
         removePending: async (sessionId, eventId, onlyUnclaimed) => {
           const rows = await client.query(`DELETE FROM pending_events WHERE session_id = $1 AND id = $2${onlyUnclaimed ? " AND (claim_owner IS NULL OR claim_expires_at <= clock_timestamp())" : ""}`, [sessionId, eventId]);
@@ -118,9 +128,15 @@ export class PgDelegationStore extends TransactionalDelegationStore {
           await client.query("SELECT id FROM pending_events WHERE session_id = $1 AND id = $2 FOR UPDATE", [sessionId, fence.eventId]);
           const session = await sessions.getById(sessionId);
           if (!session || session.status === "terminated" || !await pending.ownsClaim(sessionId, fence.eventId, fence)) delegationFenceLost(sessionId, fence);
+          checkedFences.set(sessionId, fence);
         },
       };
       const result = await work(tx);
+      // An OSS upload can outlast a lease while row locks are held. Recheck
+      // wall-clock ownership immediately before committing any references.
+      for (const [sessionId, fence] of checkedFences) {
+        if (!await pending.ownsClaim(sessionId, fence.eventId, fence)) delegationFenceLost(sessionId, fence);
+      }
       await client.query("COMMIT");
       return result;
     } catch (error) {
@@ -134,12 +150,13 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     await client.query("SELECT seq FROM event_counters WHERE session_id = $1 FOR UPDATE", [sessionId]);
     if (input.idempotencyKey) {
       const existing = await client.query("SELECT * FROM events WHERE session_id = $1 AND idempotency_key = $2", [sessionId, input.idempotencyKey]);
-      if (existing.rows[0]) { const row = existing.rows[0]; return { sessionId, seq: Number(row.seq), type: row.type, data: row.data, ts: new Date(row.ts), sessionThreadId: row.session_thread_id }; }
+      if (existing.rows[0]) { const row = existing.rows[0]; return { sessionId, seq: Number(row.seq), type: row.type, data: this.payloads ? await this.payloads.decode(sessionId, row.data, row.type) : row.data, ts: new Date(row.ts), sessionThreadId: row.session_thread_id }; }
     }
-    const counter = await client.query("UPDATE event_counters SET seq = seq + 1 WHERE session_id = $1 RETURNING seq", [sessionId]);
+    const data = this.payloads ? await this.payloads.encode(sessionId, input.type, input.data) : input.data;
+    const counter = await client.query("UPDATE event_counters SET seq = seq + $2 WHERE session_id = $1 RETURNING seq", [sessionId, eventSequenceWidth(input.type, input.data)]);
     const seq = Number(counter.rows[0].seq);
     const ts = new Date();
-    await client.query("INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [sessionId, seq, input.type, JSON.stringify(input.data ?? null), ts, input.sessionThreadId, input.apiKeyId ?? null, input.idempotencyKey ?? null]);
+    await client.query("INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [sessionId, seq, input.type, JSON.stringify(data ?? null), ts, input.sessionThreadId, input.apiKeyId ?? null, input.idempotencyKey ?? null]);
     return { sessionId, seq, type: input.type, data: input.data, ts, sessionThreadId: input.sessionThreadId };
   }
   async withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T> {

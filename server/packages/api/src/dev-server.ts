@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, S3SkillArtifactStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, S3SkillArtifactStore, OSSEventPayloadStore, EventPayloadCodec } from "@oma-server/store";
 import type { SkillArtifactStore } from "@oma-server/store";
 import {
   createRedisClient,
@@ -305,7 +305,8 @@ async function main() {
   // When the schema is pre-provisioned by a migration (and the app role lacks
   // CREATE on the database), set PG_ENSURE_SCHEMA=false to skip the startup DDL.
   const ensureSchema = process.env.PG_ENSURE_SCHEMA !== "false";
-  const stores = await createPgStores(pool, { schema, ensureSchema });
+  const payloads = new EventPayloadCodec(new OSSEventPayloadStore(workspaceConfig.oss));
+  const stores = await createPgStores(pool, { schema, ensureSchema, payloads });
   console.log(
     `Connected to PostgreSQL (${pgConfig.connectionString ?? `${pgConfig.host ?? "127.0.0.1"}:${pgConfig.port ?? 5432}`}, schema=${schema})`,
   );

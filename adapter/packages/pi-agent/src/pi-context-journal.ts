@@ -2,6 +2,7 @@ import type { ExtensionFactory, SessionManager } from "@earendil-works/pi-coding
 import type { AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 
 import { isContinuationEntry } from "./pi-continuation.js";
+import { PiPresentation } from "./pi-presentation.js";
 
 interface JournalOptions {
   manager: SessionManager;
@@ -16,10 +17,13 @@ export class PiContextJournal {
   private cursor: number;
   private inputRecorded = false;
   private pending: Promise<void> = Promise.resolve();
+  private readonly presentation: PiPresentation;
   failure?: Error;
 
   constructor(private readonly options: JournalOptions) {
     this.cursor = options.manager.getEntries().length;
+    this.presentation = new PiPresentation(options.input.agent.mcpServers?.map(server => server.name) ?? []);
+    for (const entry of options.manager.getEntries()) this.presentation.describe(entry);
   }
 
   readonly extension: ExtensionFactory = pi => {
@@ -44,7 +48,8 @@ export class PiContextJournal {
       if (isInput) this.inputRecorded = true;
       emit({ id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
         sdk: "pi@0.83.0", turnId: input.turnId,
-        ...(isInput ? { inputEventId: input.inputEventId } : {}), entry: structuredClone(entry) });
+        ...(isInput ? { inputEventId: input.inputEventId } : {}), entry: structuredClone(entry),
+        presentation: this.presentation.describe(entry) });
       this.cursor++;
     }
   }

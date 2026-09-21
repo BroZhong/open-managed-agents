@@ -1010,11 +1010,26 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
   }),
   protectedRoute({
     method: "get",
+    path: "/v1/sessions/{id}/events/{seq}/data",
+    operationId: "getSessionEventData",
+    summary: "Read complete event data on demand",
+    description: "Loads the original event data, including an OSS-backed large result. Requires access to this Session; a Session Share can read only its own Session. No result is loaded by listing events or by SSE.",
+    tags: ["Sessions/Events"],
+    request: { params: idParams.extend({ seq: z.string().regex(/^[1-9][0-9]*$/) }) },
+    responses: {
+      200: jsonResponse(z.object({ data: z.unknown() }), "Original event data"),
+      400: errorResponse("Invalid event sequence"),
+      404: errorResponse("Session or event not found"),
+      503: errorResponse("Result storage unavailable"),
+    },
+  }),
+  protectedRoute({
+    method: "get",
     path: "/v1/sessions/{id}/events",
     operationId: "listSessionEvents",
     summary: "List Complete Events or open an SSE stream",
     description:
-      "Defaults to a JSON page of durable events. Send exactly Accept: text/event-stream for SSE. Last-Event-ID or replay=1 enables replay of durable events followed by buffered Deltas from the active Turn, then live delivery. include=chunks additionally forwards live Deltas. The SSE connection remains open across Turns; it does not close when a Turn finishes. JSON pagination parameters after_seq and limit do not control SSE replay.",
+      "Defaults to a JSON page of durable events. Tool results and native Pi tool-result entries of at least 64 KiB contain payloadRef metadata instead of the full data. Retrieve full data only when needed using GET /v1/sessions/{id}/events/{seq}/data. This also applies to live and replayed SSE. Send exactly Accept: text/event-stream for SSE. Last-Event-ID or replay=1 enables replay of durable events followed by buffered Deltas from the active Turn, then live delivery. include=chunks additionally forwards live Deltas. The SSE connection remains open across Turns; it does not close when a Turn finishes. JSON pagination parameters after_seq and limit do not control SSE replay.",
     tags: ["Sessions/Events"],
     request: {
       params: idParams,

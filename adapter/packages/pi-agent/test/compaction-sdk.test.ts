@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
 
-const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, summaryError: "503 overloaded", cancelSummary: false, toolPending: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
+const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -39,7 +39,16 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
           message.stopReason = "toolUse";
         }
         const stream = createAssistantMessageEventStream();
+        if (!summary && !failed && control.streamedResponse) message.content = [{ type: "text", text: "first" }, { type: "text", text: "second" }];
         stream.push({ type: "start", partial: message });
+        if (!summary && !failed && control.streamedResponse) {
+          message.content.forEach((block, contentIndex) => {
+            if (block.type !== "text") return;
+            stream.push({ type: "text_start", contentIndex, partial: message });
+            stream.push({ type: "text_delta", contentIndex, delta: block.text, partial: message });
+            stream.push({ type: "text_end", contentIndex, content: block.text, partial: message });
+          });
+        }
         if (summary && control.pauseSummary) {
           const cancel = () => stream.push({ type: "error", reason: "aborted", error: { ...message, stopReason: "aborted" } });
           if (options?.signal?.aborted) cancel();
@@ -78,9 +87,28 @@ async function run(input: AdapterInput) {
 }
 const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => key === "timestamp" ? undefined : v));
 afterEach(() => vi.unstubAllEnvs());
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.streamedResponse = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
+  it("attaches stable stream indices to native blocks before they enter the persistence queue", async () => {
+    control.streamedResponse = true;
+    const events = await run(input([], async () => {}));
+    expect(events.filter(event => event.type === "agent.message")).toEqual([]);
+    expect(events.filter(event => event.type === "agent.message_chunk")).toHaveLength(2);
+    const assistant = events.find(event => event.type === "agent.context_entry" && (event.entry as { message?: { role?: string } }).message?.role === "assistant");
+    expect(assistant).toMatchObject({ presentation: { version: 1, blocks: [{ type: "agent.message", index: 0, streamIndex: 0 }, { type: "agent.message", index: 1, streamIndex: 1 }] } });
+  });
+
+  it("emits native content once and stores only selectors for the existing display protocol", async () => {
+    const events = await run(input([], async () => {}));
+    expect(events.filter(event => ["agent.message", "agent.thinking", "agent.tool_use", "agent.tool_result", "agent.mcp_tool_use", "agent.mcp_tool_result"].includes(event.type))).toEqual([]);
+    const assistant = events.filter(event => event.type === "agent.context_entry" && (event.entry as { message?: { role?: string } }).message?.role === "assistant");
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]).toMatchObject({ presentation: { version: 1, blocks: [{ type: "agent.message", index: 0 }] }, entry: { message: { content: [{ type: "text", text: "answer" }] } } });
+    expect(JSON.stringify(assistant[0]).match(/"answer"/g)).toHaveLength(1);
+    expect(restorePiSession(events).buildSessionContext().messages.filter(message => message.role === "assistant")).toHaveLength(1);
+  });
+
   it("reports the resolved window, rebuilt post-compaction estimate, and fresh model usage", async () => {
     const history = records(seed());
     const committed: SessionEvent[] = [];

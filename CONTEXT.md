@@ -87,6 +87,12 @@ _Avoid_: event, message, token (a Delta may contain text beyond one token)
 A durable, sequenced record of a finalized Agent output block within a **Turn**. A Complete Event replaces the Deltas aligned to the same Turn and output block.
 _Avoid_: Delta, chunk, final message (thinking and tool use may also be Complete Events)
 
+For new Pi output, native `agent.context_entry` records own the content. Host
+derives the existing Complete Event display shapes using metadata-only selectors
+and stable reserved sequence positions, without storing duplicate display rows.
+Runtime replay reads the original native entries; older histories keep their
+existing display records. See ADR-0016.
+
 **Agent File**:
 A named markdown document that shapes an **Agent**'s identity or instructions (e.g. SOUL, IDENTITY, MEMORY, USER). Agent Files belong to one Agent and are isolated per Agent — one Agent can never read another's Files. They are Agent-scoped, not Session-scoped: every Session of an Agent sees the same Files. The Host assembles them into the instructions given to the runtime; the runtime never reads them from a Session's Workspace.
 _Avoid_: prompt file, persona file, SOUL (as a category name)
@@ -185,6 +191,13 @@ writes; concurrent writes to the same path may overwrite each other. See
 ADR-0009 and ADR-0012.
 
 ## Session sharing
+
+Large tool results (at least 64 KiB of event JSON), including native Pi results
+and Delegation checkpoint copies, are stored as immutable OSS payloads. The event
+journal keeps references; Host runtime reads restore the original data. Session
+history and SSE expose only metadata for these results. The console loads complete
+content only when expanded, without thumbnails. See ADR-0015 for the read contract
+and the migration required to evacuate existing inline PG data.
 
 A **Session Share** is a permanent random read capability for exactly one
 Session and its entire bound Workspace. Owners create/retrieve the same link

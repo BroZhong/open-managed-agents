@@ -1,4 +1,5 @@
 import type { DelegationExecution, DelegationStore, EventLogStore, SessionStore } from "@oma-server/store";
+import { presentEventPage } from "@oma-server/store";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { TenantContext } from "../types.js";
 import { createContractRouter, registerContractRoute } from "../openapi/router.js";
@@ -77,7 +78,7 @@ export function delegationRoutes(deps: DelegationRouteDeps) {
     const active = execution.turnId && deps.turnStreamStore ? await deps.turnStreamStore.getActiveTurn(execution.childId) : undefined;
     const deltas = active?.turnId === execution.turnId && active?.status === "running" && deps.turnStreamStore
       ? await deps.turnStreamStore.readDeltas(execution.childId, active.turnId) : [];
-    const page = execution.turnId ? await deps.eventLogStore.getEvents(execution.childId, { turnId: execution.turnId, afterSeq, limit }) : { data: [], hasMore: false };
+    const page = presentEventPage(execution.turnId ? await deps.eventLogStore.getEvents(execution.childId, { turnId: execution.turnId, afterSeq, limit, payload: "reference" }) : { data: [], hasMore: false }, afterSeq, limit);
     const [usage, commands] = await Promise.all([
       execution.turnId ? deps.eventLogStore.getUsage({ sessionId: execution.childId, turnId: execution.turnId }) : Promise.resolve(EMPTY_TOKEN_USAGE),
       deps.delegationStore.listCommands(execution.id),

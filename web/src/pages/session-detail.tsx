@@ -160,7 +160,7 @@ function SessionDetail({ id }: { id: string }) {
               <SessionUsageFooter events={events} />
             </div>
             <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
-              {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TimelineView events={events} />}
+              {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TimelineView events={events} sessionId={id} />}
             </div>
             {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
               <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />

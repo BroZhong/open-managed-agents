@@ -36,7 +36,7 @@ export function authMiddleware(apiKeyStore: ApiKeyStore, deps: ShareAccessDeps =
       const filesPath = `/v1/workspaces/${encodeURIComponent(workspace.id)}/files`;
       const allowed = c.req.method === "GET" && (
         path === `/v1/shares/${shareId}` || path === sessionPath ||
-        path === `${sessionPath}/events` || path === filesPath || path.startsWith(`${filesPath}/`)
+        path === `${sessionPath}/events` || (path.startsWith(`${sessionPath}/events/`) && /^\d+\/data$/.test(path.slice(`${sessionPath}/events/`.length))) || path === filesPath || path.startsWith(`${filesPath}/`)
       ) && !(c.req.header("accept") ?? "").toLowerCase().includes("text/event-stream");
       if (!allowed) return c.json({ error: "Share access denied" }, 403);
       c.set("tenant", { tenantId: session.tenantId, share: { id: shareId, sessionId: session.id, workspaceId: workspace.id } });

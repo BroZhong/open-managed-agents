@@ -201,6 +201,8 @@ export interface AgentContextEntryEvent extends BaseEvent {
   turnId: string;
   inputEventId?: string;
   entry: unknown;
+  /** Native content is authoritative; selectors preserve the existing display protocol. */
+  presentation?: { version: 1; blocks: Array<{ type: string; index?: number; blockIndex?: number; streamIndex?: number; serverName?: string; name?: string; unexecuted?: "aborted" | "error" }> };
   compactionId?: string;
   tokensBeforeSource?: "usage" | "estimate";
   reason?: "manual" | "threshold" | "overflow";

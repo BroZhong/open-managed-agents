@@ -5,7 +5,7 @@ import { ChevronRight } from "lucide-react";
  * so streaming blocks retain their DOM and nested disclosure state. */
 export function SessionDisclosure({ summary, children, defaultOpen = false, active = false, className = "", onActivate, title, id: elementId }: {
   summary: ReactNode;
-  children: ReactNode;
+  children: ReactNode | ((open: boolean) => ReactNode);
   defaultOpen?: boolean;
   active?: boolean;
   className?: string;
@@ -22,7 +22,7 @@ export function SessionDisclosure({ summary, children, defaultOpen = false, acti
         <span className="session-disclosure-summary">{summary}</span>
         <ChevronRight size={14} className={!onActivate && open ? "rotate-90" : ""} aria-hidden="true" />
       </button>
-      {!onActivate && <div id={id} className="session-disclosure-content" hidden={!open}>{children}</div>}
+      {!onActivate && <div id={id} className="session-disclosure-content" hidden={!open}>{typeof children === "function" ? children(open) : children}</div>}
     </div>
   );
 }
