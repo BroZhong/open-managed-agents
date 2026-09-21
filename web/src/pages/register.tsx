@@ -4,6 +4,9 @@ import { BrandMark } from "@/components/brand-mark";
 import { useAuth } from "@/lib/auth";
 import { authRegister, AuthError } from "@/lib/auth-api";
 
+const USERNAME_ERROR =
+  "Username must be 3–32 characters and contain only English letters, numbers, underscores (_) or hyphens (-). Periods (.) and spaces are not allowed.";
+
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -20,6 +23,12 @@ export default function RegisterPage() {
     setUsernameError(null);
     setInviteError(null);
     setError(null);
+
+    if (!/^[a-zA-Z0-9_-]{3,32}$/.test(username)) {
+      setUsernameError(USERNAME_ERROR);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -69,13 +78,22 @@ export default function RegisterPage() {
               id="username"
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                setUsernameError(null);
+              }}
               autoComplete="username"
+              aria-invalid={!!usernameError}
+              aria-describedby={usernameError ? "username-hint username-error" : "username-hint"}
               required
               className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-2.5 text-sm text-[var(--color-fg)] placeholder:text-[var(--color-fg-subtle)] focus:border-[var(--color-fg-subtle)] focus:outline-none focus:ring-1 focus:ring-[var(--color-border)]"
             />
+            <p id="username-hint" className="mt-1 text-sm text-[var(--color-fg-muted)]">
+              3–32 characters: English letters, numbers, underscores (_) or hyphens (-).
+              {" "}Example: taiyou_zhang
+            </p>
             {usernameError && (
-              <p className="mt-1 text-sm text-[var(--color-danger)]">
+              <p id="username-error" role="alert" className="mt-1 text-sm text-[var(--color-danger)]">
                 {usernameError}
               </p>
             )}

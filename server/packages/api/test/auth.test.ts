@@ -112,10 +112,10 @@ describe("POST /auth/register", () => {
     expect(body.code).toBe("username_taken");
   });
 
-  it("returns 400 validation_error for a bad username", async () => {
+  it.each(["ab", "taiyou.zhang", "taiyou zhang", "a".repeat(33)])("returns a readable validation error for username %s", async (username) => {
     const { app } = build();
     const res = await post(app, "/auth/register", {
-      username: "ab",
+      username,
       password: "password123",
       inviteCode: "let-me-in",
     });
@@ -123,6 +123,9 @@ describe("POST /auth/register", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("validation_error");
+    expect(body.error).toBe(
+      "Username must be 3–32 characters and contain only English letters, numbers, underscores (_) or hyphens (-). Periods (.) and spaces are not allowed.",
+    );
   });
 
   it("returns 400 validation_error for a short password", async () => {
@@ -136,6 +139,7 @@ describe("POST /auth/register", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("validation_error");
+    expect(body.error).toBe("Password must be at least 8 characters.");
   });
 
   it("returns 503 auth_unavailable when AUTH_JWT_SECRET is unset", async () => {
