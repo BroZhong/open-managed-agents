@@ -90,7 +90,7 @@ export default function RegisterPage() {
             />
             <p id="username-hint" className="mt-1 text-sm text-[var(--color-fg-muted)]">
               3–32 characters: English letters, numbers, underscores (_) or hyphens (-).
-              {" "}Example: taiyou_zhang
+              {" "}Example: user_123
             </p>
             {usernameError && (
               <p id="username-error" role="alert" className="mt-1 text-sm text-[var(--color-danger)]">

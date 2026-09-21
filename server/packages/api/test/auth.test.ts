@@ -112,7 +112,7 @@ describe("POST /auth/register", () => {
     expect(body.code).toBe("username_taken");
   });
 
-  it.each(["ab", "taiyou.zhang", "taiyou zhang", "a".repeat(33)])("returns a readable validation error for username %s", async (username) => {
+  it.each(["ab", "user.name", "user name", "a".repeat(33)])("returns a readable validation error for username %s", async (username) => {
     const { app } = build();
     const res = await post(app, "/auth/register", {
       username,
