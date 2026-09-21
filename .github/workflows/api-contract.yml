@@ -40,6 +40,8 @@ jobs:
           cache-dependency-path: server/pnpm-lock.yaml
       - name: Install server dependencies
         run: pnpm --dir server install --frozen-lockfile
+      - name: Install Pi SDK for native context restoration tests
+        run: pnpm --dir adapter install --frozen-lockfile
       - name: Verify generated OpenAPI artifact
         run: pnpm openapi:check
       - name: Test API behavior and OpenAPI route alignment
