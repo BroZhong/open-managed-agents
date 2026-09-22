@@ -9,6 +9,9 @@ Controlled Sandbox idle reclamation has a separate
 [rollout, adoption and rollback procedure](../docs/sandbox-lifecycle-deployment.md).
 Migration 0014 and explicit Session-binding selection are required; the manifests
 do not enable the new policy globally.
+The [2026-09-23 production canary report](../docs/verification/sandbox-lifecycle-release-2026-09-23.md)
+records the deployed image, selected bindings, live model compatibility fix and
+real-time acceptance evidence.
 
 ## Topology
 

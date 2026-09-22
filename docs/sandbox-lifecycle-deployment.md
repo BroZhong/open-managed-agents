@@ -119,6 +119,27 @@ authorized. This implementation deliberately provides no wildcard global switch.
 
 ## Repeatable verification
 
+`deploy/scripts/verify-sandbox-release.mjs` runs against the deployed Host and
+public API using a dedicated verification tenant. `init` creates three cold root
+Sessions; select those exact IDs before releasing the Host. Run `exercise` for
+real model, shared-child and independent-Sandbox checks, `inspect` for read-only
+observations, then `rebuild` after 30 real idle minutes and `cleanup` after
+successful acceptance. Copy the evidence out before replacing the Host and back
+before continuing. Each phase revokes its temporary API key in `finally`.
+If a verification process is forcibly stopped, revoke its exact run/phase key
+before retrying. Failed attempts remain in the evidence.
+
+For the current OpenAI Responses gateway, Pi 0.83 needs the selected model's
+`compat.supportsStrictMode=true` so ordinary function tools explicitly send
+`strict:false`. Without that compatibility setting, the SDK omits `strict` and
+the upstream can turn optional tool fields such as `Agent.resume` into required
+fields. This was reproduced against the live gateway by
+`deploy/scripts/verify-responses-optionals.mjs`; its explicit-false case checks
+that a new child call omits `resume`. The setting describes support for the
+wire field, not a request to enable strict tools. Preserve all other model
+settings and credentials when updating the deployment-owned model catalog.
+See the [OpenAI function calling documentation](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
+
 `deploy/scripts/verify-sandbox-lifetime.mjs` creates uniquely annotated probes and
 records new creation, finite/zero lifetime controls, no-heartbeat execution,
 in-place deadline removal and explicit deletion. It never selects user resources.
