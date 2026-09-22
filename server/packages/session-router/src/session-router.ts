@@ -13,7 +13,7 @@ import type {
   DelegationStore,
   DelegationExecution,
 } from "@oma-server/store";
-import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
+import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent, presentContextData } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
@@ -869,6 +869,7 @@ export class SessionRouter {
     attemptEvents: StoredEvent[],
     pendingFence: PendingEventFence,
   ): Promise<void> {
+    attemptEvents = attemptEvents.flatMap(event => presentEvent(event));
     const results = new Set<string>();
     for (const event of attemptEvents) {
       if (event.type !== "agent.tool_result" && event.type !== "agent.mcp_tool_result") continue;
@@ -1358,12 +1359,12 @@ export class SessionRouter {
         if (resumableWaits.length && this.delegations) {
           await this.delegations.recoverWaits(delegationRun, resumableWaits);
           priorEvents = await this.readAllEvents(sessionId);
-          const turnEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq);
+          const turnEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq).flatMap(event => presentEvent(event));
           const completedTools = new Set(turnEvents.filter((event) => event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result")
             .map((event) => (event.data as { toolUseId?: string }).toolUseId));
           if (turnEvents.some((event) => (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
             !completedTools.has((event.data as { toolUseId?: string }).toolUseId))) {
-            await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId, turnEvents, pendingFence);
+            await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId, priorEvents.filter(event => event.seq > promotedEvent.seq), pendingFence);
             await this.eventLogStore.append(sessionId, {
               type: "session.error", data: { turnId, error: { code: "recovery_required",
                 message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } },
@@ -1481,19 +1482,17 @@ export class SessionRouter {
       // blockIndex increments on each stream_start, aligning a turn's deltas to
       // the full Event they roll up into (shared turnId + blockIndex).
       let blockIndex = resumableWaits.length
-        ? Math.max(-1, ...priorEvents.filter((event) => (event.data as { turnId?: string })?.turnId === turnId)
+        ? Math.max(-1, ...priorEvents.flatMap(event => presentEvent(event)).filter((event) => (event.data as { turnId?: string })?.turnId === turnId)
           .map((event) => (event.data as { blockIndex?: number })?.blockIndex ?? -1)) : -1;
       let durableEventIndex = 0;
+      const streamBlockBase = blockIndex + 1;
       const pendingStreamBlocks: PendingStreamBlock[] = [];
       // The Complete Events this attempt persisted, in order. Only the Adapter
       // knows what it produced, so an Interrupt's cleanup (dangling tool_use
       // repair) reads this instead of re-querying the log.
       const attemptStoredEvents: StoredEvent[] = [];
 
-      const persistCompleteEvent = async (event: SessionEvent): Promise<void> => {
-        // Session lifecycle belongs to the durable input, not Pi's temporary
-        // prompt completion (a synchronous tool may still hold a wait).
-        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
+      const alignCompleteEvent = (event: { type: string; toolUseId?: unknown }): { type: string; toolUseId?: unknown; turnId: string; blockIndex?: number } => {
         const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
           if (!block.completeTypes.has(event.type)) return false;
           if (block.toolUseId === undefined) return true;
@@ -1515,9 +1514,32 @@ export class SessionRouter {
         const pendingBlock = pendingBlockIndex === -1
           ? undefined
           : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
-        const alignedEvent = pendingBlock
+        return pendingBlock
           ? { ...event, turnId: turnId!, blockIndex: pendingBlock.blockIndex }
           : { ...event, turnId: turnId! };
+      };
+
+      const persistCompleteEvent = async (event: SessionEvent): Promise<void> => {
+        // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
+        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
+        let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
+        if (event.type === "agent.context_entry" && event.presentation) {
+          const displays = presentContextData(event.type, event);
+          const blocks = event.presentation.blocks.map(block => ({ ...block }));
+          // A native assistant bundles several completions. Match backwards,
+          // preserving the same latest-start rule used for individual events.
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            if (blocks[i].streamIndex !== undefined) {
+              blocks[i].blockIndex = streamBlockBase + blocks[i].streamIndex!;
+              const pending = pendingStreamBlocks.findIndex(block => block.blockIndex === blocks[i].blockIndex);
+              if (pending >= 0) pendingStreamBlocks.splice(pending, 1);
+              continue;
+            }
+            const aligned = alignCompleteEvent({ ...displays[i].data, type: displays[i].type });
+            if (aligned.blockIndex !== undefined) blocks[i].blockIndex = aligned.blockIndex;
+          }
+          alignedEvent = { ...event, turnId: turnId!, presentation: { version: 1, blocks } };
+        }
         const completeEvent = delegationExecution ? { ...alignedEvent,
           callerSessionId: delegationExecution.callerSessionId,
           callerTurnId: delegationExecution.callerTurnId,
@@ -1675,6 +1697,7 @@ export class SessionRouter {
               }
               postAbortEventsSeen++;
               if (event.type === "span.model_request_end" ||
+                  (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type !== "compaction") ||
                   (event.type === "agent.message" && event.stopReason === "aborted")) {
                 // interrupt() stops the regular heartbeat. Revalidate and extend
                 // this exact generation immediately before the accounting write;

@@ -265,6 +265,7 @@ function MessageBubble({ message, running = false }: { message: DisplayMessage; 
       if (sessionId && onOpenExecution && message.name === "Agent") return <DelegationCard sessionId={sessionId} message={message} running={running} onOpenExecution={onOpenExecution} />;
       return (
         <ToolCard
+          sessionId={sessionId}
           name={message.name || "unknown"}
           toolUseId={message.toolUseId || ""}
           input={message.input}

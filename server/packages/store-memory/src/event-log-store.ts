@@ -10,6 +10,8 @@ import type {
 } from "@oma-server/store";
 import {
   PendingEventClaimLostError,
+  lazyEventData,
+  eventSequenceWidth,
   summarizeTokenUsage,
 } from "@oma-server/store";
 
@@ -52,7 +54,7 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     }
 
     const currentSeq = this.seqCounters.get(sessionId) ?? 0;
-    const nextSeq = currentSeq + 1;
+    const nextSeq = currentSeq + eventSequenceWidth(event.type, event.data);
     this.seqCounters.set(sessionId, nextSeq);
 
     const stored: StoredEvent = {
@@ -97,7 +99,7 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     const data = filtered.slice(0, limit);
     const hasMore = filtered.length > limit;
 
-    return { data: data.map(({ event }) => event), hasMore };
+    return { data: data.map(({ event }) => opts?.payload === "reference" ? { ...event, data: lazyEventData(event.type, event.data) } : event), hasMore };
   }
 
   async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {

@@ -3,6 +3,8 @@ import { projectCompactions, type CompactionView } from "./compaction";
 import { outputBlockKey } from "@/lib/output-block";
 
 interface ToolResultData {
+  seq?: number;
+  payloadRef?: { bytes: number };
   content: unknown;
   isError: boolean;
 }
@@ -59,7 +61,7 @@ export function processEventsToMessages(
 
   const toolResultMap = new Map<
     string,
-    { content: unknown; isError: boolean; seq: number }
+    { content: unknown; isError: boolean; seq: number; payloadRef?: { bytes: number } }
   >();
   const pairedToolResultSeqs = new Set<number>();
   const notifications = new Map(events.filter((event) => event.type === "subagent.result").map((event) => [event.seq, event]));
@@ -67,14 +69,16 @@ export function processEventsToMessages(
     .map((event) => (event.data as { notificationSeq?: number }).notificationSeq));
 
   for (const event of events) {
-    if (event.type === "agent.tool_result") {
+    if (event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result") {
       const data = event.data as {
         toolUseId: string;
         content: unknown;
         isError?: boolean;
+        payloadRef?: { bytes: number };
       };
       toolResultMap.set(toolIdentity(event.data), {
         content: data.content,
+        ...(data.payloadRef ? { payloadRef: data.payloadRef } : {}),
         isError: data.isError ?? false,
         seq: event.seq,
       });
@@ -183,7 +187,7 @@ export function processEventsToMessages(
           turnId: (event.data as { turnId?: string }).turnId,
           input: data.input,
           result: pairedResult
-            ? { content: pairedResult.content, isError: pairedResult.isError }
+            ? { content: pairedResult.content, isError: pairedResult.isError, ...(pairedResult.payloadRef ? { seq: pairedResult.seq, payloadRef: pairedResult.payloadRef } : {}) }
             : undefined,
           seq,
         });
@@ -211,19 +215,21 @@ export function processEventsToMessages(
           input: data.input,
           serverName: data.serverName,
           result: pairedResult
-            ? { content: pairedResult.content, isError: pairedResult.isError }
+            ? { content: pairedResult.content, isError: pairedResult.isError, ...(pairedResult.payloadRef ? { seq: pairedResult.seq, payloadRef: pairedResult.payloadRef } : {}) }
             : undefined,
           seq,
         });
         break;
       }
 
+      case "agent.mcp_tool_result":
       case "agent.tool_result": {
         if (seq === undefined || !pairedToolResultSeqs.has(seq)) {
           const data = event.data as {
             toolUseId: string;
             content: unknown;
             isError?: boolean;
+            payloadRef?: { bytes: number };
           };
           messages.push({
             id: `tool-result-${seq}`,
@@ -236,6 +242,7 @@ export function processEventsToMessages(
             result: {
               content: data.content,
               isError: data.isError ?? false,
+              ...(data.payloadRef ? { seq, payloadRef: data.payloadRef } : {}),
             },
             seq,
           });

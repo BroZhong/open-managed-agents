@@ -2,6 +2,8 @@ import type { PaginatedResult, StoredEvent, TokenUsageSummary } from "../types.j
 import type { PendingEventFence } from "./pending-event-store.js";
 
 export interface EventLogStoreGetEventsOpts {
+  /** HTTP/SSE list readers must not hydrate OSS results. Runtime defaults to full data. */
+  payload?: "reference" | "full";
   afterSeq?: number;
   turnId?: string;
   limit?: number;

@@ -1,3 +1,5 @@
+import { lazyEventData, presentEvent } from "@oma-server/store";
+
 export interface StreamEvent {
   type: string;
   seq?: number;
@@ -86,14 +88,13 @@ export class InProcessEventStreamHub implements EventStreamHub {
     const subscribers = this.sessions.get(sessionId);
     if (!subscribers || subscribers.size === 0) return;
 
-    const frame = formatSSEFrame({
-      event: event.type,
-      id: event.seq !== undefined ? String(event.seq) : undefined,
-      data: JSON.stringify(event.data),
-    });
-
-    for (const sub of subscribers) {
-      sub.controller.enqueue(frame);
+    for (const displayed of presentEvent({ ...event, data: lazyEventData(event.type, event.data) })) {
+      const frame = formatSSEFrame({
+        event: displayed.type,
+        id: displayed.seq !== undefined ? String(displayed.seq) : undefined,
+        data: JSON.stringify(lazyEventData(displayed.type, displayed.data)),
+      });
+      for (const sub of subscribers) sub.controller.enqueue(frame);
     }
   }
 

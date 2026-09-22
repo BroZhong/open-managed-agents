@@ -110,6 +110,10 @@ export type {
 
 
 export { OSSArtifactStore } from "./oss/artifact-store.js";
+export { OSSEventPayloadStore } from "./oss/event-payload-store.js";
+export { EventPayloadCodec, BIG_RESULT_BYTES, lazyEventData, eventPayloadRef } from "./event-payload.js";
+export type { EventPayloadRef, EventPayloadStore } from "./event-payload.js";
+export { migrateEventPayloads } from "./postgres/migrate-event-payloads.js";
 export type { OSSArtifactStoreOptions, OSSObjectClient } from "./oss/artifact-store.js";
 export { workspaceObjectPrefix, validateArtifactPath } from "./workspace-path.js";
 export { resolveArtifactContentType } from "./artifact-content-type.js";
@@ -152,3 +156,4 @@ export { PgDelegationStore } from "./postgres/delegation-store.js";
 
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";
 export { PgSessionShareStore } from "./postgres/session-share-store.js";
+export { contextPresentation, eventSequenceWidth, presentContextData, presentEvent, presentEventPage } from "./event-presentation.js";

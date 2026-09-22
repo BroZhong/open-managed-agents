@@ -169,6 +169,7 @@ export function createApp(deps: AppDeps) {
   // Mount event routes
   if (deps.eventLogStore && deps.pendingEventStore && deps.sessionStore) {
     app.route("/", eventRoutes({
+      workspaceStore: deps.workspaceStore,
       eventLogStore: deps.eventLogStore,
       pendingEventStore: deps.pendingEventStore,
       sessionStore: deps.sessionStore,

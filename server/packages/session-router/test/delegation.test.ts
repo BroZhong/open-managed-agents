@@ -6,6 +6,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { SessionRouter } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
+import { presentEvent } from "@oma-server/store";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (message: string) => event("agent.message", { content: [{ type: "text", text: message }], stopReason: "stop" });
@@ -46,6 +47,70 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
 }
 
 describe("Host-owned delegation through the Session Router", () => {
+  it("persists native blocks once, aligns bundled completions to their deltas and restores native-only history", async () => {
+    let runs = 0; let history: SessionEvent[] = [];
+    const native = event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id: "assistant1", type: "message", parentId: null, message: { role: "assistant", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] } },
+      presentation: { version: 1, blocks: [{ type: "agent.message", index: 0 }, { type: "agent.message", index: 1 }] } });
+    const h = await harness({ async *run(input) {
+      if (++runs > 1) { history = input.history; return; }
+      yield event("agent.message_stream_start"); yield event("agent.message_chunk", { text: "first" }); yield event("agent.message_stream_end");
+      yield event("agent.message_stream_start"); yield event("agent.message_chunk", { text: "second" }); yield event("agent.message_stream_end");
+      await input.persistContext!([native]); yield native;
+    } });
+    await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    const log = await h.log();
+    expect(log.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(log.filter(e => e.type === "agent.message")).toHaveLength(0);
+    const displays = log.flatMap(e => presentEvent(e)).filter(e => e.type === "agent.message");
+    expect(displays.map(e => (e.data as { blockIndex: number }).blockIndex)).toEqual([0, 1]);
+    await h.enqueue("next"); await h.router.handleNewEvent(h.parent.id, h.agent);
+    expect(history.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(history.filter(e => e.type === "agent.message")).toHaveLength(0);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("consumes synchronous native tool results atomically and derives child output without display rows", async () => {
+    const native = (id: string, message: object, blocks: object[]) => event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id, parentId: null, type: "message", message }, presentation: { version: 1, blocks } });
+    const h = await harness({ async *run(input) {
+      if (input.execution?.isChild) {
+        yield native("child-answer", { role: "assistant", content: [{ type: "text", text: "native child answer" }], stopReason: "stop" }, [{ type: "agent.message", index: 0 }]); return;
+      }
+      const call = native("parent-call", { role: "assistant", content: [{ type: "toolCall", id: "native-wait", name: "Agent", arguments: { prompt: "child" } }] }, [{ type: "agent.tool_use", index: 0 }]);
+      yield call;
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "native-wait", checkpoint: [call] });
+      const result = native("parent-result", { role: "toolResult", toolCallId: "native-wait", toolName: "Agent", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }, [{ type: "agent.tool_result" }]);
+      await input.persistContext!([result]); yield result;
+    } });
+    await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    const log = await h.log();
+    expect(log.filter(e => e.type === "agent.tool_result" || e.type === "agent.tool_use")).toHaveLength(0);
+    const results = log.flatMap(e => presentEvent(e)).filter(e => e.type === "agent.tool_result");
+    expect(results).toHaveLength(1);
+    expect(JSON.stringify(results[0].data)).toContain("native child answer");
+    const executions = await h.stores.delegationStore.listExecutions("tenant", { callerSessionId: h.parent.id, limit: 10 });
+    expect(executions[0].consumedAt).toBeTruthy();
+    expect((await h.log(executions[0].childId)).filter(e => e.type === "agent.message")).toHaveLength(0);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("keeps stream alignment when a native commit overtakes queued deltas", async () => {
+    const native = event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id: "ahead", type: "message", parentId: null, message: { role: "assistant", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] } },
+      presentation: { version: 1, blocks: [{ type: "agent.message", index: 0, streamIndex: 0 }, { type: "agent.message", index: 1, streamIndex: 1 }] } });
+    const h = await harness({ async *run(input) {
+      // Pi's awaited compaction hook can commit before Router drains its queue.
+      await input.persistContext!([native]);
+      yield event("agent.message_stream_start"); yield event("agent.message_chunk", { text: "first" }); yield event("agent.message_stream_end");
+      yield event("agent.message_stream_start"); yield event("agent.message_chunk", { text: "second" }); yield event("agent.message_stream_end");
+      yield native;
+    } });
+    await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
+    const log = await h.log();
+    expect(log.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    const displays = log.flatMap(e => presentEvent(e)).filter(e => e.type === "agent.message");
+    expect(displays.map(e => (e.data as { blockIndex: number }).blockIndex)).toEqual([0, 1]);
+    expect(h.errors).toEqual([]);
+  });
+
   it("commits runtime context before continuation, deduplicates delivery and fences late writes", async () => {
     const usage = event("agent.context_usage", { turnId: "first", model: "test", tokens: 900, contextWindow: 1000, source: "sdk" });
     const context = event("agent.context_entry", { sdk: "pi@0.83.0", turnId: "first", entry: { type: "compaction", id: "durable", summary: "saved" } });

@@ -5510,7 +5510,7 @@
       "get": {
         "operationId": "listSessionEvents",
         "summary": "List Complete Events or open an SSE stream",
-        "description": "Defaults to a JSON page of durable events. Send exactly Accept: text/event-stream for SSE. Last-Event-ID or replay=1 enables replay of durable events followed by buffered Deltas from the active Turn, then live delivery. include=chunks additionally forwards live Deltas. The SSE connection remains open across Turns; it does not close when a Turn finishes. JSON pagination parameters after_seq and limit do not control SSE replay. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
+        "description": "Defaults to a JSON page of durable events. Tool results and native Pi tool-result entries of at least 64 KiB contain payloadRef metadata instead of the full data. Retrieve full data only when needed using GET /v1/sessions/{id}/events/{seq}/data. This also applies to live and replayed SSE. Send exactly Accept: text/event-stream for SSE. Last-Event-ID or replay=1 enables replay of durable events followed by buffered Deltas from the active Turn, then live delivery. include=chunks additionally forwards live Deltas. The SSE connection remains open across Turns; it does not close when a Turn finishes. JSON pagination parameters after_seq and limit do not control SSE replay. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
         "tags": [
           "Sessions/Events"
         ],
@@ -5745,6 +5745,111 @@
           },
           "404": {
             "description": "Session not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/events/{seq}/data": {
+      "get": {
+        "operationId": "getSessionEventData",
+        "summary": "Read complete event data on demand",
+        "description": "Loads the original event data, including an OSS-backed large result. Requires access to this Session; a Session Share can read only its own Session. No result is loaded by listing events or by SSE. Share access is limited to the linked Session or Workspace; SSE is forbidden. Every read rechecks Session and Workspace availability. History is shared verbatim, not redacted.",
+        "tags": [
+          "Sessions/Events"
+        ],
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "BearerAuth": []
+          },
+          {
+            "SessionShareAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            },
+            "required": true,
+            "name": "seq",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Original event data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {}
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid event sequence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid tenant credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session or event not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Result storage unavailable",
             "content": {
               "application/json": {
                 "schema": {

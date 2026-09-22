@@ -108,7 +108,7 @@ export interface DelegationStore {
   /** Child terminal + parent notification event + async pending input commit together. */
   finishExecution(executionId: string, fence: PendingEventFence, outcome: DelegationOutcome): Promise<DelegationExecution>;
   saveWait(wait: Omit<DelegationWait, "status">, fence: PendingEventFence): Promise<DelegationWait>;
-  listWaits(parentSessionId: string, parentPendingEventId: string): Promise<DelegationWait[]>;
+  listWaits(parentSessionId: string, parentPendingEventId: string, options?: { checkpoint: "reference" }): Promise<DelegationWait[]>;
   /** Append final parent tool result and suppress unclaimed async delivery atomically. */
   consumeResult(executionId: string, caller: DelegationCaller, fence: PendingEventFence, event: EventLogStoreAppendInput): Promise<StoredEvent>;
   markNotificationProcessed(executionId: string, parentFence: PendingEventFence): Promise<void>;

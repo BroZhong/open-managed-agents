@@ -20,6 +20,8 @@ on:
       - "server/packages/redis/**"
       - "server/pnpm-lock.yaml"
       - "web/src/**"
+      - "web/test/**"
+      - "web/vitest.config.ts"
       - "web/pnpm-lock.yaml"
       - ".github/workflows/usage-accounting.yml"
   push:
@@ -42,6 +44,8 @@ on:
       - "server/packages/redis/**"
       - "server/pnpm-lock.yaml"
       - "web/src/**"
+      - "web/test/**"
+      - "web/vitest.config.ts"
       - "web/pnpm-lock.yaml"
       - ".github/workflows/usage-accounting.yml"
   workflow_dispatch:
@@ -63,6 +67,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: server/pnpm-lock.yaml
       - run: pnpm --dir server install --frozen-lockfile
+      - name: Install Pi SDK for native context restoration tests
+        run: pnpm --dir adapter install --frozen-lockfile
       - name: Test durable attribution and aggregation
         run: >-
           pnpm --dir server --workspace-concurrency=1

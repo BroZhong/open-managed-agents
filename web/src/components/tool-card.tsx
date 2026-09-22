@@ -1,9 +1,13 @@
 import { Wrench, FileText, Pencil, Search, Terminal, Check, Circle, XCircle } from "lucide-react";
 import { ConversationResourceLink } from "@/components/conversation-resource-link";
 import { SessionDisclosure } from "@/components/session-disclosure";
+import { useContext } from "react";
+import { ConversationResourcesContext } from "@/lib/conversation-resources";
+import { EventData, ResultContent } from "@/components/event-data";
 
-interface ToolResult { content: unknown; isError: boolean }
+interface ToolResult { content: unknown; isError: boolean; seq?: number; payloadRef?: { bytes: number } }
 interface ToolCardProps {
+  sessionId?: string;
   name: string;
   toolUseId: string;
   input: unknown;
@@ -34,7 +38,8 @@ function toolPresentation(name: string, input: unknown) {
   return { label: name, icon: Wrench, detail };
 }
 
-export function ToolCard({ name, toolUseId, input, serverName, result, streaming = false, running = false, onActivate, detail: detailOverride, status: statusOverride, title }: ToolCardProps) {
+export function ToolCard({ sessionId = "", name, toolUseId, input, serverName, result, streaming = false, running = false, onActivate, detail: detailOverride, status: statusOverride, title }: ToolCardProps) {
+  const resources = useContext(ConversationResourcesContext);
   const { label, icon: Icon, detail: inputDetail } = toolPresentation(name, input);
   const detail = detailOverride ?? inputDetail;
   const pending = !result && (running || streaming);
@@ -42,20 +47,23 @@ export function ToolCard({ name, toolUseId, input, serverName, result, streaming
   const failed = result?.isError || /failed|interrupted|recovery_required|budget_exhausted/.test(status);
   const completed = status.toLowerCase() === "completed";
   return (
-    <SessionDisclosure id={`tool-${toolUseId}`} title={title} onActivate={onActivate} defaultOpen={result?.isError} className={`session-tool ${failed ? "session-tool-error" : ""}`} summary={<>
+    <SessionDisclosure id={`tool-${toolUseId}`} title={title} onActivate={onActivate} defaultOpen={!result?.payloadRef && result?.isError} className={`session-tool ${failed ? "session-tool-error" : ""}`} summary={<>
       <Icon size={14} />
       <span className="session-tool-label" title={[serverName, name].filter(Boolean).join(" / ")}>{label}</span>
+      {result?.payloadRef && <span className="text-xs">{(result.payloadRef.bytes / 1024).toFixed(0)} KB</span>}
       {detail && <span className="session-tool-detail" title={detail}><ConversationResourceLink inlineCode href={detail}>{detail}</ConversationResourceLink></span>}
       <span className="session-tool-status" aria-label={status} title={status}>
         {failed ? <XCircle size={13} /> : completed ? <Check size={13} /> : <Circle size={11} className={pending || /running|queued|waiting/.test(status) ? "animate-pulse" : ""} />}
       </span>
     </>}>
-      <div className="session-tool-payload">
+      {open => open && <div className="session-tool-payload">
         <p>{[serverName, name].filter(Boolean).join(" / ")} · {status}</p>
         <h4>Input</h4>
         <pre>{formatContent(input)}</pre>
-        {result && <><h4>Result</h4><pre>{formatContent(result.content)}</pre></>}
-      </div>
+        {result && <><h4>Result</h4>{result.payloadRef && result.seq !== undefined
+          ? <EventData key={`${sessionId}:${result.seq}`} sessionId={sessionId} seq={result.seq} load={resources?.loadEventData}>{data => <ResultContent content={(data as { content?: unknown }).content} />}</EventData>
+          : <ResultContent content={result.content} />}</>}
+      </div>}
     </SessionDisclosure>
   );
 }

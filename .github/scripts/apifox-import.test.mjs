@@ -11,7 +11,7 @@ function response(overrides = {}) {
     data: {
       counters: {
         endpointCreated: 0,
-        endpointUpdated: 62,
+        endpointUpdated: 63,
         endpointFailed: 0,
         endpointIgnored: 0,
         schemaCreated: 0,
@@ -46,12 +46,12 @@ test("accepts complete overwrite counters for the generated contract", () => {
 
   assert.deepEqual(validateImportResponse(document, response()), {
     endpointCreated: 0,
-    endpointUpdated: 62,
+    endpointUpdated: 63,
     endpointIgnored: 0,
     schemaCreated: 0,
     schemaUpdated: 53,
     schemaIgnored: 0,
-    expectedEndpoints: 62,
+    expectedEndpoints: 63,
     expectedSchemas: 53,
   });
 });
@@ -63,20 +63,20 @@ test("accepts a first import that creates every resource", () => {
     validateImportResponse(
       document,
       response({
-        endpointCreated: 62,
+        endpointCreated: 63,
         endpointUpdated: 0,
         schemaCreated: 53,
         schemaUpdated: 0,
       }),
     ),
     {
-      endpointCreated: 62,
+      endpointCreated: 63,
       endpointUpdated: 0,
       endpointIgnored: 0,
       schemaCreated: 53,
       schemaUpdated: 0,
       schemaIgnored: 0,
-      expectedEndpoints: 62,
+      expectedEndpoints: 63,
       expectedSchemas: 53,
     },
   );
@@ -85,7 +85,7 @@ test("accepts a first import that creates every resource", () => {
 test("accepts unchanged resources as processed pending semantic readback", () => {
   const document = JSON.parse(readFileSync("docs/openapi.json", "utf8"));
   const result = validateImportResponse(document, response({
-    endpointUpdated: 61, endpointIgnored: 1,
+    endpointUpdated: 62, endpointIgnored: 1,
     schemaUpdated: 1, schemaIgnored: 52,
   }));
   assert.equal(result.endpointIgnored, 1);
@@ -99,7 +99,7 @@ test("accepts observed endpoint counters that omit unchanged endpoints", () => {
     schemaUpdated: 1, schemaIgnored: 52,
   }));
   assert.equal(result.endpointUpdated, 17);
-  assert.equal(result.expectedEndpoints, 62);
+  assert.equal(result.expectedEndpoints, 63);
 });
 
 test("rejects failed resources and impossible counter totals", () => {
@@ -109,7 +109,7 @@ test("rejects failed resources and impossible counter totals", () => {
     () =>
       validateImportResponse(
         document,
-        response({ endpointUpdated: 62, endpointFailed: 1 }),
+        response({ endpointUpdated: 63, endpointFailed: 1 }),
       ),
     /did not overwrite every endpoint/i,
   );
@@ -123,7 +123,7 @@ test("rejects failed resources and impossible counter totals", () => {
   );
   assert.throws(
     () => validateImportResponse(document, response({ endpointUpdated: 64 })),
-    /processed 64 endpoints instead of 62/i,
+    /processed 64 endpoints instead of 63/i,
   );
   assert.throws(
     () => validateImportResponse(document, response({ schemaUpdated: 54 })),

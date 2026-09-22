@@ -3,7 +3,7 @@ import type {
   DelegationWait, EventLogStore, PendingEventFence, PendingEventStore, Session,
   SessionStore, StoredEvent,
 } from "@oma-server/store";
-import { PendingEventClaimLostError } from "@oma-server/store";
+import { PendingEventClaimLostError, presentContextData, presentEvent } from "@oma-server/store";
 import type {
   AdapterExecution, AgentToolResultEvent, HostSubagentCapability, SessionEvent,
   SubagentCallContext, ToolExecutor, ToolFileSystem,
@@ -87,7 +87,7 @@ export class DelegationCoordinator {
       },
       getResult: async (input, context) => {
         await this.assertOwner(run);
-        const priorWait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId))
+        const priorWait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
           .find((wait) => wait.callerToolUseId === context.toolUseId);
         const execution = await this.deps.store.get(
           run.session.tenantId, run.session.id, input.childId, priorWait?.executionId ?? input.executionId,
@@ -131,7 +131,7 @@ export class DelegationCoordinator {
         await delay(this.deps.pollMs ?? 200, run.signal);
       }
     } finally {
-      if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
+      if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
         .some((wait) => wait.status === "waiting")) await this.setWaiting(run, false);
     }
   }
@@ -167,6 +167,9 @@ export class DelegationCoordinator {
           // Tool results have a separate atomic consumption key. Restoring an
           // SDK snapshot must not append the same result under an event-ID key.
           if (event.type === "agent.tool_result" && waits.some((item) => item.callerToolUseId === event.toolUseId)) continue;
+          // Native results use the same atomic consumption identity on replay;
+          // an event-ID append would duplicate an already consumed native row.
+          if (event.type === "agent.context_entry" && await this.persistToolResult(run, event)) continue;
           const stored = await this.deps.events.append(run.session.id, {
             type: event.type, data: { ...event, turnId: run.turnId },
             sessionThreadId: "sthr_primary", apiKeyId: run.apiKeyId,
@@ -191,20 +194,23 @@ export class DelegationCoordinator {
   }
 
   async persistToolResult(run: DelegationRun, event: SessionEvent): Promise<StoredEvent | null> {
-    if (event.type !== "agent.tool_result") return null;
-    const wait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId))
-      .find((item) => item.callerToolUseId === event.toolUseId && item.status !== "cancelled");
+    const result = event.type === "agent.tool_result" ? event
+      : presentContextData(event.type, event).find(item => item.type === "agent.tool_result")?.data;
+    if (!result) return null;
+    const toolUseId = result.toolUseId as string;
+    const wait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
+      .find((item) => item.callerToolUseId === toolUseId && item.status !== "cancelled");
     if (!wait) return null;
     const execution = await this.deps.store.getExecution(run.session.tenantId, wait.executionId);
     if (!execution || !isTerminalExecution(execution)) return null;
     const stored = await this.deps.store.consumeResult(wait.executionId,
-      this.caller(run, event.toolUseId), run.fence, {
+      this.caller(run, toolUseId), run.fence, {
         type: event.type, data: { ...event, turnId: run.turnId },
         sessionThreadId: "sthr_primary", apiKeyId: run.apiKeyId,
-        idempotencyKey: `pending:${run.fence.eventId}:delegation_result:${event.toolUseId}`,
+        idempotencyKey: `pending:${run.fence.eventId}:delegation_result:${toolUseId}`,
       });
     this.deps.publish(stored);
-    if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
+    if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
       .some((item) => item.status === "waiting")) await this.setWaiting(run, false);
     return stored;
   }
@@ -266,6 +272,7 @@ function executionResultIsError(result: Record<string, unknown>): boolean {
 }
 
 export function outcomeFromEvents(execution: DelegationExecution, events: StoredEvent[], interrupted = false): DelegationOutcome {
+  events = events.flatMap(event => presentEvent(event));
   const error = [...events].reverse().find((event) => event.type === "session.error");
   const errorData = error?.data as { error?: { code?: string; message?: string } } | undefined;
   const messages = events.filter((event) => event.type === "agent.message");

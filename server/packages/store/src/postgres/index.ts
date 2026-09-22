@@ -20,6 +20,7 @@ import { PgSessionStore } from "./session-store.js";
 import { PgWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 import { PgUserStore } from "./user-store.js";
 import { PgLoopStore } from "./loop-store.js";
+import type { EventPayloadCodec } from "../event-payload.js";
 
 export { createPgPool, pgConfigFromEnv, DEFAULT_SCHEMA } from "./connection.js";
 export type { Pool, PoolClient, PgConnectionConfig } from "./connection.js";
@@ -56,6 +57,7 @@ export interface PgStores {
 }
 
 export interface CreatePgStoresOpts {
+  payloads?: EventPayloadCodec;
   /** Run the DDL to create the schema + tables if missing. Defaults to true. */
   ensureSchema?: boolean;
   /** Schema to create when `ensureSchema` runs. Defaults to "oma". */
@@ -73,12 +75,12 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
     skillStore: new PgSkillStore(pool),
     sessionShareStore: new PgSessionShareStore(pool),
     sessionStore: new PgSessionStore(pool),
-    eventLogStore: new PgEventLogStore(pool),
+    eventLogStore: new PgEventLogStore(pool, opts.payloads),
     pendingEventStore: new PgPendingEventStore(pool),
     apiKeyStore: new PgApiKeyStore(pool),
     userStore: new PgUserStore(pool),
     workspaceStore: new PgWorkspaceMetadataStore(pool),
     loopStore: new PgLoopStore(pool),
-    delegationStore: new PgDelegationStore(pool),
+    delegationStore: new PgDelegationStore(pool, opts.payloads),
   };
 }

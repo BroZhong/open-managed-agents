@@ -1,3 +1,4 @@
+import { EventData, type EventDataLoader } from "@/components/event-data";
 import { useState, useEffect, useRef } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -5,6 +6,8 @@ import type { SessionEvent } from "@/lib/types";
 
 interface TimelineViewProps {
   events: SessionEvent[];
+  sessionId?: string;
+  loadEventData?: EventDataLoader;
 }
 
 function formatTimestamp(ts: string): string {
@@ -26,7 +29,7 @@ function getEventTypeColor(type: string): string {
   return "bg-neutral-100 text-neutral-600";
 }
 
-function TimelineRow({ event }: { event: SessionEvent }) {
+function TimelineRow({ event, sessionId, loadEventData }: { event: SessionEvent; sessionId: string; loadEventData?: EventDataLoader }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -59,15 +62,17 @@ function TimelineRow({ event }: { event: SessionEvent }) {
         </span>
       </button>
       {expanded && (
-        <pre className="mx-4 mb-3 mt-1 overflow-x-auto rounded bg-neutral-50 p-3 text-xs font-mono">
-          {JSON.stringify(event.data, null, 2)}
-        </pre>
+        <div className="mx-4 mb-3 mt-1 overflow-x-auto rounded bg-neutral-50 p-3 text-xs font-mono">
+          {(event.data as { payloadRef?: unknown })?.payloadRef
+            ? <EventData key={`${sessionId}:${event.seq}`} sessionId={sessionId} seq={event.seq} load={loadEventData}>{data => <pre>{JSON.stringify(data, null, 2)}</pre>}</EventData>
+            : <pre>{JSON.stringify(event.data, null, 2)}</pre>}
+        </div>
       )}
     </div>
   );
 }
 
-export function TimelineView({ events }: TimelineViewProps) {
+export function TimelineView({ events, sessionId = "", loadEventData }: TimelineViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -117,7 +122,7 @@ export function TimelineView({ events }: TimelineViewProps) {
           </div>
         )}
         {events.map((event) => (
-          <TimelineRow key={event.seq} event={event} />
+          <TimelineRow key={event.seq} event={event} sessionId={sessionId} loadEventData={loadEventData} />
         ))}
         <div ref={bottomRef} />
       </div>

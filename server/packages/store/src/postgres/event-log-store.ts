@@ -3,6 +3,8 @@ import type { EventLogIngressStore, EventLogStoreAppendInput, EventLogStoreGetEv
 import type { PaginatedResult, StoredEvent, TokenUsageSummary } from "../types.js";
 import { PendingEventClaimLostError } from "../errors.js";
 import { summarizeTokenUsage } from "../token-usage.js";
+import { EventPayloadCodec, eventPayloadRef, lazyEventData } from "../event-payload.js";
+import { eventSequenceWidth } from "../event-presentation.js";
 
 interface EventRow {
   session_id: string;
@@ -51,7 +53,13 @@ function rowToEvent(row: EventRow): StoredEvent {
 }
 
 export class PgEventLogStore implements EventLogIngressStore {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) {}
+
+  private async decodeRow(row: EventRow): Promise<StoredEvent> {
+    const event = rowToEvent(row);
+    if (eventPayloadRef(event.data, event.type) && !this.payloads) throw new Error("Session result storage is not configured");
+    return this.payloads ? { ...event, data: await this.payloads.decode(event.sessionId, event.data, event.type) } : event;
+  }
 
   private async assertLiveFence(
     client: PoolClient,
@@ -107,6 +115,8 @@ export class PgEventLogStore implements EventLogIngressStore {
   }
 
   async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
+    // Upload first: no committed event may reference an unacknowledged object.
+    const data = this.payloads ? await this.payloads.encode(sessionId, event.type, event.data) : event.data;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -142,13 +152,13 @@ export class PgEventLogStore implements EventLogIngressStore {
         );
         if (existing.rows[0]) {
           await client.query("COMMIT");
-          return rowToEvent(existing.rows[0]);
+          return this.decodeRow(existing.rows[0]);
         }
       }
 
       const counter = await client.query<{ seq: string | number }>(
-        `UPDATE event_counters SET seq = seq + 1 WHERE session_id = $1 RETURNING seq`,
-        [sessionId],
+        `UPDATE event_counters SET seq = seq + $2 WHERE session_id = $1 RETURNING seq`,
+        [sessionId, eventSequenceWidth(event.type, event.data)],
       );
       const seq = Number(counter.rows[0].seq);
       const ts = new Date();
@@ -161,7 +171,7 @@ export class PgEventLogStore implements EventLogIngressStore {
           sessionId,
           seq,
           event.type,
-          JSON.stringify(event.data ?? null),
+          JSON.stringify(data ?? null),
           ts,
           event.sessionThreadId,
           event.apiKeyId ?? null,
@@ -170,7 +180,7 @@ export class PgEventLogStore implements EventLogIngressStore {
       );
 
       await client.query("COMMIT");
-      return rowToEvent(rows[0]);
+      return { ...rowToEvent(rows[0]), data: event.data };
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       if (err instanceof PendingEventClaimLostError) throw err;
@@ -197,7 +207,7 @@ export class PgEventLogStore implements EventLogIngressStore {
             [sessionId, event.idempotencyKey],
           );
           await client.query("COMMIT");
-          if (existing.rows[0]) return rowToEvent(existing.rows[0]);
+          if (existing.rows[0]) return this.decodeRow(existing.rows[0]);
         } catch (recoveryError) {
           await client.query("ROLLBACK").catch(() => {});
           throw recoveryError;
@@ -272,7 +282,13 @@ export class PgEventLogStore implements EventLogIngressStore {
     );
 
     const hasMore = rows.length > limit;
-    const data = (hasMore ? rows.slice(0, limit) : rows).map(rowToEvent);
+    const selected = hasMore ? rows.slice(0, limit) : rows;
+    const data: StoredEvent[] = [];
+    for (const row of selected) {
+      data.push(opts?.payload === "reference"
+        ? { ...rowToEvent(row), data: lazyEventData(row.type, row.data) }
+        : await this.decodeRow(row));
+    }
     return { data, hasMore };
   }
 
