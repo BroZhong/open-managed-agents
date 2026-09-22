@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { runningSessionsFirst } from "@/lib/session-order"
 import { useAuth } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Tooltip } from "@/components/ui/tooltip"
@@ -134,6 +135,7 @@ export function Sidebar() {
 
   return (
     <aside
+      id="console-sidebar"
       className="app-sidebar"
       data-collapsed={collapsed}
       aria-label="Console sidebar"
@@ -330,7 +332,8 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
     if (w.name) namedById.set(w.id, w)
   }
   const sessionsByWorkspace = new Map<string, Session[]>()
-  for (const s of sessions ?? []) {
+  const orderedSessions = runningSessionsFirst(sessions ?? [])
+  for (const s of orderedSessions) {
     if (s.loopId) continue
     const list = sessionsByWorkspace.get(s.workspaceId) ?? []
     list.push(s)
@@ -340,7 +343,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
     sessionsByWorkspace.has(w.id),
   )
   // Loose chats = sessions whose workspace is not a named one (anonymous).
-  const looseChats = (sessions ?? []).filter(
+  const looseChats = orderedSessions.filter(
     (s) => !s.loopId && !namedById.has(s.workspaceId),
   )
 
@@ -668,7 +671,7 @@ function LoopRow({ loop }: { loop: Loop }) {
           {!isLoading && !isError && (sessions ?? []).length === 0 && (
             <p className="px-2.5 py-1 text-xs text-neutral-400">No Sessions yet</p>
           )}
-          {(sessions ?? []).map((session) => (
+          {runningSessionsFirst(sessions ?? []).map((session) => (
             <SessionLink key={session.id} session={session} />
           ))}
           {hasNextPage && (
@@ -689,7 +692,7 @@ function LoopRow({ loop }: { loop: Loop }) {
 
 /**
  * A single named-Workspace row in the sidebar: an expand toggle + folder name,
- * an `…` menu (Rename / New chat here / Delete), and — when expanded — the
+ * an `…` menu (Rename / New chat here / Delete), a new Session `+`, and — when expanded — the
  * Workspace's Sessions nested beneath it. Delete hides the Workspace; "New chat
  * here" creates a Session bound to this Workspace and navigates into it.
  */
@@ -708,6 +711,7 @@ function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }
   const deleteWorkspace = useDeleteWorkspace()
 
   function newChatHere() {
+    if (createSession.isPending) return
     onExpand()
     createSession.mutate({ agentId, workspaceId: workspace.id }, {
       onSuccess: (session) => navigate(`/sessions/${session.id}`, { state: { agentId: session.agentId } }),
@@ -729,6 +733,17 @@ function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }
           if (sessions.some((session) => location.pathname === `/sessions/${session.id}`)) navigate(`/agents/${agentId}`)
         }}
         onNewSession={createSession.isPending ? undefined : newChatHere} />
+      <Tooltip content="New session here">
+        <button
+          type="button"
+          aria-label={`New session in ${workspace.name ?? workspace.id}`}
+          onClick={newChatHere}
+          disabled={createSession.isPending}
+          className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-[var(--color-accent-muted)] hover:text-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
     </div>
     {open && <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
       {sessions.map((session) => <SessionLink key={session.id} session={session} />)}

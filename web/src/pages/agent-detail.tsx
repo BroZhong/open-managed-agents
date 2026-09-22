@@ -15,6 +15,7 @@ import { EquipPicker } from "@/components/equip-picker";
 import { StatusBadge } from "@/components/status-badge";
 import { useAgent, useDeleteAgent } from "@/lib/hooks/use-agents";
 import { useAgentSessions } from "@/lib/hooks/use-sessions";
+import { runningSessionsFirst } from "@/lib/session-order";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
 export default function AgentDetailPage() {
@@ -241,7 +242,7 @@ function AgentSessionList({ agentId }: { agentId: string }) {
   }
   return (
     <div className="mt-4 space-y-2">
-      {sessions.map((s) => (
+      {runningSessionsFirst(sessions).map((s) => (
         <Link
           key={s.id}
           to={`/sessions/${s.id}`}
