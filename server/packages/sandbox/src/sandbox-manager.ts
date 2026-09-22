@@ -8,6 +8,8 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { SandboxClient, SandboxFsAccess } from "./sandbox-client.js";
+import type { SandboxActivity, SandboxLifecycleStore } from '@oma-server/store';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   assertProjectionOutsideWorkspace,
   type ProvisionSource,
@@ -33,6 +35,8 @@ export interface EnvSpec {
 }
 
 export interface SandboxManagerDeps {
+  /** Explicit Session binding allowlist. Omitted means the rollout is disabled. */
+  lifecycle?: { store: SandboxLifecycleStore; bindingIds: ReadonlySet<string> };
   sandboxClient: SandboxClient;
   provisionSources: Record<string, ProvisionSource>;
   defaults?: { lifetimeSeconds?: number };
@@ -52,6 +56,9 @@ export class SandboxSessionClosed extends Error {
 
 /** Creates independent Session resources; their OSS Workspace may be shared. */
 export interface SandboxManager {
+  beginActivity?(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean>;
+  finishActivity?(activity: SandboxActivity): Promise<void>;
+  sweepIdle?(): Promise<void>;
   open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession;
   list(filter?: {
     tenantId?: string;
@@ -62,12 +69,14 @@ export interface SandboxManager {
 
 /** Infrastructure capability supplied separately from the serializable recipe. */
 export interface SandboxEnvironmentBinding {
+  id?: string;
   withLock<T>(callback: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T>;
   /** Evaluated inside withLock immediately before reclamation. */
   canReclaim?(): Promise<boolean>;
 }
 
 export interface SandboxSession {
+  executionSettled?(): boolean;
   readonly fileSystem: ToolFileSystem;
   exec(command: string[], opts?: ExecOptions): AsyncIterable<ExecOutputChunk>;
   readFile(path: string): Promise<string>;
@@ -83,7 +92,40 @@ export interface SandboxSession {
 
 export class DefaultSandboxManager implements SandboxManager {
   constructor(private readonly deps: SandboxManagerDeps) {}
+  async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
+    const lifecycle = this.deps.lifecycle;
+    if (!lifecycle?.bindingIds.has(activity.bindingId)) return false;
+    while (!await lifecycle.store.begin(activity)) {
+      await delay(250, undefined, { signal });
+    }
+    return true;
+  }
+  async finishActivity(activity: SandboxActivity): Promise<void> {
+    await this.deps.lifecycle?.store.finish(activity);
+  }
+  async sweepIdle(): Promise<void> {
+    const lifecycle = this.deps.lifecycle;
+    if (!lifecycle) return;
+    const errors: unknown[] = [];
+    for (const bindingId of lifecycle.bindingIds) {
+      try {
+        const ticket = await lifecycle.store.claimReclamation(bindingId);
+        if (!ticket) continue;
+        // Ticket commits before external I/O. A lost DB connection cannot reopen
+        // this binding while a delayed destroy is still in flight.
+        await this.deps.sandboxClient.reconnect?.(ticket.sandboxId, {});
+        await this.deps.sandboxClient.destroy(ticket.sandboxId);
+        await lifecycle.store.completeReclamation(ticket);
+      } catch (error) {
+        // One failed gateway deletion must not starve other known-idle bindings.
+        errors.push(error);
+      }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, 'Sandbox idle sweep failed for multiple bindings');
+  }
   open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession {
+    if (this.deps.lifecycle && !binding?.id) throw new Error('Managed Sandbox lifecycle requires durable environment bindings');
     return new SandboxSessionImpl(this.deps, spec, binding);
   }
   async list(_filter?: {
@@ -93,11 +135,15 @@ export class DefaultSandboxManager implements SandboxManager {
     return [];
   }
   async reclaim(sandboxId: string): Promise<void> {
+    if (this.deps.lifecycle) throw new Error('Managed Sandbox reclamation requires a binding and a durable reclamation ticket');
     await this.deps.sandboxClient.destroy(sandboxId);
   }
 }
 
 class SandboxSessionImpl implements SandboxSession {
+  executionSettled(): boolean {
+    return !this.pendingCleanupId && (!this.sandboxId || !this.deps.sandboxClient.hasUncertainExecution(this.sandboxId));
+  }
   readonly fileSystem: ToolFileSystem;
   private readonly target: WorkspaceMountTarget;
   private projections: readonly ReadonlyProjection[];
@@ -251,6 +297,17 @@ class SandboxSessionImpl implements SandboxSession {
       } catch {
         /* Failed create cleans up its resource. */
       }
+      const lifecycle = this.deps.lifecycle;
+      if (this.binding?.id && lifecycle?.bindingIds.has(this.binding.id)) {
+        const ticket = await lifecycle.store.claimReclamation(this.binding.id, true);
+        if (ticket) {
+          await this.deps.sandboxClient.reconnect?.(ticket.sandboxId, this.metadata());
+          await this.deps.sandboxClient.destroy(ticket.sandboxId);
+          await lifecycle.store.completeReclamation(ticket);
+        }
+        if (ticket) this.sandboxId = undefined;
+        return;
+      }
       const destroy = async (id: string | null) => {
         if (this.binding?.canReclaim && !await this.binding.canReclaim()) return { sandboxId: id, value: undefined };
         if (id) {
@@ -323,10 +380,11 @@ class SandboxSessionImpl implements SandboxSession {
       await this.deps.sandboxClient.destroy(old);
       this.sandboxId = undefined;
     }
+    const managed = Boolean(this.binding?.id && this.deps.lifecycle?.bindingIds.has(this.binding.id));
     const handle = await this.deps.sandboxClient.create({
       image: this.spec.image,
       env: this.spec.env,
-      timeoutSeconds: this.deps.defaults?.lifetimeSeconds ?? 3600,
+      ...(managed ? { neverTimeout: true } : { timeoutSeconds: this.deps.defaults?.lifetimeSeconds ?? 3600 }),
       metadata: this.metadata(),
     });
     try {
@@ -347,6 +405,7 @@ class SandboxSessionImpl implements SandboxSession {
   }
   private metadata(): Record<string, string> {
     return {
+      ...(this.binding?.id ? { 'oma.dev/binding': this.binding.id } : {}),
       "oma.dev/tenant": this.spec.tenantId,
       "oma.dev/workspace": this.spec.workspaceId,
       ...workspaceMountMetadata(this.spec.workspaceMount, SANDBOX_WORKSPACE_ROOT),

@@ -18,6 +18,8 @@ ADR-0015 externalizes large tool results to OSS and defines lazy event-data read
 ADR-0016 makes new Pi native entries authoritative and derives display events without duplicate durable content.
 For Host-managed MCP work, ADR-0006 is authoritative. For recurring Loop
 dispatch and its Session ownership semantics, ADR-0007 is authoritative.
+For controlled Sandbox idle reclamation and unknown-execution retention,
+ADR-0017 supersedes the earlier fixed-lifetime assumptions.
 For mounted Workspace storage and Sandbox paths, ADR-0008 supersedes the
 former storage portions of ADR-0002 and ADR-0005. ADR-0009 defines the direct
 Workspace file API and supersedes ADR-0008’s per-Session write gate.

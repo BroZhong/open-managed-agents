@@ -2,6 +2,10 @@
 
 ## Status
 
+The fixed Sandbox lifetime assumption is superseded for controlled bindings by
+[ADR-0017](0017-sandbox-idle-reclamation.md). Production activation is gated;
+unknown execution is retained without a maximum Sandbox age.
+
 **Partially superseded by [ADR-0008](0008-oss-mounted-workspaces.md).** Sections 3 (artifact medium), 4 and 5, and their sync-specific consequences are superseded by ADR-0008. Host/Adapter ownership and per-call ToolExecutor injection remain accepted. The original decision below records history, not the current storage contract.
 
 Accepted for Host-resident Pi and Sandbox-as-Tool. This originally extended

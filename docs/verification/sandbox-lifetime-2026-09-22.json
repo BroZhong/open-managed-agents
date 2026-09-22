@@ -1,0 +1,319 @@
+{
+  "runId": "oma-lifetime-1790091006442",
+  "startedAt": "2026-09-22T15:30:06.442Z",
+  "sandboxes": [
+    {
+      "kind": "never",
+      "id": "sandbox-system--auto-story-v2-jkq2x",
+      "createdAt": "2026-09-22T15:30:06.921Z",
+      "pid": 402
+    },
+    {
+      "kind": "zero",
+      "id": "sandbox-system--auto-story-v2-j4pqj",
+      "createdAt": "2026-09-22T15:30:07.328Z",
+      "pid": 443
+    },
+    {
+      "kind": "finite",
+      "id": "sandbox-system--auto-story-v2-ft2js",
+      "createdAt": "2026-09-22T15:30:07.748Z",
+      "pid": 339
+    },
+    {
+      "kind": "adopted",
+      "id": "sandbox-system--auto-story-v2-m5crb",
+      "createdAt": "2026-09-22T15:41:52.719Z",
+      "pid": 299
+    }
+  ],
+  "observations": [
+    {
+      "at": "2026-09-22T15:30:07.276Z",
+      "kind": "never",
+      "id": "sandbox-system--auto-story-v2-jkq2x",
+      "resource": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "pid": 402
+    },
+    {
+      "at": "2026-09-22T15:30:07.690Z",
+      "kind": "zero",
+      "id": "sandbox-system--auto-story-v2-j4pqj",
+      "resource": {
+        "name": "auto-story-v2-j4pqj",
+        "uid": "b21b7faa-4d09-473c-bcc9-ba0fa26e3f32",
+        "createdAt": "2026-09-22T06:30:08Z",
+        "shutdownTime": "2026-09-22T15:35:07Z",
+        "phase": "Running"
+      },
+      "pid": 443
+    },
+    {
+      "at": "2026-09-22T15:30:08.124Z",
+      "kind": "finite",
+      "id": "sandbox-system--auto-story-v2-ft2js",
+      "resource": {
+        "name": "auto-story-v2-ft2js",
+        "uid": "c46c617d-cc24-457b-965d-5058889ea638",
+        "createdAt": "2026-09-22T02:56:06Z",
+        "shutdownTime": "2026-09-22T15:31:07Z",
+        "phase": "Running"
+      },
+      "pid": 339
+    },
+    {
+      "at": "2026-09-22T15:31:02.237Z",
+      "kind": "never",
+      "id": "sandbox-system--auto-story-v2-jkq2x",
+      "resource": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 55795
+    },
+    {
+      "at": "2026-09-22T15:31:02.842Z",
+      "kind": "never",
+      "stdout": "RUNNING\n",
+      "afterReconnect": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      }
+    },
+    {
+      "at": "2026-09-22T15:31:02.975Z",
+      "kind": "zero",
+      "id": "sandbox-system--auto-story-v2-j4pqj",
+      "resource": {
+        "name": "auto-story-v2-j4pqj",
+        "uid": "b21b7faa-4d09-473c-bcc9-ba0fa26e3f32",
+        "createdAt": "2026-09-22T06:30:08Z",
+        "shutdownTime": "2026-09-22T15:35:07Z",
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 56533
+    },
+    {
+      "at": "2026-09-22T15:31:03.111Z",
+      "kind": "finite",
+      "id": "sandbox-system--auto-story-v2-ft2js",
+      "resource": {
+        "name": "auto-story-v2-ft2js",
+        "uid": "c46c617d-cc24-457b-965d-5058889ea638",
+        "createdAt": "2026-09-22T02:56:06Z",
+        "shutdownTime": "2026-09-22T15:31:07Z",
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 56669
+    },
+    {
+      "at": "2026-09-22T15:41:54.094Z",
+      "kind": "adopted",
+      "before": {
+        "name": "auto-story-v2-m5crb",
+        "uid": "ae1bfa69-3f13-4075-ace0-097bbf3afb48",
+        "createdAt": "2026-09-22T15:30:07Z",
+        "shutdownTime": "2026-09-22T15:43:52Z",
+        "phase": "Running"
+      },
+      "after": {
+        "name": "auto-story-v2-m5crb",
+        "uid": "ae1bfa69-3f13-4075-ace0-097bbf3afb48",
+        "createdAt": "2026-09-22T15:30:07Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "stdout": "RUNNING\n",
+      "commandTimedOut": true,
+      "sandboxSurvivesCommandTimeout": true
+    },
+    {
+      "at": "2026-09-22T15:50:41.874Z",
+      "kind": "never",
+      "id": "sandbox-system--auto-story-v2-jkq2x",
+      "resource": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 1235432
+    },
+    {
+      "at": "2026-09-22T15:50:42.560Z",
+      "kind": "never",
+      "stdout": "RUNNING\n",
+      "afterReconnect": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      }
+    },
+    {
+      "at": "2026-09-22T15:50:42.702Z",
+      "kind": "zero",
+      "id": "sandbox-system--auto-story-v2-j4pqj",
+      "resource": null,
+      "elapsedSinceProbeStartMs": 1236260
+    },
+    {
+      "at": "2026-09-22T15:50:42.844Z",
+      "kind": "finite",
+      "id": "sandbox-system--auto-story-v2-ft2js",
+      "resource": null,
+      "elapsedSinceProbeStartMs": 1236402
+    },
+    {
+      "at": "2026-09-22T15:50:42.981Z",
+      "kind": "adopted",
+      "id": "sandbox-system--auto-story-v2-m5crb",
+      "resource": {
+        "name": "auto-story-v2-m5crb",
+        "uid": "ae1bfa69-3f13-4075-ace0-097bbf3afb48",
+        "createdAt": "2026-09-22T15:30:07Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 1236539
+    },
+    {
+      "at": "2026-09-22T15:50:43.349Z",
+      "kind": "adopted",
+      "stdout": "RUNNING\n",
+      "afterReconnect": {
+        "name": "auto-story-v2-m5crb",
+        "uid": "ae1bfa69-3f13-4075-ace0-097bbf3afb48",
+        "createdAt": "2026-09-22T15:30:07Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      }
+    },
+    {
+      "at": "2026-09-22T16:32:05.120Z",
+      "kind": "never",
+      "id": "sandbox-system--auto-story-v2-jkq2x",
+      "resource": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "podUid": "1206c47e-73f2-480d-8a2f-314701adbb0e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 3718678
+    },
+    {
+      "at": "2026-09-22T16:32:05.794Z",
+      "kind": "never",
+      "stdout": "START=1790091007\nDONE=1790094707\n",
+      "commandDurationSeconds": 3700,
+      "afterReconnect": {
+        "name": "auto-story-v2-jkq2x",
+        "uid": "46a3a90b-06e5-478a-baea-09013660498e",
+        "podUid": "1206c47e-73f2-480d-8a2f-314701adbb0e",
+        "createdAt": "2026-09-22T07:59:31Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      }
+    },
+    {
+      "at": "2026-09-22T16:32:05.928Z",
+      "kind": "zero",
+      "id": "sandbox-system--auto-story-v2-j4pqj",
+      "resource": null,
+      "elapsedSinceProbeStartMs": 3719486
+    },
+    {
+      "at": "2026-09-22T16:32:06.067Z",
+      "kind": "finite",
+      "id": "sandbox-system--auto-story-v2-ft2js",
+      "resource": null,
+      "elapsedSinceProbeStartMs": 3719625
+    },
+    {
+      "at": "2026-09-22T16:32:06.270Z",
+      "kind": "adopted",
+      "id": "sandbox-system--auto-story-v2-m5crb",
+      "resource": {
+        "name": "auto-story-v2-m5crb",
+        "uid": "ae1bfa69-3f13-4075-ace0-097bbf3afb48",
+        "podUid": "7e2445fa-d945-4d08-afb3-afe764dc3014",
+        "createdAt": "2026-09-22T15:30:07Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      },
+      "elapsedSinceProbeStartMs": 3719828
+    },
+    {
+      "at": "2026-09-22T16:32:06.614Z",
+      "kind": "adopted",
+      "stdout": "RUNNING\nSTART=1790091713\nDONE=",
+      "commandDurationSeconds": null,
+      "afterReconnect": {
+        "name": "auto-story-v2-m5crb",
+        "uid": "ae1bfa69-3f13-4075-ace0-097bbf3afb48",
+        "podUid": "7e2445fa-d945-4d08-afb3-afe764dc3014",
+        "createdAt": "2026-09-22T15:30:07Z",
+        "shutdownTime": null,
+        "phase": "Running"
+      }
+    },
+    {
+      "at": "2026-09-22T16:32:40.267Z",
+      "kind": "never",
+      "explicitlyKilled": true,
+      "resourceRemoved": true
+    },
+    {
+      "at": "2026-09-22T16:32:40.962Z",
+      "kind": "adopted",
+      "explicitlyKilled": true,
+      "resourceRemoved": true
+    }
+  ],
+  "sdkVersion": "2.24.0",
+  "deployment": [
+    {
+      "name": "sandbox-gateway",
+      "containers": [
+        {
+          "name": "gateway",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+          "timeoutArguments": []
+        }
+      ]
+    },
+    {
+      "name": "sandbox-manager",
+      "containers": [
+        {
+          "name": "controller",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+          "timeoutArguments": [
+            "--e2b-max-timeout=3155760000"
+          ]
+        },
+        {
+          "name": "envoy-proxy",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara",
+          "timeoutArguments": []
+        }
+      ]
+    }
+  ]
+}

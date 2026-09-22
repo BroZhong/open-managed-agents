@@ -771,6 +771,7 @@ export class SessionRouter {
     if (!sandbox) {
       const bindingId = session.delegation?.sandboxSessionId ?? sessionId;
       sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills), this.delegationStore ? {
+        id: bindingId,
         withLock: (work) => this.delegationStore!.withEnvironmentLock(bindingId, work),
         canReclaim: async () => !await this.delegationStore!.hasResourceUsers(bindingId),
       } : undefined);
@@ -1029,6 +1030,9 @@ export class SessionRouter {
       }
 
       let leaseLost = false;
+      let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
+      let activitySandbox: SandboxSession | undefined;
+      let executionSettled = false;
       let turnId: string | undefined;
       const turnController = new AbortController();
       const forwardOuterAbort = () => {
@@ -1301,11 +1305,17 @@ export class SessionRouter {
         effectiveConfig: { model: currentAgent.model } };
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
+      const activity = { bindingId: session.delegation?.sandboxSessionId ?? sessionId, sessionId, fence: pendingFence };
+      if (this.isSandboxed(currentAgent) && await this.sandboxManager?.beginActivity?.(activity, turnController.signal)) {
+        sandboxActivity = activity;
+        executionSettled = true; // No runtime has started yet.
+      }
       let sandbox: SandboxSession | undefined;
       try {
           equippedSkills = await this.equippedSkills(currentAgent);
           if (leaseLost) return;
           sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
+          activitySandbox = sandbox;
           await sandbox?.prepare(this.skillProjections(session, equippedSkills));
           if (leaseLost) return;
         } catch (error) {
@@ -1476,6 +1486,7 @@ export class SessionRouter {
       // There is no separate sandbox orchestrator — the sandbox lives behind the
       // session and is invisible to the router and the adapter alike.
       const adapter = this.resolveAdapter(currentAgent.runtime);
+      executionSettled = false;
       const events = adapter.run(adapterInput);
       const eventIterator = events[Symbol.asyncIterator]();
 
@@ -1686,8 +1697,14 @@ export class SessionRouter {
             }
 
             pendingNext = undefined;
-            if (outcome.kind === "error") throw outcome.error;
-            if (outcome.kind !== "next" || outcome.result.done) break;
+            if (outcome.kind === "error") {
+              executionSettled = true; // Runtime rejected; remote exit evidence is checked separately.
+              throw outcome.error;
+            }
+            if (outcome.kind !== "next" || outcome.result.done) {
+              executionSettled = outcome.kind === 'next' && Boolean(outcome.result.done);
+              break;
+            }
             const event = outcome.result.value;
 
             if (turnController.signal.aborted) {
@@ -1770,6 +1787,18 @@ export class SessionRouter {
           }
         } finally {
           if (abandonIterator) {
+            // The bounded drain can finish before the runtime does. Its already
+            // issued next() may later provide actual settlement evidence. Release
+            // only this attempt's activity; never infer settlement from return().
+            if (pendingNext && sandboxActivity) {
+              const activity = sandboxActivity;
+              void pendingNext.then(async (outcome) => {
+                if ((outcome.kind === 'error' || outcome.kind === 'next' && outcome.result.done) &&
+                  activitySandbox?.executionSettled?.() !== false) {
+                  await this.sandboxManager?.finishActivity?.(activity);
+                }
+              }).catch(error => this.reportDrainError(sessionId, error));
+            }
             // AsyncIterator.return() is advisory: a non-compliant Adapter may
             // leave it queued behind the same hung next(). Never await it, and
             // absorb either a synchronous throw or eventual rejection.
@@ -1898,9 +1927,18 @@ export class SessionRouter {
         }
         throw error;
       } finally {
-        await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
-        stopHeartbeat();
-        signal.removeEventListener("abort", forwardOuterAbort);
+        // A completed history marker, expired lease, bounded Interrupt drain or
+        // advisory iterator.return() is not proof of actual runtime settlement.
+        try {
+          if (sandboxActivity && executionSettled &&
+            activitySandbox?.executionSettled?.() !== false) {
+            await this.sandboxManager?.finishActivity?.(sandboxActivity);
+          }
+          await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
+        } finally {
+          stopHeartbeat();
+          signal.removeEventListener("abort", forwardOuterAbort);
+        }
       }
     }
 

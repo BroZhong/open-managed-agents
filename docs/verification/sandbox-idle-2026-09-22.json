@@ -1,0 +1,134 @@
+{
+  "runId": "oma-idle-1790091855089",
+  "schema": "oma_idle_1790091855089",
+  "tenant": "lifecycle-verification",
+  "workspace": "workspace-1790091855089",
+  "startedAt": "2026-09-22T15:44:15.089Z",
+  "cases": {
+    "idle": {
+      "root": "sess_2HhGJQ4D5krac0mzoWpAi",
+      "activity": {
+        "bindingId": "sess_2HhGJQ4D5krac0mzoWpAi",
+        "sessionId": "sess_2HhGJQ4D5krac0mzoWpAi",
+        "fence": {
+          "eventId": "LOlpL3mKqc9fw-ysNPSEL",
+          "ownerId": "verification-host",
+          "generation": 1
+        }
+      },
+      "originalId": "sandbox-system--auto-story-v2-d65c5"
+    },
+    "queued": {
+      "root": "sess_b8d0rWXKKAZYqgoSHFaxv",
+      "activity": {
+        "bindingId": "sess_b8d0rWXKKAZYqgoSHFaxv",
+        "sessionId": "sess_b8d0rWXKKAZYqgoSHFaxv",
+        "fence": {
+          "eventId": "Zvqt-hc7vZp5BMGTOdwlg",
+          "ownerId": "verification-host",
+          "generation": 1
+        }
+      },
+      "originalId": "sandbox-system--auto-story-v2-krq7p",
+      "child": "sess_hdTuzomCLf9ehmKoi74GY"
+    },
+    "unknown": {
+      "root": "sess_wM8ulxdA6GUr0TIhsRiHo",
+      "activity": {
+        "bindingId": "sess_wM8ulxdA6GUr0TIhsRiHo",
+        "sessionId": "sess_wM8ulxdA6GUr0TIhsRiHo",
+        "fence": {
+          "eventId": "-aGsjwIDwWrPHK1sEIHO7",
+          "ownerId": "verification-host",
+          "generation": 1
+        }
+      },
+      "originalId": "sandbox-system--auto-story-v2-skjvc",
+      "pid": 426
+    }
+  },
+  "observations": [
+    {
+      "at": "2026-09-22T15:44:18.093Z",
+      "data": {
+        "phase": "init",
+        "name": "idle",
+        "root": "sess_2HhGJQ4D5krac0mzoWpAi",
+        "activity": {
+          "bindingId": "sess_2HhGJQ4D5krac0mzoWpAi",
+          "sessionId": "sess_2HhGJQ4D5krac0mzoWpAi",
+          "fence": {
+            "eventId": "LOlpL3mKqc9fw-ysNPSEL",
+            "ownerId": "verification-host",
+            "generation": 1
+          }
+        },
+        "originalId": "sandbox-system--auto-story-v2-d65c5"
+      }
+    },
+    {
+      "at": "2026-09-22T15:44:20.448Z",
+      "data": {
+        "phase": "init",
+        "name": "queued",
+        "root": "sess_b8d0rWXKKAZYqgoSHFaxv",
+        "activity": {
+          "bindingId": "sess_b8d0rWXKKAZYqgoSHFaxv",
+          "sessionId": "sess_b8d0rWXKKAZYqgoSHFaxv",
+          "fence": {
+            "eventId": "Zvqt-hc7vZp5BMGTOdwlg",
+            "ownerId": "verification-host",
+            "generation": 1
+          }
+        },
+        "originalId": "sandbox-system--auto-story-v2-krq7p",
+        "child": "sess_hdTuzomCLf9ehmKoi74GY"
+      }
+    },
+    {
+      "at": "2026-09-22T15:44:22.253Z",
+      "data": {
+        "phase": "init",
+        "name": "unknown",
+        "root": "sess_wM8ulxdA6GUr0TIhsRiHo",
+        "activity": {
+          "bindingId": "sess_wM8ulxdA6GUr0TIhsRiHo",
+          "sessionId": "sess_wM8ulxdA6GUr0TIhsRiHo",
+          "fence": {
+            "eventId": "-aGsjwIDwWrPHK1sEIHO7",
+            "ownerId": "verification-host",
+            "generation": 1
+          }
+        },
+        "originalId": "sandbox-system--auto-story-v2-skjvc",
+        "pid": 426
+      }
+    },
+    {
+      "at": "2026-09-22T15:44:22.612Z",
+      "data": {
+        "idleStartedAt": "2026-09-22T15:44:22.551Z"
+      }
+    },
+    {
+      "at": "2026-09-22T16:15:02.289Z",
+      "data": {
+        "phase": "check",
+        "elapsedMs": 1836552,
+        "idleReclaimedAndRebuilt": true,
+        "workspacePreserved": true,
+        "temporaryFilesDiscarded": true,
+        "queuedChildTemporaryInputPreserved": true,
+        "concurrentChildSurvivedParentDisposal": true,
+        "unknownRetainedUntilExitConfirmed": true
+      }
+    },
+    {
+      "at": "2026-09-22T16:15:45.873Z",
+      "data": {
+        "phase": "cleanup",
+        "resourcesRemoved": true
+      }
+    }
+  ]
+}

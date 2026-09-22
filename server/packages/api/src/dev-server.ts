@@ -33,6 +33,7 @@ import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { Agent as UndiciAgent, ProxyAgent, setGlobalDispatcher } from "undici";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { sandboxLifecycleFromEnv, startSandboxSweeper } from './lib/sandbox-lifecycle.js';
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
 
@@ -361,9 +362,14 @@ async function main() {
   });
   const sandboxManager = new DefaultSandboxManager({
     sandboxClient,
+    lifecycle: await sandboxLifecycleFromEnv(pool, process.env),
     provisionSources: { s3: new S3ProvisionSource(skillArtifactStore) },
   });
   console.log("OSS Workspace enabled; Sandbox mount checks required; Skills projected from Supabase");
+  // Retention remains enabled when sweeping is paused for safe rollback.
+  const stopSandboxSweeper = process.env.SANDBOX_IDLE_SWEEP === 'true'
+    ? startSandboxSweeper(() => sandboxManager.sweepIdle(), error => console.error('Sandbox idle sweep failed; resources retained', error))
+    : () => {};
 
   const sessionRouter = new SessionRouter({
     delegationStore: stores.delegationStore,
@@ -436,7 +442,7 @@ async function main() {
 
   const shutdown = createGracefulShutdown({
     server: httpServer,
-    stopBackgroundWork: () => loopScheduler.stop(),
+    stopBackgroundWork: async () => { stopSandboxSweeper(); await loopScheduler.stop(); },
     waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {

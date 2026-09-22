@@ -64,6 +64,8 @@ export interface FakeSandboxClientOptions {
  * lifecycle calls (create/destroy) and keeps a per-sandbox file map with a shared mounted subtree so reads, writes and rebuilds can be tested.
  */
 export class FakeSandboxClient implements SandboxClient {
+  /** All fake operations settle in-process; there is no remote command to lose. */
+  hasUncertainExecution(_id: string): boolean { return false; }
   readonly created: string[] = [];
   readonly destroyed: string[] = [];
   private readonly sandboxes = new Map<string, FakeSandbox>();

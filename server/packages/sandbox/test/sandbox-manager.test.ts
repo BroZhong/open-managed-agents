@@ -8,6 +8,7 @@ import {
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { FakeProvisionSource } from "../src/provision-source.js";
+import type { SandboxLifecycleStore } from '@oma-server/store';
 
 const mount = {
   bucket: "agentry",
@@ -35,6 +36,66 @@ function makeManager() {
 }
 
 describe("mounted Workspace Sandbox Manager", () => {
+  it('keeps creation lazy, uses never-timeout, retries failed deletion, and rebuilds the same Workspace', async () => {
+    const client = new FakeSandboxClient();
+    let storedId: string | null = null;
+    let reclaim = false;
+    const store: SandboxLifecycleStore = {
+      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      claimReclamation: vi.fn(async () => reclaim && storedId ? { bindingId: 'root', sandboxId: storedId } : null),
+      completeReclamation: vi.fn(async () => { storedId = null; }),
+    };
+    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store, bindingIds: new Set(['root']) } });
+    const session = manager.open(specFor(), { id: 'root', withLock: async work => {
+      const result = await work(storedId); storedId = result.sandboxId; return result.value;
+    } });
+    expect(client.created).toHaveLength(0);
+    await session.writeFile('saved.txt', 'persistent');
+    await session.writeFile('/tmp/temporary', 'local');
+    expect(client.createOptsOf(client.created[0]).neverTimeout).toBe(true);
+    reclaim = true;
+    const destroy = vi.spyOn(client, 'destroy');
+    destroy.mockRejectedValueOnce(new Error('network unavailable'));
+    await expect(manager.sweepIdle()).rejects.toThrow('network');
+    expect(store.completeReclamation).not.toHaveBeenCalled();
+    expect(storedId).not.toBeNull();
+    await manager.sweepIdle();
+    expect(storedId).toBeNull();
+    expect(await session.readFile('saved.txt')).toBe('persistent');
+    await expect(session.readFile('/tmp/temporary')).rejects.toThrow();
+    expect(client.created).toHaveLength(2);
+  });
+
+  it('does not issue deletion after a persistence read fails or bypass coordination through reclaim()', async () => {
+    const { client } = makeManager();
+    const store: SandboxLifecycleStore = {
+      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      claimReclamation: vi.fn(async () => { throw new Error('database unavailable'); }),
+      completeReclamation: vi.fn(async () => {}),
+    };
+    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store, bindingIds: new Set(['root']) } });
+    await expect(manager.sweepIdle()).rejects.toThrow('database');
+    await expect(manager.reclaim('arbitrary')).rejects.toThrow('ticket');
+    expect(client.destroyed).toEqual([]);
+  });
+  it('continues reclaiming other known-idle bindings after one gateway failure', async () => {
+    const client = new FakeSandboxClient();
+    const one = await client.create(); const two = await client.create();
+    const destroy = client.destroy.bind(client);
+    vi.spyOn(client, 'destroy').mockImplementation(async id => {
+      if (id === one.id) throw new Error('first gateway unavailable');
+      await destroy(id);
+    });
+    const store: SandboxLifecycleStore = {
+      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      claimReclamation: vi.fn(async bindingId => ({ bindingId, sandboxId: bindingId === 'one' ? one.id : two.id })),
+      completeReclamation: vi.fn(async () => {}),
+    };
+    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store, bindingIds: new Set(['one', 'two']) } });
+    await expect(manager.sweepIdle()).rejects.toThrow('first gateway');
+    expect(client.destroyed).toEqual([two.id]);
+    expect(store.completeReclamation).toHaveBeenCalledExactlyOnceWith({ bindingId: 'two', sandboxId: two.id });
+  });
   it("refreshes renamed Skills after a new Host attaches to a shared environment", async () => {
     const { client, provision, manager } = makeManager();
     let storedId: string | null = null;

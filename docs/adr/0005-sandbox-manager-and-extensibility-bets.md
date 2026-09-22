@@ -2,6 +2,10 @@
 
 ## Status
 
+The fixed-lifetime orphan assumption below is superseded for controlled bindings
+by [ADR-0017](0017-sandbox-idle-reclamation.md): unknown execution retains its
+Sandbox without a gateway deadline; only confirmed idle state permits reclamation.
+
 Tool execution is further superseded by [ADR-0014](0014-public-pi-sdk-boundary.md):
 public SDK tools run inside Sandbox instead of patching their Host I/O.
 
