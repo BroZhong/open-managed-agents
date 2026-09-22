@@ -14,10 +14,13 @@ to legacy data and other runtimes.
 
 ## Decision
 
-Tool result event data of at least 64 KiB (UTF-8 JSON bytes) lives in OSS.
+Tool result event data of at least 64 KiB (UTF-8 JSON bytes), or containing
+NUL/unpaired UTF-16 surrogate characters that PostgreSQL JSONB cannot store,
+lives in OSS. The character check includes nested result values and object keys;
+valid surrogate pairs (such as emoji) and literal backslash escapes remain intact.
 This applies to `agent.tool_result`, `agent.mcp_tool_result` and native Pi
 `agent.context_entry` messages whose role is `toolResult`, including their
-copies in Delegation wait checkpoints. Smaller results remain inline.
+copies in Delegation wait checkpoints. Smaller JSONB-compatible results remain inline.
 
 Store the original JSON data as a content-addressed object at
 `__oma/session-results/v1/{sessionId}/{sha256}.json` in the configured OSS Bucket.

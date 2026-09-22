@@ -24,12 +24,26 @@ function isResult(type: string, data: Record<string, any>): boolean {
     || type === "agent.context_entry" && data.entry?.type === "message" && data.entry.message?.role === "toolResult";
 }
 
+/** JSON permits NUL and unpaired UTF-16 surrogates; PostgreSQL jsonb does not. */
+function hasUnsupportedJsonbText(value: unknown): boolean {
+  // Unicode mode matches lone surrogate code points, but leaves paired emoji intact.
+  if (typeof value === "string") return /[\u0000\ud800-\udfff]/u.test(value);
+  if (Array.isArray(value)) return value.some(hasUnsupportedJsonbText);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).some(([key, item]) =>
+      hasUnsupportedJsonbText(key) || hasUnsupportedJsonbText(item));
+  }
+  return false;
+}
+
 /** No preview and no result bytes. Keep only identity/status for pairing and replay. */
 export function lazyEventData(type: string, value: unknown): unknown {
   const data = record(value);
   if (!data || eventPayloadRef(data) || !isResult(type, data)) return value;
   const body = Buffer.from(JSON.stringify(data));
-  if (body.length < BIG_RESULT_BYTES) return value;
+  // Preserve exact result bytes in OSS even when a binary/text result is small.
+  // Inspect decoded strings, not JSON escape spellings: literal "\\u0000" is safe.
+  if (body.length < BIG_RESULT_BYTES && !hasUnsupportedJsonbText(data)) return value;
   const out: Record<string, unknown> = {};
   for (const key of ["id", "type", "timestamp", "turnId", "blockIndex", "toolUseId", "isError", "serverName", "sdk", "inputEventId", "executionId", "callerSessionId", "callerTurnId", "callerToolUseId", "presentation"]) {
     if (data[key] !== undefined) out[key] = data[key];
