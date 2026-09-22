@@ -6,7 +6,7 @@ import { createApp } from "../src/app.js";
 
 beforeEach(() => { vi.stubEnv("AUTH_DISABLED", "false"); });
 
-async function setup() {
+async function setup(text = "BIG_RESULT_".repeat(BIG_RESULT_BYTES)) {
   const stores = createMemoryStores();
   const headers = { "x-api-key": (await stores.apiKeyStore.create("owner", "test")).rawKey };
   const agent = await stores.agentStore.create({ tenantId: "owner", name: "Agent", model: "mock", system: "", runtime: "mock" });
@@ -14,17 +14,18 @@ async function setup() {
   const session = await stores.sessionStore.create({ tenantId: "owner", agentId: agent.id, agent, workspaceId: workspace.id });
   const hub = new InProcessEventStreamHub();
   const app = createApp({ ...stores, eventStreamHub: hub });
-  const data = { toolUseId: "call1", isError: true, content: [{ type: "text", text: "BIG_RESULT_".repeat(BIG_RESULT_BYTES) }] };
+  const data = { toolUseId: "call1", isError: true, content: [{ type: "text", text }] };
   const event = await stores.eventLogStore.append(session.id, { type: "agent.tool_result", data, sessionThreadId: "primary" });
   return { stores, headers, session, hub, app, data, event };
 }
 
-it("returns references in JSON, SSE replay and live SSE, and loads the exact result only at the detail endpoint", async () => {
-  const { app, headers, session, data, event, hub } = await setup();
+it.each([undefined, "BINARY_RESULT_\u0000\ud800"])("returns references in JSON and SSE and exact detail for result %s", async (text) => {
+  const { app, headers, session, data, event, hub } = await setup(text);
   const base = `/v1/sessions/${session.id}/events`;
   const history = await (await app.request(base, { headers })).text();
   expect(history).toContain('"payloadRef"');
   expect(history).not.toContain("BIG_RESULT_");
+  expect(history).not.toContain("BINARY_RESULT_");
   expect(history.length).toBeLessThan(1000);
   const detail = await app.request(`${base}/${event.seq}/data`, { headers });
   expect(await detail.json()).toEqual({ data });
@@ -35,10 +36,12 @@ it("returns references in JSON, SSE replay and live SSE, and loads the exact res
   let replay = "";
   while (!replay.includes("payloadRef")) replay += decoder.decode((await reader.read()).value);
   expect(replay).not.toContain("BIG_RESULT_");
+  expect(replay).not.toContain("BINARY_RESULT_");
   hub.publish(session.id, { type: event.type, seq: event.seq + 1, data });
   const live = decoder.decode((await reader.read()).value);
   expect(live).toContain("payloadRef");
   expect(live).not.toContain("BIG_RESULT_");
+  expect(live).not.toContain("BINARY_RESULT_");
   await reader.cancel();
 });
 
