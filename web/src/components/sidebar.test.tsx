@@ -110,7 +110,10 @@ describe("Sidebar Session navigation", () => {
     expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).searchParams.get("exclude_delegated") === "true")).toBe(true);
   });
 
-  it("keeps live Session status consistent between header and sidebar", async () => {
+  it.each([
+    ["chats", "running"],
+    ["workspace", "waiting"],
+  ] as const)("moves a live %s Session to the top when it becomes %s", async (group, status) => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
@@ -145,13 +148,17 @@ describe("Sidebar Session navigation", () => {
         queries: { gcTime: Infinity, retry: false, staleTime: Infinity },
       },
     });
+    const sibling: Session = { ...session, id: "session_sibling", title: "Previous chat" };
     queryClient.setQueryData(["sessions", session.id], session);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], [session]);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], [sibling, session]);
     queryClient.setQueryData(["agents", agent.id], agent);
     queryClient.setQueryData(["agents", agent.id, "skills"], []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
-    queryClient.setQueryData(["workspaces"], []);
+    queryClient.setQueryData(["workspaces"], group === "workspace" ? [{
+      id: session.workspaceId, name: "Live workspace", tenantId: "tenant_1", createdAt: session.createdAt,
+    }] : []);
 
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
     vi.stubGlobal(
       "fetch",
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
@@ -164,9 +171,12 @@ describe("Sidebar Session navigation", () => {
         }
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
+            if (String(_input).includes(`/sessions/${session.id}/events`)) {
+              streamController = controller;
+            }
             controller.enqueue(
               new TextEncoder().encode(
-                "event: session.status_running\nid: 1\ndata: {}\n\n",
+                `event: session.status_${status}\nid: 1\ndata: {}\n\n`,
               ),
             );
             init?.signal?.addEventListener(
@@ -200,10 +210,21 @@ describe("Sidebar Session navigation", () => {
       </QueryClientProvider>,
     );
 
-    expect((await screen.findAllByRole("img", { name: "Session running" })).length).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("link", { name: `${session.title}Session running` }),
-    ).toBeTruthy();
+    if (group === "workspace") {
+      fireEvent.click(within(screen.getByRole("complementary", { name: "Console sidebar" }))
+        .getByRole("button", { name: "Live workspace" }));
+    }
+    const activeLink = await screen.findByRole("link", { name: `${session.title}Session running` });
+    const siblingLink = screen.getByRole("link", { name: sibling.title });
+    expect(activeLink.compareDocumentPosition(siblingLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(queryClient.getQueryData<Session[]>(["sessions", "byAgent", agent.id, "parents"])?.map((s) => s.id))
+      .toEqual([sibling.id, session.id]);
+
+    streamController.enqueue(new TextEncoder().encode("event: session.status_idle\nid: 2\ndata: {}\n\n"));
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: `${session.title}Session running` })).toBeNull();
+      expect(siblingLink.compareDocumentPosition(activeLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
   });
 
   it("does not let an older in-flight Session list overwrite live status", async () => {
@@ -372,6 +393,7 @@ describe("Sidebar Session navigation", () => {
     const olderScheduled: Session = {
       ...scheduled,
       id: "session_scheduled_older",
+      status: "running",
       title: "Older Scheduled Review",
       createdAt: "2026-07-14T00:00:00.000Z",
       updatedAt: "2026-07-14T00:00:00.000Z",
@@ -443,8 +465,10 @@ describe("Sidebar Session navigation", () => {
     expect(screen.getAllByRole("link", { name: "Loose Session" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Load older Sessions" }));
     expect(
-      await screen.findByRole("link", { name: "Older Scheduled Review" }),
+      await screen.findByRole("link", { name: "Older Scheduled ReviewSession running" }),
     ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Older Scheduled ReviewSession running" })
+      .compareDocumentPosition(screen.getByRole("link", { name: "Scheduled Review" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", {
       name: `Loop actions for ${loop.name}`,
@@ -467,7 +491,7 @@ describe("Sidebar Session navigation", () => {
     )).toBe(true));
   });
 
-  it("keeps the Agent context while linked and newly created Sessions load", async () => {
+  it.each(["chats", "workspace"])("keeps the Agent context when creating a Session from the %s shortcut", async (group) => {
     const agent: Agent = {
       id: "agent_1",
       tenantId: "tenant_1",
@@ -509,7 +533,7 @@ describe("Sidebar Session navigation", () => {
       ...sourceSession,
       id: "session_created",
       title: undefined,
-      workspaceId: "workspace_created",
+      workspaceId: group === "workspace" ? workspace.id : "workspace_created",
     };
     const queryClient = new QueryClient({
       defaultOptions: {
@@ -565,7 +589,18 @@ describe("Sidebar Session navigation", () => {
       screen.getByRole("link", { name: `${targetSession.title}` }),
     ).toBeTruthy();
 
-    fireEvent.click(within(screen.getByTitle("New chat")).getByRole("button"));
+    if (group === "workspace") {
+      fireEvent.click(screen.getByRole("button", { name: workspace.name }));
+      expect(screen.queryByRole("link", { name: targetSession.title })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: `New session in ${workspace.name}` }));
+      expect(screen.getByRole("link", { name: targetSession.title })).toBeTruthy();
+      await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
+        String(input).endsWith("/v1/sessions") && init?.method === "POST"
+        && init.body === JSON.stringify({ agent: agent.id, workspace_id: workspace.id }),
+      )).toBe(true));
+    } else {
+      fireEvent.click(within(screen.getByTitle("New chat")).getByRole("button"));
+    }
 
     await waitFor(() =>
       expect(screen.getByLabelText("Current path").textContent).toBe(

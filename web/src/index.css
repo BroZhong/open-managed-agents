@@ -94,7 +94,7 @@ body {
 
 @layer components {
   .app-shell {
-    --sidebar-width: 224px;
+    --sidebar-width: var(--sidebar-expanded-width, 224px);
     display: flex;
     height: 100dvh;
     overflow: hidden;
@@ -127,7 +127,7 @@ body {
     z-index: 20;
     display: flex;
     flex-direction: column;
-    width: 224px;
+    width: var(--sidebar-width, 224px);
     padding: 10px 6px 0;
     background: var(--color-bg);
     transition: width 180ms ease;
@@ -135,6 +135,35 @@ body {
   .app-sidebar[data-collapsed="true"] {
     width: 56px;
     padding-inline: 2px;
+  }
+  .sidebar-resizer {
+    position: fixed;
+    inset: 0 auto 0 calc(var(--sidebar-width) - 4px);
+    z-index: 21;
+    width: 8px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .sidebar-resizer::after {
+    content: "";
+    position: absolute;
+    inset: 12px 3px;
+    border-radius: 2px;
+    background: transparent;
+  }
+  .sidebar-resizer:hover::after,
+  .sidebar-resizer:focus-visible::after,
+  .app-shell[data-resizing="true"] .sidebar-resizer::after {
+    background: var(--color-accent);
+  }
+  .app-shell[data-resizing="true"] {
+    cursor: col-resize;
+    user-select: none;
+  }
+  .app-shell[data-resizing="true"] .app-sidebar,
+  .app-shell[data-resizing="true"] .app-main {
+    transition: none;
+    pointer-events: none;
   }
   .brand-mark {
     position: relative;
@@ -457,6 +486,9 @@ body {
 }
 
 @media (max-width: 767px) {
+  .sidebar-resizer {
+    display: none;
+  }
   .app-shell {
     padding: 6px 6px 6px 0;
   }
@@ -465,6 +497,7 @@ body {
     border-radius: 12px;
   }
   .app-sidebar:not([data-collapsed="true"]) {
+    width: min(var(--sidebar-expanded-width, 224px), calc(100vw - 48px));
     box-shadow: 8px 0 24px rgb(32 33 36 / 12%);
   }
   .page-header {
