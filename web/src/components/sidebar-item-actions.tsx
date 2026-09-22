@@ -5,12 +5,11 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogFooter, DialogHeader } from "@/components/ui/dialog"
 
-export function SidebarItemActions({ kind, label, onRename, onDelete, onNewSession }: {
+export function SidebarItemActions({ kind, label, onRename, onDelete }: {
   kind: "Session" | "Workspace"
   label: string
   onRename: (name: string) => Promise<unknown>
   onDelete: () => Promise<unknown>
-  onNewSession?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -55,7 +54,6 @@ export function SidebarItemActions({ kind, label, onRename, onDelete, onNewSessi
       ><MoreHorizontal className="h-3.5 w-3.5" /></button>
       {open && <div role="menu" aria-label={`${kind} actions`} className="absolute right-0 top-6 z-30 w-36 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-surface)] py-1 shadow-md">
         <button role="menuitem" onClick={() => { setName(label); setOpen(false); setRenaming(true) }} className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)]">Rename</button>
-        {onNewSession && <button role="menuitem" onClick={() => { setOpen(false); onNewSession() }} className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--color-fg)] hover:bg-[var(--color-bg-muted)]">New chat here</button>}
         <button role="menuitem" aria-label="Delete" title={`Delete ${kind.toLowerCase()}`} onClick={() => void remove()} className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--color-danger)] hover:bg-[var(--color-bg-muted)]">Delete</button>
       </div>}
     </div>

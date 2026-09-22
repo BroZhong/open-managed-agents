@@ -692,9 +692,9 @@ function LoopRow({ loop }: { loop: Loop }) {
 
 /**
  * A single named-Workspace row in the sidebar: an expand toggle + folder name,
- * an `…` menu (Rename / New chat here / Delete), a new Session `+`, and — when expanded — the
- * Workspace's Sessions nested beneath it. Delete hides the Workspace; "New chat
- * here" creates a Session bound to this Workspace and navigates into it.
+ * an `…` menu (Rename / Delete), a new Session `+`, and — when expanded — the
+ * Workspace's Sessions nested beneath it. Delete hides the Workspace; `+`
+ * creates a Session bound to this Workspace and navigates into it.
  */
 function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }: {
   workspace: Workspace
@@ -731,8 +731,7 @@ function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }
         onDelete={async () => {
           await deleteWorkspace.mutateAsync(workspace.id)
           if (sessions.some((session) => location.pathname === `/sessions/${session.id}`)) navigate(`/agents/${agentId}`)
-        }}
-        onNewSession={createSession.isPending ? undefined : newChatHere} />
+        }} />
       <Tooltip content="New session here">
         <button
           type="button"
