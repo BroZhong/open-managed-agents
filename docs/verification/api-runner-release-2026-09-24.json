@@ -1,0 +1,985 @@
+{
+  "releasedAtLocalDate": "2026-09-24",
+  "timezone": "Asia/Shanghai",
+  "publicBaseUrl": "https://agentry.welltop.tech/api",
+  "runtime": {
+    "observedAt": "2026-09-23T17:15:32.909464+00:00",
+    "deployments": [
+      {
+        "name": "oma-api",
+        "replicas": 1,
+        "readyReplicas": 1,
+        "images": [
+          "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:448f6bbc8247"
+        ]
+      },
+      {
+        "name": "oma-runner",
+        "replicas": 1,
+        "readyReplicas": 1,
+        "images": [
+          "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:4a745042ceaa"
+        ]
+      },
+      {
+        "name": "oma-server",
+        "replicas": 0,
+        "readyReplicas": 0,
+        "images": [
+          "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:4a745042ceaa"
+        ]
+      },
+      {
+        "name": "oma-web",
+        "replicas": 1,
+        "readyReplicas": 1,
+        "images": [
+          "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web:34db82eee1ce"
+        ]
+      }
+    ],
+    "pods": [
+      {
+        "name": "oma-api-7cc4c54fcd-f7pqh",
+        "uid": "5edea242-886c-44d8-9950-6dd3b56a8543",
+        "images": [
+          {
+            "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:448f6bbc8247",
+            "imageID": "sha256:138cb8c9a6ad9525298f0969bfa43b9076ec97376fee35722c91be35f0726500",
+            "restarts": 0,
+            "ready": true
+          }
+        ]
+      },
+      {
+        "name": "oma-runner-54fb597c48-psq24",
+        "uid": "8ac9ea9f-1d42-4c6e-b0f5-57abcc5c9b8b",
+        "images": [
+          {
+            "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:4a745042ceaa",
+            "imageID": "sha256:75955ee808cd2f00b9b3e7ab52358f51d67aa516b3fbe3b27c3efb552e81e8fb",
+            "restarts": 0,
+            "ready": true
+          }
+        ]
+      },
+      {
+        "name": "oma-web-569c669554-sfqkx",
+        "uid": "3642506c-28b3-40f3-aed8-47c6abc003cc",
+        "images": [
+          {
+            "image": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web:34db82eee1ce",
+            "imageID": "sha256:fbeaa8a6a57c8fa90a94408d155dc7996cae4c194a7aafdcd99da83fed67f2c0",
+            "restarts": 0,
+            "ready": true
+          }
+        ]
+      }
+    ],
+    "publicSelector": {
+      "app": "oma-api"
+    },
+    "controlledIdleScope": {
+      "SANDBOX_IDLE_SWEEP": "true",
+      "SANDBOX_IDLE_BINDINGS": "sess_CQWe4-RJ4W8NAw6Tk12Jh,sess_mA7cS0vO2CHQso2MFC0hQ,sess_YKnmJTKv5ROPOcfrmGV4p"
+    },
+    "remainingStagePods": []
+  },
+  "staging": {
+    "runId": "split-release-1790181449147",
+    "schema": "oma_split_stage",
+    "checks": [
+      {
+        "name": "isolated verification tenant created",
+        "ok": true,
+        "phase": "init",
+        "at": "2026-09-23T16:37:53.200Z",
+        "details": {
+          "tenant": "split-release-1790181449147",
+          "schema": "oma_split_stage"
+        }
+      },
+      {
+        "name": "real model started long Sandbox command",
+        "ok": true,
+        "phase": "real-start",
+        "at": "2026-09-23T16:38:02.891Z",
+        "details": {
+          "sessionId": "sess_Hu39poO4cduBrdKp48Vwi"
+        }
+      },
+      {
+        "name": "real model and Sandbox succeeded",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T16:38:53.983Z"
+      },
+      {
+        "name": "real stream 0 no duplicate history",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T16:38:53.984Z"
+      },
+      {
+        "name": "real stream 1 no duplicate history",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T16:38:53.984Z"
+      },
+      {
+        "name": "saved Workspace bytes available",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T16:38:54.137Z"
+      },
+      {
+        "name": "stream 0 closed",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T16:38:54.143Z",
+        "details": {
+          "reconnects": 1
+        }
+      },
+      {
+        "name": "stream 1 closed",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T16:38:54.144Z",
+        "details": {
+          "reconnects": 0
+        }
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:04.542Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:05.581Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:05.582Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:05.582Z"
+      },
+      {
+        "name": "stream 1 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:05.582Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 1 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:05.582Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:40:05.891Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:40:17.881Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:40:18.905Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:40:18.905Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:40:19.216Z"
+      },
+      {
+        "name": "Interrupt durably accepted",
+        "ok": true,
+        "phase": "interrupt",
+        "at": "2026-09-23T16:40:25.922Z"
+      },
+      {
+        "name": "one interrupted Turn and preserved tail",
+        "ok": true,
+        "phase": "interrupt",
+        "at": "2026-09-23T16:40:31.969Z"
+      },
+      {
+        "name": "late Interrupt does not affect future input",
+        "ok": true,
+        "phase": "interrupt",
+        "at": "2026-09-23T16:40:31.985Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:41:15.839Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:41:19.870Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:41:19.871Z",
+        "details": {
+          "count": 7,
+          "chunks": 0
+        }
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "outage",
+        "at": "2026-09-23T16:41:20.184Z"
+      },
+      {
+        "name": "real Child completed",
+        "ok": true,
+        "phase": "delegation-sync",
+        "at": "2026-09-23T16:42:25.807Z",
+        "details": {
+          "executionId": "deleg_SYnJomb3Dms5D0WIEVvGr",
+          "background": false
+        }
+      },
+      {
+        "name": "real Child completed",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T16:42:53.660Z",
+        "details": {
+          "executionId": "deleg_yS5U1s3rWy6yqHFdbin9B",
+          "background": true
+        }
+      },
+      {
+        "name": "one consumed background result",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T16:42:53.661Z"
+      },
+      {
+        "name": "manual Loop execution preserves cadence",
+        "ok": true,
+        "phase": "loop",
+        "at": "2026-09-23T16:42:55.295Z"
+      },
+      {
+        "name": "verification Loop disabled",
+        "ok": true,
+        "phase": "loop-disable",
+        "at": "2026-09-23T16:43:59.631Z"
+      },
+      {
+        "name": "real Child completed",
+        "ok": true,
+        "phase": "delegation-sync",
+        "at": "2026-09-23T16:44:00.230Z",
+        "details": {
+          "executionId": "deleg_SYnJomb3Dms5D0WIEVvGr",
+          "background": false
+        }
+      },
+      {
+        "name": "Child executed real Sandbox tool",
+        "ok": true,
+        "phase": "delegation-sync",
+        "at": "2026-09-23T16:44:00.251Z"
+      },
+      {
+        "name": "real Child completed",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T16:44:00.885Z",
+        "details": {
+          "executionId": "deleg_yS5U1s3rWy6yqHFdbin9B",
+          "background": true
+        }
+      },
+      {
+        "name": "one consumed background result",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T16:44:00.885Z"
+      },
+      {
+        "name": "Child executed real Sandbox tool",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T16:44:00.894Z"
+      },
+      {
+        "name": "termination durable with preserved history",
+        "ok": true,
+        "phase": "terminate",
+        "at": "2026-09-23T16:44:03.536Z"
+      },
+      {
+        "name": "real Sandbox binding reclaimed",
+        "ok": true,
+        "phase": "terminate",
+        "at": "2026-09-23T16:44:03.538Z"
+      },
+      {
+        "name": "Workspace survives termination",
+        "ok": true,
+        "phase": "terminate",
+        "at": "2026-09-23T16:44:03.632Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T16:44:09.308Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:48:36.734Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:48:37.757Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:48:37.757Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:48:37.757Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:48:38.068Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T16:55:04.434Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T16:58:55.600Z"
+      },
+      {
+        "name": "active termination cleanup completed",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T16:58:57.606Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:00:22.140Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:00:23.160Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:00:23.160Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:00:23.161Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:00:23.471Z"
+      },
+      {
+        "name": "verification Sessions terminated",
+        "ok": true,
+        "phase": "cleanup",
+        "at": "2026-09-23T17:00:24.172Z"
+      }
+    ],
+    "sessions": {
+      "real": {
+        "id": "sess_Hu39poO4cduBrdKp48Vwi",
+        "workspaceId": "ws_GCo8B6mpVVQKx-JAipLlm"
+      },
+      "basic": {
+        "id": "sess_xnRa2QsIbZfVfKH0HT_yJ",
+        "workspaceId": "ws_eNMAnrhbaKVXTryVHZ7uy"
+      },
+      "outage": {
+        "id": "sess_29wb9svH3kzJTZN9OhF6r",
+        "workspaceId": "ws_3QBivV62O2-EE48dGA7Iy"
+      },
+      "interrupt": {
+        "id": "sess_CMwPSMWoXYcWCd_QymyJv",
+        "workspaceId": "ws_mWP-TL4C3faj0JZBYU6Dl"
+      },
+      "delegation-sync": {
+        "id": "sess_pcaWFPGjcj-EoeeZYztgQ",
+        "workspaceId": "ws_Abcap-tx96TvS8oHVOSXJ"
+      },
+      "delegation-async": {
+        "id": "sess_jpBPFzYKCJZezQWMi54gk",
+        "workspaceId": "ws_6xdazcS0c1SFMwDX0Etcq"
+      },
+      "loop": {
+        "id": "sess_3YQ7c7Q9xy0fOF-ztN9Aq",
+        "workspaceId": "ws_Pmf0tmWjtRzXa6PkZ8oGd"
+      },
+      "activeTermination": {
+        "id": "sess_KK-bu9ia99I1JPR9fegka",
+        "workspaceId": "ws_OIMD32oj3h3unVmuWygIQ"
+      },
+      "activeTermination-1790182496281": {
+        "id": "sess_tX2-SfKecwJBB_sO-2Q7e",
+        "workspaceId": "ws_aVEvYTwTmLMdvkH3qmf-r"
+      },
+      "activeTermination-1790182727438": {
+        "id": "sess_2mVuFWA4wn-CzZxXhfHWI",
+        "workspaceId": "ws_ThgXA_39UjBSXCvrMSWk2"
+      },
+      "basic-1790182822069": {
+        "id": "sess_YR-DUbT1XE2me6jhu2Jen",
+        "workspaceId": "ws_WoPeGcXO-Z2dkWF-ENqFb"
+      }
+    },
+    "mockAgent": "agent_mulaq5Hm9y3Ca4JBl8Pqc",
+    "realAgent": "agent_FqqeUe-aOIpbD6PfDyDlt",
+    "marker": "PERSIST_split-release-1790181449147",
+    "loopId": "loop_XSlklbCZl6UCbvbF3XpwD"
+  },
+  "production": {
+    "runId": "split-release-1790181819979",
+    "schema": "oma",
+    "checks": [
+      {
+        "name": "isolated verification tenant created",
+        "ok": true,
+        "phase": "init",
+        "at": "2026-09-23T16:44:16.815Z",
+        "details": {
+          "tenant": "split-release-1790181819979",
+          "schema": "oma"
+        }
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:44:17.424Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:44:18.438Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:44:18.438Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:44:18.438Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:44:18.749Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:53:50.532Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:53:51.555Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:53:51.555Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:53:51.555Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T16:53:51.867Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:01:22.006Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:01:23.081Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:01:23.081Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:01:23.081Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:01:23.390Z"
+      },
+      {
+        "name": "real model started long Sandbox command",
+        "ok": true,
+        "phase": "real-start",
+        "at": "2026-09-23T17:02:19.241Z",
+        "details": {
+          "sessionId": "sess_OkBIFkUcKIFjXEybABl5D"
+        }
+      },
+      {
+        "name": "real model and Sandbox succeeded",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T17:03:10.653Z"
+      },
+      {
+        "name": "real stream 0 no duplicate history",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T17:03:10.653Z"
+      },
+      {
+        "name": "saved Workspace bytes available",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T17:03:10.735Z"
+      },
+      {
+        "name": "stream 0 closed",
+        "ok": true,
+        "phase": "real-finish",
+        "at": "2026-09-23T17:03:10.748Z",
+        "details": {
+          "reconnects": 0
+        }
+      },
+      {
+        "name": "Interrupt durably accepted",
+        "ok": true,
+        "phase": "interrupt",
+        "at": "2026-09-23T17:03:15.696Z"
+      },
+      {
+        "name": "one interrupted Turn and preserved tail",
+        "ok": true,
+        "phase": "interrupt",
+        "at": "2026-09-23T17:03:20.780Z"
+      },
+      {
+        "name": "late Interrupt does not affect future input",
+        "ok": true,
+        "phase": "interrupt",
+        "at": "2026-09-23T17:03:20.792Z"
+      },
+      {
+        "name": "real Child completed",
+        "ok": true,
+        "phase": "delegation-sync",
+        "at": "2026-09-23T17:03:37.775Z",
+        "details": {
+          "executionId": "deleg_f-mHBUVoEi8YfxUVjiQNi",
+          "background": false
+        }
+      },
+      {
+        "name": "Child executed real Sandbox tool",
+        "ok": true,
+        "phase": "delegation-sync",
+        "at": "2026-09-23T17:03:37.792Z"
+      },
+      {
+        "name": "real Child completed",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T17:04:00.873Z",
+        "details": {
+          "executionId": "deleg_jSsIINgnL6dn4znaATEPy",
+          "background": true
+        }
+      },
+      {
+        "name": "one consumed background result",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T17:04:00.874Z"
+      },
+      {
+        "name": "Child executed real Sandbox tool",
+        "ok": true,
+        "phase": "delegation-async",
+        "at": "2026-09-23T17:04:00.903Z"
+      },
+      {
+        "name": "manual Loop execution preserves cadence",
+        "ok": true,
+        "phase": "loop",
+        "at": "2026-09-23T17:04:02.636Z"
+      },
+      {
+        "name": "termination durable with preserved history",
+        "ok": true,
+        "phase": "terminate",
+        "at": "2026-09-23T17:04:04.429Z"
+      },
+      {
+        "name": "real Sandbox binding reclaimed",
+        "ok": true,
+        "phase": "terminate",
+        "at": "2026-09-23T17:04:04.430Z"
+      },
+      {
+        "name": "Workspace survives termination",
+        "ok": true,
+        "phase": "terminate",
+        "at": "2026-09-23T17:04:04.521Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:04:09.319Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:14:21.081Z"
+      },
+      {
+        "name": "active termination cleanup completed",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:14:24.100Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:14:49.652Z"
+      },
+      {
+        "name": "active termination cleanup completed",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:14:53.660Z"
+      },
+      {
+        "name": "active Session terminated immediately",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:15:00.497Z"
+      },
+      {
+        "name": "active termination cleanup completed",
+        "ok": true,
+        "phase": "active-terminate",
+        "at": "2026-09-23T17:15:04.505Z"
+      },
+      {
+        "name": "input accepted",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:15:05.186Z"
+      },
+      {
+        "name": "one promoted input and final message",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:15:06.264Z"
+      },
+      {
+        "name": "stream 0 ordered unique history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:15:06.264Z",
+        "details": {
+          "count": 7,
+          "chunks": 3
+        }
+      },
+      {
+        "name": "stream 0 live deltas",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:15:06.264Z"
+      },
+      {
+        "name": "reconnect does not duplicate history",
+        "ok": true,
+        "phase": "basic",
+        "at": "2026-09-23T17:15:06.573Z"
+      },
+      {
+        "name": "verification Sessions terminated",
+        "ok": true,
+        "phase": "cleanup",
+        "at": "2026-09-23T17:15:08.384Z"
+      },
+      {
+        "name": "verification Sessions terminated",
+        "ok": true,
+        "phase": "cleanup",
+        "at": "2026-09-23T17:16:23.827Z",
+        "details": {
+          "count": 15
+        }
+      }
+    ],
+    "sessions": {
+      "basic": {
+        "id": "sess_UJ7qUIZVVyIKWdYUUvVBx",
+        "workspaceId": "ws_xcCoKWdkmTVK8MNNj6Vsh"
+      },
+      "basic-1790182430444": {
+        "id": "sess_cdo35TxSFR6UcfMgZ9nQY",
+        "workspaceId": "ws_hA9ZNWpUSfxcOMTSlAGmT"
+      },
+      "basic-1790182881659": {
+        "id": "sess_zk8zEI252O7FZ0riSAmGW",
+        "workspaceId": "ws_UN9a8AKsD8tsfjtM8OqOS"
+      },
+      "real": {
+        "id": "sess_OkBIFkUcKIFjXEybABl5D",
+        "workspaceId": "ws_ZA-hXDvJ4TARaDANT2myN"
+      },
+      "interrupt": {
+        "id": "sess_32YEwsAsj5nVfYYTab7tW",
+        "workspaceId": "ws_OIJgRHVj9MNJ6MU8SobFl"
+      },
+      "delegation-sync": {
+        "id": "sess_kuZmJs2HUbwPNibcJ6Ydu",
+        "workspaceId": "ws_9Qixlr71ymrpd0QSA8tdZ"
+      },
+      "delegation-async": {
+        "id": "sess_gvniUWxd51qVX8gKWLrxi",
+        "workspaceId": "ws_Ftkh_5mhLgMrsaTC8ioCG"
+      },
+      "loop": {
+        "id": "sess_JXQQYGxdTNhrUiO4L6cu0",
+        "workspaceId": "ws_cym3ysDi5TFEHtEzIxQXy"
+      },
+      "activeTermination": {
+        "id": "sess_12Al7Wqwd-xCmlYxmR32i",
+        "workspaceId": "ws_RnO7bdSXqzTwjby5GQLKZ"
+      },
+      "activeTermination-1790183649715": {
+        "id": "sess_UhEzPLreOjO03rXpfmj91",
+        "workspaceId": "ws_R_z7R5naPLUGaL5kk5NsS"
+      },
+      "activeTermination-1790183680342": {
+        "id": "sess_B51Eb95il-W1Un1jWqQfn",
+        "workspaceId": "ws_rvOqGaGffrzDcJ-XiBQ51"
+      },
+      "activeTermination-1790183694199": {
+        "id": "sess_r-dxHhqzjOunZFH0A0Okl",
+        "workspaceId": "ws_zBChZ8u-eTsWvLH4_TeDF"
+      },
+      "basic-1790183705054": {
+        "id": "sess_VvrjNZVxm1V0G7aYXjnwy",
+        "workspaceId": "ws_OX5RykvoIVLiDVv-GVTDL"
+      }
+    },
+    "mockAgent": "agent_LjTew6MpNoWp_3KKsbmHv",
+    "realAgent": "agent_fkpPX04xCj0yQRMY3apc-",
+    "marker": "PERSIST_split-release-1790181819979",
+    "loopId": "loop_KMVFU2OKg08S1BiBp9hBO"
+  },
+  "finalFixtureCounts": [
+    {
+      "kind": "fixture_unterminated_sessions",
+      "count": 0
+    },
+    {
+      "kind": "fixture_pending",
+      "count": 0
+    },
+    {
+      "kind": "fixture_activities",
+      "count": 0
+    },
+    {
+      "kind": "fixture_incomplete_cleanup",
+      "count": 0
+    },
+    {
+      "kind": "fixture_live_sandboxes",
+      "count": 0
+    },
+    {
+      "kind": "fixture_enabled_loops",
+      "count": 0
+    },
+    {
+      "kind": "fixture_active_keys",
+      "count": 0
+    },
+    {
+      "kind": "stage_schemas",
+      "count": 0
+    }
+  ],
+  "manualRecoveryEvidence": [
+    {
+      "sessionId": "sess_tX2-SfKecwJBB_sO-2Q7e",
+      "sandboxId": "sandbox-system--auto-story-v2-l84m2",
+      "remoteCommands": 0,
+      "ownerId": "host_ee77ecfb-e801-4925-a2b2-f4326b7e4517",
+      "observedAt": "2026-09-23T16:53:48.475Z"
+    },
+    {
+      "sessionId": "sess_2mVuFWA4wn-CzZxXhfHWI",
+      "sandboxId": "sandbox-system--auto-story-v2-jpd9q",
+      "remoteCommands": 0,
+      "ownerId": "host_782e5d21-3d48-47bf-a759-62f570d0ee68",
+      "observedAt": "2026-09-23T16:58:49.783Z"
+    },
+    {
+      "sessionId": "sess_UhEzPLreOjO03rXpfmj91",
+      "sandboxId": "sandbox-system--auto-story-v2-m7n9w",
+      "remoteCommands": 0,
+      "ownerId": "host_f69207ae-026d-4e4f-978a-1bedc4dd79c9",
+      "observedAt": "2026-09-23T17:14:09.107Z"
+    }
+  ],
+  "health": {
+    "api": {
+      "status": "ok",
+      "role": "api"
+    },
+    "webHttpStatus": 200
+  },
+  "automatedChecks": {
+    "serverPassed": 937,
+    "serverEnvironmentSkipped": 39,
+    "webPassed": 412,
+    "adapterPassed": 414,
+    "separateProcessAcceptancePassed": 10,
+    "deploymentContractsPassed": 2,
+    "serverTypechecks": "pass",
+    "webTypecheck": "pass",
+    "adapterTypechecks": "pass",
+    "sourceCI": "https://github.com/BroZhong/open-managed-agents/actions/runs/35893903217"
+  },
+  "limitations": [
+    "Redis outage testing used isolated staging infrastructure; production Redis was not stopped.",
+    "Manual fixture recovery is not automatic-cleanup success. Failed attempts are explained in the release report.",
+    "Normal in-flight Runner loss retains existing recovery limits."
+  ]
+}

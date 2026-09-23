@@ -1,7 +1,9 @@
 # API / Runner split verification
 
-Local verification for #197–#203, September 24, 2026. No production switch,
-external model call, real Sandbox deletion, or model-release automation was run.
+Local verification for #197–#203, September 24, 2026. This report describes the
+pre-release local checks. The subsequent authorized production deployment and real
+model/Sandbox results are recorded in the
+[release report](api-runner-release-2026-09-24.md).
 
 The opt-in `server/packages/api/test/split-process.test.ts` suite uses real
 PostgreSQL 16 and Redis 7 on loopback, separate Node OS processes and random PG
@@ -54,7 +56,8 @@ pnpm --dir server --filter @oma-server/store test \
 
 The independent-process suite passes all ten scenarios using the command in the
 operations guide. Both Standards and Spec review findings were resolved and
-rechecked; published image-pair qualification below remains outstanding.
+rechecked. Published image-pair qualification is recorded separately in the release
+report linked above.
 
 Real model output and real gateway deletion are intentionally outside the local
 fixture coverage. The independently versioned deployment manifest and executable

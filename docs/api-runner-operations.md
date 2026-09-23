@@ -1,7 +1,10 @@
 # API and Runner operations
 
-This is a staged release plan, not evidence of a production deployment. Do not
-restart paused model-release automations. Production remains unchanged by these files.
+The split was deployed on September 24, 2026; see the
+[production verification report](verification/api-runner-release-2026-09-24.md).
+The commands below remain the runbook for subsequent authorized releases. Keep
+paused model-release automations paused. The compatible combined Deployment is
+retained at zero replicas for rollback; public traffic targets `oma-api`.
 
 ## Commands and configuration
 
@@ -142,3 +145,36 @@ proof a Sandbox operation stopped. Unknown activity records have no age timeout.
 Resolve them only using concrete execution-exit evidence and the ADR-0017 recovery
 procedure; do not delete them to make a dashboard look clean. Saved Workspace files
 and history survive termination and reclamation.
+
+
+## Repeatable release regression
+
+`deploy/scripts/verify-api-runner-release.mjs` runs inside a deployed image with
+`node --import tsx`. Copy it into a stable Runner Pod and run `init` once with an
+absolute evidence-file path. It creates its own tenant and revokes each temporary
+API key. The default target is the public production URL; set `OMA_LIVE_BASE_URL`
+for an isolated staging API and `VERIFY_SCHEMA=oma_split_stage` for its database.
+Do not point staging Runners at the production schema or Redis for fault injection.
+
+Run phases in order: `basic`, `real-start`, `real-finish`, `interrupt`,
+`delegation-sync`, `delegation-async`, `loop`, `terminate`, `active-terminate`, and
+`cleanup`. For example, after copying the script into the Pod:
+
+Run `cleanup` even if an earlier verification phase fails. It first disables the
+verification Loop, attempts every verification Session (including completed
+Children), and reports all cleanup failures. Cleanup success does not turn a
+failed verification phase into a pass.
+
+```sh
+kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra \
+  exec deployment/oma-runner -- env HTTP_PROXY= http_proxy= \
+  node --import tsx /tmp/verify-api-runner-release.mjs basic /tmp/split-evidence.json
+```
+
+Copy evidence off the Pod before replacing it. Use `OMA_API_TARGETS` with two
+comma-separated API Pod URLs for dual-observer checks. The `outage` phase checks
+PG-backed completion while **isolated staging Redis** is stopped; rerun `basic`
+after recovery to require live deltas again. The script does not stop Redis or
+restart workloads itself. Wait for old Runner Pods to disappear before measuring
+normal termination cleanup: a task claimed by an exiting owner is an owner-loss
+case and retains unknown activity until exit is proven.
