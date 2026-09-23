@@ -30,7 +30,7 @@ export function adapterProcessEnvFromHost(
 ): Record<string, string | undefined> {
   return Object.fromEntries(
     Object.entries(env).filter(([name]) =>
-      !name.startsWith("DEFAULT_SANDBOX_") && !name.startsWith("WORKSPACE_OSS_") && !name.startsWith("AUTO_STORY_"),
+      !name.startsWith("DEFAULT_SANDBOX_") && !name.startsWith("WORKSPACE_OSS_") && !name.startsWith("AUTO_STORY_") && name !== "OMA_PROVIDER_ENCRYPTION_KEY",
     ),
   );
 }

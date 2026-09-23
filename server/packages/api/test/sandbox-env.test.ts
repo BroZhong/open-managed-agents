@@ -128,6 +128,7 @@ describe("adapterProcessEnvFromHost", () => {
       OPENAI_API_KEY: "adapter-key-sentinel",
       WORKSPACE_OSS_ACCESS_KEY_SECRET: "host-only-oss-secret",
       WORKSPACE_OSS_STS_TOKEN: "host-only-oss-token",
+      OMA_PROVIDER_ENCRYPTION_KEY: "host-only-provider-encryption-key",
       AUTO_STORY_AGENT_IDS: "agent_story",
       AUTO_STORY_SANDBOX_ENV_JSON: '{"GEMINI_API_KEY":"story-key-sentinel"}',
       DEFAULT_SANDBOX_VFS_TOKEN: "vfs-token-sentinel",
