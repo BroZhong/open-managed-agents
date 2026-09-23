@@ -9,7 +9,7 @@ function required(env: HostEnv, name: string): string {
 }
 
 /** One assembly for Workspace API storage and mounted execution; no backend fallback. */
-export function workspaceConfigFromEnv(env: HostEnv) {
+export function workspaceStorageConfigFromEnv(env: HostEnv): OSSArtifactStoreOptions {
   const region = required(env, "WORKSPACE_OSS_REGION");
   const bucket = required(env, "WORKSPACE_OSS_BUCKET");
   const oss: OSSArtifactStoreOptions = {
@@ -20,6 +20,12 @@ export function workspaceConfigFromEnv(env: HostEnv) {
     endpoint: env.WORKSPACE_OSS_ENDPOINT || `https://${region}.aliyuncs.com`,
     publicEndpoint: env.WORKSPACE_OSS_PUBLIC_ENDPOINT || `https://${region}.aliyuncs.com`,
   };
+  return oss;
+}
+
+export function workspaceConfigFromEnv(env: HostEnv) {
+  const oss = workspaceStorageConfigFromEnv(env);
+  const bucket = oss.bucket;
   if (env.SANDBOX_ENABLED !== "true") throw new Error("OSS Workspace requires SANDBOX_ENABLED=true");
   const requestTimeoutMs = Number(env.E2B_REQUEST_TIMEOUT_MS ?? 185_000);
   if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs < 180_000 || requestTimeoutMs > 300_000) {

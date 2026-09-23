@@ -61,6 +61,19 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_terminated")).toBe(0);
   });
 
+  it.skipIf(!process.env.PG_TEST_URL)("a fresh Interrupt targets a reclaimed generation without carrying the old request forward", async () => {
+    await seedSession("interrupt_generation");
+    const event = await store.enqueue("interrupt_generation", { type: "user.message", data: { text: "work" }, sessionThreadId: "t" });
+    const first = (await store.claim("interrupt_generation", "first-owner", 60_000))!;
+    expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
+    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+    await store.releaseClaim("interrupt_generation", event.id, first);
+    await store.claim("interrupt_generation", "replacement-owner", 60_000);
+    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(false);
+    expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
+    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+  });
+
   it("rolls back the complete ingress batch if any insert fails", async () => {
     await seedSession("sess_1");
     const cyclic: Record<string, unknown> = {};
@@ -304,6 +317,16 @@ describe("PgPendingEventStore", () => {
     });
     return { input, claim, log, completion };
   }
+
+  it.skipIf(!process.env.PG_TEST_URL)("Interrupt after durable completion but before acknowledgement cannot affect the queued Turn", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim } = await completedInput();
+    const tail = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "t" });
+    expect(await store.requestInterrupt("sess_1")).toBe(false);
+    expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toEqual({ acknowledged: true });
+    await store.claim("sess_1", "tail-owner", 60_000);
+    expect(await store.interruptRequested("sess_1", tail.id)).toBe(false);
+  });
 
   it("keeps the Session running between inputs and commits idle only with the final acknowledgement", async () => {
     await seedSession("sess_1", "running");

@@ -34,6 +34,8 @@ export type EventLogUsageScope =
   | { apiKeyId: string };
 
 export interface EventLogStore {
+  /** Durable boundary for a live-only subscription, without reading history. */
+  getLatestSeq?(sessionId: string): Promise<number>;
   append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent>;
   getEvents(sessionId: string, opts?: EventLogStoreGetEventsOpts): Promise<PaginatedResult<StoredEvent>>;
   getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary>;

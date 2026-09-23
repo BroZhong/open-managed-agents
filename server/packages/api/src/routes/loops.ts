@@ -15,6 +15,7 @@ export interface LoopRouteDeps {
   agentStore: AgentStore;
   loopStore: LoopStore;
   sessionRouter?: SessionRouter;
+  wakeSession?: (sessionId: string) => void;
   now?: () => Date;
 }
 
@@ -117,6 +118,7 @@ export function loopRoutes(deps: LoopRouteDeps): OpenAPIHono<Env> {
       tenant.apiKeyId,
     );
     if (!dispatched) return c.json({ error: "Loop not found" }, 404);
+    deps.wakeSession?.(dispatched.session.id);
     void deps.sessionRouter
       ?.handleNewEvent(dispatched.session.id, dispatched.session.agent)
       .catch((error) => {

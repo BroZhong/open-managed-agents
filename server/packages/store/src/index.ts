@@ -135,6 +135,7 @@ export {
   PgAgentFileStore,
   PgSkillStore,
   PgSessionStore,
+  PgSessionCleanupStore,
   PgEventLogStore,
   PgPendingEventStore,
   PgApiKeyStore,

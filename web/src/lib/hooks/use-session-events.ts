@@ -63,7 +63,7 @@ export function useSessionEvents(sessionId: string) {
     sessionEventStreamReducer,
     initialSessionEventStreamState,
   );
-  const [status, setStatus] = useState<"idle" | "running" | "waiting">("idle");
+  const [status, setStatus] = useState<Session["status"]>("idle");
   const [isConnected, setIsConnected] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState<string>();
@@ -121,7 +121,7 @@ export function useSessionEvents(sessionId: string) {
     setFileChange({ nonce: 0 });
   }
 
-  const projectStatus = useCallback((nextStatus: "idle" | "running" | "waiting") => {
+  const projectStatus = useCallback((nextStatus: Session["status"]) => {
     const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
     if (session?.status === "terminated") return;
 
@@ -215,6 +215,11 @@ export function useSessionEvents(sessionId: string) {
     if (event.type === "session.status_idle") {
       projectStatus("idle");
       setTurnLifecycleNonce((n) => n + 1);
+    }
+    if (event.type === "session.status_terminated") {
+      projectStatus("terminated");
+      setTurnLifecycleNonce((n) => n + 1);
+      setFileChange((prev) => ({ nonce: prev.nonce + 1 }));
     }
     if (event.type === "session.turn_completed") {
       setTurnLifecycleNonce((n) => n + 1);
@@ -358,6 +363,10 @@ export function useSessionEvents(sessionId: string) {
       // project into both this hook and the shared Session query caches.
       for (let i = historicalEvents.length - 1; i >= 0; i--) {
         const evt = historicalEvents[i];
+        if (evt.type === "session.status_terminated") {
+          projectStatus("terminated");
+          break;
+        }
         if (evt.type === "session.status_running") {
           projectStatus("running");
           break;

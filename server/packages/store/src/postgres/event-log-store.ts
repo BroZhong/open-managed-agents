@@ -53,6 +53,10 @@ function rowToEvent(row: EventRow): StoredEvent {
 }
 
 export class PgEventLogStore implements EventLogIngressStore {
+  async getLatestSeq(sessionId: string): Promise<number> {
+    const result = await this.pool.query<{ seq: string }>("SELECT seq FROM event_counters WHERE session_id = $1", [sessionId]);
+    return Number(result.rows[0]?.seq ?? 0);
+  }
   constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) {}
 
   private async decodeRow(row: EventRow): Promise<StoredEvent> {

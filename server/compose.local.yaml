@@ -1,0 +1,22 @@
+name: oma-split-local
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: oma_local
+      POSTGRES_PASSWORD: oma_local
+      POSTGRES_DB: oma_local
+    ports: ["127.0.0.1:55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oma_local -d oma_local"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:56379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

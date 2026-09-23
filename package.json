@@ -12,6 +12,8 @@
     "typecheck": "pnpm --dir adapter typecheck",
     "e2e": "pnpm --dir adapter e2e",
     "e2e:codex": "pnpm --dir adapter e2e:codex",
-    "e2e:pi": "pnpm --dir adapter e2e:pi"
+    "e2e:pi": "pnpm --dir adapter e2e:pi",
+    "dev:split": "node server/scripts/dev-split.mjs",
+    "test:split": "pnpm --dir server --filter @oma-server/api test test/split-process.test.ts"
   }
 }

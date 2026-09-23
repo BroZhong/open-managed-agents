@@ -7,3 +7,4 @@ export type {
 } from "./event-stream-hub.js";
 
 export { InProcessEventStreamHub, alignedChunkData } from "./event-stream-hub.js";
+export { RedisEventStreamHub } from "./redis-event-stream-hub.js";
