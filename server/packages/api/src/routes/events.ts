@@ -1,5 +1,5 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { EventLogIngressStore, PendingEventIngressStore, SessionStore } from "@oma-server/store";
+import type { EventLogIngressStore, PendingEventIngressStore, SessionStore, StoredEvent } from "@oma-server/store";
 import { lazyEventData, presentEvent, presentEventPage, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import { alignedChunkData } from "@oma-server/event-log";
@@ -379,6 +379,13 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
               }
             };
 
+            const enqueueStoredEvent = (event: StoredEvent): boolean => {
+              if (event.seq <= cursorSeq) return true;
+              if (!enqueue(`event: ${event.type}\nid: ${event.seq}\ndata: ${JSON.stringify(lazyEventData(event.type, event.data))}\n\n`)) return false;
+              cursorSeq = event.seq;
+              return true;
+            };
+
             // Send retry directive as the first frame, then a comment while the
             // stream is otherwise idle. The timer starts before replay so a
             // slow PG/Redis backfill is protected too.
@@ -416,12 +423,8 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
                 });
                 if (responseClosed) return;
 
-                for (const event of result.data.flatMap(event => presentEvent(event)).filter(event => event.seq > (cursorSeq ?? 0))) {
-                  let frame = `event: ${event.type}\n`;
-                  frame += `id: ${event.seq}\n`;
-                  frame += `data: ${JSON.stringify(lazyEventData(event.type, event.data))}\n\n`;
-                  if (!enqueue(frame)) return;
-                  cursorSeq = event.seq;
+                for (const event of result.data.flatMap(event => presentEvent(event))) {
+                  if (!enqueueStoredEvent(event)) return;
                 }
 
                 hasMore = result.hasMore;
@@ -462,9 +465,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
             if (responseClosed) return;
             stopCatchup = catchup.follow(sessionId, {
               cursor: () => cursorSeq,
-              accept: event => {
-                if (enqueue(`event: ${event.type}\nid: ${event.seq}\ndata: ${JSON.stringify(lazyEventData(event.type, event.data))}\n\n`)) cursorSeq = event.seq;
-              },
+              accept: enqueueStoredEvent,
             });
             liveReader = liveStream.getReader();
             while (!responseClosed) {

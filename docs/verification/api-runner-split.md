@@ -17,7 +17,8 @@ schemas. It tests HTTP/SSE and the existing public coordination interfaces:
 - Loop dispatch continues while both APIs are stopped; manual dispatch preserves
   cadence.
 - Redis unavailable at Runner startup and lost mid-Turn: open SSE clients receive
-  complete output and idle status from PG; reconnect restores live Deltas.
+  complete output and idle status from PG; remote Interrupt preserves queued input
+  during the outage, and reconnect restores live Deltas.
 - Synchronous and asynchronous delegation run parent and child in different PIDs,
   retaining the parent model, 500-step budget and result consumption rules.
 - Two cleanup Runners handle a failed gateway deletion, retry idempotently from
@@ -28,6 +29,32 @@ commit, then passed with periodic incremental catch-up. Existing replay, project
 share/auth, queue-fence, delegation and controlled Sandbox tests remain applicable.
 The web termination regression first reported idle, then exercises the new durable
 termination lifecycle projection.
+
+Review regressions cover a fresh Interrupt after claim-generation replacement,
+Interrupt after durable completion but before queue acknowledgement, and a Redis
+read failure with projection CAS conflicts. Only the PG claim determines execution
+authority; a failed Redis projection cannot prevent durable Turn completion.
+
+Validation commands (local infrastructure only):
+
+```sh
+pnpm --dir server -r typecheck
+pnpm --dir adapter -r typecheck
+pnpm --dir web exec tsc -b
+pnpm --dir server -r test
+pnpm --dir web test --maxWorkers=2
+pnpm --dir adapter -r --workspace-concurrency=1 test
+
+PG_TEST_URL=postgres://oma_local:oma_local@127.0.0.1:55432/oma_local \
+PG_TEST_SCHEMA=oma_local_contract \
+pnpm --dir server --filter @oma-server/store test \
+  test/pending-event-store.test.ts test/delegation-concurrency.test.ts \
+  test/sandbox-lifecycle.test.ts --maxWorkers=1 --fileParallelism=false
+```
+
+The independent-process suite passes all ten scenarios using the command in the
+operations guide. Both Standards and Spec review findings were resolved and
+rechecked; published image-pair qualification below remains outstanding.
 
 Real model output and real gateway deletion are intentionally outside the local
 fixture coverage. The independently versioned deployment manifest and executable

@@ -63,7 +63,7 @@ export function useSessionEvents(sessionId: string) {
     sessionEventStreamReducer,
     initialSessionEventStreamState,
   );
-  const [status, setStatus] = useState<"idle" | "running" | "waiting">("idle");
+  const [status, setStatus] = useState<Session["status"]>("idle");
   const [isConnected, setIsConnected] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState<string>();
@@ -121,7 +121,7 @@ export function useSessionEvents(sessionId: string) {
     setFileChange({ nonce: 0 });
   }
 
-  const projectStatus = useCallback((nextStatus: "idle" | "running" | "waiting") => {
+  const projectStatus = useCallback((nextStatus: Session["status"]) => {
     const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
     if (session?.status === "terminated") return;
 

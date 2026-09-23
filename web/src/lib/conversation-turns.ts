@@ -15,7 +15,7 @@ export interface ConversationTurn {
 /** Input promotion, including a claimed Delegation Result, starts a Turn.
  * Notification arrival alone never starts model execution. Legacy logs can
  * still use lifecycle boundaries when their output has no turnId. */
-export function groupMessagesIntoTurns(messages: DisplayMessage[], events: SessionEvent[], sessionStatus: "idle" | "running" | "waiting"): ConversationTurn[] {
+export function groupMessagesIntoTurns(messages: DisplayMessage[], events: SessionEvent[], sessionStatus: "idle" | "running" | "waiting" | "terminated"): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   const bySeq = new Map(messages.filter((message) => message.seq !== undefined).map((message) => [message.seq, message]));
   let current: ConversationTurn | undefined;

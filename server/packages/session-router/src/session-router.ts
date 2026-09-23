@@ -369,11 +369,11 @@ export class SessionRouter {
     return legacy ? { seq: Number(legacy[1]), generation: 0 } : null;
   }
 
-  private async setActiveTurnFenced(
+  private async updateActiveTurnProjection(
     sessionId: string,
     next: { turnId: string; status: "running" | "idle" },
-  ): Promise<boolean> {
-    if (!this.turnStreamStore) return true;
+  ): Promise<void> {
+    if (!this.turnStreamStore) return;
     const nextIdentity = this.turnIdentity(next.turnId);
     for (let attempt = 0; attempt < 4; attempt++) {
       const current = await this.turnStreamStore.getActiveTurn(sessionId);
@@ -388,21 +388,21 @@ export class SessionRouter {
             currentIdentity.generation > nextIdentity.generation)
         )
       ) {
-        return false;
+        return;
       }
       if (this.turnStreamStore.compareAndSetActiveTurn) {
         if (await this.turnStreamStore.compareAndSetActiveTurn(
           sessionId,
           current?.turnId ?? null,
           next,
-        )) return true;
+        )) return;
         continue;
       }
       // Narrow test-double fallback; production Redis uses the atomic CAS.
       await this.turnStreamStore.setActiveTurn(sessionId, next);
-      return true;
+      return;
     }
-    return false;
+    // Redis is a projection: only the PostgreSQL claim can revoke execution.
   }
 
   private async clearActiveTurnFenced(
@@ -1211,10 +1211,7 @@ export class SessionRouter {
           turnId,
         );
         if (this.turnStreamStore) {
-          if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
-            leaseLost = true;
-            return;
-          }
+          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
           lastOwnedTurnId = turnId;
         }
         if (!await this.completeTurn(
@@ -1245,10 +1242,7 @@ export class SessionRouter {
       // client — possibly on another Host instance — can find and backfill the
       // in-flight turn's deltas.
       if (this.turnStreamStore) {
-        if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "running" })) {
-          leaseLost = true;
-          return;
-        }
+        await this.updateActiveTurnProjection(sessionId, { turnId, status: "running" });
         lastOwnedTurnId = turnId;
       }
 
@@ -1309,10 +1303,7 @@ export class SessionRouter {
         // drain loop falls through to the idle transition when the queue empties).
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(sessionId, turnId);
-          if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
-            leaseLost = true;
-            return;
-          }
+          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
         }
         if (!await this.completeTurn(
           sessionId,
@@ -1381,13 +1372,10 @@ export class SessionRouter {
           });
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
-            if (!await this.setActiveTurnFenced(sessionId, {
+            await this.updateActiveTurnProjection(sessionId, {
               turnId,
               status: "idle",
-            })) {
-              leaseLost = true;
-              return;
-            }
+            });
           }
           if (!await this.completeTurn(
             sessionId,
@@ -1508,13 +1496,10 @@ export class SessionRouter {
         });
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(sessionId, turnId);
-          if (!await this.setActiveTurnFenced(sessionId, {
+          await this.updateActiveTurnProjection(sessionId, {
             turnId,
             status: "idle",
-          })) {
-            leaseLost = true;
-            return;
-          }
+          });
         }
         if (!await this.completeTurn(
           sessionId,
@@ -1950,10 +1935,7 @@ export class SessionRouter {
       // interrupt (the for-loop `break` falls through to here).
       if (this.turnStreamStore) {
         await this.turnStreamStore.reclaim(sessionId, turnId);
-        if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
-          leaseLost = true;
-          return;
-        }
+        await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
       }
 
       if (!await this.completeTurn(

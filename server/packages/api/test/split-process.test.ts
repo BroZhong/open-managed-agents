@@ -218,6 +218,17 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
         await until(async () => live.frames, data => data.some(e => e.type === "session.status_idle"));
         expect(live.frames.filter(e => e.type === "agent.message")).toHaveLength(1);
       } finally { await live.close(); }
+      const interrupted = await newSession();
+      await input(api1, interrupted.id, "interrupt while Redis is down");
+      await until(() => events(interrupted.id), data => data.some(e => e.type === "session.status_running"));
+      await input(api1, interrupted.id, "preserved tail");
+      expect(await request(api2, `sessions/${interrupted.id}/events`, { events: [{ type: "user.interrupt", data: {} }] }))
+        .toMatchObject({ requested: true, interrupted: false });
+      const result = await complete(interrupted.id, 2);
+      expect(result.filter(e => e.type === "session.turn_aborted")).toHaveLength(1);
+      expect(result.filter(e => e.type === "user.message")).toHaveLength(2);
+      expect(await request(api2, `sessions/${interrupted.id}/events`, { events: [{ type: "user.interrupt", data: {} }] }))
+        .toMatchObject({ requested: false, interrupted: false });
     } finally { execFileSync("docker", ["start", redisContainer!]); }
     await delay(1500);
     const session = await newSession(); const live = await stream(api1, session.id);

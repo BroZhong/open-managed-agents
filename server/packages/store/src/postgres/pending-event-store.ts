@@ -39,8 +39,8 @@ export class PgPendingEventStore implements PendingEventIngressStore {
 
   async requestInterrupt(sessionId: string): Promise<boolean> {
     const result = await this.pool.query(
-      `UPDATE pending_events p SET interrupt_requested_at = COALESCE(interrupt_requested_at, NOW()),
-       interrupt_generation = COALESCE(interrupt_generation, claim_generation)
+      `UPDATE pending_events p SET interrupt_requested_at = NOW(),
+       interrupt_generation = claim_generation
        WHERE p.id = (SELECT id FROM pending_events WHERE session_id = $1
          ORDER BY seq LIMIT 1)
        AND p.claim_owner IS NOT NULL AND p.claim_expires_at > clock_timestamp()

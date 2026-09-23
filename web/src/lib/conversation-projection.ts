@@ -42,7 +42,7 @@ export interface DisplayMessage {
 
 export function shouldShowTypingIndicator(
   messages: DisplayMessage[],
-  sessionStatus: "idle" | "running" | "waiting",
+  sessionStatus: "idle" | "running" | "waiting" | "terminated",
 ): boolean {
   if (sessionStatus !== "running") return false;
   const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
