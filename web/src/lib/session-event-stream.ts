@@ -35,6 +35,7 @@ export function sessionEventStreamUrl(baseUrl: string, sessionId: string): strin
 const LIVE_PROJECTION_END_TYPES: ReadonlySet<string> = new Set([
   "session.error",
   "session.status_idle",
+  "session.status_terminated",
 ]);
 
 function deltaKey(delta: SessionDelta): string | undefined {

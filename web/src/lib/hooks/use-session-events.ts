@@ -216,6 +216,11 @@ export function useSessionEvents(sessionId: string) {
       projectStatus("idle");
       setTurnLifecycleNonce((n) => n + 1);
     }
+    if (event.type === "session.status_terminated") {
+      projectStatus("terminated");
+      setTurnLifecycleNonce((n) => n + 1);
+      setFileChange((prev) => ({ nonce: prev.nonce + 1 }));
+    }
     if (event.type === "session.turn_completed") {
       setTurnLifecycleNonce((n) => n + 1);
       setFileChange((prev) => ({ nonce: prev.nonce + 1 }));
@@ -358,6 +363,10 @@ export function useSessionEvents(sessionId: string) {
       // project into both this hook and the shared Session query caches.
       for (let i = historicalEvents.length - 1; i >= 0; i--) {
         const evt = historicalEvents[i];
+        if (evt.type === "session.status_terminated") {
+          projectStatus("terminated");
+          break;
+        }
         if (evt.type === "session.status_running") {
           projectStatus("running");
           break;

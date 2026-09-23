@@ -88,6 +88,7 @@ class PendingLeaseLostError extends Error {
 }
 
 export interface SessionRouterDeps {
+  wakeSession?: (sessionId: string) => void;
   delegationStore?: DelegationStore;
   maxConcurrentSubagents?: number;
   maxSubagentModelSteps?: number;
@@ -269,6 +270,7 @@ export class SessionRouter {
       store: deps.delegationStore, pending: deps.pendingEventStore,
       sessions: deps.sessionStore, events: deps.eventLogStore, maxSteps,
       wake: (sessionId) => {
+        if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
         void deps.sessionStore.getById(sessionId).then((session) => {
           if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent);
         }).catch((error) => this.reportDrainError(sessionId, error));
@@ -649,7 +651,8 @@ export class SessionRouter {
   async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
     if (!this.pendingEventStore.requestInterrupt) return { requested: true, interrupted: this.interrupt(sessionId) };
     const requested = await this.pendingEventStore.requestInterrupt(sessionId);
-    if (requested) this.interrupt(sessionId);
+    // The owner observes the exact durable input marker on its heartbeat; a
+    // local abort here could hit the next Turn after a completion race.
     return { requested, interrupted: false };
   }
 
@@ -685,6 +688,29 @@ export class SessionRouter {
     if (session) await session.dispose();
     // Keep a failed disposal's closed handle so a later DELETE can retry cleanup.
     this.sessions.delete(sessionId);
+  }
+
+  /** Retry termination from durable state, including idle Sessions and lost owners. */
+  async cleanupTerminatedSession(sessionId: string): Promise<boolean> {
+    const session = await this.sessionStore.getById(sessionId);
+    if (!session || session.status !== "terminated") return false;
+    const active = this.activeSessions.get(sessionId);
+    if (active) {
+      active.terminating = true;
+      active.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
+      return false; // Wait for actual settlement; abort acceptance is not exit proof.
+    }
+    await this.delegationStore?.reconcileTerminatedExecutions(sessionId);
+    const bindingId = session.delegation?.sandboxSessionId ?? session.id;
+    if (await this.delegationStore?.hasResourceUsers(bindingId)) return false;
+    const sandbox = this.sandboxFor(sessionId, session, session.agent, []);
+    if (sandbox) await sandbox.dispose();
+    this.sessions.delete(sessionId);
+    // Disposal may retain a binding that became busy after our first check.
+    // Keep its outbox request until the persistent identity is actually cleared.
+    return this.delegationStore
+      ? this.delegationStore.withEnvironmentLock(bindingId, async id => ({ sandboxId: id, value: id === null }))
+      : true;
   }
 
   /**
@@ -1322,6 +1348,7 @@ export class SessionRouter {
         effectiveConfig: { model: currentAgent.model } };
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
+      executionSettled = true; // No runtime has started, including preparation failures.
       const activity = { bindingId: session.delegation?.sandboxSessionId ?? sessionId, sessionId, fence: pendingFence };
       if (this.isSandboxed(currentAgent) && await this.sandboxManager?.beginActivity?.(activity, turnController.signal)) {
         sandboxActivity = activity;
@@ -1951,7 +1978,9 @@ export class SessionRouter {
             activitySandbox?.executionSettled?.() !== false) {
             await this.sandboxManager?.finishActivity?.(sandboxActivity);
           }
-          await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
+          if (executionSettled && activitySandbox?.executionSettled?.() !== false) {
+            await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
+          }
         } finally {
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);

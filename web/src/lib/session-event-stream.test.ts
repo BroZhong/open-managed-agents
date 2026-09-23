@@ -78,7 +78,7 @@ describe("session event stream state", () => {
     expect(state.activeDeltas).toEqual([chunk]);
   });
 
-  it.each(["session.error", "session.status_idle"])(
+  it.each(["session.error", "session.status_idle", "session.status_terminated"])(
     "clears an incomplete Delta when %s ends the live projection",
     (type) => {
       let state = sessionEventStreamReducer(initialSessionEventStreamState, {

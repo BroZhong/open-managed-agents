@@ -7,6 +7,7 @@ import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { deriveTitleFromEventData } from "../lib/derive-title.js";
+import { EventCatchup } from "../lib/event-catchup.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -39,6 +40,7 @@ export interface EventRouteDeps {
   sessionStore: SessionStore;
   eventStreamHub?: EventStreamHub;
   sessionRouter?: SessionRouter;
+  wakeSession?: (sessionId: string) => void;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * the SSE reconnect merge is done server-side: completed Events are replayed
@@ -48,6 +50,7 @@ export interface EventRouteDeps {
   turnStreamStore?: TurnStreamStore;
   /** Override the SSE keepalive cadence in focused tests. */
   sseHeartbeatIntervalMs?: number;
+  sseCatchupIntervalMs?: number;
 }
 
 const ALLOWED_USER_TYPES = [
@@ -73,6 +76,7 @@ const PENDING_USER_TYPES = new Set<AllowedUserType>([
 
 export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+  const catchup = new EventCatchup(deps.eventLogStore, deps.sseCatchupIntervalMs);
 
   registerContractRoute(router, getOpenApiRoute("getSessionEventData"), async (c) => {
     const sessionId = c.req.param("id")!;
@@ -138,7 +142,9 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       if (events.length !== 1) {
         return c.json({ error: "user.interrupt must be the only event in a batch" }, 400);
       }
-      const outcome = deps.sessionRouter?.requestInterrupt
+      const outcome = deps.pendingEventStore.requestInterrupt
+        ? { requested: await deps.pendingEventStore.requestInterrupt(sessionId), interrupted: false }
+        : deps.sessionRouter?.requestInterrupt
         ? await deps.sessionRouter.requestInterrupt(sessionId)
         : { requested: false, interrupted: deps.sessionRouter?.interrupt(sessionId) ?? false };
       return c.json({ accepted: true, ...outcome }, 202);
@@ -209,6 +215,8 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
         }
       }
     }
+
+    if (acceptedPending) deps.wakeSession?.(sessionId);
 
     // Trigger session router if we enqueued pending events
     if (acceptedPending && deps.sessionRouter) {
@@ -292,6 +300,10 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       const includeChunks = c.req.query("include") === "chunks";
 
       const shouldReplay = replayParam === "1" || lastEventId !== undefined;
+      let cursorSeq = Math.max(0, Number.parseInt(lastEventId ?? "0", 10) || 0);
+      // Live-only connections start at the current durable boundary. Subsequent
+      // missed notifications are still caught up from that boundary.
+      if (!shouldReplay) cursorSeq = await deps.eventLogStore.getLatestSeq?.(sessionId) ?? 0;
 
       // Subscribe to the live hub BEFORE any backfill so no live event is lost
       // during the (async) PostgreSQL + Redis replay.
@@ -309,6 +321,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       let liveReader: ReadableStreamDefaultReader<string> | undefined;
       let responseClosed = false;
       let cleanupStarted = false;
+      let stopCatchup: (() => void) | undefined;
 
       // Cancellation can race with async PG/Redis replay, the heartbeat timer,
       // and a pending hub read. Make every exit converge on one idempotent
@@ -316,6 +329,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       const cleanup = () => {
         if (cleanupStarted) return;
         cleanupStarted = true;
+        stopCatchup?.();
 
         if (heartbeatTimer !== undefined) {
           clearInterval(heartbeatTimer);
@@ -333,8 +347,26 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       const responseStream = new ReadableStream<string>({
         start: async (controller) => {
           try {
+            const completedBlocks = new Set<string>();
+            const completedTurns = new Set<string>();
+            const latestDelta = new Map<string, string>();
             const enqueue = (frame: string): boolean => {
               if (responseClosed) return false;
+              const meta = deltaMetaOfFrame(frame);
+              if (meta?.turnId) {
+                const block = JSON.stringify([meta.turnId, meta.blockIndex]);
+                if (/^id: /m.test(frame)) {
+                  if (meta.blockIndex !== undefined) completedBlocks.add(block);
+                  if (/^event: session\.(turn_completed|turn_aborted)\n/.test(frame)) completedTurns.add(meta.turnId);
+                } else {
+                  if (completedTurns.has(meta.turnId) || completedBlocks.has(block)) return true;
+                  if (meta.deltaId) {
+                    const latest = latestDelta.get(meta.turnId);
+                    if (latest && compareStreamIds(meta.deltaId, latest) <= 0) return true;
+                    latestDelta.set(meta.turnId, meta.deltaId);
+                  }
+                }
+              }
               try {
                 controller.enqueue(frame);
                 return true;
@@ -374,7 +406,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
               // 1. Completed Events from PostgreSQL (authoritative log). Page
               //    until hasMore is false so a resume after >1 batch of queued
               //    events backfills ALL of them — never just the first page.
-              let cursorSeq = afterSeq;
+              cursorSeq = afterSeq ?? 0;
               let hasMore = true;
               while (hasMore) {
                 const result = await deps.eventLogStore.getEvents(sessionId, {
@@ -400,6 +432,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
               //    the full content already came from PostgreSQL above, so there
               //    is nothing (and nothing needed) to backfill.
               if (turnStreamStore) {
+                try {
                 const active = await turnStreamStore.getActiveTurn(sessionId);
                 if (responseClosed) return;
                 if (active && active.status === "running") {
@@ -420,16 +453,32 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
                     maxBackfilledIdForTurn.set(active.turnId, deltas[deltas.length - 1].id);
                   }
                 }
+                } catch { /* Transient deltas are optional; PG content is authoritative. */ }
               }
             }
 
             // Pipe live events from hub subscription, dropping delta frames that
             // were already covered by the Redis backfill.
             if (responseClosed) return;
+            stopCatchup = catchup.follow(sessionId, {
+              cursor: () => cursorSeq,
+              accept: event => {
+                if (enqueue(`event: ${event.type}\nid: ${event.seq}\ndata: ${JSON.stringify(lazyEventData(event.type, event.data))}\n\n`)) cursorSeq = event.seq;
+              },
+            });
             liveReader = liveStream.getReader();
             while (!responseClosed) {
               const { value, done } = await liveReader.read();
               if (done) break;
+              if (value.startsWith("event: oma.durable\n")) {
+                catchup.refresh(sessionId);
+                continue;
+              }
+              const seq = /^id: (\d+)$/m.exec(value);
+              if (seq) {
+                if (Number(seq[1]) <= cursorSeq) continue;
+                cursorSeq = Number(seq[1]);
+              }
               if (shouldReplay && maxBackfilledIdForTurn.size > 0) {
                 if (isBackfilledDelta(value, maxBackfilledIdForTurn)) continue;
               }
@@ -537,14 +586,15 @@ function isBackfilledDelta(
   return compareStreamIds(meta.deltaId, max) <= 0;
 }
 
-function deltaMetaOfFrame(frame: string): { turnId?: string; deltaId?: string } | undefined {
+function deltaMetaOfFrame(frame: string): { turnId?: string; deltaId?: string; blockIndex?: number } | undefined {
   const match = /\ndata: (.*)\n\n$/.exec(frame);
   if (!match) return undefined;
   try {
-    const parsed = JSON.parse(match[1]) as { turnId?: unknown; deltaId?: unknown };
+    const parsed = JSON.parse(match[1]) as { turnId?: unknown; deltaId?: unknown; blockIndex?: unknown };
     return {
       turnId: typeof parsed.turnId === "string" ? parsed.turnId : undefined,
       deltaId: typeof parsed.deltaId === "string" ? parsed.deltaId : undefined,
+      blockIndex: typeof parsed.blockIndex === "number" ? parsed.blockIndex : undefined,
     };
   } catch {
     return undefined;

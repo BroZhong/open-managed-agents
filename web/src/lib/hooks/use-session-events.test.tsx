@@ -86,6 +86,13 @@ function stubHistoryOnly(history: SessionEvent[], hasMore = false) {
 }
 
 describe("useSessionEvents history replay", () => {
+  it("projects durable Session termination after another API accepted deletion", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    stubHistoryOnly([{ ...historicalEvent(1), type: "session.status_terminated", data: {} }]);
+    const { result } = renderHook(() => useSessionEvents("terminated-remotely"), { wrapper: queryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isHistoryLoading).toBe(false));
+    expect(result.current.status).toBe("terminated");
+  });
   it("isolates concurrent Sessions with identical event, Turn, block and delta IDs through close and reopen", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

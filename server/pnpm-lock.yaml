@@ -88,6 +88,9 @@ importers:
 
   packages/event-log:
     dependencies:
+      '@oma-server/redis':
+        specifier: workspace:*
+        version: link:../redis
       '@oma-server/store':
         specifier: workspace:*
         version: link:../store

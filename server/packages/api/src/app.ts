@@ -52,7 +52,9 @@ export interface AppDeps {
   turnStreamStore?: TurnStreamStore;
   /** Override the SSE keepalive cadence in focused tests. */
   sseHeartbeatIntervalMs?: number;
+  sseCatchupIntervalMs?: number;
   sessionRouter?: SessionRouter;
+  wakeSession?: (sessionId: string) => void;
   /** Deterministic clock seam for Loop API tests. */
   now?: () => Date;
 }
@@ -117,6 +119,7 @@ export function createApp(deps: AppDeps) {
       agentStore: deps.agentStore,
       loopStore: deps.loopStore,
       sessionRouter: deps.sessionRouter,
+      wakeSession: deps.wakeSession,
       now: deps.now,
     }));
   }
@@ -159,6 +162,7 @@ export function createApp(deps: AppDeps) {
       workspaceStore: deps.workspaceStore,
       eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
+      wakeSession: deps.wakeSession,
     }));
   }
 
@@ -176,7 +180,9 @@ export function createApp(deps: AppDeps) {
       eventStreamHub: deps.eventStreamHub,
       turnStreamStore: deps.turnStreamStore,
       sseHeartbeatIntervalMs: deps.sseHeartbeatIntervalMs,
+      sseCatchupIntervalMs: deps.sseCatchupIntervalMs,
       sessionRouter: deps.sessionRouter,
+      wakeSession: deps.wakeSession,
     }));
   }
 

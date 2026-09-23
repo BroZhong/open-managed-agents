@@ -227,3 +227,16 @@ controls. Session or Workspace soft deletion invalidates each subsequent API rea
 already-issued OSS links remain usable until expiry (ADR-0012).
 termination alone does not. History is shared verbatim, not automatically
 redacted. See ADR-0011 and the `SessionShareAuth` OpenAPI security scheme.
+
+## API and Runner roles
+
+The **API** owns authenticated HTTP ingress and SSE delivery. The **Runner** owns
+SessionRouter execution, PG pending-input discovery, Loop scheduling, delegation
+coordination and Sandbox cleanup. Both use PostgreSQL as the only durable history
+and pending-input authority; Redis carries transient Deltas and lightweight
+notifications. Open SSE connections catch up committed PG events during Redis
+outages. API accepts Interrupt and termination without holding execution objects.
+Termination writes a retryable cleanup outbox and a durable lifecycle Event.
+Unknown Sandbox execution is retained until actual settlement; recording activity
+for cleanup does not enable the controlled idle-reclamation rollout.
+See ADR-0018 and `docs/api-runner-operations.md`.

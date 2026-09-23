@@ -11,7 +11,9 @@
     "openapi:generate": "tsx src/openapi/generate.ts",
     "openapi:check": "tsx src/openapi/generate.ts --check && redocly lint ../../../docs/openapi.json",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "start:api": "node --import tsx src/api-server.ts",
+    "start:runner": "node --import tsx src/runner-server.ts"
   },
   "dependencies": {
     "hono": "^4.12.23",
