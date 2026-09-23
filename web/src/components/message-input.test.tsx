@@ -58,6 +58,62 @@ it("opens equipped Skill commands when the user types slash", () => {
   expect(screen.getAllByRole("option")).toHaveLength(2);
 });
 
+it.each(["/board", "/SCREENPLAY", "/skill:board", "/skill:SCREENPLAY"])(
+  "matches Skill name fragments and description keywords for %s",
+  (query) => {
+    const onSend = vi.fn();
+    render(<MessageInput onSend={onSend} skills={skills} />);
+    const input = screen.getByLabelText("Message");
+    fireEvent.change(input, { target: { value: query } });
+
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("option", { name: /storyboard/ })).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveProperty("value", "/skill:storyboard ");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+  },
+);
+
+it("matches Chinese description keywords without selecting during IME composition", () => {
+  const onSend = vi.fn();
+  render(<MessageInput onSend={onSend} skills={[
+    { ...skills[0], description: "将剧本拆解为分镜" },
+    skills[1],
+  ]} />);
+  const input = screen.getByLabelText("Message");
+  fireEvent.change(input, { target: { value: "/分镜" } });
+
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+  fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+  expect(input).toHaveProperty("value", "/分镜");
+  expect(onSend).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(input, { key: "Tab" });
+  expect(input).toHaveProperty("value", "/skill:storyboard ");
+});
+
+it.each(["/unmatched", "discuss /board", "/skill:storyboard scene", "/board\n"])(
+  "does not show Skill suggestions for %j",
+  (draft) => {
+    render(<MessageInput onSend={vi.fn()} skills={skills} />);
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: draft } });
+    expect(screen.queryByRole("listbox")).toBeNull();
+  },
+);
+
+it("filters slash keywords after opening the toolbar picker and replaces the query", () => {
+  render(<MessageInput onSend={vi.fn()} skills={skills} />);
+  const input = screen.getByLabelText("Message");
+  fireEvent.click(screen.getByRole("button", { name: "Choose a Skill" }));
+  fireEvent.change(input, { target: { value: "/topic" } });
+
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("option", { name: /research/ }));
+  expect(input).toHaveProperty("value", "/skill:research ");
+});
+
 it("selects the highlighted Skill with Enter instead of sending an incomplete query", () => {
   const onSend = vi.fn();
   render(<MessageInput onSend={onSend} skills={skills} />);
