@@ -5,6 +5,7 @@ Workspaces and Skills. Requires Node.js >=22; no runtime npm dependencies.
 
 ```sh
 npm ci
+pnpm --dir ../server install --frozen-lockfile # real Host test dependencies
 npm test
 npm pack
 # In an independent directory:

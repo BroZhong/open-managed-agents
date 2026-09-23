@@ -216,3 +216,24 @@ test("incomplete signed response retains successful siblings and never commits a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("Skill download rejects an invalid local directory before contacting Host", async () => {
+  const dir = await realpath(
+    await mkdtemp(join(tmpdir(), "oma-skill-output-")),
+  );
+  await writeFile(join(dir, "file"), "not a directory");
+  const f = await fixture((req, res) =>
+    json(res, { id: "s", files: ["SKILL.md"] }),
+  );
+  try {
+    const r = await run(
+      ["skill", "download", "--skill-id", "s", "--output", join(dir, "file")],
+      auth(f),
+    );
+    assert.equal(r.code, 2, r.stderr);
+    assert.equal(f.requests.length, 0);
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

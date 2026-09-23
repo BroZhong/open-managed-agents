@@ -197,6 +197,7 @@ transfers.push({
   write: true,
   api: ["GET /v1/skills/{id}", "GET /v1/skills/{id}/files/content"],
   run: async (c) => {
+    await checkChain(c.flags.output, "directory");
     const root = base(c, "skill"),
       skill = await c.http.request(root);
     const paths: string[] = skill.files;
