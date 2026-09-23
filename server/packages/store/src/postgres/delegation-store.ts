@@ -164,7 +164,8 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     try {
       await client.query("BEGIN");
       await client.query("INSERT INTO delegation_environments (id, sandbox_id) VALUES ($1, NULL) ON CONFLICT (id) DO NOTHING", [bindingId]);
-      const row = await client.query<{ sandbox_id: string | null }>("SELECT sandbox_id FROM delegation_environments WHERE id = $1 FOR UPDATE", [bindingId]);
+      const row = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>("SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id = $1 FOR UPDATE", [bindingId]);
+      if (row.rows[0].reclaiming) throw new Error('Sandbox reclamation in progress; retry input');
       const result = await work(row.rows[0].sandbox_id);
       await client.query("UPDATE delegation_environments SET sandbox_id = $2 WHERE id = $1", [bindingId, result.sandboxId]);
       await client.query("COMMIT");

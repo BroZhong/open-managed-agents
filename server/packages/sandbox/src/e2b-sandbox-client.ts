@@ -1,4 +1,4 @@
-import { Sandbox, SandboxNotFoundError } from "e2b";
+import { Sandbox, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
 import {
   WORKSPACE_MOUNT_PROBE,
   WORKSPACE_MOUNT_PROBE_CLEANUP,
@@ -168,12 +168,11 @@ export class E2BSandboxClient implements SandboxClient {
       requestTimeoutMs: this.requestTimeoutMs,
       apiKey: this.apiKey,
       domain: this.domain,
-      ...(opts.metadata ? { metadata: opts.metadata } : {}),
+      metadata: { ...opts.metadata, ...(opts.neverTimeout ? { 'e2b.agents.kruise.io/never-timeout': 'true' } : {}) },
       ...(opts.env ? { envs: opts.env } : {}),
-      // `!= null` so an explicit `0` maps to `timeoutMs: 0` (e2b's disable
-      // convention) rather than being dropped as falsy; `undefined` omits it and
-      // e2b applies its own default lifetime (issue #81).
-      ...(opts.timeoutSeconds != null
+      // Sandbox timeout=0 is NOT unlimited on the deployed ACK gateway.
+      // Only the separately verified never-timeout extension removes expiry.
+      ...(!opts.neverTimeout && opts.timeoutSeconds != null
         ? { timeoutMs: opts.timeoutSeconds * 1000 }
         : {}),
     });
@@ -212,12 +211,12 @@ export class E2BSandboxClient implements SandboxClient {
       ) {
         throw new WorkspaceMountUnavailable();
       }
-      const result = await sandbox.commands.run(
+      const result = await this.observeRemote(id, () => sandbox.commands.run(
         ["python3", "-c", WORKSPACE_MOUNT_PROBE, target.mountPath]
           .map(shellQuote)
           .join(" "),
         { user: "user", cwd: "/home/user", timeoutMs: 20_000 },
-      );
+      ));
       if (result.exitCode !== 0) throw new WorkspaceMountUnavailable();
       const probe = JSON.parse(result.stdout);
       if (
@@ -229,7 +228,7 @@ export class E2BSandboxClient implements SandboxClient {
       try {
         await this.verifyWorkspaceProbe(target, probe.probeName, probe.content);
       } finally {
-        const cleanup = await sandbox.commands.run(
+        const cleanup = await this.observeRemote(id, () => sandbox.commands.run(
           [
             "python3",
             "-c",
@@ -240,7 +239,7 @@ export class E2BSandboxClient implements SandboxClient {
             .map(shellQuote)
             .join(" "),
           { user: "user", cwd: "/home/user", timeoutMs: 20_000 },
-        );
+        ));
         if (
           cleanup.exitCode !== 0 ||
           cleanup.stdout.trim() !== "OMA_WORKSPACE_PROBE_REMOVED"
@@ -264,7 +263,8 @@ export class E2BSandboxClient implements SandboxClient {
     }
     const sandbox = this.require(id);
     const cmd = wrapCommand(command, opts);
-    yield* streamRun(sandbox, cmd, {
+    let exited = false;
+    try { yield* streamRun(sandbox, cmd, {
       ...(opts?.cwd ? { cwd: opts.cwd } : {}),
       ...(opts?.env ? { envs: opts.env } : {}),
       // `!= null` (not truthiness) so `timeoutSeconds: 0` — the disable-timeout
@@ -275,24 +275,45 @@ export class E2BSandboxClient implements SandboxClient {
         ? { timeoutMs: opts.timeoutSeconds * 1000 }
         : {}),
       ...(opts?.signal ? { signal: opts.signal } : {}),
-      ...(opts?.onExit ? { onExit: opts.onExit } : {}),
-    });
+      onExit: (result) => {
+        exited = true;
+        opts?.onExit?.(result);
+      },
+    }); } catch (error) {
+      if (error instanceof ExecAbortedBeforeStartError) exited = true;
+      throw error;
+    } finally {
+      if (!exited) this.uncertain.add(id);
+    }
+  }
+
+  // Running operations belong to their own durable Turn activities. Do not
+  // mistake a sibling's still-running command for this Turn's unknown outcome.
+  private readonly uncertain = new Set<string>();
+  hasUncertainExecution(id: string): boolean { return this.uncertain.has(id); }
+  private async observeRemote<T>(id: string, work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      if (!isCommandExitError(error) && !(error instanceof FileNotFoundError) && !(error instanceof InvalidArgumentError)) this.uncertain.add(id);
+      throw error;
+    }
   }
 
   async readFile(id: string, path: string): Promise<string> {
     const sandbox = this.require(id);
-    return sandbox.files.read(path, { format: "text" });
+    return this.observeRemote(id, () => sandbox.files.read(path, { format: "text" }));
   }
 
   async readFileBytes(id: string, path: string): Promise<Uint8Array> {
     const sandbox = this.require(id);
-    return sandbox.files.read(path, { format: "bytes" });
+    return this.observeRemote(id, () => sandbox.files.read(path, { format: "bytes" }));
   }
 
   async writeFile(id: string, path: string, content: string): Promise<void> {
     const sandbox = this.require(id);
     // The e2b SDK creates parent directories automatically on write.
-    await sandbox.files.write(path, content);
+    await this.observeRemote(id, () => sandbox.files.write(path, content));
   }
 
   async writeFileBytes(
@@ -304,13 +325,13 @@ export class E2BSandboxClient implements SandboxClient {
     // Copy into an owned ArrayBuffer: a Uint8Array may be a view with a
     // non-zero offset, while the SDK accepts the whole ArrayBuffer.
     const copy = new Uint8Array(content);
-    await sandbox.files.write(path, copy.buffer);
+    await this.observeRemote(id, () => sandbox.files.write(path, copy.buffer));
   }
 
   async remove(id: string, path: string): Promise<void> {
     const sandbox = this.require(id);
     try {
-      await sandbox.files.remove(path);
+      await this.observeRemote(id, () => sandbox.files.remove(path));
     } catch (error) {
       // Downward reconciliation is idempotent. A concurrent/missing delete is
       // already the desired state; preserve all other backend failures.
@@ -334,9 +355,9 @@ export class E2BSandboxClient implements SandboxClient {
     // present and the listing is fully recursive, the ToolExecutor listing contract.
     // CSI exposes the Workspace root as a symlink. -H follows that command-line
     // root while preserving find's normal handling of links inside the tree.
-    const res = await sandbox.commands.run(
+    const res = await this.observeRemote(id, () => sandbox.commands.run(
       `find -H ${shellQuote(dir)} -type f -printf '%T@ %s %p\\n'`,
-    );
+    ));
     if (res.exitCode !== 0)
       throw new Error("Sandbox file list failed; retry after storage recovers");
     return parseFindOutput(res.stdout);
@@ -378,11 +399,12 @@ export class E2BSandboxClient implements SandboxClient {
     try {
       await sandbox.kill();
     } catch (error) {
-      if (!isMissingFileError(error)) throw error;
+      if (!(error instanceof SandboxNotFoundError)) throw error;
     }
     this.sandboxes.delete(id);
     this.creationMetadata.delete(id);
     this.fileSystems.delete(id);
+    this.uncertain.delete(id);
   }
 
   // ─── internals ────────────────────────────────────────────────────────────
@@ -521,7 +543,7 @@ async function* streamRun(
       const outcome = await Promise.race([waiting, killFailure]);
       await killPromise;
       if (killError) throw killError;
-      if (cancelRequested && killed) {
+      if (cancelRequested && killed && ('result' in outcome || isCommandExitError(outcome.reason))) {
         exitResult = { exitCode: null, signal: "SIGKILL" };
         error = new DOMException("Command aborted", "AbortError");
       } else if ("result" in outcome) {

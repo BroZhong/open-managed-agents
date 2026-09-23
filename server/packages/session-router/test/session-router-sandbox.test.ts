@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryAgentStore } from "@oma-server/store-memory";
@@ -394,6 +394,7 @@ function createDeps(opts: {
   skillArtifactStore?: SkillArtifactStore;
   agentStore?: AgentStore;
   withManager?: boolean;
+  interruptedAdapterDrainTimeoutMs?: number;
   defaultSandboxEnv?: Record<string, string>;
   managedSandboxEnvByAgentId?: Readonly<
     Record<string, Readonly<Record<string, string>>>
@@ -417,6 +418,7 @@ function createDeps(opts: {
         });
 
   const router = new SessionRouter({
+    interruptedAdapterDrainTimeoutMs: opts.interruptedAdapterDrainTimeoutMs,
     eventLogStore,
     pendingEventStore,
     sessionStore,
@@ -443,6 +445,7 @@ function createDeps(opts: {
     eventStreamHub,
     sandboxClient,
     provisionSource,
+    sandboxManager,
     router,
   };
 }
@@ -462,6 +465,64 @@ async function enqueue(
 // ─── SandboxSession injection (#42, now via SandboxManager #77/#78) ──────────
 
 describe("SessionRouter — SandboxManager-backed session injection", () => {
+  it('retains an unknown remote operation even after the model runtime finishes', async () => {
+    const deps = createDeps({ adapter: { async *run(input) {
+      await input.toolExecutor!.writeFile('saved.txt', 'closed');
+    } } });
+    vi.spyOn(deps.sandboxClient, 'hasUncertainExecution').mockReturnValue(true);
+    vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
+    const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
+    const session = await deps.sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
+    await enqueue(deps.pendingEventStore, session.id, 'work');
+    await deps.router.handleNewEvent(session.id, sandboxedAgent);
+    expect(deps.sandboxClient.created).toHaveLength(1);
+    expect(end).not.toHaveBeenCalled();
+    expect((await deps.eventLogStore.getEvents(session.id)).data.map(event => event.type)).toContain('session.turn_completed');
+  });
+  it('retains activity when Interrupt gives up waiting for the runtime', async () => {
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let settle!: () => void;
+    const eventuallySettled = new Promise<void>(resolve => { settle = resolve; });
+    const deps = createDeps({ interruptedAdapterDrainTimeoutMs: 10, adapter: { async *run() {
+      started(); await eventuallySettled;
+    } } });
+    vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
+    const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
+    const session = await deps.sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
+    await enqueue(deps.pendingEventStore, session.id, 'work');
+    const running = deps.router.handleNewEvent(session.id, sandboxedAgent);
+    await ready; deps.router.interrupt(session.id); await running;
+    expect(end).not.toHaveBeenCalled();
+    expect((await deps.eventLogStore.getEvents(session.id)).data.map(event => event.type)).toContain('session.turn_completed');
+    settle();
+    await vi.waitFor(() => expect(end).toHaveBeenCalledOnce());
+  });
+  it.each(['complete', 'failure', 'Interrupt'] as const)('holds activity through model waiting and releases only after actual %s settlement', async outcome => {
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let finish!: () => void;
+    const wait = new Promise<void>(resolve => { finish = resolve; });
+    const deps = createDeps({ adapter: { async *run(input) {
+      started();
+      if (outcome === 'Interrupt') await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
+      else await wait;
+      if (outcome === 'failure') throw new Error('provider failed');
+    } } });
+    const begin = vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
+    const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
+    const session = await deps.sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
+    await enqueue(deps.pendingEventStore, session.id, 'think');
+    const running = deps.router.handleNewEvent(session.id, sandboxedAgent);
+    await ready;
+    expect(begin).toHaveBeenCalledOnce();
+    expect(end).not.toHaveBeenCalled();
+    expect(deps.sandboxClient.created).toHaveLength(0);
+    if (outcome === 'Interrupt') deps.router.interrupt(session.id); else finish();
+    await running;
+    expect(end).toHaveBeenCalledOnce();
+    expect(end.mock.calls[0][0]).toMatchObject({ bindingId: session.id, sessionId: session.id });
+  });
   it("a pure-chat turn creates NO sandbox (lazy)", async () => {
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: chatAdapter,

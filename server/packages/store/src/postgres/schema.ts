@@ -150,6 +150,15 @@ CREATE TABLE IF NOT EXISTS ${s}.delegation_waits (id TEXT PRIMARY KEY, record JS
 CREATE TABLE IF NOT EXISTS ${s}.delegation_commands (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS lifecycle_managed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS idle_since TIMESTAMPTZ;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS ${s}.sandbox_activities (
+  id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  pending_event_id TEXT NOT NULL, owner_id TEXT NOT NULL, generation BIGINT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS sandbox_activities_binding_idx ON ${s}.sandbox_activities(binding_id);
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);

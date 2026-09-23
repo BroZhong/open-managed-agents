@@ -5,6 +5,14 @@ cluster in `cn-shanghai`. This document and the manifests in this directory are
 the current deployment reference. Dated E2E reports under `docs/` describe their
 original runs and must not be used as current runbooks.
 
+Controlled Sandbox idle reclamation has a separate
+[rollout, adoption and rollback procedure](../docs/sandbox-lifecycle-deployment.md).
+Migration 0014 and explicit Session-binding selection are required; the manifests
+do not enable the new policy globally.
+The [2026-09-23 production canary report](../docs/verification/sandbox-lifecycle-release-2026-09-23.md)
+records the deployed image, selected bindings, live model compatibility fix and
+real-time acceptance evidence.
+
 ## Topology
 
 | Scope | Namespace | Resources |

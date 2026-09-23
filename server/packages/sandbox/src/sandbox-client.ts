@@ -19,7 +19,8 @@ export interface SandboxExecOptions {
   /** Working directory for the command (absolute path inside the sandbox). */
   cwd?: string;
   /**
-   * Kill the command after this many seconds. `0` means **disable the timeout**
+   * Command timeout in seconds; expiry attempts process cleanup, while onExit
+   * reports observed termination. `0` means **disable the timeout**
    * (mirrors the e2b SDK's `timeoutMs: 0`), distinct from `undefined` = backend
    * default (issue #81).
    */
@@ -47,6 +48,8 @@ export interface SandboxFileEntry {
 
 /** Options for creating a sandbox. */
 export interface SandboxCreateOptions {
+  /** Verified gateway extension; independent of command timeout and SDK zero. */
+  neverTimeout?: boolean;
   /** Container image / e2b template the sandbox runtime should use. */
   image?: string;
   /** Environment variables baked into the sandbox runtime. */
@@ -69,6 +72,8 @@ export interface SandboxHandle {
  * Low-level sandbox lifecycle + file/exec port. Production uses the E2B SDK; a fake implements the same surface in-memory for tests.
  */
 export interface SandboxClient {
+  /** Transport loss is not an observed remote process exit. */
+  hasUncertainExecution(id: string): boolean;
   /** Native I/O primitives at absolute sandbox paths, separate from persistence. */
   fileSystem?(id: string): ToolFileSystem;
 
@@ -106,11 +111,10 @@ export interface SandboxClient {
   list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]>;
 
   /**
-   * True when the sandbox `id` is still live and able to accept ops. Because
-   * sandboxes are reclaimed by the gateway after their lifetime (ADR-0002 §4),
-   * a memoized handle can go stale between turns; the executor calls this before
-   * a tool op and rebuilds when it returns false. An unknown id (never created,
-   * already destroyed) is not alive.
+   * True when the Sandbox is live. Explicit reclamation and legacy gateway
+   * deadlines can invalidate cached handles; managed bindings have no deadline
+   * (ADR-0017). A confirmed missing resource returns false. Transport failures
+   * throw because they do not prove that a resource disappeared.
    */
   isAlive(id: string): Promise<boolean>;
 

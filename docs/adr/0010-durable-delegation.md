@@ -2,6 +2,11 @@
 
 ## Status
 
+[ADR-0017](0017-sandbox-idle-reclamation.md) adds non-expiring activity records
+for controlled Sandbox lifecycle management. Execution resource-use leases still
+fence work, but expiry is not evidence that remote execution has stopped and
+cannot authorize reclamation of a managed binding.
+
 Accepted. Supersedes ADR-0006's plugin delegation, shared parent ToolExecutor,
 private usage bridge and parent-scoped child lifetime. Retains ADR-0002/0003's
 Host/Adapter boundary and ADR-0009's concurrent Workspace write semantics.

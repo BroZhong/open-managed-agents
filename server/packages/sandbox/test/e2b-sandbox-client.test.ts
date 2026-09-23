@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
+import { SandboxNotFoundError } from 'e2b';
 import {
   E2BSandboxClient,
   parseFindOutput,
@@ -183,7 +184,7 @@ function makeClient(
       };
     if (opts?.failKill) {
       s.kill = async () => {
-        throw new Error("not found");
+        throw new SandboxNotFoundError("not found");
       };
     }
     sandboxes.push(s);
@@ -198,6 +199,58 @@ function makeClient(
   });
   return { client, factoryCalls, sandboxes };
 }
+
+describe('managed Sandbox lifetime and exit evidence', () => {
+  it('does not turn an acknowledged kill plus a broken stream into exit evidence', async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    const controller = new AbortController();
+    const onExit = vi.fn();
+    let waiting!: () => void;
+    let rejectWait!: (error: Error) => void;
+    const ready = new Promise<void>(resolve => { waiting = resolve; });
+    sandboxes[0].processWait = () => { waiting(); return new Promise((_, reject) => { rejectWait = reject; }); };
+    sandboxes[0].processKill.mockImplementation(async () => { rejectWait(new Error('transport lost')); return true; });
+    const run = collect(client.exec(id, ['sleep', '999'], { signal: controller.signal, onExit }));
+    const rejected = expect(run).rejects.toThrow('transport');
+    await ready; controller.abort(); await rejected;
+    expect(onExit).not.toHaveBeenCalled();
+    expect(client.hasUncertainExecution(id)).toBe(true);
+  });
+  it('does not treat a DNS ENOTFOUND during deletion as a missing Sandbox', async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].kill = async () => { throw new Error('getaddrinfo ENOTFOUND gateway'); };
+    await expect(client.destroy(id)).rejects.toThrow('ENOTFOUND');
+    expect(await client.isAlive(id)).toBe(true);
+  });
+  it('uses the verified gateway extension without sending a finite lifetime', async () => {
+    const { client, factoryCalls } = makeClient();
+    await client.create({ neverTimeout: true, timeoutSeconds: 3600, metadata: { 'oma.dev/binding': 'parent' } });
+    expect(factoryCalls[0].opts.metadata).toEqual({ 'oma.dev/binding': 'parent', 'e2b.agents.kruise.io/never-timeout': 'true' });
+    expect(factoryCalls[0].opts.timeoutMs).toBeUndefined();
+  });
+  it('retains uncertainty after a lost command stream, even if a later command exits', async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].processWait = async () => { throw new Error('transport disconnected'); };
+    sandboxes[0].processKill.mockRejectedValueOnce(new Error('network unavailable'));
+    await expect((async () => { for await (const _ of client.exec(id, ['sleep', '999'])) {} })()).rejects.toThrow('transport');
+    expect(client.hasUncertainExecution(id)).toBe(true);
+    sandboxes[0].processWait = undefined;
+    for await (const _ of client.exec(id, ['true'])) {}
+    expect(client.hasUncertainExecution(id)).toBe(true);
+  });
+  it('clears activity on an observed nonzero exit and on an abort before process creation', async () => {
+    const { client } = makeClient(() => ({ exitCode: 2, throwExit: true }));
+    const { id } = await client.create();
+    for await (const _ of client.exec(id, ['false'])) {}
+    expect(client.hasUncertainExecution(id)).toBe(false);
+    const signal = AbortSignal.abort();
+    await expect((async () => { for await (const _ of client.exec(id, ['true'], { signal })) {} })()).rejects.toBeInstanceOf(ExecAbortedBeforeStartError);
+    expect(client.hasUncertainExecution(id)).toBe(false);
+  });
+});
 
 async function collect(
   it: AsyncIterable<SandboxExecChunk>,
