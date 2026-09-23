@@ -136,9 +136,19 @@ permit direct HTTPS egress to these endpoints.
 For local development with a proxy in Fake-IP mode, exclude provider domains
 from Fake-IP DNS (for example, add `open.bigmodel.cn` to Clash/Mihomo's
 `dns.fake-ip-filter`). Reserved `198.18.0.0/15` addresses are deliberately blocked,
-even when the proxy would route them to a public service. Model discovery reports
+even when the proxy would route them to a public service. Discovery and inference tests report
 this DNS failure separately from authentication errors; no API key reaches the
 provider when the connection is blocked.
+
+Inference tests also report the upstream HTTP status without exposing upstream
+error bodies. A 404/405 can mean the selected protocol's inference endpoint is
+unsupported even when model discovery succeeds: OpenAI Chat Completions and
+OpenAI Responses share `/models` but call `/chat/completions` and `/responses`,
+respectively. Live production probes on 2026-09-24 confirmed that BigModel's
+Coding endpoint accepted Chat Completions for `glm-5.3` but returned 404 for
+Responses. A 401/403 points to credentials/access; a 429 to rate limits/quota.
+These signals help diagnose a failed test; a generic error from an older release
+alone cannot identify which condition occurred.
 
 ### Deployment
 

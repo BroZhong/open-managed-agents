@@ -9,6 +9,7 @@ import {
   isPublicProviderAddress,
   providerBaseUrl,
   providerFetch,
+  ProviderAddressError,
 } from "../src/lib/provider-fetch.js";
 const input: ProviderInput = {
   name: "My provider",
@@ -44,6 +45,66 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("Tenant provider configuration", () => {
+  it("preserves DNS rejection through the real Pi probe without exposing transport secrets", async () => {
+    const stores = createMemoryStores();
+    const service = new ModelProviderService(
+      stores.modelProviderStore,
+      "ab".repeat(32),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(
+        new TypeError(`fetch failed ${input.apiKey}`, {
+          cause: new ProviderAddressError(true),
+        }),
+      ),
+    );
+    let response: Response | undefined;
+    try {
+      await service.test("a", input);
+    } catch (error) {
+      response = (error as { res: Response }).res;
+    }
+    expect(response?.status).toBe(422);
+    const body = await response!.text();
+    expect(body).toContain("Fake-IP");
+    expect(body).toContain("before API-key authentication");
+    expect(body).not.toContain(input.apiKey);
+  });
+  it.each([
+    [401, "API key"],
+    [404, "protocol"],
+    [429, "rate limit"],
+  ])(
+    "preserves upstream HTTP %s through the real Pi probe",
+    async (status, hint) => {
+      const stores = createMemoryStores();
+      const service = new ModelProviderService(
+        stores.modelProviderStore,
+        "ab".repeat(32),
+      );
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json(
+            { error: { message: `reflected ${input.apiKey}` } },
+            { status },
+          ),
+        ),
+      );
+      let response: Response | undefined;
+      try {
+        await service.test("a", input);
+      } catch (error) {
+        response = (error as { res: Response }).res;
+      }
+      expect(response?.status).toBe(422);
+      const body = await response!.text();
+      expect(body).toContain(`HTTP ${status}`);
+      expect(body).toContain(hint);
+      expect(body).not.toContain(input.apiKey);
+    },
+  );
   it("requires a successful test of the exact configuration and encrypts stored credentials", async () => {
     const { service, stores } = fixture();
     const proof = await service.test("a", input);

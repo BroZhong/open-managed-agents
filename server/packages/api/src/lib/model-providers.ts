@@ -157,8 +157,33 @@ export class ModelProviderService {
   }
   async test(tenantId: string, input: ProviderInput) {
     const definition = await this.definition(tenantId, input);
+    const request = providerFetch(definition.baseUrl);
+    let diagnostic: string | undefined;
+    // Pi returns inference failures as AssistantMessages, dropping the original
+    // fetch cause. Capture only Host-owned diagnostics at the transport boundary.
+    const observedFetch: typeof fetch = async (url, init) => {
+      diagnostic = undefined;
+      try {
+        const response = await request(url, init);
+        if (!response.ok) {
+          const hint =
+            response.status === 401 || response.status === 403
+              ? "Check the API key and model access."
+              : response.status === 404 || response.status === 405
+                ? "Check that the Base URL supports the selected protocol's inference endpoint. A model list alone does not prove protocol support."
+                : response.status === 429
+                  ? "The provider rejected the request due to a rate limit or quota. Check your provider account and retry later."
+                  : "Check the provider's availability, model access and protocol.";
+          diagnostic = `Provider returned HTTP ${response.status}. ${hint}`;
+        }
+        return response;
+      } catch (error) {
+        diagnostic = providerAddressError(error)?.message;
+        throw error;
+      }
+    };
     try {
-      await this.probe(definition, providerFetch(definition.baseUrl));
+      await this.probe(definition, observedFetch);
     } catch (error) {
       // Only our SDK helper's fixed message is safe to expose.
       const message =
@@ -170,7 +195,7 @@ export class ModelProviderService {
         )
           ? error.message
           : "Provider test failed. Check the endpoint, protocol, API key and model access.";
-      throw new ProviderError(422, { message });
+      throw new ProviderError(422, { message: diagnostic ?? message });
     }
     const testedAt = new Date().toISOString();
     return {
