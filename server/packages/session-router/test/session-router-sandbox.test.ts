@@ -2,6 +2,7 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryAgentStore } from "@oma-server/store-memory";
+import { PendingEventClaimLostError } from "@oma-server/store";
 import {
   FakeSandboxClient,
   FakeProvisionSource,
@@ -465,6 +466,33 @@ async function enqueue(
 // ─── SandboxSession injection (#42, now via SandboxManager #77/#78) ──────────
 
 describe("SessionRouter — SandboxManager-backed session injection", () => {
+  it('observes settlement when termination races with a durable event write', async () => {
+    let aborted = false;
+    const deps = createDeps({ adapter: { async *run(input) {
+      yield { id: 'racing-write', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked' }] };
+      if (!input.signal!.aborted) await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
+      aborted = input.signal!.aborted;
+      yield { id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked too' }] };
+    } } });
+    vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
+    const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
+    const session = await deps.sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
+    const append = deps.eventLogStore.append.bind(deps.eventLogStore);
+    vi.spyOn(deps.eventLogStore, 'append').mockImplementation(async (id, event) => {
+      if (event.type === 'agent.message') {
+        await deps.sessionStore.terminate(id);
+        const fence = event.pendingFence!;
+        throw new PendingEventClaimLostError(id, fence.eventId, fence.ownerId, fence.generation);
+      }
+      return append(id, event);
+    });
+    await enqueue(deps.pendingEventStore, session.id, 'work');
+    await deps.router.handleNewEvent(session.id, sandboxedAgent).catch(() => {});
+    await vi.waitFor(() => expect(end).toHaveBeenCalledOnce(), { timeout: 200 });
+    expect(aborted).toBe(true);
+    expect((await deps.eventLogStore.getEvents(session.id)).data.some(e => e.type === 'agent.message')).toBe(false);
+  });
+
   it.each([{ unknown: false, retry: false }, { unknown: true, retry: false }, { unknown: false, retry: true }])('observes natural runtime completion after termination accounting (remote unknown: $unknown, PG retry: $retry)', async ({ unknown, retry }) => {
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });

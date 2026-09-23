@@ -1098,6 +1098,7 @@ export class SessionRouter {
       let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
       let activitySandbox: SandboxSession | undefined;
       let executionSettled = false;
+      let iterationFailed = false;
       let turnId: string | undefined;
       const turnController = new AbortController();
       const forwardOuterAbort = () => {
@@ -1836,6 +1837,15 @@ export class SessionRouter {
               await persistCompleteEvent(event);
             }
           }
+        } catch (error) {
+          if (!executionSettled) {
+            // A fenced write can fail before the heartbeat observes revocation.
+            // Stop the runtime and observe its exit just as for an explicit abort.
+            iterationFailed = !turnController.signal.aborted;
+            abandonIterator = true;
+            turnController.abort(error);
+          }
+          throw error;
         } finally {
           if (abandonIterator) {
             // AsyncIterator.return() is advisory: a non-compliant Adapter may
@@ -1877,13 +1887,13 @@ export class SessionRouter {
           }
         }
       } catch (err) {
-        if (leaseLost) {
+        if (leaseLost || err instanceof PendingEventClaimLostError) {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
           }
           return;
         }
-        if (turnController.signal.aborted) {
+        if (turnController.signal.aborted && !iterationFailed) {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
           }
@@ -1919,7 +1929,7 @@ export class SessionRouter {
       // those orphans with the same repair the restart path uses, and record the
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
-      if (turnController.signal.aborted) {
+      if (turnController.signal.aborted && !iterationFailed) {
         await this.delegations?.interruptChildren(session, turnId, pendingFence);
         await this.repairDanglingToolUses(
           sessionId,
