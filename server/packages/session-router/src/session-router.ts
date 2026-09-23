@@ -12,6 +12,7 @@ import type {
   SkillArtifactStore,
   DelegationStore,
   DelegationExecution,
+  SandboxActivity,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent, presentContextData } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
@@ -232,6 +233,7 @@ export class SessionRouter {
   private readonly interruptedAdapterDrainMaxEvents: number;
   private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
   private readonly activeSessions = new Map<string, ActiveSessionRun>();
+  private readonly settledActivities = new Map<string, SandboxActivity>();
   private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly claimRetryAttempts = new Map<string, number>();
   private readonly claimHeartbeatStops = new Map<string, () => void>();
@@ -599,6 +601,7 @@ export class SessionRouter {
   async recoverPendingEvents(
     onBackgroundError?: (failure: PendingRecoveryFailure) => void,
   ): Promise<PendingRecoverySummary> {
+    await this.retrySettledActivities();
     const summary: PendingRecoverySummary = {
       recovered: [],
       discarded: [],
@@ -692,6 +695,7 @@ export class SessionRouter {
 
   /** Retry termination from durable state, including idle Sessions and lost owners. */
   async cleanupTerminatedSession(sessionId: string): Promise<boolean> {
+    await this.retrySettledActivities(sessionId);
     const session = await this.sessionStore.getById(sessionId);
     if (!session || session.status !== "terminated") return false;
     const active = this.activeSessions.get(sessionId);
@@ -711,6 +715,24 @@ export class SessionRouter {
     return this.delegationStore
       ? this.delegationStore.withEnvironmentLock(bindingId, async id => ({ sandboxId: id, value: id === null }))
       : true;
+  }
+
+  private async finishSettledActivity(activity: SandboxActivity): Promise<void> {
+    const key = JSON.stringify([activity.bindingId, activity.sessionId, activity.fence]);
+    // This map holds observed exit evidence only. If PG is temporarily down,
+    // scans retry recording it; owner loss still leaves unknown activity safe.
+    this.settledActivities.set(key, activity);
+    await this.sandboxManager?.finishActivity?.(activity);
+    await this.delegationStore?.releaseResourceUse(activity.sessionId, activity.fence);
+    this.settledActivities.delete(key);
+  }
+
+  private async retrySettledActivities(sessionId?: string): Promise<void> {
+    for (const activity of this.settledActivities.values()) {
+      if (sessionId && activity.sessionId !== sessionId) continue;
+      try { await this.finishSettledActivity(activity); }
+      catch (error) { this.reportDrainError(activity.sessionId, error); }
+    }
   }
 
   /**
@@ -1841,8 +1863,7 @@ export class SessionRouter {
                   next = undefined;
                   if (outcome.kind === 'error' || outcome.result.done) {
                     if (activitySandbox?.executionSettled?.() !== false) {
-                      await this.sandboxManager?.finishActivity?.(activity);
-                      await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
+                      await this.finishSettledActivity(activity);
                     }
                     return;
                   }
@@ -1972,9 +1993,8 @@ export class SessionRouter {
         try {
           if (sandboxActivity && executionSettled &&
             activitySandbox?.executionSettled?.() !== false) {
-            await this.sandboxManager?.finishActivity?.(sandboxActivity);
-          }
-          if (executionSettled && activitySandbox?.executionSettled?.() !== false) {
+            await this.finishSettledActivity(sandboxActivity);
+          } else if (executionSettled && activitySandbox?.executionSettled?.() !== false) {
             await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
           }
         } finally {

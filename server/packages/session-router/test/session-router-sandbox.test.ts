@@ -465,7 +465,7 @@ async function enqueue(
 // ─── SandboxSession injection (#42, now via SandboxManager #77/#78) ──────────
 
 describe("SessionRouter — SandboxManager-backed session injection", () => {
-  it.each([false, true])('observes natural runtime completion after termination accounting (remote unknown: %s)', async unknown => {
+  it.each([{ unknown: false, retry: false }, { unknown: true, retry: false }, { unknown: false, retry: true }])('observes natural runtime completion after termination accounting (remote unknown: $unknown, PG retry: $retry)', async ({ unknown, retry }) => {
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
     let settle!: () => void;
@@ -480,6 +480,7 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     vi.spyOn(deps.sandboxClient, 'hasUncertainExecution').mockReturnValue(unknown);
     vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
     const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
+    if (retry) end.mockRejectedValueOnce(new Error('temporary PG outage'));
     const session = await deps.sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
     await enqueue(deps.pendingEventStore, session.id, 'work');
     const running = deps.router.handleNewEvent(session.id, sandboxedAgent);
@@ -492,7 +493,14 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     if (unknown) {
       await new Promise(resolve => setTimeout(resolve, 30));
       expect(end).not.toHaveBeenCalled();
-    } else await vi.waitFor(() => expect(end).toHaveBeenCalledOnce(), { timeout: 200 });
+    } else {
+      await vi.waitFor(() => expect(end).toHaveBeenCalledOnce(), { timeout: 200 });
+      if (retry) {
+        await deps.router.cleanupTerminatedSession(session.id);
+        expect(end).toHaveBeenCalledTimes(2);
+        expect(end.mock.calls[1][0]).toEqual(end.mock.calls[0][0]);
+      }
+    }
     expect((await deps.eventLogStore.getEvents(session.id)).data.some(e => JSON.stringify(e.data).includes('must not persist'))).toBe(false);
   });
 
