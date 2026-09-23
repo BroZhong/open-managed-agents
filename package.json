@@ -12,6 +12,9 @@
     "typecheck": "pnpm --dir adapter typecheck",
     "e2e": "pnpm --dir adapter e2e",
     "e2e:codex": "pnpm --dir adapter e2e:codex",
-    "e2e:pi": "pnpm --dir adapter e2e:pi"
+    "e2e:pi": "pnpm --dir adapter e2e:pi",
+    "test:cli": "npm --prefix cli test",
+    "typecheck:cli": "npm --prefix cli run typecheck",
+    "pack:cli": "npm --prefix cli run build && cd cli && npm pack"
   }
 }

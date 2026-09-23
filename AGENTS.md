@@ -11,3 +11,7 @@ Default label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-h
 ### Domain docs
 
 Single-context layout (one CONTEXT.md + docs/adr/ at root). See `docs/agents/domain.md`.
+
+### CLI
+
+Agent-friendly TypeScript/npm CLI conventions and verification: see `docs/agents/cli.md`.
