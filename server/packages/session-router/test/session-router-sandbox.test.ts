@@ -465,6 +465,37 @@ async function enqueue(
 // ─── SandboxSession injection (#42, now via SandboxManager #77/#78) ──────────
 
 describe("SessionRouter — SandboxManager-backed session injection", () => {
+  it.each([false, true])('observes natural runtime completion after termination accounting (remote unknown: %s)', async unknown => {
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let settle!: () => void;
+    const settled = new Promise<void>(resolve => { settle = resolve; });
+    const deps = createDeps({ adapter: { async *run(input) {
+      await input.toolExecutor!.writeFile('saved.txt', 'preserved');
+      started();
+      await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
+      yield { id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'must not persist' }] };
+      await settled;
+    } } });
+    vi.spyOn(deps.sandboxClient, 'hasUncertainExecution').mockReturnValue(unknown);
+    vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
+    const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
+    const session = await deps.sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
+    await enqueue(deps.pendingEventStore, session.id, 'work');
+    const running = deps.router.handleNewEvent(session.id, sandboxedAgent);
+    await ready;
+    await deps.sessionStore.terminate(session.id);
+    expect(await deps.router.cleanupTerminatedSession(session.id)).toBe(false);
+    await running;
+    expect(end).not.toHaveBeenCalled();
+    settle();
+    if (unknown) {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(end).not.toHaveBeenCalled();
+    } else await vi.waitFor(() => expect(end).toHaveBeenCalledOnce(), { timeout: 200 });
+    expect((await deps.eventLogStore.getEvents(session.id)).data.some(e => JSON.stringify(e.data).includes('must not persist'))).toBe(false);
+  });
+
   it('retains an unknown remote operation even after the model runtime finishes', async () => {
     const deps = createDeps({ adapter: { async *run(input) {
       await input.toolExecutor!.writeFile('saved.txt', 'closed');

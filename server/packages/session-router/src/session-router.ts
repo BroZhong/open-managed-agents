@@ -1816,28 +1816,42 @@ export class SessionRouter {
           }
         } finally {
           if (abandonIterator) {
-            // The bounded drain can finish before the runtime does. Its already
-            // issued next() may later provide actual settlement evidence. Release
-            // only this attempt's activity; never infer settlement from return().
-            if (pendingNext && sandboxActivity) {
-              const activity = sandboxActivity;
-              void pendingNext.then(async (outcome) => {
-                if ((outcome.kind === 'error' || outcome.kind === 'next' && outcome.result.done) &&
-                  activitySandbox?.executionSettled?.() !== false) {
-                  await this.sandboxManager?.finishActivity?.(activity);
-                }
-              }).catch(error => this.reportDrainError(sessionId, error));
-            }
             // AsyncIterator.return() is advisory: a non-compliant Adapter may
             // leave it queued behind the same hung next(). Never await it, and
             // absorb either a synchronous throw or eventual rejection.
-            try {
-              const closeIterator = eventIterator.return;
-              if (closeIterator) {
-                void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
+            const closeAbandonedIterator = () => {
+              try {
+                const closeIterator = eventIterator.return;
+                if (closeIterator) {
+                  void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
+                }
+              } catch {
+                // Best-effort closure only; Router completion remains bounded.
               }
-            } catch {
-              // Best-effort closure only; Router completion remains bounded.
+            };
+            if (sandboxActivity) {
+              const activity = sandboxActivity;
+              // Pi can emit final accounting before its natural end. Observe
+              // that end without publishing revoked output or blocking cleanup.
+              // Calling return() first would conceal the settlement evidence.
+              void (async () => {
+                let next = pendingNext;
+                for (let seen = 0; seen < this.interruptedAdapterDrainMaxEvents; seen++) {
+                  const outcome = await (next ?? nextOutcome());
+                  next = undefined;
+                  if (outcome.kind === 'error' || outcome.result.done) {
+                    if (activitySandbox?.executionSettled?.() !== false) {
+                      await this.sandboxManager?.finishActivity?.(activity);
+                      await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
+                    }
+                    return;
+                  }
+                }
+                // An endless or stuck runtime remains unknown, never reclaimed.
+              })().catch(error => this.reportDrainError(sessionId, error))
+                .finally(closeAbandonedIterator);
+            } else {
+              closeAbandonedIterator();
             }
           }
         }
