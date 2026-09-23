@@ -18,7 +18,10 @@ import {
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { type CustomProviderProtocol } from "./custom-provider-protocols.js";
-export { CUSTOM_PROVIDER_PROTOCOLS, type CustomProviderProtocol } from "./custom-provider-protocols.js";
+export {
+  CUSTOM_PROVIDER_PROTOCOLS,
+  type CustomProviderProtocol,
+} from "./custom-provider-protocols.js";
 export interface CustomModelDefinition {
   id: string;
   name: string;

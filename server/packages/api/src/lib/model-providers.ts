@@ -43,8 +43,16 @@ export class ModelProviderService {
   constructor(
     readonly store: ModelProviderStore,
     private readonly encryptionKey: string | undefined,
-    private readonly probe: typeof testCustomProvider = async (...args) => (await import("@open-managed-agents/adapter-pi-agent")).testCustomProvider(...args),
-    private readonly discoverModels: typeof discoverCustomProviderModels = async (...args) => (await import("@open-managed-agents/adapter-pi-agent")).discoverCustomProviderModels(...args),
+    private readonly probe: typeof testCustomProvider = async (...args) =>
+      (
+        await import("@open-managed-agents/adapter-pi-agent")
+      ).testCustomProvider(...args),
+    private readonly discoverModels: typeof discoverCustomProviderModels = async (
+      ...args
+    ) =>
+      (
+        await import("@open-managed-agents/adapter-pi-agent")
+      ).discoverCustomProviderModels(...args),
   ) {}
   private key() {
     if (!this.encryptionKey || !/^[a-f\d]{64}$/i.test(this.encryptionKey)) {
@@ -135,7 +143,9 @@ export class ModelProviderService {
       );
       return { data };
     } catch (error) {
-      const { ModelDiscoveryError } = await import("@open-managed-agents/adapter-pi-agent");
+      const { ModelDiscoveryError } = await import(
+        "@open-managed-agents/adapter-pi-agent"
+      );
       throw new ProviderError(422, {
         message:
           providerAddressError(error)?.message ??
@@ -229,7 +239,9 @@ export class ModelProviderService {
         testedAt: _testedAt,
         ...config
       } = record;
-      const { registerCustomProvider } = await import("@open-managed-agents/adapter-pi-agent");
+      const { registerCustomProvider } = await import(
+        "@open-managed-agents/adapter-pi-agent"
+      );
       await registerCustomProvider(
         runtime,
         {

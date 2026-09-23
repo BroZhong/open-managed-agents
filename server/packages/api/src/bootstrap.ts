@@ -61,7 +61,7 @@ export async function startHost(role: HostRole): Promise<void> {
   const app = new Hono();
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
-    modelProviders: new ModelProviderService(stores.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY),
+    modelProviderService: new ModelProviderService(stores.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     sseCatchupIntervalMs: Number(process.env.SSE_CATCHUP_INTERVAL_MS ?? 2000),
   }));

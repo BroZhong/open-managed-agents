@@ -14,6 +14,11 @@ load SessionRouter, Pi, CLI adapters, Sandbox clients, Kubernetes Sandbox Secret
 Loop timers or reclamation timers. Runner owns those execution dependencies.
 Web remains a separate application and Deployment.
 
+Tenant-owned provider configuration adds on-demand Pi discovery/connection probes
+to authenticated API requests. They do not start Sessions or load the managed Pi
+catalog; SDK loading remains lazy. API and Runner share only the provider-record
+encryption key for this feature, while Turn execution remains Runner-owned.
+
 PostgreSQL owns accepted input, FIFO claims, leases and generations, execution
 and delegation state, Loop dispatch, Complete Events and termination cleanup.
 Only a committed ingress transaction authorizes HTTP acceptance. A Runner always
