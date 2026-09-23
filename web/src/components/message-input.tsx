@@ -55,14 +55,14 @@ export function MessageInput({
   const pickerButtonRef = useRef<HTMLButtonElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const skillQuery =
-    text === "/"
-      ? ""
-      : text.match(/^\/skill:([^\s]*)$/)?.[1].toLowerCase();
+  // Only search a single slash token; whitespace starts the command's arguments.
+  const skillQuery = text.match(/^\/(?:skill:)?([^\s]*)$/i)?.[1].toLowerCase();
   const skillSuggestions =
     (!skillPickerOpen && skillQuery === undefined) || suggestionsDismissed
       ? []
-      : skills.filter((skill) => skill.name.toLowerCase().startsWith(skillPickerOpen ? "" : skillQuery ?? ""));
+      : skills.filter((skill) =>
+          `${skill.name} ${skill.description}`.toLowerCase().includes(skillQuery ?? ""),
+        );
   const activeSkillIndex = Math.min(
     selectedSkillIndex,
     Math.max(skillSuggestions.length - 1, 0),
@@ -119,7 +119,10 @@ export function MessageInput({
   function selectSkill(index: number) {
     const skill = skillSuggestions[index];
     if (!skill) return;
-    setText(`/skill:${skill.name} ${skillPickerOpen ? text.replace(/^\/skill:[^\s]*\s*|^\/$/, "") : ""}`);
+    const draft = skillPickerOpen && skillQuery === undefined
+      ? text.replace(/^\/skill:[^\s]*\s*/i, "")
+      : "";
+    setText(`/skill:${skill.name} ${draft}`);
     setSkillPickerOpen(false);
     setSelectedSkillIndex(0);
     setSuggestionsDismissed(true);
