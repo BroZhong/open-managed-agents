@@ -151,6 +151,3 @@ Exit codes: 0 success; 1 network/internal/partial failure; 2 validation;
 124 timeout; 130 SIGINT. Structured error fields are type/subtype/message/param
 (when relevant)/hint/retryable. Follow the hint and inspect remote state before
 retrying a write; do not infer that a timeout proves it was not accepted.
-
-Design guidance adapted from https://github.com/welltop-cn/vfs-cli for OMA and
-TypeScript/npm, without VFS credentials, business conventions or release flows.
