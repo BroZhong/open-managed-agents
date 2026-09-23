@@ -13,7 +13,8 @@ const commands = [...agents, ...files, ...skills, ...transfers, ...sessions];
 let schemaPath = "";
 commands.push(...discovery(commands, () => schemaPath));
 const controller = new AbortController();
-process.once("SIGINT", () =>
+process.once("SIGINT", () => {
+  process.stdin.destroy();
   controller.abort(
     new CliError(
       {
@@ -25,8 +26,8 @@ process.once("SIGINT", () =>
       },
       130,
     ),
-  ),
-);
+  );
+});
 let secret = process.env.OMA_API_KEY ?? "";
 try {
   const { words, flags } = parse(process.argv.slice(2), commands);
@@ -43,12 +44,9 @@ try {
     const command = commands.find((c) => c.path === words.join(" "));
     if (!command) invalid("Unknown command; run oma-cli --help");
     const inputs = await prepare(command, flags);
+    controller.signal.throwIfAborted();
     const http = new Http(inputs.flags, controller.signal);
     if (!command.offline) http.configured();
-    if (command.path.startsWith("workspace file "))
-      await http.request(
-        "/v1/workspaces/" + encodeURIComponent(inputs.flags["workspace-id"]),
-      );
     const result = await command.run({
       ...inputs,
       http,
@@ -73,7 +71,9 @@ try {
     process.exitCode = result.code ?? 0;
   }
 } catch (e) {
-  const error = normalizeError(e);
+  const error = normalizeError(
+    controller.signal.aborted ? controller.signal.reason : e,
+  );
   process.stderr.write(
     JSON.stringify({ ok: false, error: redact(error.info, [secret]) }) + "\n",
   );

@@ -12,7 +12,8 @@ fields, requirements, exclusivity, API mappings and effects. `input.ts` performs
 strict offline validation and merges only non-overlapping sources. Discovery
 builds help/schema from those definitions. `http.ts` owns prefix-aware Host
 requests, credential separation, errors, per-request timeout and cursor traversal.
-It never retries writes (currently ordinary reads also have no implicit retries).
+It never retries writes. Transient GET/HEAD failures have at most three attempts,
+with bounded backoff and the same overall observation deadline.
 `output.ts` handles envelopes, field/raw, fixed/default columns, CSV and NDJSON.
 `local-files.ts` owns local symlink/path checks and complete-file commits.
 `events.ts` owns durable history, resumable SSE and Session waiting.

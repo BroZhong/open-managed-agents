@@ -104,3 +104,115 @@ test("Skill upload preserves fallback directory name, detects all names before a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("recursive upload preflights the entire tree and reports lost submissions as unknown without retry", async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "oma-upload-")));
+  await writeFile(join(dir, "a.txt"), "A");
+  await writeFile(join(dir, "b.txt"), "B");
+  let conflicts = true;
+  let posts = 0;
+  const f = await fixture((req, res) => {
+    if (req.method === "POST") {
+      posts++;
+      if (posts === 1) json(res, { data: [{ path: "root/a.txt" }] });
+      else req.socket.destroy();
+    } else
+      json(
+        res,
+        req.url.includes("/files")
+          ? {
+              data: conflicts
+                ? [{ path: "root/b.txt", size: 1, updated_at: null }]
+                : [],
+            }
+          : { id: "w" },
+      );
+  });
+  try {
+    const args = [
+      "workspace",
+      "file",
+      "upload",
+      "--workspace-id",
+      "w",
+      "--path",
+      "root",
+      "--file",
+      dir,
+      "--recursive",
+    ];
+    const conflict = await run(args, auth(f));
+    assert.equal(conflict.code, 5);
+    assert.equal(posts, 0);
+    conflicts = false;
+    const r = await run(args, auth(f));
+    assert.equal(r.code, 1, r.stderr);
+    assert.equal(r.data().ok, false);
+    assert.deepEqual(r.data().meta, { succeeded: 1, failed: 0, unknown: 1 });
+    assert.equal(r.data().data[1].status, "unknown");
+    assert.equal(r.error().type, "partial_failure");
+    assert.equal(posts, 2);
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test("incomplete signed response retains successful siblings and never commits a truncated file", async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "oma-partial-")));
+  const signed = await fixture((req, res) => {
+    if (req.url === "/bad") {
+      res.writeHead(200, { "content-length": "100" });
+      res.write("partial");
+      setTimeout(() => res.destroy(), 20);
+    } else res.end("good");
+  });
+  const host = await fixture((req, res) => {
+    if (req.url.includes("/files?"))
+      json(res, {
+        data: [
+          { path: "folder/a.txt", size: 4 },
+          { path: "folder/b.txt", size: 100 },
+        ],
+      });
+    else if (req.url.includes("/files/"))
+      json(res, {
+        url: signed.url + (req.url.includes("b.txt") ? "/bad" : "/good"),
+        size: req.url.includes("b.txt") ? 100 : 4,
+      });
+    else json(res, { id: "w" });
+  });
+  try {
+    const r = await run(
+      [
+        "workspace",
+        "file",
+        "download",
+        "--workspace-id",
+        "w",
+        "--path",
+        "folder",
+        "--recursive",
+        "--output",
+        join(dir, "out"),
+      ],
+      auth(host),
+    );
+    assert.equal(r.code, 1, r.stderr);
+    assert.deepEqual(r.data().meta, { succeeded: 1, failed: 1, unknown: 0 });
+    assert.equal(await readFile(join(dir, "out/a.txt"), "utf8"), "good");
+    await assert.rejects(readFile(join(dir, "out/b.txt")));
+    const { readdir } = await import("node:fs/promises");
+    assert.deepEqual(await readdir(join(dir, "out")), ["a.txt"]);
+    assert.ok(
+      signed.requests.every(
+        (r) =>
+          r.headers.authorization === undefined &&
+          r.headers["x-api-key"] === undefined,
+      ),
+    );
+  } finally {
+    await host.close();
+    await signed.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

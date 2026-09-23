@@ -127,6 +127,8 @@ async function uploadWorkspace(c: Context) {
 async function downloadWorkspace(c: Context) {
   const f = c.flags,
     root = base(c, "workspace");
+  await checkChain(f.output, f.recursive ? "directory" : "file", f.overwrite);
+  if (!f.recursive) await c.http.request(root);
   const paths = f.recursive
     ? (await workspaceFiles(c, f.path || undefined)).map((x) => x.path)
     : [f.path];
@@ -350,3 +352,14 @@ transfers.push({
     return batch(results);
   },
 });
+
+for (const command of transfers) {
+  if (command.path.startsWith("workspace file "))
+    command.api = [
+      ...new Set([
+        "GET /v1/workspaces/{id}",
+        "GET /v1/workspaces/{id}/files",
+        ...(command.api ?? []),
+      ]),
+    ];
+}

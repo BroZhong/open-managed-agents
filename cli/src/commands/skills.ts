@@ -1,5 +1,5 @@
 import { boolean, id, pagination, string, type Command } from "../types.js";
-import { CliError } from "../errors.js";
+import { CliError, invalid } from "../errors.js";
 import { base, enc, write } from "./common.js";
 import { pick } from "../http.js";
 export const skills: Command[] = [
@@ -94,6 +94,9 @@ export const skills: Command[] = [
       overwrite: boolean("Replace tree"),
     },
     requiredBody: ["skillId"],
+    validate: (_flags, body) => {
+      if (!body.skillId) invalid("Skill ID cannot be empty", "--skill-id");
+    },
     write: true,
     api: ["POST /v1/agents/{id}/skills"],
     run: (c) =>

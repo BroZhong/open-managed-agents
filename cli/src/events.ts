@@ -1,3 +1,4 @@
+import { deadline } from "./deadline.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { CliError, invalid, normalizeError } from "./errors.js";
 import { duration } from "./input.js";
@@ -43,8 +44,7 @@ export function emit(c: Context, e: Event) {
 }
 export async function follow(c: Context): Promise<Result> {
   const limit = duration(c.flags.duration, "--duration");
-  const stop = new AbortController();
-  const timer = limit ? setTimeout(() => stop.abort(), limit) : undefined;
+  const stop = deadline(limit, new Error("Observation duration elapsed"));
   const signal = AbortSignal.any([c.signal, stop.signal]);
   let cursor = c.flags["after-seq"],
     failures = 0,
@@ -52,24 +52,27 @@ export async function follow(c: Context): Promise<Result> {
   try {
     while (!signal.aborted) {
       const connection = new AbortController();
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      let watchdog: ReturnType<typeof deadline> | undefined;
       const touch = () => {
-        clearTimeout(watchdog);
-        watchdog = setTimeout(
-          () =>
-            connection.abort(
-              new CliError(
-                {
-                  type: "timeout",
-                  subtype: "http_timeout",
-                  message: "SSE transport stalled",
-                  hint: "Resume events follow with the last printed --after-seq.",
-                  retryable: true,
-                },
-                124,
-              ),
-            ),
+        watchdog?.cancel();
+        const activity = deadline(
           c.http.timeout,
+          new CliError(
+            {
+              type: "timeout",
+              subtype: "http_timeout",
+              message: "SSE transport stalled",
+              hint: "Resume events follow with the last printed --after-seq.",
+              retryable: true,
+            },
+            124,
+          ),
+        );
+        watchdog = activity;
+        activity.signal.addEventListener(
+          "abort",
+          () => connection.abort(activity.signal.reason),
+          { once: true },
         );
       };
       try {
@@ -142,7 +145,7 @@ export async function follow(c: Context): Promise<Result> {
         )
           throw err;
       } finally {
-        clearTimeout(watchdog);
+        watchdog?.cancel();
         connection.abort();
       }
       if (!signal.aborted)
@@ -151,7 +154,7 @@ export async function follow(c: Context): Promise<Result> {
     c.signal.throwIfAborted();
     return { data: null, silent: true };
   } finally {
-    clearTimeout(timer);
+    stop.cancel();
   }
 }
 const inputs = new Set([
@@ -206,25 +209,19 @@ export async function waitSession(
   initial?: Event[],
 ): Promise<Result> {
   const timeout = duration(c.flags["wait-timeout"], "--wait-timeout");
-  const expired = new AbortController();
-  const timer = timeout
-    ? setTimeout(
-        () =>
-          expired.abort(
-            new CliError(
-              {
-                type: "timeout",
-                subtype: "wait_timeout",
-                message: "Local wait timed out; remote execution continues",
-                hint: `Run oma-cli session wait --session-id ${c.flags["session-id"]}`,
-                retryable: true,
-              },
-              124,
-            ),
-          ),
-        timeout,
-      )
-    : undefined;
+  const expired = deadline(
+    timeout,
+    new CliError(
+      {
+        type: "timeout",
+        subtype: "wait_timeout",
+        message: "Local wait timed out; remote execution continues",
+        hint: `Run oma-cli session wait --session-id ${c.flags["session-id"]}`,
+        retryable: true,
+      },
+      124,
+    ),
+  );
   const previousSignal = c.http.signal;
   const signal = AbortSignal.any([c.signal, expired.signal]);
   c.http.signal = signal;
@@ -304,7 +301,7 @@ export async function waitSession(
       );
     }
   } finally {
-    clearTimeout(timer);
+    expired.cancel();
     c.http.signal = previousSignal;
   }
 }

@@ -223,3 +223,49 @@ test("writes are submitted once on lost response and HTTP timeout is distinct fr
     await f.close();
   }
 });
+
+test("empty equip body IDs and missing local upload input fail before networking", async () => {
+  const f = await fixture((req, res) =>
+    json(res, { error: "Should not contact Host" }, 401),
+  );
+  try {
+    for (const args of [
+      [
+        "agent",
+        "skill",
+        "equip",
+        "--agent-id",
+        "a",
+        "--body",
+        '{"skillId":""}',
+      ],
+      [
+        "agent",
+        "skill",
+        "equip",
+        "--agent-id",
+        "a",
+        "--body",
+        '{"skillId":""}',
+        "--dry-run",
+      ],
+      [
+        "workspace",
+        "file",
+        "upload",
+        "--workspace-id",
+        "w",
+        "--path",
+        "x",
+        "--file",
+        "/definitely/missing/oma-cli-file",
+      ],
+    ]) {
+      const r = await run(args, auth(f));
+      assert.ok([2, 3].includes(r.code), r.stderr);
+    }
+    assert.equal(f.requests.length, 0);
+  } finally {
+    await f.close();
+  }
+});

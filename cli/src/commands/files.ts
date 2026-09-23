@@ -24,7 +24,9 @@ export const descriptorPath = (
 export async function workspaceFiles(
   c: Context,
   prefix?: string,
+  verified = false,
 ): Promise<Values[]> {
+  if (!verified) await c.http.request(base(c, "workspace"));
   const r = await c.http.request(
     base(c, "workspace") + "/files" + (prefix ? "?prefix=" + enc(prefix) : ""),
   );
@@ -60,7 +62,7 @@ export const files: Command[] = [
     run: async (c) => ({
       data: {
         ...pick(await c.http.request(base(c, "workspace")), wsFields),
-        files: (await workspaceFiles(c)).map((f) => f.path),
+        files: (await workspaceFiles(c, undefined, true)).map((f) => f.path),
       },
     }),
   },
@@ -190,6 +192,7 @@ for (const noun of ["workspace", "skill"] as const) {
       },
       run: async (c) => {
         const root = base(c, noun);
+        if (!skill) await c.http.request(root);
         const read = (p: string) =>
           c.http.request(
             skill
@@ -262,13 +265,33 @@ files.push({
   validate: (f) => {
     f.path = remotePath(f.path);
   },
-  run: async (c) => ({
-    data: await c.http.request(
-      descriptorPath(
-        base(c, "workspace"),
-        c.flags.path,
-        `expiresIn=${c.flags["expires-in"]}${c.flags.download ? "&download=1" : ""}`,
+  run: async (c) => {
+    await c.http.request(base(c, "workspace"));
+    return {
+      data: await c.http.request(
+        descriptorPath(
+          base(c, "workspace"),
+          c.flags.path,
+          `expiresIn=${c.flags["expires-in"]}${c.flags.download ? "&download=1" : ""}`,
+        ),
       ),
-    ),
-  }),
+    };
+  },
 });
+
+// Metadata includes the read-only guards used by these executable handlers.
+for (const command of files) {
+  if (command.path.startsWith("workspace file "))
+    command.api = [
+      ...new Set(["GET /v1/workspaces/{id}", ...(command.api ?? [])]),
+    ];
+  if (command.path.endsWith("file rename"))
+    command.api = [
+      ...new Set([
+        ...(command.api ?? []),
+        command.path.startsWith("skill")
+          ? "GET /v1/skills/{id}/files/content"
+          : "GET /v1/workspaces/{id}/files/{path}",
+      ]),
+    ];
+}

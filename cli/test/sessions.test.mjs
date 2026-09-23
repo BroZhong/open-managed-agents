@@ -255,3 +255,57 @@ test("accepted send timeout and SIGINT stop observation without resending or int
     await f.close();
   }
 });
+
+test("long deadlines do not clamp and transient wait reads recover without duplicating events", async () => {
+  let eventReads = 0;
+  const events = [
+    event(1, "user.message"),
+    event(2, "agent.message", {
+      turnId: "a",
+      content: [{ type: "text", text: "done" }],
+    }),
+    event(3, "session.turn_completed", { turnId: "a" }),
+    event(4, "session.status_idle"),
+  ];
+  const f = await fixture((req, res) => {
+    if (req.url.includes("/events?")) {
+      if (++eventReads === 2) {
+        req.socket.destroy();
+        return;
+      }
+      const after = Number(
+        new URL(req.url, "http://x").searchParams.get("after_seq"),
+      );
+      json(res, { data: events.filter((e) => e.seq > after), has_more: false });
+    } else json(res, { status: "idle" });
+  });
+  try {
+    const r = await run(
+      [
+        "session",
+        "wait",
+        "--session-id",
+        "s",
+        "--stream",
+        "--wait-timeout",
+        "720h",
+        "--timeout",
+        "720h",
+      ],
+      auth(f),
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stderr, "");
+    assert.deepEqual(
+      r.stdout
+        .trim()
+        .split("\n")
+        .map(JSON.parse)
+        .filter((x) => x.kind === "event")
+        .map((x) => x.seq),
+      [1, 2, 3, 4],
+    );
+  } finally {
+    await f.close();
+  }
+});
