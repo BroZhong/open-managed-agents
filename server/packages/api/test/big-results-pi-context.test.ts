@@ -70,7 +70,8 @@ it("continues a Turn after persisting binary tool output instead of emitting ada
     expect(history.filter(event => event.type === "session.error")).toEqual([]);
     expect(history.find(event => event.type === "agent.tool_result")?.data).toMatchObject({ content });
     expect(history.find(event => event.type === "agent.message")?.data).toMatchObject({ content: [{ type: "text", text: "continued after binary output" }] });
-    expect(history.at(-1)?.type).toBe("session.turn_completed");
+    expect(history.at(-2)?.type).toBe("session.turn_completed");
+    expect(history.at(-1)?.type).toBe("session.status_idle");
     expect(executions).toBe(1);
     expect(objects.size).toBe(2);
   } finally { await harness.close(); }

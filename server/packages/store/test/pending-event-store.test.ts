@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { PgEventLogStore } from "../src/postgres/event-log-store.js";
 import { PgPendingEventStore } from "../src/postgres/pending-event-store.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
@@ -19,7 +20,7 @@ describe("PgPendingEventStore", () => {
     store = new PgPendingEventStore(harness.pool);
   });
 
-  async function seedSession(id: string, status: "idle" | "terminated" = "idle") {
+  async function seedSession(id: string, status: "idle" | "running" | "terminated" = "idle") {
     const now = new Date();
     await harness.pool.query(
       `INSERT INTO sessions
@@ -292,4 +293,139 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(0);
     expect(await store.listPendingSessionIds()).toEqual(["sess_2"]);
   });
+  async function completedInput(sessionId = "sess_1") {
+    const input = await store.enqueue(sessionId, { type: "user.message", data: {}, sessionThreadId: "t" });
+    const claim = (await store.claim(sessionId, "host-a", 60000))!;
+    const log = new PgEventLogStore(harness.pool);
+    const completion = await log.append(sessionId, {
+      type: "session.turn_completed", data: { pendingEventId: input.id, turnId: "turn_1_a1" },
+      sessionThreadId: "t", idempotencyKey: `pending:${input.id}:completed`,
+      pendingFence: { eventId: input.id, ...claim },
+    });
+    return { input, claim, log, completion };
+  }
+
+  it("keeps the Session running between inputs and commits idle only with the final acknowledgement", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim, log } = await completedInput();
+    const tail = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "t" });
+    expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toEqual({ acknowledged: true });
+    expect((await harness.pool.query("SELECT status FROM sessions WHERE id = 'sess_1'")).rows[0].status).toBe("running");
+    expect((await log.getEvents("sess_1")).data.map(e => e.type)).toEqual(["session.turn_completed"]);
+
+    const tailClaim = (await store.claim("sess_1", "host-b", 60000))!;
+    await log.append("sess_1", { type: "session.turn_completed", data: { pendingEventId: tail.id, turnId: "turn_2_a1" },
+      sessionThreadId: "t", idempotencyKey: `pending:${tail.id}:completed`, pendingFence: { eventId: tail.id, ...tailClaim } });
+    const finished = await store.ackCompletedTurn("sess_1", tail.id, tailClaim);
+    expect(finished).toMatchObject({ acknowledged: true, idleEvent: { type: "session.status_idle", seq: 3 } });
+    expect(await store.count("sess_1")).toBe(0);
+    expect((await harness.pool.query("SELECT status FROM sessions WHERE id = 'sess_1'")).rows[0].status).toBe("idle");
+    expect((await log.getEvents("sess_1")).data.map(e => e.type)).toEqual([
+      "session.turn_completed", "session.turn_completed", "session.status_idle",
+    ]);
+  });
+
+  it("refuses acknowledgement before durable completion", async () => {
+    await seedSession("sess_1", "running");
+    const input = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "t" });
+    const claim = (await store.claim("sess_1", "host", 60000))!;
+    await expect(store.ackCompletedTurn("sess_1", input.id, claim)).rejects.toThrow("completion marker");
+    expect(await store.count("sess_1")).toBe(1);
+    expect((await harness.pool.query("SELECT status FROM sessions WHERE id = 'sess_1'")).rows[0].status).toBe("running");
+  });
+
+  it("recovers a completed but unacknowledged Turn with a new owner and rejects the old owner", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim, log } = await completedInput();
+    await store.releaseClaim("sess_1", input.id, claim);
+    const next = (await store.claim("sess_1", "host-b", 60000))!;
+    expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toEqual({ acknowledged: false });
+    expect((await log.getEvents("sess_1")).data).toHaveLength(1);
+    expect(await store.ackCompletedTurn("sess_1", input.id, next)).toMatchObject({ acknowledged: true, idleEvent: { type: "session.status_idle" } });
+    expect(await store.ackCompletedTurn("sess_1", input.id, next)).toEqual({ acknowledged: false });
+    expect((await log.getEvents("sess_1")).data.map(e => e.type)).toEqual(["session.turn_completed", "session.status_idle"]);
+  });
+
+  it("never revives a terminated Session during completed-input acknowledgement", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim, log } = await completedInput();
+    await harness.pool.query("UPDATE sessions SET status = 'terminated' WHERE id = 'sess_1'");
+    expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toEqual({ acknowledged: false });
+    expect((await log.getEvents("sess_1")).data).toHaveLength(1);
+  });
+
+  it.skipIf(!process.env.PG_TEST_URL)("rolls back removal and status when the idle event cannot commit", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim, log } = await completedInput();
+    await harness.pool.query(`CREATE FUNCTION reject_idle() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.type = 'session.status_idle' THEN RAISE EXCEPTION 'injected idle failure'; END IF; RETURN NEW; END $$`);
+    await harness.pool.query("CREATE TRIGGER reject_idle BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION reject_idle()");
+    await expect(store.ackCompletedTurn("sess_1", input.id, claim)).rejects.toThrow("injected idle failure");
+    expect(await store.count("sess_1")).toBe(1);
+    expect((await harness.pool.query("SELECT status FROM sessions WHERE id = 'sess_1'")).rows[0].status).toBe("running");
+    expect((await log.getEvents("sess_1")).data).toHaveLength(1);
+    await harness.pool.query("DROP TRIGGER reject_idle ON events");
+    expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toMatchObject({ acknowledged: true });
+  });
+
+  it.skipIf(!process.env.PG_TEST_URL)("observes ingress committed while completion waits for the Session lock", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim, log } = await completedInput();
+    const ingress = await harness.pool.connect();
+    try {
+      await ingress.query("BEGIN");
+      await ingress.query("SELECT id FROM sessions WHERE id = 'sess_1' FOR UPDATE");
+      await ingress.query("INSERT INTO pending_events (id, session_id, type, data, session_thread_id, arrived_at) VALUES ('tail', 'sess_1', 'user.message', '{}', 't', clock_timestamp())");
+      let settled = false;
+      const ack = store.ackCompletedTurn("sess_1", input.id, claim).finally(() => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 40));
+      expect(settled).toBe(false);
+      await ingress.query("COMMIT");
+      expect(await ack).toEqual({ acknowledged: true });
+      expect((await store.peek("sess_1"))?.id).toBe("tail");
+      expect((await log.getEvents("sess_1")).data).toHaveLength(1);
+    } finally { await ingress.query("ROLLBACK"); ingress.release(); }
+  });
+
+  it.skipIf(!process.env.PG_TEST_URL).each(["single", "batch"])(
+    "serializes %s ingress behind a Session completion transaction", async (kind) => {
+      await seedSession("sess_1", "running");
+      const blocker = await harness.pool.connect();
+      let accepting: Promise<unknown> | undefined;
+      try {
+        await blocker.query("BEGIN");
+        await blocker.query("SELECT id FROM sessions WHERE id = 'sess_1' FOR UPDATE");
+        let accepted = false;
+        const input = { type: "user.message", data: {}, sessionThreadId: "t" };
+        accepting = (kind === "single" ? store.enqueue("sess_1", input) : store.enqueueBatchIfSessionActive("sess_1", [input]))
+          .then(result => { accepted = true; return result; });
+        await new Promise(resolve => setTimeout(resolve, 40));
+        expect(accepted).toBe(false);
+        expect(await store.count("sess_1")).toBe(0);
+        await blocker.query("COMMIT");
+        await accepting;
+        expect(await store.count("sess_1")).toBe(1);
+      } finally {
+        await blocker.query("ROLLBACK"); blocker.release();
+        await accepting;
+      }
+    },
+  );
+
+  it.skipIf(!process.env.PG_TEST_URL)("checks lease expiry after waiting for the Session lock", async () => {
+    await seedSession("sess_1", "running");
+    const { input, claim, log } = await completedInput();
+    const blocker = await harness.pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM sessions WHERE id = 'sess_1' FOR UPDATE");
+      const ack = store.ackCompletedTurn("sess_1", input.id, claim);
+      await blocker.query("UPDATE pending_events SET claim_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1", [input.id]);
+      await blocker.query("COMMIT");
+      expect(await ack).toEqual({ acknowledged: false });
+      expect(await store.count("sess_1")).toBe(1);
+      expect((await log.getEvents("sess_1")).data).toHaveLength(1);
+    } finally { await blocker.query("ROLLBACK"); blocker.release(); }
+  });
+
 });

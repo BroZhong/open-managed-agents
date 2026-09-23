@@ -68,3 +68,14 @@ it("keeps an instruction inside its current Turn and tolerates missing timestamp
   expect(result[0].timing).toBeUndefined();
   expect(result[0].responses.map((message) => message.role)).toEqual(["instruction", "assistant"]);
 });
+
+it("closes consecutive Turns without intermediate idle and keeps idle out of Turn timing", () => {
+  const result = turns([
+    event(1, 0, "user.message", { content: [] }), answer(2, 1, "a"),
+    event(3, 2, "session.turn_completed", { turnId: "a" }),
+    event(4, 3, "user.message", { content: [] }), answer(5, 4, "b"),
+    event(6, 5, "session.turn_completed", { turnId: "b" }), event(7, 30, "session.status_idle"),
+  ]);
+  expect(result.map(t => t.completed)).toEqual([true, true]);
+  expect(result.map(t => t.timing?.endedAt)).toEqual([start + 2000, start + 5000]);
+});

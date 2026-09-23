@@ -215,6 +215,9 @@ export function useSessionEvents(sessionId: string) {
     if (event.type === "session.status_idle") {
       projectStatus("idle");
       setTurnLifecycleNonce((n) => n + 1);
+    }
+    if (event.type === "session.turn_completed") {
+      setTurnLifecycleNonce((n) => n + 1);
       setFileChange((prev) => ({ nonce: prev.nonce + 1 }));
     }
   }, [projectStatus]);

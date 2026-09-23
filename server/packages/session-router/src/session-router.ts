@@ -920,7 +920,7 @@ export class SessionRouter {
   /**
    * Persist the durable turn boundary before acknowledging its pending input.
    * The ordering is the recovery protocol:
-   *   full output/storage check → durable idle → completion marker → pending ack.
+   *   full output/storage check → completion marker → atomic ack + idle if empty.
    * A crash before the marker retries under turn-scoped idempotency keys; a
    * crash after the marker only re-acks and never reruns the Adapter.
    */
@@ -964,28 +964,6 @@ export class SessionRouter {
       if (data.executionId) await this.delegationStore.markNotificationProcessed(data.executionId, pendingFence);
     }
     await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
-    const session = await this.sessionStore.getById(sessionId);
-    if (session?.status !== "terminated") {
-      if (this.sessionStore.updateStatusIfClaimed) {
-        await this.sessionStore.updateStatusIfClaimed(sessionId, "idle", pendingFence);
-      } else {
-        await this.sessionStore.updateStatus(sessionId, "idle");
-      }
-
-      const idleEvent = await this.eventLogStore.append(sessionId, {
-        type: "session.status_idle",
-        data: {},
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: this.turnKey(pendingEventId, "status_idle"),
-        pendingFence,
-      });
-      this.eventStreamHub.publish(sessionId, {
-        type: idleEvent.type,
-        seq: idleEvent.seq,
-        data: idleEvent.data,
-      });
-    }
-
     const completionData = { pendingEventId, turnId };
     const completionEvent = await this.eventLogStore.append(sessionId, {
       type: "session.turn_completed",
@@ -1000,6 +978,45 @@ export class SessionRouter {
       data: completionEvent.data,
     });
 
+    return this.acknowledgeCompletedTurn(sessionId, pendingEventId, pendingFence);
+  }
+
+  private async acknowledgeCompletedTurn(
+    sessionId: string,
+    pendingEventId: string,
+    pendingFence: PendingEventFence,
+  ): Promise<boolean> {
+    if (this.pendingEventStore.ackCompletedTurn) {
+      const result = await this.pendingEventStore.ackCompletedTurn(sessionId, pendingEventId, pendingFence);
+      if (result.idleEvent) {
+        this.eventStreamHub.publish(sessionId, {
+          type: result.idleEvent.type, seq: result.idleEvent.seq, data: result.idleEvent.data,
+        });
+      }
+      return result.acknowledged;
+    }
+
+    // Compatibility for narrow single-process stores. Durable production stores
+    // commit acknowledgement, empty-queue observation and idle in one transaction.
+    // The executing input is still the queue head until acknowledgement.
+    if ((await this.pendingEventStore.peek(sessionId))?.id !== pendingEventId) return false;
+    if (await this.pendingEventStore.count(sessionId) === 1) {
+      const session = await this.sessionStore.getById(sessionId);
+      if (session && session.status !== "terminated") {
+        if (this.sessionStore.updateStatusIfClaimed) {
+          await this.sessionStore.updateStatusIfClaimed(sessionId, "idle", pendingFence);
+        } else {
+          await this.sessionStore.updateStatus(sessionId, "idle");
+        }
+        const idleEvent = await this.eventLogStore.append(sessionId, {
+          type: "session.status_idle", data: {}, sessionThreadId: "sthr_primary",
+          idempotencyKey: this.turnKey(pendingEventId, "status_idle"), pendingFence,
+        });
+        this.eventStreamHub.publish(sessionId, {
+          type: idleEvent.type, seq: idleEvent.seq, data: idleEvent.data,
+        });
+      }
+    }
     return this.pendingEventStore.ack(sessionId, pendingEventId, pendingFence);
   }
 
@@ -1063,9 +1080,9 @@ export class SessionRouter {
       });
 
       // Read the complete log once after idempotent promotion. On restart, a
-      // completion marker means all durable output + idle already committed and
-      // only the pending acknowledgement was interrupted — never rerun the
-      // Adapter in that case.
+      // completion marker means the durable Turn output already committed. The
+      // acknowledgement must still settle Session idle if the queue empties.
+      // Never rerun the Adapter in that case.
       let priorEvents = await this.readAllEvents(sessionId);
       turnId = `turn_${promotedEvent.seq}_a${claim.generation}`;
       const waits = await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [];
@@ -1078,7 +1095,7 @@ export class SessionRouter {
           claim.generation,
           turnId,
         );
-        const acknowledged = await this.pendingEventStore.ack(
+        const acknowledged = await this.acknowledgeCompletedTurn(
           sessionId,
           pendingEvent.id,
           pendingFence,
@@ -1942,9 +1959,9 @@ export class SessionRouter {
       }
     }
 
-    // Every handled Turn persisted its own idle + completion boundary before its
-    // pending acknowledgement. Once the queue drains, only the transient active
-    // map remains to clear — no additional durable lifecycle Event is needed.
+    // Every handled Turn persisted its completion before acknowledgement. The
+    // last acknowledgement committed Session idle atomically with queue removal.
+    // A failed claim alone is never evidence of idle: another Host may own it.
     if (this.turnStreamStore && lastOwnedTurnId) {
       await this.clearActiveTurnFenced(sessionId, lastOwnedTurnId);
     }

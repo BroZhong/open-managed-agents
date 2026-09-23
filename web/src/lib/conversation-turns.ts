@@ -59,8 +59,9 @@ export function groupMessagesIntoTurns(messages: DisplayMessage[], events: Sessi
     else if (message) current.responses.push(message);
     if (event.type === "session.error" || event.type === "session.turn_aborted" || message?.aborted) stopped = true;
     if (event.type === "session.turn_completed" || event.type === "session.status_idle") {
-      // A completion marker follows status_idle in current Host logs.
-      if (Number.isFinite(time) && current.timing) current.timing.endedAt = Math.max(current.timing.endedAt, time);
+      // Turn completion owns its timing. A later Session idle event must not
+      // extend it; idle remains a fallback for historical logs.
+      if ((!closed || event.type === "session.turn_completed") && Number.isFinite(time) && current.timing) current.timing.endedAt = Math.max(current.timing.endedAt, time);
       current.completed = !stopped;
       closed = true;
     }

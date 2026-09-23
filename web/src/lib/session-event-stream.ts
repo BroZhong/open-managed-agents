@@ -5,6 +5,7 @@ export interface SessionEventStreamState {
   events: SessionEvent[];
   activeDeltas: SessionDelta[];
   completedBlocks: ReadonlySet<string>;
+  completedTurns: ReadonlySet<string>;
   seenDeltaKeys: ReadonlySet<string>;
   latestDeltaBlock?: OutputBlockRef;
 }
@@ -23,6 +24,7 @@ export const initialSessionEventStreamState: SessionEventStreamState = {
   events: [],
   activeDeltas: [],
   completedBlocks: new Set(),
+  completedTurns: new Set(),
   seenDeltaKeys: new Set(),
 };
 
@@ -55,6 +57,12 @@ function completedBlocksOf(events: SessionEvent[]): ReadonlySet<string> {
     if (block !== undefined) completed.add(outputBlockKey(block));
   }
   return completed;
+}
+
+function completedTurn(event: SessionEvent): string | undefined {
+  if (event.type !== "session.turn_completed" || !event.data || typeof event.data !== "object") return undefined;
+  const data = event.data as Record<string, unknown>;
+  return typeof data.turnId === "string" ? data.turnId : undefined;
 }
 
 function timestampOf(data: Record<string, unknown>): string {
@@ -147,13 +155,14 @@ export function sessionEventStreamReducer(
         events: action.events,
         activeDeltas: [],
         completedBlocks: completedBlocksOf(action.events),
+        completedTurns: new Set(action.events.flatMap(event => completedTurn(event) ?? [])),
         seenDeltaKeys: new Set(),
         latestDeltaBlock: undefined,
       };
 
     case "delta.received": {
       const key = outputBlockKey(action.delta);
-      if (state.completedBlocks.has(key)) return state;
+      if (state.completedBlocks.has(key) || state.completedTurns.has(action.delta.turnId)) return state;
       const identity = deltaKey(action.delta);
       const sameTurn =
         state.latestDeltaBlock === undefined ||
@@ -192,6 +201,9 @@ export function sessionEventStreamReducer(
       const completedBlocks = new Set(state.completedBlocks);
       if (key !== undefined) completedBlocks.add(key);
       const liveProjectionEnded = LIVE_PROJECTION_END_TYPES.has(action.event.type);
+      const turnId = completedTurn(action.event);
+      const completedTurns = turnId === undefined
+        ? state.completedTurns : new Set([...state.completedTurns, turnId]);
 
       return {
         ...state,
@@ -200,12 +212,10 @@ export function sessionEventStreamReducer(
           : [...state.events, action.event],
         activeDeltas: liveProjectionEnded
           ? []
-          : key === undefined
-            ? state.activeDeltas
-            : state.activeDeltas.filter(
-                (delta) => outputBlockKey(delta) !== key,
-              ),
+          : state.activeDeltas.filter((delta) =>
+              !completedTurns.has(delta.turnId) && (key === undefined || outputBlockKey(delta) !== key)),
         completedBlocks,
+        completedTurns,
       };
     }
   }

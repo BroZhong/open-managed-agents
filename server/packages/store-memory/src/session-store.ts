@@ -38,6 +38,11 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   async getById(id: string): Promise<Session | null> {
+    return this.getRecord(id);
+  }
+
+  /** Internal synchronous lookup for a composed in-memory transaction. */
+  getRecord(id: string): Session | null {
     return this.sessions.find((s) => s.id === id) ?? null;
   }
 

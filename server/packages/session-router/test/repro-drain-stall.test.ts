@@ -137,7 +137,6 @@ class InMemorySessionStore implements SessionStore {
   private sessions: Session[] = [];
   private nextId = 1;
   failBeforeAdapterOnce = false;
-  failBeforeCompletionMarkerOnce = false;
 
   async create(input: SessionStoreCreateInput): Promise<Session> {
     const session: Session = {
@@ -172,10 +171,6 @@ class InMemorySessionStore implements SessionStore {
     if (status === "running" && this.failBeforeAdapterOnce) {
       this.failBeforeAdapterOnce = false;
       throw new Error("simulated crash before adapter start");
-    }
-    if (status === "idle" && this.failBeforeCompletionMarkerOnce) {
-      this.failBeforeCompletionMarkerOnce = false;
-      throw new Error("simulated crash after durable output");
     }
     return session;
   }
@@ -613,7 +608,15 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       workspaceId: "ws_test",
     });
     await enqueueUser(pendingEventStore, session.id, "retry partial completion");
-    sessionStore.failBeforeCompletionMarkerOnce = true;
+    const append = eventLogStore.append.bind(eventLogStore);
+    let failBeforeCompletion = true;
+    vi.spyOn(eventLogStore, "append").mockImplementation(async (sessionId, event) => {
+      if (event.type === "session.turn_completed" && failBeforeCompletion) {
+        failBeforeCompletion = false;
+        throw new Error("simulated crash after durable output");
+      }
+      return append(sessionId, event);
+    });
 
     await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
       "simulated crash after durable output",
@@ -632,8 +635,8 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       "user.message",
       "session.status_running",
       "agent.message",
-      "session.status_idle",
       "session.turn_completed",
+      "session.status_idle",
     ]) {
       expect(recovered.filter((event) => event.type === type), type).toHaveLength(1);
     }
