@@ -1,3 +1,4 @@
+import { modelProviderRoutes } from "../src/routes/model-providers.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -93,6 +94,7 @@ function runtimeOperations(): string[] {
     skillRoutes(adapter, adapter),
     apiKeyRoutes(adapter),
     mcpCatalogRoutes(),
+    modelProviderRoutes(adapter),
     loopRoutes({ agentStore: adapter, loopStore: adapter }),
     workspaceEntityRoutes(adapter),
     sessionRoutes({
@@ -173,6 +175,7 @@ describe("OpenAPI contract", () => {
       skillRoutes(adapter, adapter),
       apiKeyRoutes(adapter),
       mcpCatalogRoutes(),
+    modelProviderRoutes(adapter),
       loopRoutes({ agentStore: adapter, loopStore: adapter }),
       workspaceEntityRoutes(adapter),
       sessionRoutes({

@@ -6,6 +6,7 @@ import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createApp } from "./app.js";
 import { workspaceStorageConfigFromEnv } from "./lib/workspace-config.js";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { ModelProviderService } from "./lib/model-providers.js";
 
 export type HostRole = "api" | "runner" | "combined";
 
@@ -60,6 +61,7 @@ export async function startHost(role: HostRole): Promise<void> {
   const app = new Hono();
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
+    modelProviders: new ModelProviderService(stores.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     sseCatchupIntervalMs: Number(process.env.SSE_CATCHUP_INTERVAL_MS ?? 2000),
   }));

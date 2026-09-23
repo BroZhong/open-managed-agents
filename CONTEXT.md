@@ -240,3 +240,16 @@ Termination writes a retryable cleanup outbox and a durable lifecycle Event.
 Unknown Sandbox execution is retained until actual settlement; recording activity
 for cleanup does not enable the controlled idle-reclamation rollout.
 See ADR-0018 and `docs/api-runner-operations.md`.
+
+## User-owned model providers
+
+A **Model Provider** is a Tenant-owned connection to a model service, configured
+with a Pi protocol, public HTTPS endpoint, encrypted API key and selected models.
+The Models page fetches models from the configured endpoint using the Tenant's
+credentials through Pi's dynamic provider discovery and vendor SDKs. It never
+substitutes a built-in catalog for that endpoint's list. Each selected model
+must also complete an actual Pi inference request before saving. Each Agent stores only a provider/model reference. Runner loads that
+Tenant's selected provider into a fresh Pi ModelRuntime for each Turn; credentials
+never enter Agent configuration, Workspace or Sandbox. The managed Host catalog
+continues to supply built-in models. See `docs/pi-models.md` for the protocol,
+test-proof, storage and deployment contracts.

@@ -11,6 +11,8 @@ import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import { sandboxLifecycleFromEnv, startSandboxSweeper } from "./lib/sandbox-lifecycle.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
+import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
+import { ModelProviderService } from "./lib/model-providers.js";
 
 export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
@@ -24,6 +26,8 @@ export async function startExecution(deps: PgStores & {
   const workspaceConfig = deps.local ? undefined : workspaceConfigFromEnv(process.env);
   const sandboxEnvPolicy = deps.local ? {} : sandboxEnvPolicyFromHost(process.env, await sandboxBaseEnvFromKubernetes(process.env));
   const activities = new PgSandboxLifecycleStore(deps.pool);
+  const modelProviders = new ModelProviderService(deps.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
+  const piAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviders.configureRuntime(deps.sessionStore) });
   const sandboxManager = execution?.sandboxManager ?? (workspaceConfig ? new DefaultSandboxManager({
     executionActivities: { begin: activity => activities.begin(activity, false), finish: activity => activities.finish(activity) },
     sandboxClient: new E2BSandboxClient({
@@ -40,7 +44,7 @@ export async function startExecution(deps: PgStores & {
     ...deps, sandboxManager, workspaceMount: execution?.workspaceMount ?? workspaceConfig?.mount, ...sandboxEnvPolicy,
     resolveAdapter: execution?.resolveAdapter ?? (runtime => {
       if (deps.local && runtime !== "mock") throw new Error("Local infrastructure profile executes only mock Agents");
-      return resolveAdapter(runtime);
+      return runtime === "pi-agent" ? piAgentAdapter : resolveAdapter(runtime);
     }),
     wakeSession: sessionId => deps.signals.publish({ sessionId, kind: "wake" }),
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),

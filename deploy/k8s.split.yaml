@@ -58,6 +58,12 @@ spec:
         - configMapRef:
             name: oma-api-config
         env:
+        - name: OMA_PROVIDER_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: OMA_PROVIDER_ENCRYPTION_KEY
+              optional: true
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -217,6 +223,12 @@ spec:
             name: oma-auto-story-env
             optional: true
         env:
+        - name: OMA_PROVIDER_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: OMA_PROVIDER_ENCRYPTION_KEY
+              optional: true
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:

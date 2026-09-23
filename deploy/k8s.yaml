@@ -167,6 +167,9 @@ spec:
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_DOMAIN } }
             - name: E2B_API_KEY
               valueFrom: { secretKeyRef: { name: oma-secrets, key: E2B_API_KEY } }
+            # Stable Host-only encryption key for Tenant provider credentials.
+            - name: OMA_PROVIDER_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: oma-secrets, key: OMA_PROVIDER_ENCRYPTION_KEY, optional: true } }
             - name: AUTH_JWT_SECRET
               valueFrom: { secretKeyRef: { name: oma-secrets, key: AUTH_JWT_SECRET } }
             - name: INVITE_CODE

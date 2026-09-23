@@ -1,3 +1,5 @@
+import { InMemoryModelProviderStore } from "./model-provider-store.js";
+export { InMemoryModelProviderStore } from "./model-provider-store.js";
 import { InMemorySessionShareStore } from "./session-share-store.js";
 export { InMemorySessionShareStore } from "./session-share-store.js";
 import { InMemoryDelegationStore } from "./delegation-store.js";
@@ -29,6 +31,7 @@ export { InMemoryWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 export { InMemoryLoopStore } from "./loop-store.js";
 
 export interface MemoryStores {
+  modelProviderStore: InMemoryModelProviderStore;
   agentStore: InMemoryAgentStore;
   agentFileStore: InMemoryAgentFileStore;
   skillStore: InMemorySkillStore;
@@ -84,6 +87,7 @@ export function createMemoryStores(): MemoryStores {
     pendingEventStore,
   );
   return {
+    modelProviderStore: new InMemoryModelProviderStore(),
     agentStore,
     agentFileStore: new InMemoryAgentFileStore(),
     skillStore: new InMemorySkillStore(),

@@ -3285,9 +3285,11 @@ snapshots:
 
   '@open-managed-agents/adapter-pi-agent@file:../adapter/packages/pi-agent(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
+      '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
       '@earendil-works/pi-ai': 0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-coding-agent': 0.83.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@open-managed-agents/adapter-core': file:../adapter/packages/core
+      openai: 6.26.0(ws@8.21.0)(zod@4.4.3)
       typebox: 1.1.38
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
