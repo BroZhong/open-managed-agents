@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import type { StoredEvent } from "../types.js";
 import type { Pool } from "./connection.js";
 import type {
   PendingEvent,
@@ -65,9 +66,13 @@ export class PgPendingEventStore implements PendingEventIngressStore {
   }
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
+    // Serialize lower-level ingress (including delegation transactions) with
+    // completed-input acknowledgement. The aggregate preserves the existing
+    // low-level insert behavior even when the Session row is absent.
     const { rows } = await this.pool.query<PendingRow>(
       `INSERT INTO pending_events (id, session_id, type, data, session_thread_id, api_key_id, arrived_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       SELECT $1, $2, $3, $4::jsonb, $5, $6, $7::timestamptz
+       FROM (SELECT COUNT(*) FROM (SELECT id FROM sessions WHERE id = $2 FOR UPDATE) AS locked_session) AS gate
        RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at`,
       [nanoid(), sessionId, event.type, JSON.stringify(event.data ?? null), event.sessionThreadId, event.apiKeyId ?? null, new Date()],
     );
@@ -333,9 +338,38 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     eventId: string,
     claim?: PendingEventClaimRef,
   ): Promise<boolean> {
+    return (await this.acknowledge(sessionId, eventId, claim, false)).acknowledged;
+  }
+
+  async ackCompletedTurn(sessionId: string, eventId: string, claim: PendingEventClaimRef) {
+    return this.acknowledge(sessionId, eventId, claim, true);
+  }
+
+  private async acknowledge(
+    sessionId: string,
+    eventId: string,
+    claim: PendingEventClaimRef | undefined,
+    completed: boolean,
+  ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      if (completed) {
+        // Session-first matches ingress, termination and fenced event writes.
+        // Ingress cannot slip between the empty check and committing idle.
+        const session = await client.query<{ status: string }>(
+          `SELECT status FROM sessions WHERE id = $1 FOR UPDATE`, [sessionId],
+        );
+        if (!session.rows[0] || session.rows[0].status === "terminated") {
+          await client.query("COMMIT");
+          return { acknowledged: false };
+        }
+        const marker = await client.query(
+          `SELECT seq FROM events WHERE session_id = $1 AND idempotency_key = $2
+           AND type = 'session.turn_completed'`, [sessionId, `pending:${eventId}:completed`],
+        );
+        if (!marker.rows.length) throw new Error("Cannot acknowledge a Turn without its completion marker");
+      }
       const head = await client.query<{ id: string }>(
         `SELECT id FROM pending_events
          WHERE session_id = $1
@@ -346,7 +380,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       );
       if (head.rows[0]?.id !== eventId) {
         await client.query("COMMIT");
-        return false;
+        return { acknowledged: false };
       }
       const params: unknown[] = [sessionId, eventId];
       let fence = "AND claim_owner IS NULL";
@@ -362,8 +396,32 @@ export class PgPendingEventStore implements PendingEventIngressStore {
          RETURNING id`,
         params,
       );
+      let idleEvent: StoredEvent | undefined;
+      if (completed && rows.length > 0) {
+        const remaining = await client.query(`SELECT id FROM pending_events WHERE session_id = $1 LIMIT 1`, [sessionId]);
+        if (!remaining.rows.length) {
+          await client.query(`UPDATE sessions SET status = 'idle', updated_at = $2 WHERE id = $1`, [sessionId, new Date()]);
+          await client.query(`INSERT INTO event_counters (session_id, seq) VALUES ($1, 0) ON CONFLICT (session_id) DO NOTHING`, [sessionId]);
+          await client.query(`SELECT seq FROM event_counters WHERE session_id = $1 FOR UPDATE`, [sessionId]);
+          const key = `pending:${eventId}:status_idle`;
+          // Old Hosts wrote idle before completion; preserve that event on recovery.
+          const existing = await client.query(`SELECT * FROM events WHERE session_id = $1 AND idempotency_key = $2`, [sessionId, key]);
+          let row = existing.rows[0];
+          if (!row) {
+            const counter = await client.query(`UPDATE event_counters SET seq = seq + 1 WHERE session_id = $1 RETURNING seq`, [sessionId]);
+            const inserted = await client.query(
+              `INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, idempotency_key)
+               VALUES ($1, $2, 'session.status_idle', '{}', $3, 'sthr_primary', $4) RETURNING *`,
+              [sessionId, counter.rows[0].seq, new Date(), key],
+            );
+            row = inserted.rows[0];
+          }
+          idleEvent = { sessionId, seq: Number(row.seq), type: row.type, data: row.data,
+            ts: new Date(row.ts), sessionThreadId: row.session_thread_id };
+        }
+      }
       await client.query("COMMIT");
-      return rows.length > 0;
+      return { acknowledged: rows.length > 0, ...(idleEvent ? { idleEvent } : {}) };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;

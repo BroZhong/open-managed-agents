@@ -184,8 +184,8 @@ describe("Loop + managed Supabase MCP end to end", () => {
       "agent.mcp_tool_use",
       "agent.mcp_tool_result",
       "agent.message",
-      "session.status_idle",
       "session.turn_completed",
+      "session.status_idle",
     ]);
     expect(events.data[4].data).toMatchObject({
       content: [{ type: "text", text: expect.stringContaining("Agent 优化点") }],

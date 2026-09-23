@@ -313,3 +313,19 @@ it("deduplicates durable compaction frames across reconnect and history refresh"
   expect(state.events).toHaveLength(1);
   expect(state.events[0].data).toMatchObject({ summary: "saved" });
 });
+
+it("ends only the completed Turn and rejects its late and reconnected Deltas", () => {
+  const completion: SessionEvent = { seq: 20, type: "session.turn_completed", data: { turnId: "turn_10" }, ts: userMessage.ts };
+  const old = delta("agent.message_chunk", "1-1", { text: "unfinished A" });
+  const next = { ...old, turnId: "turn_20", data: { text: "B" } };
+  let state = sessionEventStreamReducer(initialSessionEventStreamState, { type: "delta.received", delta: old });
+  state = sessionEventStreamReducer(state, { type: "event.received", event: completion });
+  expect(state.activeDeltas).toEqual([]);
+  state = sessionEventStreamReducer(state, { type: "delta.received", delta: next });
+  state = sessionEventStreamReducer(state, { type: "event.received", event: completion });
+  state = sessionEventStreamReducer(state, { type: "delta.received", delta: old });
+  expect(state.activeDeltas).toEqual([next]);
+  state = sessionEventStreamReducer(initialSessionEventStreamState, { type: "history.loaded", events: [completion] });
+  state = sessionEventStreamReducer(state, { type: "deltas.loaded", deltas: [old, next] });
+  expect(state.activeDeltas).toEqual([next]);
+});

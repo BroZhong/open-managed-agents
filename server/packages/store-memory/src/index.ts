@@ -47,13 +47,28 @@ export interface MemoryStores {
 
 export function createMemoryStores(): MemoryStores {
   let sessionStore!: InMemorySessionStore;
+  let eventLogStore!: InMemoryEventLogStore;
   const pendingEventStore = new InMemoryPendingEventStore(async (sessionId) => {
     const session = await sessionStore.getById(sessionId);
     return Boolean(session && session.status !== "terminated");
+  }, (sessionId, eventId, queueEmpty) => {
+    const session = sessionStore.getRecord(sessionId);
+    if (!session || session.status === "terminated") return { accepted: false };
+    if (!eventLogStore.hasTurnCompletion(sessionId, eventId)) {
+      throw new Error("Cannot acknowledge a Turn without its completion marker");
+    }
+    if (!queueEmpty) return { accepted: true };
+    const idleEvent = eventLogStore.appendUnfenced(sessionId, {
+      type: "session.status_idle", data: {}, sessionThreadId: "sthr_primary",
+      idempotencyKey: `pending:${eventId}:status_idle`,
+    });
+    session.status = "idle";
+    session.updatedAt = new Date();
+    return { accepted: true, idleEvent };
   });
   sessionStore = new InMemorySessionStore((sessionId, fence) =>
     pendingEventStore.ownsClaim(sessionId, fence.eventId, fence));
-  const eventLogStore = new InMemoryEventLogStore(
+  eventLogStore = new InMemoryEventLogStore(
     (sessionId, fence) => pendingEventStore.ownsClaim(sessionId, fence.eventId, fence),
     async (sessionId) => {
       const session = await sessionStore.getById(sessionId);

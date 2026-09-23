@@ -45,6 +45,11 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
         event.pendingFence.generation,
       );
     }
+    return this.appendUnfenced(sessionId, event);
+  }
+
+  /** Internal synchronous write for a composed in-memory transaction. */
+  appendUnfenced(sessionId: string, event: Omit<EventLogStoreAppendInput, "pendingFence">): StoredEvent {
     const idempotencyIdentity = event.idempotencyKey === undefined
       ? undefined
       : `${sessionId}\u0000${event.idempotencyKey}`;
@@ -77,6 +82,11 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     }
 
     return stored;
+  }
+
+  /** Internal lookup for the completed-input acknowledgement transaction. */
+  hasTurnCompletion(sessionId: string, eventId: string): boolean {
+    return this.idempotentEvents.get(`${sessionId}\u0000pending:${eventId}:completed`)?.type === "session.turn_completed";
   }
 
   async appendIfSessionActive(

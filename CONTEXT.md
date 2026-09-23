@@ -67,6 +67,14 @@ _Avoid_: cron job, scheduled Session (the Loop is the schedule; each occurrence 
 One accepted input and the Agent execution that responds to it within a **Session**. The input can be a user message, a **Delegation Input**, or a claimed **Delegation Result**. A synchronous delegation waits within the original Turn; an asynchronous result may start a later Turn.
 _Avoid_: request, job, invocation
 
+A Turn's durable `session.turn_completed` Event ends that Turn independently of
+Session status. Queued Input starts another Turn without an intermediate
+`session.status_idle`. The last input's acknowledgement atomically removes it
+and commits Session idle plus its lifecycle Event when the queue is empty.
+Completion is durable before acknowledgement, so recovery can finish queue
+cleanup without repeating Agent execution. The console uses Turn completion for
+per-Turn stream cleanup and file refresh, and Session lifecycle Events for status.
+
 **Interrupt**:
 A user's demand that the **Session**'s currently running **Turn** stop now. An Interrupt targets that one Turn only: input the user has already queued still runs afterwards, and the Session stays usable. It is a request about the present, not an edit of the past — whatever the Agent had already produced remains part of the Session's history.
 _Avoid_: cancel, stop the session, kill (an Interrupt ends a Turn, not a Session)

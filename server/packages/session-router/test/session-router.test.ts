@@ -404,15 +404,15 @@ describe("SessionRouter", () => {
       // seq 1: user.message (promoted from pending)
       // seq 2: session.status_running
       // seq 3: agent.message (from adapter)
-      // seq 4: session.status_idle
-      // seq 5: session.turn_completed (durable before pending ack)
+      // seq 4: session.turn_completed (durable before pending ack)
+      // seq 5: session.status_idle (queue drained)
       const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
       expect(allEvents.data.length).toBe(5);
       expect(allEvents.data[0].type).toBe("user.message");
       expect(allEvents.data[1].type).toBe("session.status_running");
       expect(allEvents.data[2].type).toBe("agent.message");
-      expect(allEvents.data[3].type).toBe("session.status_idle");
-      expect(allEvents.data[4].type).toBe("session.turn_completed");
+      expect(allEvents.data[3].type).toBe("session.turn_completed");
+      expect(allEvents.data[4].type).toBe("session.status_idle");
 
       // Verify pending queue is empty
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -460,8 +460,8 @@ describe("SessionRouter", () => {
           "user.message",
           "session.status_running",
           "session.error",
-          "session.status_idle",
           "session.turn_completed",
+          "session.status_idle",
         ]);
         expect(events.data[2]?.data).toMatchObject({
           error: { code: "managed_mcp_unavailable" },
@@ -516,7 +516,7 @@ describe("SessionRouter", () => {
   });
 
   describe("handleNewEvent - lifecycle events are router-owned (issue #83)", () => {
-    it("persists EXACTLY ONE session.status_running and ONE session.status_idle per turn", async () => {
+    it("persists one running event at Turn start and one idle event when its queue drains", async () => {
       // The router is the sole owner of lifecycle events: it emits one running
       // at turn start and one idle when the queue drains. Adapters yield only
       // content/errors. Before #83, adapters ALSO yielded running/idle, which
@@ -600,12 +600,13 @@ describe("SessionRouter", () => {
       const allEvents = await eventLogStore.getEvents(session.id, { limit: 100 });
       const types = allEvents.data.map((e) => e.type);
 
-      // Each Turn gets its own durable idle + completion marker before that
-      // pending head is acknowledged, then the next Turn may start.
+      // Every Turn completes separately; only the final acknowledgement makes
+      // the Session idle. There is no idle transition between queued Turns.
       expect(types.filter((t) => t === "user.message")).toHaveLength(2);
       expect(types.filter((t) => t === "agent.message")).toHaveLength(2);
       expect(types.filter((t) => t === "session.status_running")).toHaveLength(2);
-      expect(types.filter((t) => t === "session.status_idle")).toHaveLength(2);
+      expect(types.filter((t) => t === "session.status_idle")).toHaveLength(1);
+      expect(types.at(-1)).toBe("session.status_idle");
       expect(types.filter((t) => t === "session.turn_completed")).toHaveLength(2);
 
       // Verify pending queue is drained
@@ -865,8 +866,8 @@ describe("SessionRouter", () => {
         "session.status_running",
         "span.model_request_end",
         "session.turn_aborted",
-        "session.status_idle",
         "session.turn_completed",
+        "session.status_idle",
       ]);
       await expect(eventLogStore.getUsage({ sessionId: session.id })).resolves.toEqual({
         inputTokens: 100,
@@ -994,8 +995,8 @@ describe("SessionRouter", () => {
         "user.message",
         "session.status_running",
         "session.turn_aborted",
-        "session.status_idle",
         "session.turn_completed",
+        "session.status_idle",
       ]);
     });
 

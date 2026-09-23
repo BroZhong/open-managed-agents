@@ -1,3 +1,5 @@
+import type { StoredEvent } from "../types.js";
+
 export interface PendingEvent {
   id: string;
   sessionId: string;
@@ -73,6 +75,17 @@ export interface PendingEventStore {
    * omitting claim is retained only for unclaimed legacy/test callers.
    */
   ack(sessionId: string, eventId: string, claim?: PendingEventClaimRef): Promise<boolean>;
+  /**
+   * Acknowledge an input with a durable turn_completed marker. Atomically
+   * remove it and, only if the queue empties, commit Session idle + its Event.
+   * Production stores serialize this with ingress and fence the claimed head.
+   * Optional for legacy stores and narrow single-process test doubles.
+   */
+  ackCompletedTurn?(
+    sessionId: string,
+    eventId: string,
+    claim: PendingEventClaimRef,
+  ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }>;
   /** Session ids whose FIFO queues currently contain at least one event. */
   listPendingSessionIds(): Promise<string[]>;
   /** Discard every pending event for one Session (missing/terminated cleanup). */

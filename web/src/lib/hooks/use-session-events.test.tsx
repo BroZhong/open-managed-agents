@@ -137,10 +137,17 @@ describe("useSessionEvents history replay", () => {
 
     const complete = { turnId: "turn_1_a1", blockIndex: 0, content: [{ type: "text", text: "parent complete" }] };
     await act(async () => {
-      emit("parent", "agent.message", complete, 2);
-      emit("parent", "session.status_idle", {}, 3);
+      emit("parent", "session.status_running", {}, 2);
+      emit("parent", "agent.message", complete, 3);
+      emit("parent", "session.turn_completed", { turnId: "turn_1_a1" }, 4);
     });
     expect(parent.result.current.activeDeltas).toEqual([]);
+    expect(parent.result.current.status).toBe("running");
+    expect(parent.result.current.fileChange.nonce).toBe(1);
+    expect(parent.result.current.turnLifecycleNonce).toBe(2);
+    await act(async () => emit("parent", "session.status_idle", {}, 5));
+    expect(parent.result.current.status).toBe("idle");
+    expect(parent.result.current.fileChange.nonce).toBe(1);
     expect(child.result.current.activeDeltas.map(d => d.data)).toEqual([delta("child-only")]);
     expect(child.result.current.events).toHaveLength(1);
     parent.unmount();
@@ -263,9 +270,9 @@ describe("useSessionEvents history replay", () => {
       "event: user.message\n" +
       "id: 75\n" +
       'data: {"content":[{"type":"text","text":"message 75"}]}\n\n' +
-      "event: session.status_idle\n" +
+      "event: session.turn_completed\n" +
       "id: 76\n" +
-      'data: {}\n\n';
+      'data: {"turnId":"turn_75"}\n\n';
 
     const historyUrls: string[] = [];
 

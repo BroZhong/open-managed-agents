@@ -1,4 +1,5 @@
 import type {
+  StoredEvent,
   PendingEvent,
   PendingEventClaim,
   PendingEventClaimRef,
@@ -19,9 +20,25 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
   private claims: Map<string, ClaimState> = new Map();
   private nextId = 1;
 
+  ackCompletedTurn?: PendingEventStore["ackCompletedTurn"];
+
   constructor(
     private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
-  ) {}
+    completeTurn?: (sessionId: string, eventId: string, queueEmpty: boolean) => {
+      accepted: boolean; idleEvent?: StoredEvent;
+    },
+  ) {
+    if (completeTurn) this.ackCompletedTurn = async (sessionId, eventId, claim) => {
+      // No await between ownership validation, lifecycle commit and removal.
+      // All three stores change in the same JavaScript turn.
+      if (!this.canAcknowledge(sessionId, eventId, claim)) return { acknowledged: false };
+      const result = completeTurn(sessionId, eventId, this.queues.get(sessionId)!.length === 1);
+      if (!result.accepted) return { acknowledged: false };
+      this.queues.get(sessionId)!.shift();
+      this.claims.delete(eventId);
+      return { acknowledged: true, ...(result.idleEvent ? { idleEvent: result.idleEvent } : {}) };
+    };
+  }
 
   async requestInterrupt(sessionId: string): Promise<boolean> {
     const event = this.queues.get(sessionId)?.[0];
@@ -168,24 +185,18 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     eventId: string,
     claim?: PendingEventClaimRef,
   ): Promise<boolean> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    const current = this.claims.get(eventId);
-    if (current?.ownerId) {
-      if (
-        !claim ||
-        current.ownerId !== claim.ownerId ||
-        current.generation !== claim.generation ||
-        current.expiresAtMs <= Date.now()
-      ) {
-        return false;
-      }
-    } else if (claim) {
-      return false;
-    }
-    queue.shift();
+    if (!this.canAcknowledge(sessionId, eventId, claim)) return false;
+    this.queues.get(sessionId)!.shift();
     this.claims.delete(eventId);
     return true;
+  }
+
+  private canAcknowledge(sessionId: string, eventId: string, claim?: PendingEventClaimRef): boolean {
+    if (this.queues.get(sessionId)?.[0]?.id !== eventId) return false;
+    const current = this.claims.get(eventId);
+    if (!current?.ownerId) return !claim;
+    return Boolean(claim && current.ownerId === claim.ownerId &&
+      current.generation === claim.generation && current.expiresAtMs > Date.now());
   }
 
   async listPendingSessionIds(): Promise<string[]> {
