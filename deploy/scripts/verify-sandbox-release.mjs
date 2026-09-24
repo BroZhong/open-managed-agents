@@ -58,7 +58,7 @@ function successfulCommand(es, command, expected) {
 }
 async function state() {
   const ids = Object.values(evidence.sessions).map(s => s.id);
-  return (await pool.query(`SELECT e.id, e.sandbox_id, e.lifecycle_managed, e.idle_since, e.reclaiming,
+  return (await pool.query(`SELECT e.id, e.sandbox_id, e.idle_since, e.reclaiming,
     (SELECT count(*)::int FROM sandbox_activities a WHERE a.binding_id=e.id) AS activities,
     (SELECT count(*)::int FROM pending_events p JOIN sessions s ON s.id=p.session_id WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=e.id) AS inputs
     FROM delegation_environments e WHERE e.id=ANY($1) ORDER BY e.id`, [ids])).rows;
@@ -98,7 +98,7 @@ try {
     check('parent settles before background child', ['queued', 'running'].includes(x.status), { status: x.status });
     let rows = await state(); const sharedRow = rows.find(r => r.id === shared.id);
     check('shared binding retains activity or queued input after parent completion', sharedRow.activities + sharedRow.inputs > 0 && sharedRow.idle_since === null, sharedRow);
-    check('independent Sessions sharing Workspace have distinct Sandboxes', new Set(rows.map(r => r.sandbox_id)).size === 3 && rows.every(r => r.sandbox_id && r.lifecycle_managed), rows);
+    check('independent Sessions sharing Workspace have distinct Sandboxes', new Set(rows.map(r => r.sandbox_id)).size === 3 && rows.every(r => r.sandbox_id), rows);
     evidence.originalBindings = rows; await save();
     const done = await wait('background child and notification settled', async () => (await api(`/v1/sessions/${shared.id}/delegations?limit=100`)).data.find(y => y.id === x.id), y => y.status === 'completed' && y.notificationStatus === 'processed');
     const childEvents = await events(x.childId);

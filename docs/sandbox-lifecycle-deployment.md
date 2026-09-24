@@ -9,9 +9,11 @@ Tests do not authorize production deployment.
 1. Verify the gateway/manager image digests and isolated never-timeout probe on
    the target deployment. The tested ACK gateway is v0.3.0, manager v0.6.11 and
    E2B JS SDK 2.24.0. Upstream documentation alone is insufficient evidence.
-2. Before deploying the new Host binary, apply `deploy/migrations/0014_sandbox_lifecycle.sql` using the normal authorized
-   database release process. Its default schema is `oma`. Install the trigger
-   before enabling any binding. Tables and columns alone are insufficient.
+2. Before deploying the new Host binary, apply `deploy/migrations/0014_sandbox_lifecycle.sql`
+   and then `deploy/migrations/0017_remove_sandbox_lifecycle_mode.sql` using the
+   normal authorized database release process. Its default schema is `oma`.
+   Install the trigger before running the lifecycle controller. Tables and
+   columns alone are insufficient.
    Production has `PG_ENSURE_SCHEMA=false`; even disabled Hosts need the additive
    environment columns. The trigger updates only already-managed bindings.
 3. Deploy the implementation to every Host that can execute a Sandbox. Mixed
@@ -72,11 +74,11 @@ returns; the Workspace remains the persistent source of files.
 Inspect only lifecycle metadata, not secret environment values:
 
 ```sql
-SELECT e.id, e.sandbox_id, e.lifecycle_managed, e.idle_since, e.reclaiming,
+SELECT e.id, e.sandbox_id, e.idle_since, e.reclaiming,
        (SELECT count(*) FROM oma.sandbox_activities a WHERE a.binding_id=e.id) AS activities,
        (SELECT count(*) FROM oma.pending_events p JOIN oma.sessions s ON s.id=p.session_id
         WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=e.id) AS inputs
-FROM oma.delegation_environments e WHERE e.lifecycle_managed;
+FROM oma.delegation_environments e WHERE e.sandbox_id IS NOT NULL;
 ```
 
 Success means a managed resource has no gateway deadline, stays bound throughout

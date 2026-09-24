@@ -315,14 +315,14 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
       const claim = (await stores.pendingEventStore.claim(retained.id, "departed-owner", 30_000))!;
       const activities = new PgSandboxLifecycleStore(pool);
       const activity = { bindingId: retained.id, sessionId: retained.id, fence: { eventId: accepted![0].id, ownerId: claim.ownerId, generation: claim.generation } };
-      await activities.begin(activity, false);
+      await activities.begin(activity);
       const child = await stores.delegationStore.accept({ tenantId: "test", callerSessionId: retained.id,
         callerTurnId: "parent-turn", callerToolUseId: "shared", prompt: "shared resource", mode: "async",
         parentModel: "mock", maxSteps: 500, sandboxSessionId: retained.id }, activity.fence);
       const childClaim = (await stores.pendingEventStore.claim(child.childId, "child-owner", 30_000))!;
       const childActivity = { bindingId: retained.id, sessionId: child.childId,
         fence: { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation } };
-      await activities.begin(childActivity, false);
+      await activities.begin(childActivity);
       await stores.delegationStore.withEnvironmentLock(retained.id, async () => ({ sandboxId: "unknown-sandbox", value: undefined }));
       await request(api1, `sessions/${retained.id}`, undefined, "DELETE");
       await delay(600);

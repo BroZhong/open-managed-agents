@@ -30,8 +30,7 @@ const pool = createPgPool({ connectionString: process.env.PG_TEST_URL, schema: e
 const stores = await createPgStores(pool, { ensureSchema: phase === 'init', schema: evidence.schema });
 const lifecycle = new PgSandboxLifecycleStore(pool);
 const client = new E2BSandboxClient({ ...config.sandbox, verifyWorkspaceProbe: (target, name, content) => artifactStore.verifyWorkspaceProbe(target.prefix, name, content) });
-const bindingIds = new Set(Object.values(evidence.cases).map(item => item.root));
-const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store: lifecycle, bindingIds } });
+const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle });
 const spec: EnvSpec = { tenantId: evidence.tenant, workspaceId: evidence.workspace, workspaceMount: { ...config.mount, prefix: `${evidence.tenant}/${evidence.workspace}/` } };
 const open = (root: string) => manager.open(spec, { id: root, withLock: work => stores.delegationStore.withEnvironmentLock(root, work) });
 const save = () => writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
@@ -58,7 +57,6 @@ try {
     const agent = await stores.agentStore.create({ tenantId: evidence.tenant, name: evidence.runId, runtime: 'pi', model: 'verification', system: '' });
     for (const name of ['idle', 'queued', 'unknown']) {
       const parent = await stores.sessionStore.create({ tenantId: evidence.tenant, agentId: agent.id, agent, workspaceId: evidence.workspace });
-      bindingIds.add(parent.id);
       await stores.pendingEventStore.enqueue(parent.id, { type: 'user.message', data: {}, sessionThreadId: 'sthr_primary' });
       const claim = (await stores.pendingEventStore.claim(parent.id, 'verification-host', 60000))!;
       const activity = { bindingId: parent.id, sessionId: parent.id, fence: { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation } };

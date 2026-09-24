@@ -29,7 +29,7 @@ export async function startExecution(deps: PgStores & {
   const modelProviders = new ModelProviderService(deps.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
   const piAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviders.configureRuntime(deps.sessionStore) });
   const sandboxManager = execution?.sandboxManager ?? (workspaceConfig ? new DefaultSandboxManager({
-    executionActivities: { begin: activity => activities.begin(activity, false), finish: activity => activities.finish(activity) },
+    executionActivities: { begin: activity => activities.begin(activity), finish: activity => activities.finish(activity) },
     sandboxClient: new E2BSandboxClient({
       ...workspaceConfig.sandbox,
       verifyWorkspaceProbe: async (target, name, content) => {

@@ -4,21 +4,12 @@ import type { Pool } from '@oma-server/store';
 
 describe('Sandbox lifecycle activation', () => {
   afterEach(() => vi.useRealTimers());
-  it('manages all existing bindings by default without rollout configuration', async () => {
+  it('constructs the unconditional lifecycle store without rollout configuration', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
     const pool = { query } as unknown as Pool;
     const lifecycle = await sandboxLifecycle(pool);
-    expect(lifecycle?.allBindings).toBe(true);
-    expect(lifecycle?.bindingIds).toEqual(new Set());
-    expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls[1][0]).toContain('SET lifecycle_managed=TRUE, idle_since=NULL WHERE lifecycle_managed=FALSE');
-  });
-  it('does not require rollout configuration', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
-    const pool = { query } as unknown as Pool;
-    const lifecycle = await sandboxLifecycle(pool);
-    expect(lifecycle?.allBindings).toBe(true);
-    expect(lifecycle?.bindingIds.size).toBe(0);
+    expect(lifecycle).toBeDefined();
+    expect(query).toHaveBeenCalledOnce();
   });
   it('requires the queue trigger before enabling idle reclamation', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });

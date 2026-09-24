@@ -5,8 +5,7 @@ import type { SandboxManagerDeps } from '@oma-server/sandbox';
 export async function sandboxLifecycle(pool: Pool): Promise<SandboxManagerDeps['lifecycle']> {
   const store = new PgSandboxLifecycleStore(pool);
   await store.assertReady();
-  await store.markAllManaged();
-  return { store, bindingIds: new Set(), allBindings: true };
+  return store;
 }
 
 /** No overlapping sweeps; failures retain resources and remain observable. */
