@@ -153,15 +153,16 @@ export function discovery(
     {
       path: "guide read",
       description:
-        "Read a bundled guide with --name <name> or positional <name>",
+        "Read a bundled guide selected by name from `guide list`",
       flags: {
-        name: string("Guide name", { required: true }),
+        name: string("Guide name from `guide list`", {
+          required: true,
+          missingHint:
+            "Missing --name. Run `oma-cli guide list`, then use `oma-cli guide read --name <name>`",
+        }),
         raw: boolean("Exact Markdown without added newline"),
       },
-      examples: [
-        "oma-cli guide read --name oma-cli",
-        "oma-cli guide read oma-cli",
-      ],
+      examples: ["oma-cli guide read --name oma-cli"],
       offline: true,
       run: async (c) => {
         if (c.flags.name !== "oma-cli")

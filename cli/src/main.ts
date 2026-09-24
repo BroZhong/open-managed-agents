@@ -41,15 +41,12 @@ try {
       schemaPath = words.slice(1).join(" ");
       words.splice(1);
     }
-    if (words[0] === "guide" && words[1] === "read" && words.length > 2) {
-      if (words.length !== 3 || flags.name !== undefined)
-        invalid(
-          "Use either `guide read <name>` or `guide read --name <name>`",
-          "guide read",
-        );
-      flags.name = words[2];
-      words.splice(2);
-    }
+    if (words[0] === "guide" && words[1] === "read" && words.length > 2)
+      invalid(
+        "guide read does not accept a positional name; run `oma-cli guide list`, then use `oma-cli guide read --name <name>`",
+        "--name",
+        "guide_name_must_use_flag",
+      );
     const command = commands.find((c) => c.path === words.join(" "));
     if (!command) invalid("Unknown command; run oma-cli --help");
     const inputs = await prepare(command, flags);
