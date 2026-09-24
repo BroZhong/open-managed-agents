@@ -10,7 +10,7 @@ metadata:
 spec:
   persistentContents:
   - filesystem
-  replicas: 1
+  replicas: 8
   runtimes:
   - name: csi
   - name: agent-runtime
