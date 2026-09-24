@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { boolean, string, type Command, type Values } from "../types.js";
 import { commandFlags } from "../input.js";
 import { invalid, normalizeError, redact } from "../errors.js";
-export const version = "0.0.1";
+export const version = "0.0.2";
 export function contract(c: Command) {
   const { run, validate, ...data } = c;
   return {
@@ -237,7 +237,7 @@ export function discovery(
                 name,
                 "error",
                 String(redact(error.message, [c.http.key])),
-                hint,
+                error.info.subtype === "non_json_response" ? error.info.hint : hint,
                 error.code === 4 ? 4 : error.code === 124 ? 124 : 1,
               );
               return undefined;

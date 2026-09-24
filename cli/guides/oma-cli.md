@@ -1,6 +1,6 @@
 # oma-cli
 
-Version 0.0.1. This guide is distributed with the CLI. The npm package name is `@welltop/oma-cli`. Requires Node.js >=22.
+Version 0.0.2. This guide is distributed with the CLI. The npm package name is `@welltop/oma-cli`. Requires Node.js >=22.
 
 ## Connect and discover
 

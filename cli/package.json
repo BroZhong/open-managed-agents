@@ -1,6 +1,6 @@
 {
   "name": "@welltop/oma-cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Non-interactive OMA CLI",
   "type": "module",
   "bin": {
