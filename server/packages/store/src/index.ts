@@ -16,6 +16,7 @@ export type {
   User,
   PaginatedResult,
   Runtime,
+  ThinkingLevel,
   Workspace,
   Loop,
   LoopDispatch,

@@ -18,6 +18,7 @@ type Env = {
 };
 
 const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
+const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function validateSandbox(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "sandbox must be an object";
@@ -43,7 +44,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       return c.json({ error: "Invalid JSON body" }, 400);
     }
 
-    const { name, description, model, system, runtime, tools, mcpServers, skills, sandbox } = body;
+    const { name, description, model, thinking, system, runtime, tools, mcpServers, skills, sandbox } = body;
     const tenant = c.get("tenant");
     let normalizedMcpServers = mcpServers;
 
@@ -58,6 +59,9 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     }
     if (!system || typeof system !== "string") {
       return c.json({ error: "system is required" }, 400);
+    }
+    if (thinking != null && !VALID_THINKING_LEVELS.includes(thinking)) {
+      return c.json({ error: `thinking must be one of: ${VALID_THINKING_LEVELS.join(", ")}` }, 400);
     }
     if (!runtime || typeof runtime !== "string") {
       return c.json({ error: "runtime is required" }, 400);
@@ -91,6 +95,7 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
       name,
       description,
       model,
+      thinking,
       system,
       runtime: runtime as Runtime,
       tools,
@@ -200,6 +205,12 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     if (body.name !== undefined) updateInput.name = body.name;
     if (body.description !== undefined) updateInput.description = body.description;
     if (body.model !== undefined) updateInput.model = body.model;
+    if (body.thinking !== undefined) {
+      if (body.thinking !== null && !VALID_THINKING_LEVELS.includes(body.thinking)) {
+        return c.json({ error: `thinking must be one of: ${VALID_THINKING_LEVELS.join(", ")}` }, 400);
+      }
+      updateInput.thinking = body.thinking;
+    }
     if (body.system !== undefined) updateInput.system = body.system;
     if (body.runtime !== undefined) updateInput.runtime = body.runtime;
     if (body.tools !== undefined) updateInput.tools = body.tools;

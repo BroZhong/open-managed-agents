@@ -78,6 +78,7 @@ export const AgentSchema = z
     name: z.string(),
     description: z.string().optional(),
     model: z.string(),
+    thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
     system: z.string(),
     runtime: RuntimeSchema,
     tools: z.array(ToolConfigSchema).optional(),
@@ -100,6 +101,7 @@ export const CreateAgentInputSchema = z
     model: z
       .string({ error: "model is required" })
       .min(1, { error: "model is required" }),
+    thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).nullable().optional(),
     system: z
       .string({ error: "system is required" })
       .min(1, { error: "system is required" }),

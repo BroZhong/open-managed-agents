@@ -2095,6 +2095,7 @@ export class SessionRouter {
       message,
       agent: {
         model,
+        thinking: agentConfig.thinking,
         system: agentConfig.system,
         tools: agentConfig.tools,
         mcpServers: resolveManagedMcpServers(agentConfig.mcpServers, {

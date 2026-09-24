@@ -18,6 +18,7 @@ export interface Agent {
    */
   description?: string;
   model: string;
+  thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   system: string;
   runtime: string;
   /** Equipped Agent Skill fork ids (private copies of Library Skills). */
@@ -37,6 +38,7 @@ export interface AgentMutationBody {
   name: string;
   description?: string;
   model: string;
+  thinking?: Agent["thinking"];
   system: string;
   runtime: string;
   skills?: string[];

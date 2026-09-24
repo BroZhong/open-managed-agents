@@ -36,6 +36,7 @@ export function agentForkRoutes(
     const fork = await agents.create({
       tenantId, name: name.trim(), description: config.description,
       model: config.model, system: config.system, runtime: config.runtime,
+      thinking: config.thinking,
       tools: config.tools, mcpServers: config.mcpServers, sandbox: config.sandbox,
       skills: [],
     });

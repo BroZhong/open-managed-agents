@@ -107,3 +107,26 @@ describe("effective execution configuration", () => {
     expect(sessionFactory).not.toHaveBeenCalled();
   });
 });
+
+describe("Agent thinking preference", () => {
+  it.each([
+    ["low", "low"],
+    ["max", "high"],
+    ["off", "off"],
+  ] as const)("adapts %s to the model's supported %s level", async (requested, expected) => {
+    const start = vi.fn(async (_args: SessionFactoryArgs) => {});
+    const onResolved = vi.fn(async () => {});
+    const value = input();
+    value.agent.thinking = requested;
+    value.execution = { onResolved };
+    expect(await collect(new PiAgentAdapter({ _sessionFactory: factory(start) }), value)).toEqual([]);
+    expect(start.mock.calls[0][0].thinkingLevel).toBe(expected);
+    expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ thinking: expected, thinkingSource: "agent" }));
+  });
+  it("keeps execution overrides authoritative over the Agent preference", async () => {
+    const start = vi.fn(async (_args: SessionFactoryArgs) => {});
+    const value = input(); value.agent.thinking = "max"; value.execution = { thinking: "low" };
+    await collect(new PiAgentAdapter({ _sessionFactory: factory(start) }), value);
+    expect(start.mock.calls[0][0].thinkingLevel).toBe("low");
+  });
+});

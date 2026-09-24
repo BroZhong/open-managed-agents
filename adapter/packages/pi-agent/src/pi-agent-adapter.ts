@@ -24,7 +24,7 @@ import type {
   SkillDescriptor,
   DelegationInstruction,
 } from "@open-managed-agents/adapter-core";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
@@ -313,11 +313,15 @@ export class PiAgentAdapter implements Adapter {
       const model = resolveModel(this.model ?? input.agent.model, modelRuntime);
       const requestedThinking = input.execution?.thinking;
       if (requestedThinking !== undefined && !getSupportedThinkingLevels(model).includes(requestedThinking as ModelThinkingLevel)) throw new Error(`Unsupported thinking level: ${requestedThinking}`);
-      const thinkingLevel = requestedThinking as ModelThinkingLevel | undefined ?? highestThinkingLevel(model);
+      const thinkingLevel = requestedThinking !== undefined
+        ? requestedThinking as ModelThinkingLevel
+        : input.agent.thinking != null
+          ? clampThinkingLevel(model, input.agent.thinking)
+          : highestThinkingLevel(model);
       await input.execution?.onResolved?.({
         model: `${model.provider}/${model.id}`,
         thinking: thinkingLevel,
-        thinkingSource: requestedThinking === undefined ? "model_default" : "override",
+        thinkingSource: requestedThinking !== undefined ? "override" : input.agent.thinking != null ? "agent" : "model_default",
       });
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
