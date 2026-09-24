@@ -80,7 +80,9 @@ try {
     check('cold Sessions create no Sandbox', rows.every(r => !r.sandbox_id));
   } else if (phase === 'exercise' || phase === 'shared') {
     const { idle, shared, independent } = evidence.sessions;
-    assert(Object.values(evidence.sessions).every(s => (process.env.SANDBOX_IDLE_BINDINGS ?? '').split(',').includes(s.id)), 'All fixtures must be selected on deployed Host');
+    const selected = (process.env.SANDBOX_IDLE_BINDINGS ?? '').split(',').map(s => s.trim()).filter(Boolean);
+    const allBindings = process.env.SANDBOX_IDLE_ALL === 'true' || (process.env.SANDBOX_IDLE_SWEEP === 'true' && selected.length === 0);
+    assert(allBindings || Object.values(evidence.sessions).every(s => selected.includes(s.id)), 'All fixtures must be selected on deployed Host');
     assert(process.env.SANDBOX_IDLE_SWEEP === 'true', 'Production sweeper must be enabled');
     const token = `PERSIST_${evidence.runId}`; evidence.token = token;
     if (phase === 'exercise') {

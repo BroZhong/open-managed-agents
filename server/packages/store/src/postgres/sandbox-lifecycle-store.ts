@@ -17,6 +17,13 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
     }
   }
 
+  async listManagedBindings(): Promise<readonly string[]> {
+    const result = await this.pool.query<{ id: string }>(
+      'SELECT id FROM delegation_environments WHERE lifecycle_managed=TRUE AND sandbox_id IS NOT NULL ORDER BY id',
+    );
+    return result.rows.map(row => row.id);
+  }
+
   private async locked<T>(bindingId: string, work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {

@@ -90,8 +90,9 @@ explicitly. The following commands are for the separately authorized release:
 
 1. Record current Host/Web images, Service selectors, active Session/Turn IDs,
    pending depth, and controlled Sandbox lifecycle configuration. Back up the
-   database. Keep `SANDBOX_IDLE_BINDINGS` and `SANDBOX_IDLE_SWEEP` exactly at their
-   existing authorized scope; the split manifest does not enable either.
+   database. Keep `SANDBOX_IDLE_SWEEP` enabled for the default all-bindings
+   selector and remove any stale `SANDBOX_IDLE_BINDINGS` allowlist before cutover.
+   The split manifest does not own these externally injected values.
 2. Apply `deploy/migrations/0015_api_runner_split.sql` using the existing migration
    process. It adds the cleanup outbox and app-role grants, and discovers older
    terminated Sessions. It does not rewrite events or remove columns.

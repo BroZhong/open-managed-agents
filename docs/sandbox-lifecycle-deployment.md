@@ -1,7 +1,8 @@
-# Sandbox lifecycle: controlled rollout, adoption and rollback
+# Sandbox lifecycle: default activation, adoption and rollback
 
-This is the release procedure for #172–#176 and ADR-0017. Tests do not authorize
-production deployment. No production policy flag is enabled by this change.
+This is the release procedure for #172–#176 and ADR-0017. With the all-bindings
+selector enabled, lifecycle management applies to every durable binding.
+Tests do not authorize production deployment.
 
 ## Preconditions
 
@@ -17,13 +18,13 @@ production deployment. No production policy flag is enabled by this change.
    Mixed old/new Hosts must not execute those bindings: old Hosts do not record
    the new non-expiring activities. Gate their admission or drain the old Hosts;
    never kill user Sandboxes merely to switch code.
-4. First select new, cold Sessions via `SANDBOX_IDLE_BINDINGS=<root-session-id>,...`.
-   Children inherit protection automatically. Workspace and Agent IDs are not
-   selectors, and `*` is rejected. Leave `SANDBOX_IDLE_SWEEP` unset until retention
-   and the complete acceptance matrix have been verified.
-5. Enable `SANDBOX_IDLE_SWEEP=true` only for the selected bindings. The Manager
-   samples every 30 seconds. Idle starts when absence of activity and inputs is
-   confirmed, so reclamation can occur slightly later than 30 minutes.
+4. The default production configuration sets `SANDBOX_IDLE_ALL=true` and omits
+   `SANDBOX_IDLE_BINDINGS`. `SANDBOX_IDLE_SWEEP=true` enables deletion for every
+   adopted binding; setting it to false pauses deletion while retaining
+   never-timeout creation. An explicit ID list remains only as a
+   rollback-compatible selector.
+5. The Manager samples every 30 seconds. Idle starts when absence of activity and
+   inputs is confirmed, so reclamation can occur slightly later than 30 minutes.
 
 ## Inventory and safe adoption of existing resources
 
@@ -106,16 +107,16 @@ If evidence is unavailable, retain the resource indefinitely.
 
 ## Rollback
 
-Set `SANDBOX_IDLE_SWEEP=false` and stop/delete no user Sandbox. Keep the selected
-binding allowlist, never-timeout creation, input trigger and activity recording.
-Do not drop lifecycle tables, remove unknown records, revert to a pre-lifecycle
-binary on selected bindings, or restore a finite deadline. A committed
+Set `SANDBOX_IDLE_SWEEP=false` and stop/delete no user Sandbox. Keep lifecycle
+activity recording and the input trigger. Do not drop lifecycle tables, remove
+unknown records, revert to a pre-lifecycle binary, or restore a finite deadline.
+A committed
 `reclaiming` ticket must finish its idempotent cleanup before work can resume;
 never clear it merely because the deleting Host is unavailable.
 
-Full production enablement remains blocked until the complete verification matrix
-passes on the actual release configuration and an explicit deployment is
-authorized. This implementation deliberately provides no wildcard global switch.
+Production activation still requires the complete verification matrix and an
+explicit deployment authorization. Existing resources must be reconciled and
+adopted before the all-bindings selector is enabled.
 
 ## Repeatable verification
 

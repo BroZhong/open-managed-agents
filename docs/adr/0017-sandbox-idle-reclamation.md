@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted. Implementation is restricted to explicit root Session bindings. This
-supersedes the one-hour Sandbox lifetime assumption in ADR-0002 and ADR-0005
-for those bindings. Production-wide activation is a separate release decision.
+Accepted. The implementation supports all durable Session bindings by default
+when the lifecycle sweep is enabled. This supersedes the one-hour Sandbox
+lifetime assumption in ADR-0002 and ADR-0005 after existing resources are safely
+adopted.
 
 ## Decision
 
@@ -41,9 +42,10 @@ database connection cannot reopen the binding during an uncertain delete.
 Managed Sandboxes use the verified ACK `e2b.agents.kruise.io/never-timeout`
 extension. Neither SDK `timeoutMs: 0` nor command timeout disabling establishes
 this property. No renewal heartbeat, eight-hour cutoff, maximum connection time
-or maximum Sandbox age substitutes for unknown-state retention. Legacy bindings
-remain outside the rollout and retain their existing behavior until safely
-adopted. The implementation refuses automatic adoption of an existing binding.
+or maximum Sandbox age substitutes for unknown-state retention. Existing
+finite-lifetime bindings retain their current behavior until their gateway
+deadline and identity are safely verified; the implementation refuses automatic
+adoption of an existing binding.
 
 Only completed writes within the OSS Workspace survive reclamation. A later tool
 operation recreates the Sandbox against the same verified mount. Temporary files,
@@ -54,11 +56,11 @@ reclamation. History viewing and Workspace file API reads do not renew activity.
 ## Rollout and recovery
 
 Migration 0014 installs the queue trigger and persistent state. Explicit
-`SANDBOX_IDLE_BINDINGS` enables retention for selected root Session IDs and their
-children; `SANDBOX_IDLE_SWEEP=true` separately enables deletion. Neither is added
-to production manifests. Startup refuses controlled enablement without the
-trigger. Rollback pauses sweeping while retaining never-timeout creation and
-activity recording; it must not restore short expiry to existing resources.
+`SANDBOX_IDLE_ALL=true` enables retention for all durable bindings and
+`SANDBOX_IDLE_SWEEP=true` enables their deletion. An explicit ID list remains
+available for rollback. Startup refuses enablement without the trigger. Rollback
+pauses sweeping while retaining never-timeout creation and activity recording;
+it must not restore short expiry to existing resources.
 
 Existing finite-lifetime resources require an authorized, UID-checked removal of
 their gateway deadline before adoption, preserving the running Pod. Every
