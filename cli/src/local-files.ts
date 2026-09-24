@@ -1,5 +1,6 @@
 import {
   lstat,
+  stat as fsStat,
   readdir,
   readFile,
   mkdir,
@@ -33,8 +34,17 @@ export async function checkChain(
     current = join(current, parts[i]!);
     const s = await stat(current);
     if (!s) continue;
-    if (s.isSymbolicLink())
-      invalid("Symbolic links are not allowed: " + current);
+    if (s.isSymbolicLink()) {
+      // macOS exposes /var (and therefore the default os.tmpdir()) as a
+      // root-level compatibility alias for /private/var. Treat root aliases
+      // like the filesystem root itself, while still rejecting symlinks
+      // inside a user-provided tree where they could escape the destination.
+      if (i !== 0 || root !== "/")
+        invalid("Symbolic links are not allowed: " + current);
+      if (!(await fsStat(current)).isDirectory())
+        invalid("Expected directory: " + current);
+      continue;
+    }
     const last = i === parts.length - 1;
     if (!last || leaf === "directory") {
       if (!s.isDirectory()) invalid("Expected directory: " + current);
