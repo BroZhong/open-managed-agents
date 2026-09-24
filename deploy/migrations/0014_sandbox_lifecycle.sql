@@ -1,5 +1,6 @@
 -- Apply before deploying the Host (production uses PG_ENSURE_SCHEMA=false).
--- Does not adopt, renew or delete resources; the trigger touches managed rows only.
+-- The Runner marks every durable binding managed after this schema is present;
+-- the trigger then touches managed rows only.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS lifecycle_managed BOOLEAN NOT NULL DEFAULT FALSE;

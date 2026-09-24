@@ -237,7 +237,7 @@ notifications. Open SSE connections catch up committed PG events during Redis
 outages. API accepts Interrupt and termination without holding execution objects.
 Termination writes a retryable cleanup outbox and a durable lifecycle Event.
 Unknown Sandbox execution is retained until actual settlement; recording activity
-for cleanup does not enable the controlled idle-reclamation rollout.
+and reclamation are enabled for every durable Sandbox binding by default.
 See ADR-0018 and `docs/api-runner-operations.md`.
 
 ## User-owned model providers
