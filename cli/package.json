@@ -1,0 +1,27 @@
+{
+  "name": "oma-cli-local",
+  "version": "0.1.0",
+  "description": "Non-interactive OMA CLI (local package name; registry name pending)",
+  "type": "module",
+  "bin": {
+    "oma-cli": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "guides",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "5.8.3"
+  }
+}
