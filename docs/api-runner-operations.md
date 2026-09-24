@@ -34,6 +34,13 @@ API Pods have no Pi config mount or Sandbox service account. Web and public Ingr
 remain separately managed by the existing deployment. The legacy `oma-server`
 Service selector is intentionally not changed by the staged manifest.
 
+Tenant model-provider configuration requires migration `0016_model_providers.sql`
+and the same `OMA_PROVIDER_ENCRYPTION_KEY` Secret reference in API and Runner.
+API lazily loads Pi only for an authenticated provider discovery/test request;
+startup still does not load Pi or execution infrastructure. Runner decrypts the
+selected Tenant provider for each Turn. The API does not need the managed Pi
+catalog or Sandbox credentials for these user-supplied provider probes.
+
 ## Local debugging
 
 Install the adapter and server dependencies, then run from the repository root:

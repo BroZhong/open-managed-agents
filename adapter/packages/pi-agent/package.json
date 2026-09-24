@@ -8,7 +8,8 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./src/index.ts"
-    }
+    },
+    "./custom-provider-protocols": "./src/custom-provider-protocols.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -16,9 +17,11 @@
     "e2e": "tsx e2e/run-sdk.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
     "@earendil-works/pi-ai": "0.83.0",
     "@earendil-works/pi-coding-agent": "0.83.0",
     "@open-managed-agents/adapter-core": "file:../core",
+    "openai": "6.26.0",
     "typebox": "1.1.38"
   },
   "devDependencies": {

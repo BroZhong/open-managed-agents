@@ -210,6 +210,8 @@ export function buildSkillsPromptSection(descriptors: SkillDescriptor[]): string
 }
 
 export interface PiAgentAdapterOptions {
+  /** Host resolves Tenant-owned providers into this Turn-local runtime. */
+  configureModelRuntime?: (input: AdapterInput, runtime: ModelRuntime) => Promise<void>;
   /** Override the model string (otherwise taken from `input.agent.model`). */
   model?: string;
   /**
@@ -269,12 +271,14 @@ function materializeMcpConfig(
 }
 
 export class PiAgentAdapter implements Adapter {
+  private readonly configureModelRuntime: PiAgentAdapterOptions["configureModelRuntime"];
   private readonly model: string | undefined;
   private readonly sessionFactory:
     | ((args: SessionFactoryArgs) => Promise<PiSessionLike>)
     | undefined;
 
   constructor(options?: PiAgentAdapterOptions) {
+    this.configureModelRuntime = options?.configureModelRuntime;
     this.model = options?.model;
     this.sessionFactory = options?._sessionFactory;
   }
@@ -305,6 +309,7 @@ export class PiAgentAdapter implements Adapter {
       // this Turn. Catalog refresh belongs to deployment; avoid network
       // discovery on every managed Turn.
       const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false });
+      await this.configureModelRuntime?.(input, modelRuntime);
       const model = resolveModel(this.model ?? input.agent.model, modelRuntime);
       const requestedThinking = input.execution?.thinking;
       if (requestedThinking !== undefined && !getSupportedThinkingLevels(model).includes(requestedThinking as ModelThinkingLevel)) throw new Error(`Unsupported thinking level: ${requestedThinking}`);

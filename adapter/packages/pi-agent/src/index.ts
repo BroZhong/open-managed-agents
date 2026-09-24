@@ -12,3 +12,8 @@ export {
   expandManagedSkillCommand,
 } from "./skill-command-bridge.js";
 export { resolveModel, highestThinkingLevel, DEFAULT_MODEL } from "./model-resolver.js";
+
+export { CUSTOM_PROVIDER_PROTOCOLS, registerCustomProvider, testCustomProvider } from "./custom-provider.js";
+export type { CustomProviderDefinition, CustomProviderProtocol, CustomModelDefinition } from "./custom-provider.js";
+
+export { discoverCustomProviderModels, ModelDiscoveryError } from "./provider-discovery.js";

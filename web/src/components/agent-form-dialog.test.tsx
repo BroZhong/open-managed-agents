@@ -43,9 +43,10 @@ it.each([
   );
   vi.stubGlobal("fetch", fetchMock);
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
   });
 
+  queryClient.setQueryData(["model-providers"], []);
   render(
     <QueryClientProvider client={queryClient}>
       <AgentFormDialog open onOpenChange={() => {}} agent={agent} />
@@ -76,8 +77,9 @@ it.each(PI_MODELS.map((choice) => choice.value))("creates an Agent with %s and t
   }) as Response);
   vi.stubGlobal("fetch", fetchMock);
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
   });
+  queryClient.setQueryData(["model-providers"], []);
   render(
     <QueryClientProvider client={queryClient}>
       <AgentFormDialog open onOpenChange={() => {}} />
@@ -99,4 +101,19 @@ it.each(PI_MODELS.map((choice) => choice.value))("creates an Agent with %s and t
     runtime: "pi-agent",
   });
   expect(JSON.parse(String(init.body)).sandbox).toEqual({ enabled: true });
+});
+
+it("selects a tested custom model when creating an Agent", async () => {
+  const fetchMock = vi.fn(async () => Response.json({ id: "agent_custom" }));
+  vi.stubGlobal("fetch", fetchMock);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  queryClient.setQueryData(["model-providers"], [{ id: "custom-one", name: "Gateway", models: [{ id: "vendor/model", name: "Custom Model" }] }]);
+  render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} /></QueryClientProvider>);
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Custom Agent" } });
+  fireEvent.click(screen.getByLabelText("Model"));
+  fireEvent.click(screen.getByRole("button", { name: "Custom Model · Gateway" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(JSON.parse(String(init.body)).model).toBe("custom-one/vendor/model");
 });

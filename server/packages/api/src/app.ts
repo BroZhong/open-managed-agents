@@ -1,3 +1,5 @@
+import { modelProviderRoutes } from "./routes/model-providers.js";
+import type { ModelProviderService } from "./lib/model-providers.js";
 import { cors } from "hono/cors";
 import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -33,6 +35,7 @@ type Env = {
 };
 
 export interface AppDeps {
+  modelProviderService?: ModelProviderService;
   sessionShareStore?: SessionShareStore;
   apiKeyStore: ApiKeyStore;
   fullApiKeyStore?: FullApiKeyStore;
@@ -108,6 +111,8 @@ export function createApp(deps: AppDeps) {
 
   // Host-owned MCP catalog exposes metadata only; runtime definitions stay private.
   app.route("/", mcpCatalogRoutes());
+
+  if (deps.modelProviderService) app.route("/", modelProviderRoutes(deps.modelProviderService));
 
   // Mount agent routes
   if (deps.agentStore) {

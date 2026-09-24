@@ -1,3 +1,4 @@
+import { useModelProviders } from "@/lib/hooks/use-model-providers";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Dialog, DialogHeader, DialogFooter } from "@/components/ui/dialog";
@@ -29,6 +30,8 @@ export function AgentFormDialog({
   agent,
   onSuccess,
 }: AgentFormDialogProps) {
+  const providers = useModelProviders(open);
+  const choices = [...PI_MODELS, ...(providers.data ?? []).flatMap(provider => provider.models.map(model => ({ value: `${provider.id}/${model.id}`, label: `${model.name} · ${provider.name}` })))];
   const isEdit = !!agent;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -166,16 +169,17 @@ export function AgentFormDialog({
             value={model}
             onChange={(e) => setModel(e.target.value)}
           >
-            {PI_MODELS.map((choice) => (
+            {choices.map((choice) => (
               <option key={choice.value} value={choice.value}>{choice.label}</option>
             ))}
-            {agent && !PI_MODELS.some((choice) => choice.value === agent.model) && (
+            {agent && !choices.some((choice) => choice.value === agent.model) && (
               <option value={agent.model}>{`${agent.model} (current)`}</option>
             )}
           </Select>
           <p className="text-xs text-neutral-500">
             Thinking uses the highest level supported by the selected model.
           </p>
+          <p className="text-xs text-neutral-500">{providers.error ? "Custom models could not be loaded. " : ""}<a href="/model-providers" className="underline">Manage model providers</a></p>
           <Textarea
             id="agent-system"
             label="System Prompt"

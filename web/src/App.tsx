@@ -1,3 +1,4 @@
+import ModelProvidersPage from "@/pages/model-providers";
 import { Routes, Route, Navigate } from "react-router";
 import { useAuth } from "@/lib/auth";
 import LoginPage from "@/pages/login";
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/agents/:id/skills/:skillId" element={<SkillDetailPage />} />
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/mcp" element={<McpPage />} />
+        <Route path="/model-providers" element={<ModelProvidersPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
       </Route>
     </Routes>

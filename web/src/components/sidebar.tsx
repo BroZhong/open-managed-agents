@@ -78,6 +78,7 @@ const navGroups = [
     items: [
       { label: "Skill", icon: BookOpen, path: "/skills" },
       { label: "MCP", icon: Plug, path: "/mcp" },
+      { label: "Models", icon: Plug, path: "/model-providers" },
     ],
   },
   {
