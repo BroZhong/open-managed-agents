@@ -1,23 +1,21 @@
 import type { Pool, PoolClient } from './connection.js';
 import { SANDBOX_IDLE_MS, type SandboxActivity, type SandboxLifecycleStore, type SandboxReclamation } from '../interfaces/sandbox-lifecycle-store.js';
 
-/** Installed explicitly for controlled rollout; never inferred from a lost lease. */
+/** Tracks all Sandbox use and only reclaims resources after observed idle time. */
 export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
   constructor(private readonly pool: Pool, private readonly clock?: () => Date) {}
   async assertReady(): Promise<void> {
     const result = await this.pool.query("SELECT 1 FROM pg_trigger WHERE tgname = 'sandbox_input_activity' AND tgrelid = 'pending_events'::regclass AND tgfoid = 'invalidate_sandbox_idle()'::regprocedure AND tgenabled IN ('O', 'A')");
     if (!result.rows.length) throw new Error('Sandbox lifecycle requires migration 0014 and its input activity trigger');
   }
-  async assertBindings(bindingIds: ReadonlySet<string>): Promise<void> {
-    for (const id of bindingIds) {
-      const session = await this.pool.query<{ delegation: unknown }>('SELECT delegation FROM sessions WHERE id=$1', [id]);
-      if (!session.rows.length || session.rows[0].delegation) throw new Error(`Sandbox lifecycle selection ${id} must be an existing root Session`);
-      const row = await this.pool.query('SELECT id FROM delegation_environments WHERE id=$1 AND sandbox_id IS NOT NULL AND lifecycle_managed=FALSE', [id]);
-      if (row.rows.length) throw new Error(`Sandbox binding ${id} requires verified adoption before enablement`);
-    }
+  async markAllManaged(): Promise<void> {
+    await this.pool.query('UPDATE delegation_environments SET lifecycle_managed=TRUE, idle_since=NULL WHERE lifecycle_managed=FALSE');
   }
 
   async listManagedBindings(): Promise<readonly string[]> {
+    // File access can create a binding without starting a Turn. Include those
+    // bindings on the next sweep as well as those present at Runner startup.
+    await this.markAllManaged();
     const result = await this.pool.query<{ id: string }>(
       'SELECT id FROM delegation_environments WHERE lifecycle_managed=TRUE AND sandbox_id IS NOT NULL ORDER BY id',
     );
@@ -39,9 +37,8 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
 
   async begin(activity: SandboxActivity, managed = true): Promise<boolean> {
     return this.locked(activity.bindingId, async client => {
-      const { rows: [environment] } = await client.query<{ sandbox_id: string | null; lifecycle_managed: boolean; reclaiming: boolean }>('SELECT sandbox_id, lifecycle_managed, reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
+      const { rows: [environment] } = await client.query<{ reclaiming: boolean }>('SELECT reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
       if (environment.reclaiming) return false;
-      if (managed && environment.sandbox_id && !environment.lifecycle_managed) throw new Error('Existing Sandbox requires verified never-timeout adoption before controlled enablement');
       // Validate ownership in the same transaction as registering an attempt.
       const fence = activity.fence;
       const owned = await client.query(`SELECT p.id FROM pending_events p JOIN sessions s ON s.id=p.session_id

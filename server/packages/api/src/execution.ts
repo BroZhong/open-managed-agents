@@ -60,7 +60,7 @@ export async function startExecution(deps: PgStores & {
   await dispatch.start();
   const loops = new LoopScheduler({ loopStore: deps.loopStore, sessionRouter: router, pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000) });
   loops.start();
-  const stopSweep = sandboxManager && process.env.SANDBOX_IDLE_SWEEP === "true"
+  const stopSweep = sandboxManager && process.env.SANDBOX_IDLE_SWEEP !== "false"
     ? startSandboxSweeper(async () => { await sandboxManager.sweepIdle?.(); }, error => console.error("Sandbox sweep failed:", error)) : () => {};
   return { router, ready: () => dispatch.ready, stop: async () => { stopSweep(); await Promise.all([dispatch.stop(), loops.stop()]); } };
 }

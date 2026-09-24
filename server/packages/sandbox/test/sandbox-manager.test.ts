@@ -42,6 +42,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     let reclaim = false;
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      markAllManaged: vi.fn(async () => {}),
       listManagedBindings: vi.fn(async () => ['root']),
       claimReclamation: vi.fn(async () => reclaim && storedId ? { bindingId: 'root', sandboxId: storedId } : null),
       completeReclamation: vi.fn(async () => { storedId = null; }),
@@ -71,6 +72,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     const { client } = makeManager();
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      markAllManaged: vi.fn(async () => {}),
       listManagedBindings: vi.fn(async () => ['root']),
       claimReclamation: vi.fn(async () => { throw new Error('database unavailable'); }),
       completeReclamation: vi.fn(async () => {}),
@@ -90,6 +92,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     });
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      markAllManaged: vi.fn(async () => {}),
       listManagedBindings: vi.fn(async () => ['one', 'two']),
       claimReclamation: vi.fn(async bindingId => ({ bindingId, sandboxId: bindingId === 'one' ? one.id : two.id })),
       completeReclamation: vi.fn(async () => {}),
@@ -99,11 +102,12 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.destroyed).toEqual([two.id]);
     expect(store.completeReclamation).toHaveBeenCalledExactlyOnceWith({ bindingId: 'two', sandboxId: two.id });
   });
-  it('enumerates adopted bindings dynamically in the all-bindings mode', async () => {
+  it('enumerates all bindings dynamically in the all-bindings mode', async () => {
     const client = new FakeSandboxClient();
     const stored = await client.create();
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      markAllManaged: vi.fn(async () => {}),
       listManagedBindings: vi.fn(async () => ['dynamic']),
       claimReclamation: vi.fn(async bindingId => ({ bindingId, sandboxId: stored.id })),
       completeReclamation: vi.fn(async () => {}),

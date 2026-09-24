@@ -4,8 +4,8 @@
 
 Accepted. The implementation supports all durable Session bindings by default
 when the lifecycle sweep is enabled. This supersedes the one-hour Sandbox
-lifetime assumption in ADR-0002 and ADR-0005 after existing resources are safely
-adopted.
+lifetime assumption in ADR-0002 and ADR-0005. In the test deployment every
+durable binding is managed automatically; there is no per-binding adoption gate.
 
 ## Decision
 
@@ -43,9 +43,10 @@ Managed Sandboxes use the verified ACK `e2b.agents.kruise.io/never-timeout`
 extension. Neither SDK `timeoutMs: 0` nor command timeout disabling establishes
 this property. No renewal heartbeat, eight-hour cutoff, maximum connection time
 or maximum Sandbox age substitutes for unknown-state retention. Existing
-finite-lifetime bindings retain their current behavior until their gateway
-deadline and identity are safely verified; the implementation refuses automatic
-adoption of an existing binding.
+bindings are marked managed by the Runner at startup and during each sweep. New
+Sandboxes are created with the never-timeout extension. A stale or already
+expired Sandbox ID is handled by the idempotent destroy path and does not block
+lifecycle management.
 
 Only completed writes within the OSS Workspace survive reclamation. A later tool
 operation recreates the Sandbox against the same verified mount. Temporary files,
@@ -55,20 +56,18 @@ reclamation. History viewing and Workspace file API reads do not renew activity.
 
 ## Rollout and recovery
 
-Migration 0014 installs the queue trigger and persistent state. Explicit
-`SANDBOX_IDLE_ALL=true` enables retention for all durable bindings and
-`SANDBOX_IDLE_SWEEP=true` enables their deletion. An explicit ID list remains
-available for rollback. Startup refuses enablement without the trigger. Rollback
-pauses sweeping while retaining never-timeout creation and activity recording;
-it must not restore short expiry to existing resources.
+Migration 0014 installs the queue trigger and persistent state. The Runner
+enables lifecycle management for every durable binding without reading a
+selector or allowlist. `SANDBOX_IDLE_SWEEP` defaults to enabled; setting it to
+`false` pauses deletion while retaining never-timeout creation and activity
+recording. The historical `SANDBOX_IDLE_ALL` and `SANDBOX_IDLE_BINDINGS` values
+are ignored. Startup still refuses enablement without the trigger. Rollback
+does not restore a finite deadline.
 
-Existing finite-lifetime resources require an authorized, UID-checked removal of
-their gateway deadline before adoption, preserving the running Pod. Every
-pre-adoption execution whose settlement cannot be proved receives an unresolved
-activity record. An ambiguous create may leave a gateway resource before its ID
-commits in PostgreSQL: the persistent `oma.dev/binding`, Tenant and Workspace
-metadata permit operator reconciliation. Such resources are retained, never
-deleted by an orphan-age policy or silently replaced as part of adoption.
+If a test resource still has a gateway deadline, it may be interrupted and
+recreated under the new policy, or its deadline may be removed with a UID-checked
+patch. An ambiguous create still requires normal binding reconciliation; it is
+never deleted by an orphan-age policy.
 
 See [rollout and rollback](../sandbox-lifecycle-deployment.md) and
 [verification evidence](../verification/sandbox-lifecycle-2026-09-22.md).

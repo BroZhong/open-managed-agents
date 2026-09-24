@@ -1,7 +1,7 @@
-# Sandbox lifecycle: default activation, adoption and rollback
+# Sandbox lifecycle: default activation and rollback
 
-This is the release procedure for #172–#176 and ADR-0017. With the all-bindings
-selector enabled, lifecycle management applies to every durable binding.
+This is the release procedure for #172–#176 and ADR-0017. Lifecycle management
+applies to every durable Sandbox binding by default.
 Tests do not authorize production deployment.
 
 ## Preconditions
@@ -14,19 +14,17 @@ Tests do not authorize production deployment.
    before enabling any binding. Tables and columns alone are insufficient.
    Production has `PG_ENSURE_SCHEMA=false`; even disabled Hosts need the additive
    environment columns. The trigger updates only already-managed bindings.
-3. Deploy the implementation to every Host that can execute a selected binding.
-   Mixed old/new Hosts must not execute those bindings: old Hosts do not record
-   the new non-expiring activities. Gate their admission or drain the old Hosts;
+3. Deploy the implementation to every Host that can execute a Sandbox. Mixed
+   old/new Hosts must not execute these bindings: old Hosts do not record the
+   new non-expiring activities. Gate their admission or drain the old Hosts;
    never kill user Sandboxes merely to switch code.
-4. The default production configuration sets `SANDBOX_IDLE_ALL=true` and omits
-   `SANDBOX_IDLE_BINDINGS`. `SANDBOX_IDLE_SWEEP=true` enables deletion for every
-   adopted binding; setting it to false pauses deletion while retaining
-   never-timeout creation. An explicit ID list remains only as a
-   rollback-compatible selector.
+4. The default configuration has no binding selector. Every binding is managed
+   after startup; `SANDBOX_IDLE_SWEEP=true` enables deletion and setting it to
+   false pauses deletion while retaining never-timeout creation.
 5. The Manager samples every 30 seconds. Idle starts when absence of activity and
    inputs is confirmed, so reclamation can occur slightly later than 30 minutes.
 
-## Inventory and safe adoption of existing resources
+## Existing resources
 
 Use the explicit Shanghai kubeconfig for all cluster operations:
 
@@ -46,37 +44,29 @@ Match PostgreSQL `delegation_environments.sandbox_id` to the E2B identity
 binding, Tenant and Workspace must agree before any modification. Warm-pool
 resources without a claimed identity are not OMA orphaned executions.
 
-For each explicitly authorized existing binding:
+Existing bindings are included automatically. No per-binding adoption is needed
+in this test environment. The Runner marks all durable environment rows as
+managed at startup and on each sweep; a newly created binding is included on the
+next sweep as well.
 
-1. Record the Sandbox UID, Pod UID, existing `shutdownTime`, pending inputs,
-   resource users and unresolved executions. Stop legacy lifecycle writers for
-   this binding without destroying its environment. If ownership cannot be
-   coordinated before its existing expiry, the release is blocked; a heartbeat
-   is not the final protection mechanism.
-2. Use a Kubernetes JSON patch containing a `test /metadata/uid` followed by
-   `remove /spec/shutdownTime`. This removes the deadline in place. Adding the
-   never-timeout **annotation** to an already-created Sandbox is not a verified
-   update mechanism: that key is interpreted at E2B creation.
-3. Read back the absent deadline and unchanged UID, reconnect through E2B, and
-   verify the running command/Pod identity. Do not use `setTimeout(0)`: creation
-   with zero selected a five-minute default in the actual gateway probe.
-4. While coordinating admission, seed `sandbox_activities` for every unresolved
-   pre-adoption attempt, including resource leases that expired. If an exact
-   attempt cannot be reconstructed, insert a distinct operator-owned adoption
-   uncertainty record. Never infer settlement from Session status or history.
-5. Under the environment row lock, mark `lifecycle_managed=true` and clear
-   `idle_since`. Then admit selected work through the new Host. A binding whose
-   existing Sandbox has not been verified is rejected by `begin()`.
+For a live Sandbox that still has a gateway deadline, remove that deadline before
+the next 30-minute idle window. In this environment it is acceptable to interrupt
+the test workload and let the Runner recreate the Sandbox with `neverTimeout`.
+Do not treat a missing Sandbox ID as a reason to retain a stale database row; the
+reclamation delete is idempotent and clears the binding after the gateway call.
 
-Do not rebuild a running, queued or unknown Sandbox to apply this policy. A
-gateway that cannot remove the deadline in place blocks adoption of active
-resources. New never-timeout Sandboxes may still be tested independently.
+The lifecycle checks remain:
 
-An ambiguous create can leave a resource whose E2B response never reached the
-Host. Reconcile the durable gateway binding/Tenant/Workspace metadata with the
-database under the binding lock. Preserve an uncertainty token before attaching
-the verified identity. Multiple matching Sandboxes or mismatched mount metadata
-require investigation; they are not candidates for automatic age-based deletion.
+1. Keep all running Turns, queued inputs and unresolved executions protected by
+   their activity records.
+2. Let the next confirmed idle sweep start the 30-minute clock.
+3. If a live Sandbox deadline must be removed in place, use a UID-checked patch
+   and verify the unchanged identity. Rebuilding is also allowed for this test
+   environment; the new Sandbox is created with `neverTimeout`.
+
+The database marker is a lifecycle-controller state, not a second eligibility
+allowlist. A stale Sandbox ID is safe to clear after the idempotent destroy path
+returns; the Workspace remains the persistent source of files.
 
 ## Evidence and diagnostics
 
@@ -90,7 +80,7 @@ SELECT e.id, e.sandbox_id, e.lifecycle_managed, e.idle_since, e.reclaiming,
 FROM oma.delegation_environments e WHERE e.lifecycle_managed;
 ```
 
-Success means a selected resource has no gateway deadline, stays bound throughout
+Success means a managed resource has no gateway deadline, stays bound throughout
 running/queued/unknown work, becomes idle only after confirmed settlement, then
 is deleted after a full idle period and rebuilt with saved Workspace files.
 `reclaiming=true` is a committed deletion ticket, not permission to reuse that
@@ -114,9 +104,8 @@ A committed
 `reclaiming` ticket must finish its idempotent cleanup before work can resume;
 never clear it merely because the deleting Host is unavailable.
 
-Production activation still requires the complete verification matrix and an
-explicit deployment authorization. Existing resources must be reconciled and
-adopted before the all-bindings selector is enabled.
+The test deployment enables this policy by default. A production rollout would
+still require its own deployment authorization.
 
 ## Repeatable verification
 

@@ -6,13 +6,14 @@ the current deployment reference. Dated E2E reports under `docs/` describe their
 original runs and must not be used as current runbooks.
 
 Default Sandbox idle reclamation has a separate
-[rollout, adoption and rollback procedure](../docs/sandbox-lifecycle-deployment.md).
-Migration 0014 and existing-resource adoption are required. Setting
-`SANDBOX_IDLE_ALL=true` selects every binding and
-`SANDBOX_IDLE_SWEEP=true` enables deletion; the externally injected Runner
-ConfigMap controls activation.
+[rollout and rollback procedure](../docs/sandbox-lifecycle-deployment.md).
+Migration 0014 is required. The Runner automatically manages every durable
+Sandbox binding; the historical `SANDBOX_IDLE_ALL` and
+`SANDBOX_IDLE_BINDINGS` selectors are ignored. `SANDBOX_IDLE_SWEEP` defaults to
+enabled and only an explicit `false` pauses deletion; the externally injected
+Runner ConfigMap controls that kill switch.
 The [2026-09-23 production canary report](../docs/verification/sandbox-lifecycle-release-2026-09-23.md)
-records the deployed image, selected bindings, live model compatibility fix and
+records the deployed image, lifecycle checks, live model compatibility fix and
 real-time acceptance evidence.
 
 ## Topology

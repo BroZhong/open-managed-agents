@@ -4,29 +4,27 @@ import type { Pool } from '@oma-server/store';
 
 describe('Sandbox lifecycle activation', () => {
   afterEach(() => vi.useRealTimers());
-  it('does no persistence work when disabled and enables all bindings when the sweep is enabled', async () => {
-    const query = vi.fn();
+  it('manages all existing bindings by default without rollout configuration', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
     const pool = { query } as unknown as Pool;
-    expect(await sandboxLifecycleFromEnv(pool, {})).toBeUndefined();
-    expect(query).not.toHaveBeenCalled();
-    query.mockResolvedValue({ rows: [{ ok: 1 }] });
-    const lifecycle = await sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_SWEEP: 'true' });
+    const lifecycle = await sandboxLifecycleFromEnv(pool, {});
     expect(lifecycle?.allBindings).toBe(true);
     expect(lifecycle?.bindingIds).toEqual(new Set());
-    expect(query).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][0]).toContain('SET lifecycle_managed=TRUE, idle_since=NULL WHERE lifecycle_managed=FALSE');
   });
-  it('rejects mixing the all-bindings mode with an explicit selector', async () => {
-    const query = vi.fn();
+  it('ignores former rollout selectors and keeps all bindings managed when deletion is paused', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
     const pool = { query } as unknown as Pool;
-    await expect(sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_ALL: 'true', SANDBOX_IDLE_BINDINGS: 'root' })).rejects.toThrow('combined');
-    expect(query).not.toHaveBeenCalled();
+    const lifecycle = await sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_ALL: 'false', SANDBOX_IDLE_BINDINGS: 'root', SANDBOX_IDLE_SWEEP: 'false' });
+    expect(lifecycle?.allBindings).toBe(true);
+    expect(lifecycle?.bindingIds.size).toBe(0);
   });
-  it('refuses enablement without the queue trigger or with unverified existing bindings', async () => {
+  it('requires the queue trigger before enabling idle reclamation', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const pool = { query } as unknown as Pool;
-    await expect(sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_BINDINGS: 'root' })).rejects.toThrow('migration');
-    query.mockResolvedValue({ rows: [{ id: 'root' }] });
-    await expect(sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_BINDINGS: 'root' })).rejects.toThrow('adoption');
+    await expect(sandboxLifecycleFromEnv(pool, {})).rejects.toThrow('migration');
+    expect(query).toHaveBeenCalledOnce();
   });
   it('does not overlap slow sweeps, reports failures, and stops scheduling on rollback', async () => {
     vi.useFakeTimers();

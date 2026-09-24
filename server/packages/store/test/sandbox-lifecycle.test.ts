@@ -154,13 +154,37 @@ describe.skipIf(!process.env.PG_TEST_URL)('durable Sandbox lifecycle on PostgreS
     await lifecycle.finish(activity);
     expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
   });
-  it('refuses unverified adoption and permits explicit deletion only after all activity ends', async () => {
+  it('includes an existing Sandbox when its next Turn starts and waits for all activity before explicit deletion', async () => {
     expect(await lifecycle.claimReclamation(activity.bindingId, true)).toBeNull();
     await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed = FALSE WHERE id = $1', [activity.bindingId]);
-    await expect(lifecycle.begin(activity)).rejects.toThrow('adoption');
-    await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed = TRUE WHERE id = $1', [activity.bindingId]);
+    expect(await lifecycle.begin(activity)).toBe(true);
+    expect((await harness.pool.query('SELECT lifecycle_managed FROM delegation_environments WHERE id=$1', [activity.bindingId])).rows[0].lifecycle_managed).toBe(true);
+    expect(await lifecycle.claimReclamation(activity.bindingId, true)).toBeNull();
     await finish();
     expect(await lifecycle.claimReclamation(activity.bindingId, true)).not.toBeNull();
+  });
+  it('includes every existing Sandbox on startup and starts a fresh 30-minute idle period', async () => {
+    await finish();
+    await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed=FALSE WHERE id=$1', [activity.bindingId]);
+    await ageIdle(120);
+    await lifecycle.markAllManaged();
+    expect((await harness.pool.query('SELECT lifecycle_managed, idle_since FROM delegation_environments WHERE id=$1', [activity.bindingId])).rows[0]).toEqual({ lifecycle_managed: true, idle_since: null });
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    nowMs += 30 * 60000 - 1;
+    await lifecycle.markAllManaged(); // A restart must not reset an existing idle clock.
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    nowMs += 1;
+    expect(await lifecycle.claimReclamation(activity.bindingId)).not.toBeNull();
+  });
+  it('finds bindings created without a Turn after startup and protects their pending input', async () => {
+    await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed=FALSE WHERE id=$1', [activity.bindingId]);
+    expect(await lifecycle.listManagedBindings()).toContain(activity.bindingId);
+    await ageIdle(120);
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    await finish();
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    await ageIdle(30);
+    expect(await lifecycle.claimReclamation(activity.bindingId)).not.toBeNull();
   });
   it('does not serialize legacy input behind a legacy Sandbox provisioning lock', async () => {
     await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed=FALSE WHERE id=$1', [activity.bindingId]);
