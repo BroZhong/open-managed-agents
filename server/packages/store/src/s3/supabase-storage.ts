@@ -50,6 +50,30 @@ async function safeText(res: { text(): Promise<string> }): Promise<string> {
   }
 }
 
+/**
+ * Supabase Storage has returned a missing object as both HTTP 404 and HTTP
+ * 400 with a JSON body containing statusCode 404. Treat both forms as a
+ * normal cache miss so API routes can return their documented 404 response.
+ */
+function isMissingObjectResponse(status: number, body: string): boolean {
+  if (status === 404) return true;
+  if (status !== 400) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const record = parsed as Record<string, unknown>;
+  const code = record.statusCode ?? record.status ?? record.code;
+  if (String(code) === "404") return true;
+  const message = [record.error, record.message]
+    .filter((value) => typeof value === "string")
+    .join(" ");
+  return /\b(?:object|file|resource)\b[\s\S]*\bnot found\b/i.test(message);
+}
+
 /** A thin authenticated client over a single Supabase Storage bucket. */
 export class SupabaseStorageClient {
   readonly bucket: string;
@@ -97,9 +121,10 @@ export class SupabaseStorageClient {
       method: "GET",
       headers: this.authHeaders(),
     });
-    if (res.status === 404) return null;
     if (!res.ok) {
-      throw new Error(`Supabase getObject failed: ${res.status} ${await safeText(res)}`);
+      const body = await safeText(res);
+      if (isMissingObjectResponse(res.status, body)) return null;
+      throw new Error(`Supabase getObject failed: ${res.status} ${body}`);
     }
     return {
       body: new Uint8Array(await res.arrayBuffer()),
@@ -113,9 +138,10 @@ export class SupabaseStorageClient {
       method: "DELETE",
       headers: this.authHeaders(),
     });
-    if (res.status === 404) return false;
     if (!res.ok) {
-      throw new Error(`Supabase deleteObject failed: ${res.status} ${await safeText(res)}`);
+      const body = await safeText(res);
+      if (isMissingObjectResponse(res.status, body)) return false;
+      throw new Error(`Supabase deleteObject failed: ${res.status} ${body}`);
     }
     return true;
   }

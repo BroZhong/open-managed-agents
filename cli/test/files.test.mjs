@@ -89,3 +89,38 @@ test("Skill entry protection precedes same-path rename; ordinary same-path check
     await f.close();
   }
 });
+
+test("Skill rename treats a missing destination as available", async () => {
+  const f = await fixture((req, res) => {
+    if (req.method === "GET" && req.url.includes("path=target"))
+      return json(res, { error: "Not found" }, 404);
+    if (req.method === "GET")
+      return json(res, { path: "source", content: "x" });
+    return json(res, {
+      type: "skill_file_renamed",
+      id: "s",
+      from: "source",
+      to: "target",
+    });
+  });
+  try {
+    const r = await run(
+      [
+        "skill",
+        "file",
+        "rename",
+        "--skill-id",
+        "s",
+        "--path",
+        "source",
+        "--to",
+        "target",
+      ],
+      auth(f),
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(f.requests.at(-1).method, "POST");
+  } finally {
+    await f.close();
+  }
+});

@@ -15,10 +15,11 @@ async function fixture() {
   const objects = new Map<string, Buffer>();
   const requests: URL[] = [];
   let failureStatus: number | undefined;
+  let failureBody = "storage request failed";
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://storage.test");
     requests.push(url);
-    if (failureStatus) { res.writeHead(failureStatus); res.end("storage request failed"); return; }
+    if (failureStatus) { res.writeHead(failureStatus); res.end(failureBody); return; }
     const key = decodeURIComponent(url.pathname);
     if (req.method === "POST") {
       const chunks: Buffer[] = [];
@@ -42,7 +43,15 @@ async function fixture() {
     endpoint: `http://127.0.0.1:${address.port}/storage/v1`,
     serviceKey: "test-service-key", bucket: "workspace",
   });
-  return { store, objects, requests, fail: (status: number) => { failureStatus = status; } };
+  return {
+    store,
+    objects,
+    requests,
+    fail: (status: number, body?: string) => {
+      failureStatus = status;
+      failureBody = body ?? "storage request failed";
+    },
+  };
 }
 
 describe("retained Skill storage over actual HTTP", () => {
@@ -67,5 +76,19 @@ describe("retained Skill storage over actual HTTP", () => {
     fail(400);
     await expect(store.get("tenant", "own", "SKILL.md")).rejects.toThrow("400");
     await expect(store.delete("tenant", "own", "SKILL.md")).rejects.toThrow("400");
+  });
+
+  it("treats Supabase's JSON 404 wrapped in HTTP 400 as a missing object", async () => {
+    const { store, fail } = await fixture();
+    fail(
+      400,
+      JSON.stringify({
+        statusCode: "404",
+        error: "Not Found",
+        message: "Object not found",
+      }),
+    );
+    expect(await store.get("tenant", "own", "missing.md")).toBeNull();
+    await expect(store.delete("tenant", "own", "missing.md")).resolves.toBeUndefined();
   });
 });

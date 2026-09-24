@@ -12,6 +12,25 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fixture, json, run, auth } from "./helpers.mjs";
+import { checkChain } from "../dist/local-files.js";
+
+test("accepts the macOS root alias used by os.tmpdir but rejects nested symlinks", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "oma-root-alias-"));
+  try {
+    await checkChain(dir, "directory");
+    const target = join(dir, "target");
+    const link = join(dir, "link");
+    await mkdir(target);
+    await symlink(target, link);
+    await assert.rejects(
+      () => checkChain(link, "directory"),
+      /Symbolic links are not allowed:/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("recursive binary download preserves relative structure; conflicts and dry-run make no local writes", async () => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "oma-test-")));
   let signed;
