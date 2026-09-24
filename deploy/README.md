@@ -8,10 +8,8 @@ original runs and must not be used as current runbooks.
 Default Sandbox idle reclamation has a separate
 [rollout and rollback procedure](../docs/sandbox-lifecycle-deployment.md).
 Migration 0014 is required. The Runner automatically manages every durable
-Sandbox binding; the historical `SANDBOX_IDLE_ALL` and
-`SANDBOX_IDLE_BINDINGS` selectors are ignored. `SANDBOX_IDLE_SWEEP` defaults to
-enabled and only an explicit `false` pauses deletion; the externally injected
-Runner ConfigMap controls that kill switch.
+Sandbox binding. There is no lifecycle environment variable or selector; the
+30-second sweeper is always enabled after migration 0014.
 The [2026-09-23 production canary report](../docs/verification/sandbox-lifecycle-release-2026-09-23.md)
 records the deployed image, lifecycle checks, live model compatibility fix and
 real-time acceptance evidence.

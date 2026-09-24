@@ -58,11 +58,10 @@ reclamation. History viewing and Workspace file API reads do not renew activity.
 
 Migration 0014 installs the queue trigger and persistent state. The Runner
 enables lifecycle management for every durable binding without reading a
-selector or allowlist. `SANDBOX_IDLE_SWEEP` defaults to enabled; setting it to
-`false` pauses deletion while retaining never-timeout creation and activity
-recording. The historical `SANDBOX_IDLE_ALL` and `SANDBOX_IDLE_BINDINGS` values
-are ignored. Startup still refuses enablement without the trigger. Rollback
-does not restore a finite deadline.
+selector or allowlist. The 30-second sweeper is always enabled after the
+migration trigger is present. Startup refuses enablement without the trigger;
+rollback requires a Host build that changes the policy and does not restore a
+finite deadline.
 
 If a test resource still has a gateway deadline, it may be interrupted and
 recreated under the new policy, or its deadline may be removed with a UID-checked

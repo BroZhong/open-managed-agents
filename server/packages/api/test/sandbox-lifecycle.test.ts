@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sandboxLifecycleFromEnv, startSandboxSweeper } from '../src/lib/sandbox-lifecycle.js';
+import { sandboxLifecycle, startSandboxSweeper } from '../src/lib/sandbox-lifecycle.js';
 import type { Pool } from '@oma-server/store';
 
 describe('Sandbox lifecycle activation', () => {
@@ -7,23 +7,23 @@ describe('Sandbox lifecycle activation', () => {
   it('manages all existing bindings by default without rollout configuration', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
     const pool = { query } as unknown as Pool;
-    const lifecycle = await sandboxLifecycleFromEnv(pool, {});
+    const lifecycle = await sandboxLifecycle(pool);
     expect(lifecycle?.allBindings).toBe(true);
     expect(lifecycle?.bindingIds).toEqual(new Set());
     expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[1][0]).toContain('SET lifecycle_managed=TRUE, idle_since=NULL WHERE lifecycle_managed=FALSE');
   });
-  it('ignores former rollout selectors and keeps all bindings managed when deletion is paused', async () => {
+  it('does not require rollout configuration', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
     const pool = { query } as unknown as Pool;
-    const lifecycle = await sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_ALL: 'false', SANDBOX_IDLE_BINDINGS: 'root', SANDBOX_IDLE_SWEEP: 'false' });
+    const lifecycle = await sandboxLifecycle(pool);
     expect(lifecycle?.allBindings).toBe(true);
     expect(lifecycle?.bindingIds.size).toBe(0);
   });
   it('requires the queue trigger before enabling idle reclamation', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const pool = { query } as unknown as Pool;
-    await expect(sandboxLifecycleFromEnv(pool, {})).rejects.toThrow('migration');
+    await expect(sandboxLifecycle(pool)).rejects.toThrow('migration');
     expect(query).toHaveBeenCalledOnce();
   });
   it('does not overlap slow sweeps, reports failures, and stops scheduling on rollback', async () => {

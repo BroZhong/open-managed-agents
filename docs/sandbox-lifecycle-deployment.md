@@ -18,9 +18,8 @@ Tests do not authorize production deployment.
    old/new Hosts must not execute these bindings: old Hosts do not record the
    new non-expiring activities. Gate their admission or drain the old Hosts;
    never kill user Sandboxes merely to switch code.
-4. The default configuration has no binding selector. Every binding is managed
-   after startup; `SANDBOX_IDLE_SWEEP=true` enables deletion and setting it to
-   false pauses deletion while retaining never-timeout creation.
+4. There is no lifecycle configuration. Every binding is managed after startup
+   and the 30-second sweeper is always enabled.
 5. The Manager samples every 30 seconds. Idle starts when absence of activity and
    inputs is confirmed, so reclamation can occur slightly later than 30 minutes.
 
@@ -97,9 +96,10 @@ If evidence is unavailable, retain the resource indefinitely.
 
 ## Rollback
 
-Set `SANDBOX_IDLE_SWEEP=false` and stop/delete no user Sandbox. Keep lifecycle
-activity recording and the input trigger. Do not drop lifecycle tables, remove
-unknown records, revert to a pre-lifecycle binary, or restore a finite deadline.
+Rollback requires a new Host build. Stop the lifecycle-enabled Runner before
+deploying that build and delete no user Sandbox. Keep lifecycle activity
+recording and the input trigger. Do not drop lifecycle tables, remove unknown
+records, or restore a finite deadline.
 A committed
 `reclaiming` ticket must finish its idempotent cleanup before work can resume;
 never clear it merely because the deleting Host is unavailable.

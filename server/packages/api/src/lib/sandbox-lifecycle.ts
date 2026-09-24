@@ -1,8 +1,8 @@
 import { PgSandboxLifecycleStore, type Pool } from '@oma-server/store';
 import type { SandboxManagerDeps } from '@oma-server/sandbox';
 
-/** Every Sandbox uses the same lifecycle; former rollout selectors are ignored. */
-export async function sandboxLifecycleFromEnv(pool: Pool, _env: NodeJS.ProcessEnv): Promise<SandboxManagerDeps['lifecycle']> {
+/** Every Sandbox uses the same lifecycle; activation is unconditional. */
+export async function sandboxLifecycle(pool: Pool): Promise<SandboxManagerDeps['lifecycle']> {
   const store = new PgSandboxLifecycleStore(pool);
   await store.assertReady();
   await store.markAllManaged();
