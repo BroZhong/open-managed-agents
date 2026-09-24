@@ -15,6 +15,8 @@
     "e2e:pi": "pnpm --dir adapter e2e:pi",
     "test:cli": "npm --prefix cli test",
     "typecheck:cli": "npm --prefix cli run typecheck",
-    "pack:cli": "npm --prefix cli run build && cd cli && npm pack"
+    "pack:cli": "npm --prefix cli run build && cd cli && npm pack",
+    "dev:split": "node server/scripts/dev-split.mjs",
+    "test:split": "pnpm --dir server --filter @oma-server/api test test/split-process.test.ts"
   }
 }

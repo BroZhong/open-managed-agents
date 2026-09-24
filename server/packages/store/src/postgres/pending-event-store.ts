@@ -39,11 +39,11 @@ export class PgPendingEventStore implements PendingEventIngressStore {
 
   async requestInterrupt(sessionId: string): Promise<boolean> {
     const result = await this.pool.query(
-      `UPDATE pending_events p SET interrupt_requested_at = COALESCE(interrupt_requested_at, NOW()),
-       interrupt_generation = COALESCE(interrupt_generation, claim_generation)
+      `UPDATE pending_events p SET interrupt_requested_at = NOW(),
+       interrupt_generation = claim_generation
        WHERE p.id = (SELECT id FROM pending_events WHERE session_id = $1
-         ORDER BY arrived_at, id LIMIT 1)
-       AND p.claim_owner IS NOT NULL
+         ORDER BY seq LIMIT 1)
+       AND p.claim_owner IS NOT NULL AND p.claim_expires_at > clock_timestamp()
        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = p.session_id
          AND e.type = 'session.turn_completed' AND e.data->>'pendingEventId' = p.id)
        RETURNING p.id`, [sessionId],
@@ -54,7 +54,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
   async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
     const result = await this.pool.query(
       `SELECT 1 FROM pending_events WHERE session_id = $1 AND id = $2
-       AND interrupt_requested_at IS NOT NULL`, [sessionId, eventId],
+       AND interrupt_requested_at IS NOT NULL AND interrupt_generation = claim_generation`, [sessionId, eventId],
     );
     return result.rows.length > 0;
   }

@@ -236,6 +236,15 @@ export class PgSessionStore implements SessionStore {
       // Deleting retained input is the remote-Host fence: its next heartbeat,
       // durable append, storage-check fence, or ack fails immediately.
       await client.query(`DELETE FROM pending_events WHERE session_id = $1`, [id]);
+      await client.query("INSERT INTO session_cleanup (session_id) VALUES ($1) ON CONFLICT DO NOTHING", [id]);
+      // Status must reach open SSE clients even when no execution owner survives.
+      await client.query("INSERT INTO event_counters (session_id, seq) VALUES ($1, 0) ON CONFLICT DO NOTHING", [id]);
+      await client.query("SELECT seq FROM event_counters WHERE session_id=$1 FOR UPDATE", [id]);
+      const existing = await client.query("SELECT seq FROM events WHERE session_id=$1 AND idempotency_key='session:terminated'", [id]);
+      if (!existing.rows.length) {
+        const counter = await client.query<{ seq: string }>("UPDATE event_counters SET seq=seq+1 WHERE session_id=$1 RETURNING seq", [id]);
+        await client.query("INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, idempotency_key) VALUES ($1,$2,'session.status_terminated','{}',$3,'sthr_primary','session:terminated')", [id, counter.rows[0].seq, now]);
+      }
       await client.query("COMMIT");
       return rowToSession(rows[0]);
     } catch (error) {

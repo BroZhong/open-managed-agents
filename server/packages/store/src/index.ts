@@ -135,6 +135,7 @@ export {
   PgAgentFileStore,
   PgSkillStore,
   PgSessionStore,
+  PgSessionCleanupStore,
   PgEventLogStore,
   PgPendingEventStore,
   PgApiKeyStore,
@@ -160,3 +161,6 @@ export { PgDelegationStore } from "./postgres/delegation-store.js";
 export type { SessionShare, SessionShareStore } from "./interfaces/session-share-store.js";
 export { PgSessionShareStore } from "./postgres/session-share-store.js";
 export { contextPresentation, eventSequenceWidth, presentContextData, presentEvent, presentEventPage } from "./event-presentation.js";
+
+export type { ModelProviderStore, ModelProviderRecord } from "./interfaces/model-provider-store.js";
+export { PgModelProviderStore } from "./postgres/model-provider-store.js";

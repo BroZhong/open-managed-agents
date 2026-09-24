@@ -35,6 +35,8 @@ export interface EnvSpec {
 }
 
 export interface SandboxManagerDeps {
+  /** Settlement records for termination safety; does not enable idle reclamation. */
+  executionActivities?: Pick<SandboxLifecycleStore, "begin" | "finish">;
   /** Explicit Session binding allowlist. Omitted means the rollout is disabled. */
   lifecycle?: { store: SandboxLifecycleStore; bindingIds: ReadonlySet<string> };
   sandboxClient: SandboxClient;
@@ -94,14 +96,17 @@ export class DefaultSandboxManager implements SandboxManager {
   constructor(private readonly deps: SandboxManagerDeps) {}
   async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
     const lifecycle = this.deps.lifecycle;
-    if (!lifecycle?.bindingIds.has(activity.bindingId)) return false;
-    while (!await lifecycle.store.begin(activity)) {
+    const store = lifecycle?.bindingIds.has(activity.bindingId) ? lifecycle.store : this.deps.executionActivities;
+    if (!store) return false;
+    while (!await store.begin(activity)) {
       await delay(250, undefined, { signal });
     }
     return true;
   }
   async finishActivity(activity: SandboxActivity): Promise<void> {
-    await this.deps.lifecycle?.store.finish(activity);
+    const lifecycle = this.deps.lifecycle;
+    const store = lifecycle?.bindingIds.has(activity.bindingId) ? lifecycle.store : this.deps.executionActivities;
+    await store?.finish(activity);
   }
   async sweepIdle(): Promise<void> {
     const lifecycle = this.deps.lifecycle;

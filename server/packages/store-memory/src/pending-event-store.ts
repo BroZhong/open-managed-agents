@@ -12,7 +12,7 @@ interface ClaimState {
   ownerId?: string;
   generation: number;
   expiresAtMs: number;
-  interruptRequested?: boolean;
+  interruptGeneration?: number;
 }
 
 export class InMemoryPendingEventStore implements PendingEventIngressStore {
@@ -43,14 +43,15 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
   async requestInterrupt(sessionId: string): Promise<boolean> {
     const event = this.queues.get(sessionId)?.[0];
     const claim = event ? this.claims.get(event.id) : undefined;
-    if (!claim?.ownerId) return false;
-    claim.interruptRequested = true;
+    if (!claim?.ownerId || claim.expiresAtMs <= Date.now()) return false;
+    claim.interruptGeneration = claim.generation;
     return true;
   }
 
   async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
     return this.queues.get(sessionId)?.[0]?.id === eventId &&
-      this.claims.get(eventId)?.interruptRequested === true;
+      this.claims.get(eventId)?.interruptGeneration !== undefined &&
+      this.claims.get(eventId)?.interruptGeneration === this.claims.get(eventId)?.generation;
   }
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {

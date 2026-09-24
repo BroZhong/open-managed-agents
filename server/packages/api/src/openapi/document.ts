@@ -54,6 +54,7 @@ export function createOpenApiDocument(
     servers: [{ url: serverUrl }],
     security: [{ ApiKeyAuth: [] }, { BearerAuth: [] }],
     tags: [
+      { name: "Model Providers", description: "Tenant-owned Pi model providers and connection testing." },
       { name: "System", description: "Service health and metadata." },
       {
         name: "Authentication",

@@ -1,3 +1,6 @@
+import { randomBytes } from "node:crypto";
+import { ModelProviderService } from "./lib/model-providers.js";
+import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { serve } from "@hono/node-server";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -253,11 +256,12 @@ const mockAdapter = new MockAdapter({ delayMs: 75 });
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
+let configuredPiAgentAdapter: Adapter = memoryPiAgentAdapter;
 function resolveAdapter(runtime: string): Adapter {
   switch (runtime) {
     case "claude-code": return new DevClaudeCodeAdapter();
     case "codex": return new DevCodexAdapter();
-    case "pi-agent": return memoryPiAgentAdapter;
+    case "pi-agent": return configuredPiAgentAdapter;
     case "mock": return mockAdapter;
     default: return mockAdapter;
   }
@@ -265,6 +269,8 @@ function resolveAdapter(runtime: string): Adapter {
 
 async function main() {
   const stores = createMemoryStores();
+  const modelProviderService = new ModelProviderService(stores.modelProviderStore, randomBytes(32).toString("hex"));
+  configuredPiAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviderService.configureRuntime(stores.sessionStore) });
   const eventStreamHub = new InProcessEventStreamHub();
 
   // Create a dev seed key so auth can be tested
@@ -312,6 +318,7 @@ async function main() {
   loopScheduler.start();
 
   const app = createApp({
+    modelProviderService,
     sessionShareStore: stores.sessionShareStore,
     delegationStore: stores.delegationStore,
     apiKeyStore: stores.apiKeyStore,

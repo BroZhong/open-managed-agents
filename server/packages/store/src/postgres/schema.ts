@@ -14,6 +14,13 @@ export function schemaDdl(schema: string = DEFAULT_SCHEMA): string {
   return `
 CREATE SCHEMA IF NOT EXISTS ${s};
 
+CREATE TABLE IF NOT EXISTS ${s}.model_providers (
+  tenant_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  config JSONB NOT NULL,
+  PRIMARY KEY (tenant_id, id)
+);
+
 CREATE TABLE IF NOT EXISTS ${s}.session_shares (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL UNIQUE
@@ -212,6 +219,14 @@ ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_owner TEXT;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ;
 ALTER TABLE ${s}.pending_events ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS pending_events_session_idx ON ${s}.pending_events (session_id, seq);
+
+CREATE TABLE IF NOT EXISTS ${s}.session_cleanup (
+  session_id TEXT PRIMARY KEY,
+  retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  attempts INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS session_cleanup_retry_idx ON ${s}.session_cleanup (retry_at) WHERE completed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS ${s}.api_keys (
   id          TEXT PRIMARY KEY,

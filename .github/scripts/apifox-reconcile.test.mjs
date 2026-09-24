@@ -27,7 +27,7 @@ test("accepts the repository's generated OpenAPI inventory", () => {
     ...operation,
   }));
 
-  assert.equal(desired.length, 63);
+  assert.equal(desired.length, 69);
   assert.ok(desired.some((operation) =>
     operation.method === "POST" && operation.path === "/v1/sessions/{id}/share"
   ));

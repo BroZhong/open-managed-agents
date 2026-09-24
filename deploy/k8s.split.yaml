@@ -1,0 +1,356 @@
+# Staged API/Runner deployments. This does not change the public Service selector.
+# Render both immutable versions with scripts/render-split.mjs; do not apply placeholders.
+# Web, Ingress and the legacy oma-server Deployment remain separately managed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oma-api-config
+  namespace: oma-infra
+data:
+  PORT: '3000'
+  API_BASE_PATH: /api
+  PUBLIC_API_URL: https://agentry.welltop.tech/api
+  AUTH_DISABLED: 'false'
+  PG_HOST: pgm-uf6fh394661t62gb.pg.rds.aliyuncs.com
+  PG_PORT: '5432'
+  PG_DATABASE: supabase_db
+  PG_USER: oma_app
+  PG_SCHEMA: oma
+  PG_SSL: 'false'
+  PG_ENSURE_SCHEMA: 'false'
+  REDIS_HOST: 10.0.64.18
+  REDIS_PORT: '6379'
+  S3_ENDPOINT: http://172.17.255.52:80/storage/v1
+  S3_BUCKET: workspace
+  STORAGE_PUBLIC_BASE: http://172.17.255.52:80/storage/v1
+  WORKSPACE_OSS_REGION: oss-cn-shanghai
+  WORKSPACE_OSS_BUCKET: agentry
+  WORKSPACE_OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  WORKSPACE_OSS_PUBLIC_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  SSE_CATCHUP_INTERVAL_MS: '2000'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oma-api
+  namespace: oma-infra
+  labels:
+    app: oma-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oma-api
+  template:
+    metadata:
+      labels:
+        app: oma-api
+        alibabacloud.com/acs: 'true'
+    spec:
+      imagePullSecrets:
+      - name: ali-shanghai
+      containers:
+      - name: api
+        image: OMA_API_IMAGE
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: oma-api-config
+        env:
+        - name: OMA_PROVIDER_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: OMA_PROVIDER_ENCRYPTION_KEY
+              optional: true
+        - name: PG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: PG_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: REDIS_PASSWORD
+        - name: SUPABASE_SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: SUPABASE_SERVICE_KEY
+        - name: WORKSPACE_OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: WORKSPACE_OSS_ACCESS_KEY_ID
+        - name: WORKSPACE_OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: WORKSPACE_OSS_ACCESS_KEY_SECRET
+        - name: AUTH_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: AUTH_JWT_SECRET
+        - name: INVITE_CODE
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: INVITE_CODE
+        readinessProbe:
+          httpGet:
+            path: /api/ready
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 6
+        resources:
+          limits:
+            cpu: '4'
+            memory: 8Gi
+        command:
+        - node
+        - --import
+        - tsx
+        - src/api-server.ts
+        workingDir: /app/server/packages/api
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oma-api
+  namespace: oma-infra
+spec:
+  selector:
+    app: oma-api
+  ports:
+  - port: 3000
+    targetPort: 3000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oma-runner-config
+  namespace: oma-infra
+data:
+  PORT: '3001'
+  ALIYUN_REGION: cn-shanghai
+  OMA_SUPABASE_ALLOWED_TENANTS: ''
+  PG_HOST: pgm-uf6fh394661t62gb.pg.rds.aliyuncs.com
+  PG_PORT: '5432'
+  PG_DATABASE: supabase_db
+  PG_USER: oma_app
+  PG_SCHEMA: oma
+  PG_SSL: 'false'
+  PG_ENSURE_SCHEMA: 'false'
+  REDIS_HOST: 10.0.64.18
+  REDIS_PORT: '6379'
+  S3_ENDPOINT: http://172.17.255.52:80/storage/v1
+  S3_BUCKET: workspace
+  STORAGE_PUBLIC_BASE: http://172.17.255.52:80/storage/v1
+  WORKSPACE_OSS_REGION: oss-cn-shanghai
+  WORKSPACE_OSS_BUCKET: agentry
+  WORKSPACE_OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  WORKSPACE_OSS_PUBLIC_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  WORKSPACE_OSS_AGENT_NAME: agentry-workspace
+  WORKSPACE_OSS_PV_NAME: agentry-workspace-oss
+  WORKSPACE_OSS_CREDENTIAL_PROVIDER: agentry-oss-rw
+  OMA_PROXY_URL: http://10.0.165.246:7890
+  SANDBOX_ENABLED: 'true'
+  SANDBOX_TEMPLATE: auto-story-v2
+  E2B_REQUEST_TIMEOUT_MS: '185000'
+  E2B_API_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:8080
+  E2B_SANDBOX_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:7788
+  NO_PROXY: localhost,127.0.0.1,sandbox-manager.sandbox-system.svc.cluster.local
+  SANDBOX_BASE_SECRET_NAMESPACE: sandbox-system
+  SANDBOX_BASE_SECRET_NAME: base-secret
+  PENDING_SCAN_INTERVAL_MS: '5000'
+  LOOP_POLL_INTERVAL_MS: '15000'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oma-runner
+  namespace: oma-infra
+  labels:
+    app: oma-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oma-runner
+  template:
+    metadata:
+      labels:
+        app: oma-runner
+        alibabacloud.com/acs: 'true'
+    spec:
+      serviceAccountName: oma-server
+      imagePullSecrets:
+      - name: ali-shanghai
+      volumes:
+      - name: pi-gateway-config
+        secret:
+          secretName: oma-pi-gateway
+          defaultMode: 256
+          items:
+          - key: auth.json
+            path: auth.json
+          - key: models.json
+            path: models.json
+      containers:
+      - name: runner
+        image: OMA_RUNNER_IMAGE
+        ports:
+        - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: oma-runner-config
+        - secretRef:
+            name: oma-auto-story-env
+            optional: true
+        env:
+        - name: OMA_PROVIDER_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: OMA_PROVIDER_ENCRYPTION_KEY
+              optional: true
+        - name: PG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: PG_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: REDIS_PASSWORD
+        - name: SUPABASE_SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: SUPABASE_SERVICE_KEY
+        - name: WORKSPACE_OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: WORKSPACE_OSS_ACCESS_KEY_ID
+        - name: WORKSPACE_OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: WORKSPACE_OSS_ACCESS_KEY_SECRET
+        - name: ALIYUN_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: ALIYUN_ACCESS_KEY_ID
+        - name: ALIYUN_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: ALIYUN_ACCESS_KEY_SECRET
+        - name: E2B_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: E2B_DOMAIN
+        - name: E2B_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: E2B_API_KEY
+        - name: DEFAULT_SANDBOX_VFS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: DEFAULT_SANDBOX_VFS_TOKEN
+        - name: RDS_MCP_APIKEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: DEFAULT_SANDBOX_VFS_TOKEN
+        - name: PI_CODING_AGENT_DIR
+          value: /opt/pi-agent-seed
+        - name: OMA_PROXY_URL
+          value: ''
+        - name: HTTPS_PROXY
+          value: ''
+        - name: https_proxy
+          value: ''
+        - name: NODE_USE_ENV_PROXY
+          value: '1'
+        - name: HTTP_PROXY
+          valueFrom:
+            configMapKeyRef:
+              name: oma-runner-config
+              key: OMA_PROXY_URL
+        - name: http_proxy
+          value: $(HTTP_PROXY)
+        - name: NO_PROXY
+          value: localhost,127.0.0.1,::1,.svc,.cluster.local,172.17.255.52
+        - name: no_proxy
+          value: $(NO_PROXY)
+        volumeMounts:
+        - name: pi-gateway-config
+          mountPath: /opt/pi-agent-seed/auth.json
+          subPath: auth.json
+          readOnly: true
+        - name: pi-gateway-config
+          mountPath: /opt/pi-agent-seed/models.json
+          subPath: models.json
+          readOnly: true
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3001
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 6
+        resources:
+          limits:
+            cpu: '4'
+            memory: 8Gi
+        command:
+        - node
+        - --import
+        - tsx
+        - src/runner-server.ts
+        workingDir: /app/server/packages/api
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 20
+          periodSeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oma-runner
+  namespace: oma-infra
+spec:
+  selector:
+    app: oma-runner
+  ports:
+  - port: 3001
+    targetPort: 3001

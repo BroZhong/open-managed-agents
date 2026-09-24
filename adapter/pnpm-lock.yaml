@@ -78,6 +78,9 @@ importers:
 
   packages/pi-agent:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: 0.91.1
+        version: 0.91.1(zod@4.4.3)
       '@earendil-works/pi-ai':
         specifier: 0.83.0
         version: 0.83.0(ws@8.21.0)(zod@4.4.3)
@@ -87,6 +90,9 @@ importers:
       '@open-managed-agents/adapter-core':
         specifier: file:../core
         version: link:../core
+      openai:
+        specifier: 6.26.0
+        version: 6.26.0(ws@8.21.0)(zod@4.4.3)
       typebox:
         specifier: 1.1.38
         version: 1.1.38

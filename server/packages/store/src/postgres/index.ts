@@ -1,5 +1,8 @@
+import { PgModelProviderStore } from "./model-provider-store.js";
+export { PgModelProviderStore } from "./model-provider-store.js";
 import { PgSessionShareStore } from "./session-share-store.js";
 export { PgSessionShareStore } from "./session-share-store.js";
+export { PgSessionCleanupStore } from "./session-cleanup-store.js";
 import { PgDelegationStore } from "./delegation-store.js";
 import type { AgentStore } from "../interfaces/agent-store.js";
 import type { AgentFileStore } from "../interfaces/agent-file-store.js";
@@ -37,6 +40,7 @@ export { PgWorkspaceMetadataStore } from "./workspace-metadata-store.js";
 export { PgLoopStore } from "./loop-store.js";
 
 export interface PgStores {
+  modelProviderStore: PgModelProviderStore;
   agentStore: AgentStore;
   agentFileStore: AgentFileStore;
   skillStore: SkillStore;
@@ -70,6 +74,7 @@ export async function createPgStores(pool: Pool, opts: CreatePgStoresOpts = {}):
   }
 
   return {
+    modelProviderStore: new PgModelProviderStore(pool),
     agentStore: new PgAgentStore(pool),
     agentFileStore: new PgAgentFileStore(pool),
     skillStore: new PgSkillStore(pool),

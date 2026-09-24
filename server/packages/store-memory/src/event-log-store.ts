@@ -16,6 +16,9 @@ import {
 } from "@oma-server/store";
 
 export class InMemoryEventLogStore implements EventLogIngressStore {
+  async getLatestSeq(sessionId: string): Promise<number> {
+    return this.seqCounters.get(sessionId) ?? 0;
+  }
   /** Canonical in-memory log record; attribution stays internal to the store. */
   private events: Map<
     string,

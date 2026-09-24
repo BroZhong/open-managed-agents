@@ -13,6 +13,11 @@ const tables: Record<DelegationTable, string> = { executions: "delegation_execut
 /** All writes use the same SQL transaction as existing Sessions and event queues. */
 export class PgDelegationStore extends TransactionalDelegationStore {
   constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) { super(); }
+  override async hasResourceUsers(bindingId: string): Promise<boolean> {
+    if (await super.hasResourceUsers(bindingId)) return true;
+    const result = await this.pool.query("SELECT 1 FROM sandbox_activities WHERE binding_id=$1 LIMIT 1", [bindingId]);
+    return result.rows.length > 0;
+  }
   private async checkpointRecord<R extends DelegationRecord>(record: R, decode: boolean): Promise<R> {
     if (!this.payloads || !("checkpoint" in record)) return record;
     return { ...record, checkpoint: await this.payloads.checkpoint(record.callerSessionId, record.checkpoint, decode) };

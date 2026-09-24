@@ -12,6 +12,7 @@ import type {
   SkillArtifactStore,
   DelegationStore,
   DelegationExecution,
+  SandboxActivity,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent, presentContextData } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
@@ -88,6 +89,7 @@ class PendingLeaseLostError extends Error {
 }
 
 export interface SessionRouterDeps {
+  wakeSession?: (sessionId: string) => void;
   delegationStore?: DelegationStore;
   maxConcurrentSubagents?: number;
   maxSubagentModelSteps?: number;
@@ -231,6 +233,7 @@ export class SessionRouter {
   private readonly interruptedAdapterDrainMaxEvents: number;
   private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
   private readonly activeSessions = new Map<string, ActiveSessionRun>();
+  private readonly settledActivities = new Map<string, SandboxActivity>();
   private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly claimRetryAttempts = new Map<string, number>();
   private readonly claimHeartbeatStops = new Map<string, () => void>();
@@ -269,6 +272,7 @@ export class SessionRouter {
       store: deps.delegationStore, pending: deps.pendingEventStore,
       sessions: deps.sessionStore, events: deps.eventLogStore, maxSteps,
       wake: (sessionId) => {
+        if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
         void deps.sessionStore.getById(sessionId).then((session) => {
           if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent);
         }).catch((error) => this.reportDrainError(sessionId, error));
@@ -367,11 +371,11 @@ export class SessionRouter {
     return legacy ? { seq: Number(legacy[1]), generation: 0 } : null;
   }
 
-  private async setActiveTurnFenced(
+  private async updateActiveTurnProjection(
     sessionId: string,
     next: { turnId: string; status: "running" | "idle" },
-  ): Promise<boolean> {
-    if (!this.turnStreamStore) return true;
+  ): Promise<void> {
+    if (!this.turnStreamStore) return;
     const nextIdentity = this.turnIdentity(next.turnId);
     for (let attempt = 0; attempt < 4; attempt++) {
       const current = await this.turnStreamStore.getActiveTurn(sessionId);
@@ -386,21 +390,21 @@ export class SessionRouter {
             currentIdentity.generation > nextIdentity.generation)
         )
       ) {
-        return false;
+        return;
       }
       if (this.turnStreamStore.compareAndSetActiveTurn) {
         if (await this.turnStreamStore.compareAndSetActiveTurn(
           sessionId,
           current?.turnId ?? null,
           next,
-        )) return true;
+        )) return;
         continue;
       }
       // Narrow test-double fallback; production Redis uses the atomic CAS.
       await this.turnStreamStore.setActiveTurn(sessionId, next);
-      return true;
+      return;
     }
-    return false;
+    // Redis is a projection: only the PostgreSQL claim can revoke execution.
   }
 
   private async clearActiveTurnFenced(
@@ -597,6 +601,7 @@ export class SessionRouter {
   async recoverPendingEvents(
     onBackgroundError?: (failure: PendingRecoveryFailure) => void,
   ): Promise<PendingRecoverySummary> {
+    await this.retrySettledActivities();
     const summary: PendingRecoverySummary = {
       recovered: [],
       discarded: [],
@@ -649,7 +654,8 @@ export class SessionRouter {
   async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
     if (!this.pendingEventStore.requestInterrupt) return { requested: true, interrupted: this.interrupt(sessionId) };
     const requested = await this.pendingEventStore.requestInterrupt(sessionId);
-    if (requested) this.interrupt(sessionId);
+    // The owner observes the exact durable input marker on its heartbeat; a
+    // local abort here could hit the next Turn after a completion race.
     return { requested, interrupted: false };
   }
 
@@ -685,6 +691,48 @@ export class SessionRouter {
     if (session) await session.dispose();
     // Keep a failed disposal's closed handle so a later DELETE can retry cleanup.
     this.sessions.delete(sessionId);
+  }
+
+  /** Retry termination from durable state, including idle Sessions and lost owners. */
+  async cleanupTerminatedSession(sessionId: string): Promise<boolean> {
+    await this.retrySettledActivities(sessionId);
+    const session = await this.sessionStore.getById(sessionId);
+    if (!session || session.status !== "terminated") return false;
+    const active = this.activeSessions.get(sessionId);
+    if (active) {
+      active.terminating = true;
+      active.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
+      return false; // Wait for actual settlement; abort acceptance is not exit proof.
+    }
+    await this.delegationStore?.reconcileTerminatedExecutions(sessionId);
+    const bindingId = session.delegation?.sandboxSessionId ?? session.id;
+    if (await this.delegationStore?.hasResourceUsers(bindingId)) return false;
+    const sandbox = this.sandboxFor(sessionId, session, session.agent, []);
+    if (sandbox) await sandbox.dispose();
+    this.sessions.delete(sessionId);
+    // Disposal may retain a binding that became busy after our first check.
+    // Keep its outbox request until the persistent identity is actually cleared.
+    return this.delegationStore
+      ? this.delegationStore.withEnvironmentLock(bindingId, async id => ({ sandboxId: id, value: id === null }))
+      : true;
+  }
+
+  private async finishSettledActivity(activity: SandboxActivity): Promise<void> {
+    const key = JSON.stringify([activity.bindingId, activity.sessionId, activity.fence]);
+    // This map holds observed exit evidence only. If PG is temporarily down,
+    // scans retry recording it; owner loss still leaves unknown activity safe.
+    this.settledActivities.set(key, activity);
+    await this.sandboxManager?.finishActivity?.(activity);
+    await this.delegationStore?.releaseResourceUse(activity.sessionId, activity.fence);
+    this.settledActivities.delete(key);
+  }
+
+  private async retrySettledActivities(sessionId?: string): Promise<void> {
+    for (const activity of this.settledActivities.values()) {
+      if (sessionId && activity.sessionId !== sessionId) continue;
+      try { await this.finishSettledActivity(activity); }
+      catch (error) { this.reportDrainError(activity.sessionId, error); }
+    }
   }
 
   /**
@@ -1050,6 +1098,7 @@ export class SessionRouter {
       let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
       let activitySandbox: SandboxSession | undefined;
       let executionSettled = false;
+      let iterationFailed = false;
       let turnId: string | undefined;
       const turnController = new AbortController();
       const forwardOuterAbort = () => {
@@ -1185,10 +1234,7 @@ export class SessionRouter {
           turnId,
         );
         if (this.turnStreamStore) {
-          if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
-            leaseLost = true;
-            return;
-          }
+          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
           lastOwnedTurnId = turnId;
         }
         if (!await this.completeTurn(
@@ -1219,10 +1265,7 @@ export class SessionRouter {
       // client — possibly on another Host instance — can find and backfill the
       // in-flight turn's deltas.
       if (this.turnStreamStore) {
-        if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "running" })) {
-          leaseLost = true;
-          return;
-        }
+        await this.updateActiveTurnProjection(sessionId, { turnId, status: "running" });
         lastOwnedTurnId = turnId;
       }
 
@@ -1283,10 +1326,7 @@ export class SessionRouter {
         // drain loop falls through to the idle transition when the queue empties).
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(sessionId, turnId);
-          if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
-            leaseLost = true;
-            return;
-          }
+          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
         }
         if (!await this.completeTurn(
           sessionId,
@@ -1322,6 +1362,7 @@ export class SessionRouter {
         effectiveConfig: { model: currentAgent.model } };
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
+      executionSettled = true; // No runtime has started, including preparation failures.
       const activity = { bindingId: session.delegation?.sandboxSessionId ?? sessionId, sessionId, fence: pendingFence };
       if (this.isSandboxed(currentAgent) && await this.sandboxManager?.beginActivity?.(activity, turnController.signal)) {
         sandboxActivity = activity;
@@ -1354,13 +1395,10 @@ export class SessionRouter {
           });
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
-            if (!await this.setActiveTurnFenced(sessionId, {
+            await this.updateActiveTurnProjection(sessionId, {
               turnId,
               status: "idle",
-            })) {
-              leaseLost = true;
-              return;
-            }
+            });
           }
           if (!await this.completeTurn(
             sessionId,
@@ -1481,13 +1519,10 @@ export class SessionRouter {
         });
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(sessionId, turnId);
-          if (!await this.setActiveTurnFenced(sessionId, {
+          await this.updateActiveTurnProjection(sessionId, {
             turnId,
             status: "idle",
-          })) {
-            leaseLost = true;
-            return;
-          }
+          });
         }
         if (!await this.completeTurn(
           sessionId,
@@ -1802,41 +1837,63 @@ export class SessionRouter {
               await persistCompleteEvent(event);
             }
           }
+        } catch (error) {
+          if (!executionSettled) {
+            // A fenced write can fail before the heartbeat observes revocation.
+            // Stop the runtime and observe its exit just as for an explicit abort.
+            iterationFailed = !turnController.signal.aborted;
+            abandonIterator = true;
+            turnController.abort(error);
+          }
+          throw error;
         } finally {
           if (abandonIterator) {
-            // The bounded drain can finish before the runtime does. Its already
-            // issued next() may later provide actual settlement evidence. Release
-            // only this attempt's activity; never infer settlement from return().
-            if (pendingNext && sandboxActivity) {
-              const activity = sandboxActivity;
-              void pendingNext.then(async (outcome) => {
-                if ((outcome.kind === 'error' || outcome.kind === 'next' && outcome.result.done) &&
-                  activitySandbox?.executionSettled?.() !== false) {
-                  await this.sandboxManager?.finishActivity?.(activity);
-                }
-              }).catch(error => this.reportDrainError(sessionId, error));
-            }
             // AsyncIterator.return() is advisory: a non-compliant Adapter may
             // leave it queued behind the same hung next(). Never await it, and
             // absorb either a synchronous throw or eventual rejection.
-            try {
-              const closeIterator = eventIterator.return;
-              if (closeIterator) {
-                void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
+            const closeAbandonedIterator = () => {
+              try {
+                const closeIterator = eventIterator.return;
+                if (closeIterator) {
+                  void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
+                }
+              } catch {
+                // Best-effort closure only; Router completion remains bounded.
               }
-            } catch {
-              // Best-effort closure only; Router completion remains bounded.
+            };
+            if (sandboxActivity) {
+              const activity = sandboxActivity;
+              // Pi can emit final accounting before its natural end. Observe
+              // that end without publishing revoked output or blocking cleanup.
+              // Calling return() first would conceal the settlement evidence.
+              void (async () => {
+                let next = pendingNext;
+                for (let seen = 0; seen < this.interruptedAdapterDrainMaxEvents; seen++) {
+                  const outcome = await (next ?? nextOutcome());
+                  next = undefined;
+                  if (outcome.kind === 'error' || outcome.result.done) {
+                    if (activitySandbox?.executionSettled?.() !== false) {
+                      await this.finishSettledActivity(activity);
+                    }
+                    return;
+                  }
+                }
+                // An endless or stuck runtime remains unknown, never reclaimed.
+              })().catch(error => this.reportDrainError(sessionId, error))
+                .finally(closeAbandonedIterator);
+            } else {
+              closeAbandonedIterator();
             }
           }
         }
       } catch (err) {
-        if (leaseLost) {
+        if (leaseLost || err instanceof PendingEventClaimLostError) {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
           }
           return;
         }
-        if (turnController.signal.aborted) {
+        if (turnController.signal.aborted && !iterationFailed) {
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
           }
@@ -1872,7 +1929,7 @@ export class SessionRouter {
       // those orphans with the same repair the restart path uses, and record the
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
-      if (turnController.signal.aborted) {
+      if (turnController.signal.aborted && !iterationFailed) {
         await this.delegations?.interruptChildren(session, turnId, pendingFence);
         await this.repairDanglingToolUses(
           sessionId,
@@ -1923,10 +1980,7 @@ export class SessionRouter {
       // interrupt (the for-loop `break` falls through to here).
       if (this.turnStreamStore) {
         await this.turnStreamStore.reclaim(sessionId, turnId);
-        if (!await this.setActiveTurnFenced(sessionId, { turnId, status: "idle" })) {
-          leaseLost = true;
-          return;
-        }
+        await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
       }
 
       if (!await this.completeTurn(
@@ -1949,9 +2003,10 @@ export class SessionRouter {
         try {
           if (sandboxActivity && executionSettled &&
             activitySandbox?.executionSettled?.() !== false) {
-            await this.sandboxManager?.finishActivity?.(sandboxActivity);
+            await this.finishSettledActivity(sandboxActivity);
+          } else if (executionSettled && activitySandbox?.executionSettled?.() !== false) {
+            await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
           }
-          await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
         } finally {
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);

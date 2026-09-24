@@ -35,7 +35,7 @@ interface ConversationViewProps {
   focusToolUseId?: string;
   events: SessionEvent[];
   activeDeltas?: SessionDelta[];
-  sessionStatus: "idle" | "running" | "waiting";
+  sessionStatus: "idle" | "running" | "waiting" | "terminated";
 }
 
 export function ConversationView({

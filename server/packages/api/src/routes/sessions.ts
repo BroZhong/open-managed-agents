@@ -24,6 +24,7 @@ export interface SessionRouteDeps {
   workspaceStore: WorkspaceMetadataStore;
   eventLogStore?: EventLogStore;
   sessionRouter?: SessionRouter;
+  wakeSession?: (sessionId: string) => void;
 }
 
 export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
@@ -218,6 +219,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     }
 
     await deps.sessionStore.terminate(id);
+    deps.wakeSession?.(id);
     await deps.sessionRouter?.terminateSession(id);
 
     return c.json({ type: "session_terminated", id });

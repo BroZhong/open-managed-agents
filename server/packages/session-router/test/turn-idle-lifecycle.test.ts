@@ -1,19 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
+import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnStreamStore } from "@oma-server/redis";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { SessionRouter } from "../src/session-router.js";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
-async function fixture(run: (input: AdapterInput) => AsyncIterable<SessionEvent>) {
+async function fixture(run: (input: AdapterInput) => AsyncIterable<SessionEvent>, turnStreamStore?: TurnStreamStore) {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "t", name: "test", model: "test", system: "test",
     runtime: "claude-code", sandbox: { enabled: false } });
   const session = await stores.sessionStore.create({ tenantId: "t", agentId: agent.id, agent, workspaceId: "ws" });
   const eventStreamHub = new InProcessEventStreamHub();
   const publish = vi.spyOn(eventStreamHub, "publish");
-  const makeRouter = () => new SessionRouter({ ...stores, eventStreamHub, resolveAdapter: (): Adapter => ({ run }),
+  const makeRouter = () => new SessionRouter({ ...stores, eventStreamHub, turnStreamStore, resolveAdapter: (): Adapter => ({ run }),
     pendingClaimRetryMinMs: 10 });
   const enqueue = (text: string) => stores.pendingEventStore.enqueue(session.id, {
     type: "user.message", data: { content: [{ type: "text", text }] }, sessionThreadId: "t",
@@ -26,6 +27,27 @@ function reply(id: string): SessionEvent {
 }
 
 describe("Session idle at queue boundaries", () => {
+  it("completes PG-owned work when Redis reads fail and its projection CAS conflicts", async () => {
+    const redis = new InMemoryTurnStreamStore();
+    vi.spyOn(redis, "getActiveTurn").mockRejectedValue(new Error("Redis read unavailable"));
+    vi.spyOn(redis, "compareAndSetActiveTurn").mockResolvedValue(false);
+    const f = await fixture(async function* () { yield reply("durable answer"); },
+      new BestEffortTurnStreamStore(redis, () => true));
+    const router = f.makeRouter();
+    try {
+      await f.enqueue("A");
+      await router.handleNewEvent(f.session.id, f.agent);
+      const events = (await f.eventLogStore.getEvents(f.session.id)).data;
+      expect(events.filter(e => e.type === "agent.message")).toHaveLength(1);
+      expect(events.filter(e => e.type === "session.turn_completed")).toHaveLength(1);
+      expect(await f.pendingEventStore.count(f.session.id)).toBe(0);
+      expect(f.session.status).toBe("idle");
+    } finally {
+      await f.sessionStore.terminate(f.session.id);
+      await router.terminateSession(f.session.id);
+    }
+  });
+
   it("completes each Turn while staying running until both queued inputs finish", async () => {
     let runs = 0;
     const f = await fixture(async function* () {

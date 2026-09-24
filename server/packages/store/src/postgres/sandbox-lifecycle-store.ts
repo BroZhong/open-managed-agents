@@ -30,11 +30,11 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
     finally { client.release(); }
   }
 
-  async begin(activity: SandboxActivity): Promise<boolean> {
+  async begin(activity: SandboxActivity, managed = true): Promise<boolean> {
     return this.locked(activity.bindingId, async client => {
       const { rows: [environment] } = await client.query<{ sandbox_id: string | null; lifecycle_managed: boolean; reclaiming: boolean }>('SELECT sandbox_id, lifecycle_managed, reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
       if (environment.reclaiming) return false;
-      if (environment.sandbox_id && !environment.lifecycle_managed) throw new Error('Existing Sandbox requires verified never-timeout adoption before controlled enablement');
+      if (managed && environment.sandbox_id && !environment.lifecycle_managed) throw new Error('Existing Sandbox requires verified never-timeout adoption before controlled enablement');
       // Validate ownership in the same transaction as registering an attempt.
       const fence = activity.fence;
       const owned = await client.query(`SELECT p.id FROM pending_events p JOIN sessions s ON s.id=p.session_id
@@ -42,7 +42,7 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
           AND p.claim_expires_at > clock_timestamp() AND s.status <> 'terminated'
           AND COALESCE(s.delegation->>'sandboxSessionId',s.id)=$5`, [activity.sessionId, fence.eventId, fence.ownerId, fence.generation, activity.bindingId]);
       if (!owned.rows.length) throw new Error('Cannot protect Sandbox for a stale Turn owner');
-      await client.query('UPDATE delegation_environments SET lifecycle_managed = TRUE, idle_since = NULL WHERE id = $1', [activity.bindingId]);
+      await client.query('UPDATE delegation_environments SET lifecycle_managed = lifecycle_managed OR $2, idle_since = NULL WHERE id = $1', [activity.bindingId, managed]);
       await client.query('INSERT INTO sandbox_activities (id, binding_id, session_id, pending_event_id, owner_id, generation) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING', [activityKey(activity), activity.bindingId, activity.sessionId, fence.eventId, fence.ownerId, fence.generation]);
       return true;
     });
