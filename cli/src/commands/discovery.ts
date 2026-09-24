@@ -137,6 +137,7 @@ export function discovery(
       path: "guide list",
       description: "List bundled versioned guides",
       flags: {},
+      examples: ["oma-cli guide list"],
       offline: true,
       run: async () => ({
         data: [
@@ -152,11 +153,15 @@ export function discovery(
     {
       path: "guide read",
       description:
-        "Read bundled Markdown guide without network or local writes",
+        "Read a bundled guide with --name <name> or positional <name>",
       flags: {
         name: string("Guide name", { required: true }),
         raw: boolean("Exact Markdown without added newline"),
       },
+      examples: [
+        "oma-cli guide read --name oma-cli",
+        "oma-cli guide read oma-cli",
+      ],
       offline: true,
       run: async (c) => {
         if (c.flags.name !== "oma-cli")

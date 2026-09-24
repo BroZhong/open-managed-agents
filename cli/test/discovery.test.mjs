@@ -12,6 +12,13 @@ test("schema and guide work offline and expose actual command metadata", async (
   const raw = await run(["guide", "read", "--name", "oma-cli", "--raw"]);
   assert.equal(raw.code, 0, raw.stderr);
   assert.match(raw.stdout, /# oma-cli/);
+  const positional = await run(["guide", "read", "oma-cli", "--raw"]);
+  assert.equal(positional.code, 0, positional.stderr);
+  assert.equal(positional.stdout, raw.stdout);
+  const listed = await run(["guide", "list", "--format", "table"]);
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.match(listed.stdout, /^name\ttitle\tdescription/m);
+  assert.doesNotMatch(listed.stdout, /^id\tname\tstatus/m);
   for (const args of [
     ["schema", "--field", "x"],
     ["schema", "session", "send", "--all"],
