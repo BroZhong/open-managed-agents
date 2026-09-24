@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { boolean, string, type Command, type Values } from "../types.js";
 import { commandFlags } from "../input.js";
 import { invalid, normalizeError, redact } from "../errors.js";
-export const version = "0.1.0";
+export const version = "0.0.2";
 export function contract(c: Command) {
   const { run, validate, ...data } = c;
   return {
@@ -137,6 +137,7 @@ export function discovery(
       path: "guide list",
       description: "List bundled versioned guides",
       flags: {},
+      examples: ["oma-cli guide list"],
       offline: true,
       run: async () => ({
         data: [
@@ -152,11 +153,16 @@ export function discovery(
     {
       path: "guide read",
       description:
-        "Read bundled Markdown guide without network or local writes",
+        "Read a bundled guide selected by name from `guide list`",
       flags: {
-        name: string("Guide name", { required: true }),
+        name: string("Guide name from `guide list`", {
+          required: true,
+          missingHint:
+            "Missing --name. Run `oma-cli guide list`, then use `oma-cli guide read --name <name>`",
+        }),
         raw: boolean("Exact Markdown without added newline"),
       },
+      examples: ["oma-cli guide read --name oma-cli"],
       offline: true,
       run: async (c) => {
         if (c.flags.name !== "oma-cli")
@@ -194,7 +200,7 @@ export function discovery(
           "runtime",
           Number(process.versions.node.split(".")[0]) >= 22 ? "ok" : "error",
           `Node ${process.version}; requires >=22`,
-          "Use Node.js 22 or newer",
+          "Install Node.js 22 or newer: https://nodejs.org/",
           Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 2,
         );
         let urlOK = false;
@@ -212,7 +218,7 @@ export function discovery(
             "url",
             "error",
             "Missing or invalid base URL",
-            "Set --base-url or OMA_BASE_URL",
+            "Set OMA_BASE_URL to the OMA API root (for example https://agentry.welltop.tech/api), or pass --base-url.",
             2,
           );
         }
@@ -220,7 +226,7 @@ export function discovery(
           "authentication",
           c.http.key ? "ok" : "error",
           c.http.key ? "API key configured (redacted)" : "API key missing",
-          "Set --api-key or OMA_API_KEY",
+          "Create a key in the OMA Console API Keys page (Create Key), copy it once, then set OMA_API_KEY or pass --api-key.",
           c.http.key ? 0 : 2,
         );
         if (!c.flags.offline && urlOK) {
@@ -237,7 +243,7 @@ export function discovery(
                 name,
                 "error",
                 String(redact(error.message, [c.http.key])),
-                hint,
+                error.info.subtype === "non_json_response" ? error.info.hint : hint,
                 error.code === 4 ? 4 : error.code === 124 ? 124 : 1,
               );
               return undefined;
@@ -262,7 +268,7 @@ export function discovery(
             const agents = await check(
               "authenticated-read",
               () => c.http.request("/v1/agents?limit=1"),
-              "Check API key and Tenant permissions",
+              "Verify the key is active, belongs to the target Agent's Tenant, and is sent as x-api-key; create a replacement in the OMA Console API Keys page if needed.",
             );
             if (agents)
               add(

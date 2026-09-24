@@ -23,7 +23,7 @@ try {
     ["install", "--ignore-scripts", "--omit=dev", "--prefix", dir, tarball],
     { stdio: "pipe" },
   );
-  const bin = join(dir, "node_modules/oma-cli-local/dist/main.js");
+  const bin = join(dir, "node_modules/@welltop/oma-cli/dist/main.js");
   for (const args of [
     ["--help"],
     ["--version"],
@@ -69,11 +69,11 @@ try {
     ["--version"],
     { cwd: dir, encoding: "utf8" },
   );
-  assert.equal(text.trim(), "0.1.0");
+  assert.equal(text.trim(), "0.0.2");
   console.log(
     JSON.stringify(
       {
-        version: "0.1.0",
+        version: "0.0.2",
         runtime: process.version,
         sha256: createHash("sha256")
           .update(await readFile(tarball))

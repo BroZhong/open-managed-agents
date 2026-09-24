@@ -4,6 +4,7 @@ export type Flag = {
   type: "string" | "boolean" | "integer" | "duration" | "json";
   description: string;
   required?: boolean;
+  missingHint?: string;
   default?: any;
   enum?: readonly string[];
   min?: number;

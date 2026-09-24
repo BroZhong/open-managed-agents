@@ -45,7 +45,7 @@ execFileSync(
   ],
   { stdio: "pipe" },
 );
-const bin = join(dir, "node_modules/oma-cli-local/dist/main.js");
+const bin = join(dir, "node_modules/@welltop/oma-cli/dist/main.js");
 async function cli(args, expected = 0) {
   const r = await run(args, { env, bin, cwd: dir });
   assert.equal(r.code, expected, `${args.slice(0, 3).join(" ")}: ${r.stderr}`);

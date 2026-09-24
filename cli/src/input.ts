@@ -219,7 +219,7 @@ export async function prepare(
       invalid(`Missing required field ${field}`, "--" + field);
   for (const [k, def] of Object.entries(defs)) {
     if (def.required && !(k in flags))
-      invalid("Missing required flag", "--" + k);
+      invalid(def.missingHint ?? "Missing required flag", "--" + k);
     if (!(k in flags) && def.default !== undefined) flags[k] = def.default;
   }
   if (command.confirm && !flags.yes && !flags["dry-run"])

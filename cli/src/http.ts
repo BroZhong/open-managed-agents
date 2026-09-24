@@ -201,9 +201,23 @@ export class Http {
           }
         })();
       }
-      return options.bytes
-        ? new Uint8Array(await response.arrayBuffer())
-        : await response.json();
+      if (options.bytes) return new Uint8Array(await response.arrayBuffer());
+      try {
+        return await response.json();
+      } catch {
+        const contentType = response.headers.get("content-type") ?? "unknown";
+        throw new CliError(
+          {
+            type: "validation",
+            subtype: "non_json_response",
+            message: `Expected JSON response from OMA Host, received ${contentType}`,
+            hint:
+              "Check OMA_BASE_URL points to the OMA API root (for example /api), not a web-console path or /v1.",
+            retryable: false,
+          },
+          2,
+        );
+      }
     } catch (e) {
       if (timeout.signal.aborted) throw timeout.signal.reason;
       if (e instanceof CliError)

@@ -12,6 +12,16 @@ test("schema and guide work offline and expose actual command metadata", async (
   const raw = await run(["guide", "read", "--name", "oma-cli", "--raw"]);
   assert.equal(raw.code, 0, raw.stderr);
   assert.match(raw.stdout, /# oma-cli/);
+  const positional = await run(["guide", "read", "oma-cli"]);
+  assert.equal(positional.code, 2);
+  assert.match(positional.error().message, /does not accept a positional name/);
+  const missing = await run(["guide", "read"]);
+  assert.equal(missing.code, 2);
+  assert.match(missing.error().message, /guide list/);
+  const listed = await run(["guide", "list", "--format", "table"]);
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.match(listed.stdout, /^name\ttitle\tdescription/m);
+  assert.doesNotMatch(listed.stdout, /^id\tname\tstatus/m);
   for (const args of [
     ["schema", "--field", "x"],
     ["schema", "session", "send", "--all"],
@@ -28,6 +38,14 @@ test("schema and guide work offline and expose actual command metadata", async (
   ])
     assert.equal((await run(args)).code, 2);
 });
+test("doctor table shows actionable configuration diagnostics", async () => {
+  const r = await run(["doctor", "--offline", "--format", "table"]);
+  assert.equal(r.code, 2, r.stderr);
+  assert.match(r.stdout, /^name\tstatus\tmessage\thint/m);
+  assert.match(r.stdout, /Missing or invalid base URL/);
+  assert.match(r.stdout, /Create a key in the OMA Console API Keys page/);
+});
+
 test("doctor missing credentials still completes health and capability checks", async () => {
   const f = await fixture((req, res) =>
     json(res, req.url.endsWith("/health") ? { status: "ok" } : { paths: {} }),

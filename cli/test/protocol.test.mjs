@@ -64,6 +64,22 @@ test("validation is offline, body duplicates fail, raw preserves bytes and dry-r
     await f.close();
   }
 });
+test("non-JSON Host responses explain an invalid API base URL", async () => {
+  const f = await fixture((req, res) => {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<!doctype html><html></html>");
+  });
+  try {
+    const r = await run(["agent", "list"], auth(f));
+    assert.equal(r.code, 2);
+    assert.equal(r.error().type, "validation");
+    assert.equal(r.error().subtype, "non_json_response");
+    assert.match(r.error().message, /Expected JSON response/);
+    assert.match(r.error().hint, /OMA_BASE_URL/);
+  } finally {
+    await f.close();
+  }
+});
 test("pagination, field and HTTP error classification", async () => {
   const f = await fixture((req, res) =>
     req.url.includes("/missing")

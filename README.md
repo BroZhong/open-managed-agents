@@ -75,11 +75,11 @@ CLI 默认输出结构化 JSON；交互终端可使用 table，脚本可使用 `
 
 ### 安装
 
-仓库当前只生成本地 tarball，不代表已发布到公共 npm registry：
+发布包名为 `@welltop/oma-cli`；从源码验证时也可以生成本地 tarball：
 
 ```bash
 pnpm pack:cli
-npm install --global ./cli/oma-cli-local-0.1.0.tgz
+npm install --global ./cli/welltop-oma-cli-0.0.2.tgz
 
 oma-cli --version
 oma-cli --help
@@ -88,7 +88,7 @@ oma-cli --help
 也可以在不全局安装的情况下直接运行打包文件：
 
 ```bash
-npm install /absolute/path/to/cli/oma-cli-local-0.1.0.tgz
+npm install /absolute/path/to/cli/welltop-oma-cli-0.0.2.tgz
 ./node_modules/.bin/oma-cli guide read --name oma-cli --raw
 ```
 

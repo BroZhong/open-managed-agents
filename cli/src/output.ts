@@ -58,7 +58,11 @@ export function render(
               "createdAt",
               "updatedAt",
             ]
-          : ["id", "name", "status", "path", "size", "updatedAt", "updated_at"];
+          : command.path === "guide list"
+            ? ["name", "title", "description"]
+            : command.path === "doctor"
+              ? ["name", "status", "message", "hint"]
+              : ["id", "name", "status", "path", "size", "updatedAt", "updated_at"];
     rows = data;
   } else if (data && typeof data === "object" && !Array.isArray(data)) {
     columns = ["key", "value"];
