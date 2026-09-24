@@ -83,7 +83,7 @@ COPY --from=ffmpeg-build /out/ffmpeg /out/ffprobe /usr/local/bin/
 COPY bin/vfs-cli bin/mediakit-cli bin/rg bin/fd bin/ossutil /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/vfs-cli /usr/local/bin/mediakit-cli /usr/local/bin/rg /usr/local/bin/fd /usr/local/bin/ossutil && \
     printf '%s\n' \
-      'fb9b291e8940a4cfaf7812fc897ee85d0e679b08c6c12b4f44adb63aa4b9ec63  /usr/local/bin/vfs-cli' \
+      '9c5d365165aafd6c29c835deebf216e966eeafe3d372f49d2bbfca7bfd85c348  /usr/local/bin/vfs-cli' \
       '2c962efef686307e8e839face4a347634e939b84b2a4df5caf292b035e5f96ca  /usr/local/bin/mediakit-cli' \
       'de09edc5649d00bf9495040b09c70a52174f7ae6b812097411f46def16d47c2f  /usr/local/bin/ossutil' \
       'ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2  /usr/local/bin/rg' \

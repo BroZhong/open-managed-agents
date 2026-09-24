@@ -11,6 +11,10 @@ The September 21 test release uses `pi-tools/Dockerfile.overlay` to retain the
 existing live 0.3.0 image (including offline Whisper) while appending Node 22 and
 Pi. This is distinct from the clean recipe below; see the
 [release record](../../docs/verification/pi-public-sdk-release-2026-09-21.md).
+The vfs-cli-only production update uses `vfs-cli/Dockerfile` and starts from the
+live parent digest `sha256:2486e0b67f23cfda15055aaa9f5e0655a0e32acb45879124c191e7e1478d082c`.
+It replaces only `/usr/local/bin/vfs-cli` and the inherited VFS version, smoke,
+and tool-hash records, preserving the parent's Whisper/scenedetect runtime.
 `versions.json` pins the inputs for future builds; build verification runs
 again for each release and is not implied by historical reports.
 
@@ -28,14 +32,14 @@ story-seed launcher or its former repository Skill folders.
 
 ## Pinned releases
 
-Component releases checked on 2026-09-09; the search versions match native Pi
-parity tests:
+Component releases checked on 2026-09-09; vfs-cli was refreshed to 0.3.18 on
+2026-09-25. The search versions match native Pi parity tests:
 
 | Component | Version | Source |
 | --- | --- | --- |
 | Node.js | 22.23.2 | Pinned Host node-base image in `versions.json` |
 | Pi Coding Agent SDK | 0.83.0 | `pi-tools/package-lock.json` |
-| vfs-cli | 0.3.15 | [Official distribution](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.15) |
+| vfs-cli | 0.3.18 | [Official distribution](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.18) |
 | FFmpeg / ffprobe | 9.0.1 | [Official releases](https://ffmpeg.org/download.html) |
 | Gemini Python SDK (`google-genai`) | 2.22.0 | [Official SDK release](https://github.com/googleapis/python-genai/releases/tag/v2.22.0) |
 | mediakit-cli | 0.2.1 | [Official release](https://github.com/volcengine/mediakit-cli/releases/tag/v0.2.1) |
@@ -110,6 +114,19 @@ Aliyun; `PIP_INDEX_URL=https://pypi.org/simple/` selects official PyPI.
 version records, verified hashes and acceptance expectations together.
 Build and acceptance outputs are saved to `build-metadata.json` and
 `verification.json` (gitignored).
+
+For the live production parent that still carries Whisper/scenedetect, build the
+small additive vfs-cli overlay on `vfs-dev` from the repository root:
+
+```bash
+bash sandbox/auto-story-v2/vfs-cli/build.sh
+PUSH=1 bash sandbox/auto-story-v2/vfs-cli/build.sh
+```
+
+The script stages and verifies the official Linux amd64 archive, builds from the
+immutable parent digest above, runs the inherited image checks, and prints the
+registry digest after a push. It rejects a different `BASE_IMAGE` so a clean
+recipe rebuild cannot be substituted accidentally.
 
 Acceptance runs with no network as the unprivileged `user`, on a minimal PATH:
 

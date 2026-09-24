@@ -4,10 +4,10 @@
   "platform": "linux/amd64",
   "baseImage": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/code-interpreter@sha256:b53bc461e59fda3bff45bb3682d1b56f071e772989d3579cd1773165b4e761fb",
   "vfs-cli": {
-    "version": "v0.3.15",
-    "url": "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.15/vfs-cli_v0.3.15_linux_amd64.tar.gz",
-    "sha256": "4a8e640d33d83c73d2cf8832c5d678ae3d4f972cfd462e3aa99855e2cfa1ae07",
-    "binarySha256": "fb9b291e8940a4cfaf7812fc897ee85d0e679b08c6c12b4f44adb63aa4b9ec63"
+    "version": "v0.3.18",
+    "url": "https://github.com/welltop-cn/vfs-cli-dist/releases/download/v0.3.18/vfs-cli_v0.3.18_linux_amd64.tar.gz",
+    "sha256": "6de350642795b6adc555424dd3d6194483aae8e7665cda29af7f014d429ee48e",
+    "binarySha256": "9c5d365165aafd6c29c835deebf216e966eeafe3d372f49d2bbfca7bfd85c348"
   },
   "ffmpeg": {
     "version": "9.0.1",
