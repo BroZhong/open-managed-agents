@@ -1,5 +1,5 @@
 {
-  "name": "oma-cli-local",
+  "name": "@welltop/oma-cli",
   "version": "0.0.1",
   "description": "Non-interactive OMA CLI",
   "type": "module",
@@ -23,5 +23,9 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "5.8.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

@@ -23,7 +23,7 @@ try {
     ["install", "--ignore-scripts", "--omit=dev", "--prefix", dir, tarball],
     { stdio: "pipe" },
   );
-  const bin = join(dir, "node_modules/oma-cli-local/dist/main.js");
+  const bin = join(dir, "node_modules/@welltop/oma-cli/dist/main.js");
   for (const args of [
     ["--help"],
     ["--version"],

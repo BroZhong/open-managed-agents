@@ -9,7 +9,7 @@ pnpm --dir ../server install --frozen-lockfile # real Host test dependencies
 npm test
 npm pack
 # In an independent directory:
-npm install /absolute/path/to/oma-cli-local-0.0.1.tgz
+npm install /absolute/path/to/welltop-oma-cli-0.0.1.tgz
 ./node_modules/.bin/oma-cli --help
 ./node_modules/.bin/oma-cli guide read --name oma-cli --raw
 ```
