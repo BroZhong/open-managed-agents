@@ -9,20 +9,20 @@ pnpm --dir ../server install --frozen-lockfile # real Host test dependencies
 npm test
 npm pack
 # In an independent directory:
-npm install /absolute/path/to/oma-cli-local-0.1.0.tgz
+npm install /absolute/path/to/oma-cli-local-0.0.1.tgz
 ./node_modules/.bin/oma-cli --help
 ./node_modules/.bin/oma-cli guide read --name oma-cli --raw
 ```
 
-The local package name is not a public registry allocation. Public scope, registry
-and publication rights must be confirmed separately. This work does not publish.
+This package is released manually from a verified tarball. Confirm npm ownership and
+registry settings before each publication.
 
 Configure `OMA_BASE_URL=https://oma.example.test/api` and a private `OMA_API_KEY`.
 Corresponding flags override environment values. No production URL is built in.
 Use `schema <command path>` for the complete contract and `doctor` for read-only
 diagnostics. [Bundled guide](guides/oma-cli.md) documents all workflows and recovery.
 
-To upgrade an unpublished installation, install the newly verified tarball.
+To upgrade an installation, install the newly verified tarball or the corresponding npm version.
 Before any manual registry release: confirm package ownership, update version and
 guide together, run typecheck/tests/pack verification, inspect `npm pack --dry-run`,
 and verify the tarball contains no credentials. Only after separate publication

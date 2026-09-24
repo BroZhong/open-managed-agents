@@ -1,7 +1,6 @@
 # oma-cli
 
-Version 0.1.0. This guide is distributed with the CLI. The local npm package name
-`oma-cli-local` does not reserve a public registry name. Requires Node.js >=22.
+Version 0.0.1. This guide is distributed with the CLI. The npm package name is `oma-cli-local`. Requires Node.js >=22.
 
 ## Connect and discover
 

@@ -1,7 +1,7 @@
 {
   "name": "oma-cli-local",
-  "version": "0.1.0",
-  "description": "Non-interactive OMA CLI (local package name; registry name pending)",
+  "version": "0.0.1",
+  "description": "Non-interactive OMA CLI",
   "type": "module",
   "bin": {
     "oma-cli": "dist/main.js"

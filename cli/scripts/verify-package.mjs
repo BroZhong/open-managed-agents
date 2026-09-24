@@ -69,11 +69,11 @@ try {
     ["--version"],
     { cwd: dir, encoding: "utf8" },
   );
-  assert.equal(text.trim(), "0.1.0");
+  assert.equal(text.trim(), "0.0.1");
   console.log(
     JSON.stringify(
       {
-        version: "0.1.0",
+        version: "0.0.1",
         runtime: process.version,
         sha256: createHash("sha256")
           .update(await readFile(tarball))

@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { boolean, string, type Command, type Values } from "../types.js";
 import { commandFlags } from "../input.js";
 import { invalid, normalizeError, redact } from "../errors.js";
-export const version = "0.1.0";
+export const version = "0.0.1";
 export function contract(c: Command) {
   const { run, validate, ...data } = c;
   return {
