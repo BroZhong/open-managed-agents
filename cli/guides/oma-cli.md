@@ -9,6 +9,29 @@ There is no default production URL. A deployment prefix is retained, for example
 `https://oma.example.test/api`. Host requests use x-api-key. Signed Workspace
 requests have no Host credentials. Do not put real keys in shared scripts.
 
+## Configuration and troubleshooting
+
+The CLI requires Node.js 22 or newer. Install or upgrade it from
+[https://nodejs.org/](https://nodejs.org/), then verify with `node --version`.
+
+Set the OMA API root and key in the shell before running network commands:
+
+```sh
+export OMA_BASE_URL=https://agentry.welltop.tech/api
+export OMA_API_KEY=oma_...
+oma-cli doctor
+```
+
+Create an API key in the OMA Console's **API Keys** page with **Create Key**.
+Copy the value when it is shown because it is only displayed once. The key must
+belong to the same Tenant as the Agent you want to access. You can use
+`--base-url` and `--api-key` instead of environment variables; command-line
+flags take precedence.
+
+If you are only checking local setup, run `oma-cli doctor --offline`. For a
+machine-readable diagnostic that includes every message and repair hint, run
+`oma-cli doctor --format json`.
+
 `oma-cli --help`, `--version`, `version`, `schema`, `schema session send`,
 `guide list`, and `guide read --name oma-cli --raw` work offline.
 `doctor --offline` checks local configuration; `doctor` additionally reads health,

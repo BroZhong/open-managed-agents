@@ -38,6 +38,14 @@ test("schema and guide work offline and expose actual command metadata", async (
   ])
     assert.equal((await run(args)).code, 2);
 });
+test("doctor table shows actionable configuration diagnostics", async () => {
+  const r = await run(["doctor", "--offline", "--format", "table"]);
+  assert.equal(r.code, 2, r.stderr);
+  assert.match(r.stdout, /^name\tstatus\tmessage\thint/m);
+  assert.match(r.stdout, /Missing or invalid base URL/);
+  assert.match(r.stdout, /Create a key in the OMA Console API Keys page/);
+});
+
 test("doctor missing credentials still completes health and capability checks", async () => {
   const f = await fixture((req, res) =>
     json(res, req.url.endsWith("/health") ? { status: "ok" } : { paths: {} }),
