@@ -117,6 +117,7 @@ export interface AdapterInput {
   message: UserMessage;
   agent: {
     model: string;
+    thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
     system: string;
     tools?: ToolConfig[];
     mcpServers?: McpServerConfig[];

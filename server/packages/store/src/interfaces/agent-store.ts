@@ -10,6 +10,7 @@ export interface AgentStoreCreateInput {
   name: string;
   description?: string;
   model: string;
+  thinking?: import("../types.js").ThinkingLevel | null;
   system: string;
   runtime: Agent["runtime"];
   tools?: Agent["tools"];
@@ -22,6 +23,7 @@ export interface AgentStoreUpdateInput {
   name?: string;
   description?: string;
   model?: string;
+  thinking?: import("../types.js").ThinkingLevel | null;
   system?: string;
   runtime?: Agent["runtime"];
   tools?: Agent["tools"];

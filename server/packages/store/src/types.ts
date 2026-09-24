@@ -1,4 +1,5 @@
 export type Runtime = "claude-code" | "codex" | "pi-agent" | "mock";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface AgentToolConfig {
   name: string;
@@ -51,6 +52,7 @@ export interface Agent {
    */
   description?: string;
   model: string;
+  thinking?: ThinkingLevel | null;
   system: string;
   runtime: Runtime;
   tools?: AgentToolConfig[];

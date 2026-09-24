@@ -503,3 +503,30 @@
 .file-manager-workbench .file-markdown-preview > * { max-width: 68ch; margin-inline: auto; }
 .file-manager-workbench .file-markdown-preview h1 { font-size: clamp(26px, 2.4vw, 36px); letter-spacing: -.035em; line-height: 1.25; font-weight: 600; }
 .file-manager-workbench .file-markdown-preview { font-size: 14px; line-height: 1.85; }
+/* Shared thinking-level control used in Agent configuration. */
+.thinking-slider {
+  appearance: none;
+  height: 0.55rem;
+  border-radius: 9999px;
+  background: var(--color-bg-active);
+  cursor: pointer;
+}
+
+.thinking-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 9999px;
+  border: 3px solid white;
+  background: var(--color-accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+}
+
+.thinking-slider::-moz-range-thumb {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 9999px;
+  border: 3px solid white;
+  background: var(--color-accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+}

@@ -117,3 +117,21 @@ it("selects a tested custom model when creating an Agent", async () => {
   const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
   expect(JSON.parse(String(init.body)).model).toBe("custom-one/vendor/model");
 });
+
+it.each([false, true])("persists slider preference and supports resetting it (reset=%s)", async (reset) => {
+  const fetchMock = vi.fn(async () => Response.json({ id: "a" }));
+  vi.stubGlobal("fetch", fetchMock);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  queryClient.setQueryData(["model-providers"], []);
+  const agent: Agent = { id: "a", tenantId: "t", name: "Test", model: "bigmodel/glm-5.3", thinking: "low", system: "test", runtime: "pi-agent", createdAt: "", updatedAt: "" };
+  render(<QueryClientProvider client={queryClient}><AgentFormDialog open onOpenChange={() => {}} agent={agent} /></QueryClientProvider>);
+  const slider = screen.getByRole("slider", { name: "思考强度" }) as HTMLInputElement;
+  expect(slider.value).toBe("2");
+  fireEvent.change(slider, { target: { value: "3" } });
+  expect(slider.getAttribute("aria-valuetext")).toBe("中");
+  if (reset) fireEvent.click(screen.getByRole("button", { name: "重置思考强度" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(JSON.parse(String(init.body)).thinking).toBe(reset ? null : "medium");
+});

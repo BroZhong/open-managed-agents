@@ -12,9 +12,22 @@ Pi Agents can select these model ids in the console or the Agent API:
 
 New Agents default to GPT-5.6 Sol, matching the local Pi model selection.
 Editing an existing Agent preserves its model until another model is selected.
-The runtime always selects the highest thinking level supported by that model,
-including for the managed Storyboard Stage subagent when no explicit subagent
-thinking override is supplied.
+Agent configuration exposes **思考强度** as a horizontal slider. The API field
+`thinking` accepts `off | minimal | low | medium | high | xhigh | max`.
+Omission on creation or `null` selects the highest supported level; omission
+on update preserves the preference. Existing Agents keep their default.
+Pi's `clampThinkingLevel` adapts an Agent preference to the selected model:
+it keeps supported levels, otherwise selects the next supported higher level,
+falling back downward if necessary. Non-reasoning models resolve to `off`.
+Provider payload conversion remains entirely in Pi; model metadata must accurately
+describe the upstream capabilities. A custom endpoint is not guaranteed to
+honor thinking controls just because it supports a compatible protocol.
+
+Child executions inherit the Agent preference unless an explicit execution
+override is provided. Such overrides retain strict supported-level validation.
+A resumed Turn retains its recorded effective level. Agent forks copy the setting.
+Apply `deploy/migrations/0017_agent_thinking_level.sql` before releasing the
+API/Runner changes. No credentials or Sandbox rebuild are required for this setting.
 
 The Host uses Pi SDK 0.83.0, matching the local Pi installation. Earlier 0.80.3
 releases cannot express the `max` thinking level. Each Turn creates one Pi

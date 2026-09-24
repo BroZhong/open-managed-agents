@@ -22,6 +22,7 @@ class InMemoryAgentStore implements AgentStore {
       name: input.name,
       description: input.description,
       model: input.model,
+      thinking: input.thinking,
       system: input.system,
       runtime: input.runtime,
       tools: input.tools,
@@ -68,6 +69,7 @@ class InMemoryAgentStore implements AgentStore {
     if (input.name !== undefined) agent.name = input.name;
     if (input.description !== undefined) agent.description = input.description;
     if (input.model !== undefined) agent.model = input.model;
+    if (input.thinking !== undefined) agent.thinking = input.thinking ?? undefined;
     if (input.system !== undefined) agent.system = input.system;
     if (input.runtime !== undefined) agent.runtime = input.runtime;
     if (input.tools !== undefined) agent.tools = input.tools;

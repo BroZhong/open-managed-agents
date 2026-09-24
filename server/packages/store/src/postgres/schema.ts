@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
   name         TEXT NOT NULL,
   description  TEXT,
   model        TEXT NOT NULL,
+  thinking     TEXT,
   system       TEXT NOT NULL,
   runtime      TEXT NOT NULL,
   tools        JSONB,
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS ${s}.agents (
   created_at   TIMESTAMPTZ NOT NULL,
   updated_at   TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE ${s}.agents ADD COLUMN IF NOT EXISTS thinking TEXT;
 CREATE INDEX IF NOT EXISTS agents_tenant_id_idx ON ${s}.agents (tenant_id, id);
 
 CREATE TABLE IF NOT EXISTS ${s}.loops (

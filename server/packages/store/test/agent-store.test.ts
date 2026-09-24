@@ -19,6 +19,17 @@ describe("PgAgentStore", () => {
     store = new PgAgentStore(harness.pool);
   });
 
+  it("persists thinking across store instances and clears it without changing the model", async () => {
+    const agent = await store.create({ tenantId: "t", name: "A", model: "test", system: "s", runtime: "pi-agent", thinking: "medium" });
+    const reader = new PgAgentStore(harness.pool);
+    expect((await reader.getById(agent.id))?.thinking).toBe("medium");
+    await store.update(agent.id, { name: "B" });
+    expect((await reader.getById(agent.id))?.thinking).toBe("medium");
+    await store.update(agent.id, { thinking: null });
+    expect((await reader.getById(agent.id))?.thinking).toBeUndefined();
+    expect((await reader.getById(agent.id))?.model).toBe("test");
+  });
+
   it("should create an agent with agent_ prefix", async () => {
     const agent = await store.create({
       tenantId: "tenant1",

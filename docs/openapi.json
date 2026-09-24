@@ -198,6 +198,22 @@
           "model": {
             "type": "string"
           },
+          "thinking": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              null
+            ]
+          },
           "system": {
             "type": "string"
           },
@@ -334,6 +350,22 @@
             "type": "string",
             "minLength": 1
           },
+          "thinking": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              null
+            ]
+          },
           "system": {
             "type": "string",
             "minLength": 1
@@ -406,6 +438,22 @@
           "model": {
             "type": "string",
             "minLength": 1
+          },
+          "thinking": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              null
+            ]
           },
           "system": {
             "type": "string",
