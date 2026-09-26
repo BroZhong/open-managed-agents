@@ -10,7 +10,7 @@ Tests do not authorize production deployment.
    the target deployment. The tested ACK gateway is v0.3.0, manager v0.6.11 and
    E2B JS SDK 2.24.0. Upstream documentation alone is insufficient evidence.
 2. Before deploying the new Host binary, apply `deploy/migrations/0014_sandbox_lifecycle.sql`
-   and then `deploy/migrations/0017_remove_sandbox_lifecycle_mode.sql` using the
+   and then `deploy/migrations/0018_remove_sandbox_lifecycle_mode.sql` using the
    normal authorized database release process. Its default schema is `oma`.
    Install the trigger before running the lifecycle controller. Tables and
    columns alone are insufficient.
