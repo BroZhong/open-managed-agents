@@ -157,16 +157,15 @@ _Avoid_: Tenant, home directory, snapshot, Turn output transaction
 The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, describe — shared by both the Sandbox-as-Tool mode and the future Agent-in-the-Sandbox mode. It reads an **Environment Spec** to know what to build and verifies its mounted Workspace before execution, refreshes Read-only Projections, and releases execution resources. It knows no Agent runtime or business ownership policy; the Host supplies trusted storage coordinates.
 _Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
 
-Controlled Sandbox idle reclamation uses explicit root Session bindings. Each
-running Turn and every Queued Input across the binding protects its Sandbox.
+Sandbox idle reclamation applies to every durable Sandbox binding. Each running
+Turn and every Queued Input across the binding protects its Sandbox.
 After all actual executions settle and the queues empty, a confirmed idle
 observation starts a continuous 30-minute period. New input invalidates it.
 Expired leases, Host loss and bounded Interrupt cleanup do not prove execution
 has stopped: unknown activity retains the resource without a maximum age.
 Managed Sandboxes have no gateway deadline. Reclamation preserves the mounted
 Workspace, while temporary files, processes and local dependencies may be lost.
-See ADR-0017 and `docs/sandbox-lifecycle-deployment.md`; production-wide rollout
-is not enabled by default.
+See ADR-0017 and `docs/sandbox-lifecycle-deployment.md`.
 
 **Environment Spec**:
 The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and any **Read-only Projections**. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
@@ -238,7 +237,7 @@ notifications. Open SSE connections catch up committed PG events during Redis
 outages. API accepts Interrupt and termination without holding execution objects.
 Termination writes a retryable cleanup outbox and a durable lifecycle Event.
 Unknown Sandbox execution is retained until actual settlement; recording activity
-for cleanup does not enable the controlled idle-reclamation rollout.
+and reclamation are enabled for every durable Sandbox binding by default.
 See ADR-0018 and `docs/api-runner-operations.md`.
 
 ## User-owned model providers

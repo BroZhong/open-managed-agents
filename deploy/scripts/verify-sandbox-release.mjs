@@ -58,7 +58,7 @@ function successfulCommand(es, command, expected) {
 }
 async function state() {
   const ids = Object.values(evidence.sessions).map(s => s.id);
-  return (await pool.query(`SELECT e.id, e.sandbox_id, e.lifecycle_managed, e.idle_since, e.reclaiming,
+  return (await pool.query(`SELECT e.id, e.sandbox_id, e.idle_since, e.reclaiming,
     (SELECT count(*)::int FROM sandbox_activities a WHERE a.binding_id=e.id) AS activities,
     (SELECT count(*)::int FROM pending_events p JOIN sessions s ON s.id=p.session_id WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=e.id) AS inputs
     FROM delegation_environments e WHERE e.id=ANY($1) ORDER BY e.id`, [ids])).rows;
@@ -80,8 +80,6 @@ try {
     check('cold Sessions create no Sandbox', rows.every(r => !r.sandbox_id));
   } else if (phase === 'exercise' || phase === 'shared') {
     const { idle, shared, independent } = evidence.sessions;
-    assert(Object.values(evidence.sessions).every(s => (process.env.SANDBOX_IDLE_BINDINGS ?? '').split(',').includes(s.id)), 'All fixtures must be selected on deployed Host');
-    assert(process.env.SANDBOX_IDLE_SWEEP === 'true', 'Production sweeper must be enabled');
     const token = `PERSIST_${evidence.runId}`; evidence.token = token;
     if (phase === 'exercise') {
     const cmd = `printf %s ${token} > /home/user/workspace/lifecycle-release.txt; printf %s ${token} > /tmp/lifecycle-release-marker; cat /home/user/workspace/lifecycle-release.txt /tmp/lifecycle-release-marker`;
@@ -100,7 +98,7 @@ try {
     check('parent settles before background child', ['queued', 'running'].includes(x.status), { status: x.status });
     let rows = await state(); const sharedRow = rows.find(r => r.id === shared.id);
     check('shared binding retains activity or queued input after parent completion', sharedRow.activities + sharedRow.inputs > 0 && sharedRow.idle_since === null, sharedRow);
-    check('independent Sessions sharing Workspace have distinct Sandboxes', new Set(rows.map(r => r.sandbox_id)).size === 3 && rows.every(r => r.sandbox_id && r.lifecycle_managed), rows);
+    check('independent Sessions sharing Workspace have distinct Sandboxes', new Set(rows.map(r => r.sandbox_id)).size === 3 && rows.every(r => r.sandbox_id), rows);
     evidence.originalBindings = rows; await save();
     const done = await wait('background child and notification settled', async () => (await api(`/v1/sessions/${shared.id}/delegations?limit=100`)).data.find(y => y.id === x.id), y => y.status === 'completed' && y.notificationStatus === 'processed');
     const childEvents = await events(x.childId);

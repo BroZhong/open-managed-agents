@@ -73,9 +73,8 @@ a passing Sandbox credential-refresh probe also renews Host credentials.
 
 The SDK request timeout is separate from the Sandbox lifetime. Shanghai's ALB
 allows 180 seconds and observed cold starts can exceed 60 seconds; 185 seconds
-lets the ALB response reach the SDK. Unselected legacy bindings retain the
-3600-second lifetime. Explicitly selected [ADR-0017 bindings](sandbox-lifecycle-deployment.md)
-use verified never-timeout creation and confirmed idle reclamation instead.
+lets the ALB response reach the SDK. All bindings use lifecycle-managed
+never-timeout creation and confirmed idle reclamation instead.
 Neither a longer HTTP timeout nor a longer Sandbox lifetime
 extends an expiring credential.
 

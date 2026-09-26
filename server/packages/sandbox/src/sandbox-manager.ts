@@ -37,8 +37,8 @@ export interface EnvSpec {
 export interface SandboxManagerDeps {
   /** Settlement records for termination safety; does not enable idle reclamation. */
   executionActivities?: Pick<SandboxLifecycleStore, "begin" | "finish">;
-  /** Explicit Session binding allowlist. Omitted means the rollout is disabled. */
-  lifecycle?: { store: SandboxLifecycleStore; bindingIds: ReadonlySet<string> };
+  /** Durable lifecycle controller; every durable binding uses this store. */
+  lifecycle?: SandboxLifecycleStore;
   sandboxClient: SandboxClient;
   provisionSources: Record<string, ProvisionSource>;
   defaults?: { lifetimeSeconds?: number };
@@ -96,7 +96,7 @@ export class DefaultSandboxManager implements SandboxManager {
   constructor(private readonly deps: SandboxManagerDeps) {}
   async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
     const lifecycle = this.deps.lifecycle;
-    const store = lifecycle?.bindingIds.has(activity.bindingId) ? lifecycle.store : this.deps.executionActivities;
+    const store = lifecycle ?? this.deps.executionActivities;
     if (!store) return false;
     while (!await store.begin(activity)) {
       await delay(250, undefined, { signal });
@@ -105,22 +105,23 @@ export class DefaultSandboxManager implements SandboxManager {
   }
   async finishActivity(activity: SandboxActivity): Promise<void> {
     const lifecycle = this.deps.lifecycle;
-    const store = lifecycle?.bindingIds.has(activity.bindingId) ? lifecycle.store : this.deps.executionActivities;
+    const store = lifecycle ?? this.deps.executionActivities;
     await store?.finish(activity);
   }
   async sweepIdle(): Promise<void> {
     const lifecycle = this.deps.lifecycle;
     if (!lifecycle) return;
     const errors: unknown[] = [];
-    for (const bindingId of lifecycle.bindingIds) {
+    const bindingIds = await lifecycle.listManagedBindings();
+    for (const bindingId of bindingIds) {
       try {
-        const ticket = await lifecycle.store.claimReclamation(bindingId);
+        const ticket = await lifecycle.claimReclamation(bindingId);
         if (!ticket) continue;
         // Ticket commits before external I/O. A lost DB connection cannot reopen
         // this binding while a delayed destroy is still in flight.
         await this.deps.sandboxClient.reconnect?.(ticket.sandboxId, {});
         await this.deps.sandboxClient.destroy(ticket.sandboxId);
-        await lifecycle.store.completeReclamation(ticket);
+        await lifecycle.completeReclamation(ticket);
       } catch (error) {
         // One failed gateway deletion must not starve other known-idle bindings.
         errors.push(error);
@@ -303,12 +304,13 @@ class SandboxSessionImpl implements SandboxSession {
         /* Failed create cleans up its resource. */
       }
       const lifecycle = this.deps.lifecycle;
-      if (this.binding?.id && lifecycle?.bindingIds.has(this.binding.id)) {
-        const ticket = await lifecycle.store.claimReclamation(this.binding.id, true);
+      const bindingId = this.binding?.id;
+      if (lifecycle && bindingId) {
+        const ticket = await lifecycle.claimReclamation(bindingId, true);
         if (ticket) {
           await this.deps.sandboxClient.reconnect?.(ticket.sandboxId, this.metadata());
           await this.deps.sandboxClient.destroy(ticket.sandboxId);
-          await lifecycle.store.completeReclamation(ticket);
+          await lifecycle.completeReclamation(ticket);
         }
         if (ticket) this.sandboxId = undefined;
         return;
@@ -385,7 +387,7 @@ class SandboxSessionImpl implements SandboxSession {
       await this.deps.sandboxClient.destroy(old);
       this.sandboxId = undefined;
     }
-    const managed = Boolean(this.binding?.id && this.deps.lifecycle?.bindingIds.has(this.binding.id));
+    const managed = Boolean(this.deps.lifecycle && this.binding?.id);
     const handle = await this.deps.sandboxClient.create({
       image: this.spec.image,
       env: this.spec.env,

@@ -1,23 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sandboxLifecycleFromEnv, startSandboxSweeper } from '../src/lib/sandbox-lifecycle.js';
+import { sandboxLifecycle, startSandboxSweeper } from '../src/lib/sandbox-lifecycle.js';
 import type { Pool } from '@oma-server/store';
 
-describe('controlled Sandbox lifecycle activation', () => {
+describe('Sandbox lifecycle activation', () => {
   afterEach(() => vi.useRealTimers());
-  it('does no persistence work when disabled and rejects wildcard activation', async () => {
-    const query = vi.fn();
+  it('constructs the unconditional lifecycle store without rollout configuration', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ ok: 1 }] });
     const pool = { query } as unknown as Pool;
-    expect(await sandboxLifecycleFromEnv(pool, {})).toBeUndefined();
-    expect(query).not.toHaveBeenCalled();
-    await expect(sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_BINDINGS: '*' })).rejects.toThrow('explicit');
-    expect(query).not.toHaveBeenCalled();
+    const lifecycle = await sandboxLifecycle(pool);
+    expect(lifecycle).toBeDefined();
+    expect(query).toHaveBeenCalledOnce();
   });
-  it('refuses enablement without the queue trigger or with unverified existing bindings', async () => {
+  it('requires the queue trigger before enabling idle reclamation', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const pool = { query } as unknown as Pool;
-    await expect(sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_BINDINGS: 'root' })).rejects.toThrow('migration');
-    query.mockResolvedValue({ rows: [{ id: 'root' }] });
-    await expect(sandboxLifecycleFromEnv(pool, { SANDBOX_IDLE_BINDINGS: 'root' })).rejects.toThrow('adoption');
+    await expect(sandboxLifecycle(pool)).rejects.toThrow('migration');
+    expect(query).toHaveBeenCalledOnce();
   });
   it('does not overlap slow sweeps, reports failures, and stops scheduling on rollback', async () => {
     vi.useFakeTimers();

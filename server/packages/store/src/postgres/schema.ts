@@ -159,7 +159,6 @@ CREATE TABLE IF NOT EXISTS ${s}.delegation_waits (id TEXT PRIMARY KEY, record JS
 CREATE TABLE IF NOT EXISTS ${s}.delegation_commands (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
-ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS lifecycle_managed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS idle_since TIMESTAMPTZ;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS ${s}.sandbox_activities (

@@ -65,9 +65,9 @@ pending with a retry time. Cleanup reconstructs the Sandbox from its durable
 binding, coordinates child outcomes, and preserves saved Workspace files/history.
 Gateway cleanup cannot block the independent pending-input scan.
 
-Runners record actual Sandbox execution activities for termination safety even
-outside the controlled idle-reclamation allowlist. These records do **not** adopt
-a legacy Sandbox, set never-timeout, or enable idle sweeping. Only observed
+Runners record actual Sandbox execution activities for termination safety across
+all lifecycle-managed bindings. These records set never-timeout for newly
+created Sandboxes and enable idle sweeping. Only observed
 execution settlement releases them; owner expiry and termination do not. Cleanup
 checks resource users and these activities, retains unknown execution indefinitely,
 and rechecks whether disposal actually cleared the binding before completing its

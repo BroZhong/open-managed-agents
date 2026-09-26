@@ -154,26 +154,21 @@ describe.skipIf(!process.env.PG_TEST_URL)('durable Sandbox lifecycle on PostgreS
     await lifecycle.finish(activity);
     expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
   });
-  it('refuses unverified adoption and permits explicit deletion only after all activity ends', async () => {
+  it('includes an existing Sandbox when its next Turn starts and waits for all activity before explicit deletion', async () => {
     expect(await lifecycle.claimReclamation(activity.bindingId, true)).toBeNull();
-    await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed = FALSE WHERE id = $1', [activity.bindingId]);
-    await expect(lifecycle.begin(activity)).rejects.toThrow('adoption');
-    await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed = TRUE WHERE id = $1', [activity.bindingId]);
+    expect(await lifecycle.begin(activity)).toBe(true);
+    expect(await lifecycle.claimReclamation(activity.bindingId, true)).toBeNull();
     await finish();
     expect(await lifecycle.claimReclamation(activity.bindingId, true)).not.toBeNull();
   });
-  it('does not serialize legacy input behind a legacy Sandbox provisioning lock', async () => {
-    await harness.pool.query('UPDATE delegation_environments SET lifecycle_managed=FALSE WHERE id=$1', [activity.bindingId]);
-    const gate = await harness.pool.connect();
-    try {
-      await gate.query('BEGIN');
-      await gate.query('SELECT id FROM delegation_environments WHERE id=$1 FOR UPDATE', [activity.bindingId]);
-      const input = stores.pendingEventStore.enqueue(activity.sessionId, { type: 'user.message', data: {}, sessionThreadId: 'sthr_primary' });
-      const accepted = await Promise.race([input.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1000))]);
-      expect(accepted).toBe(true);
-      await gate.query('COMMIT');
-      await input;
-    } finally { await gate.query('ROLLBACK'); gate.release(); }
+  it('finds bindings created without a Turn after startup and protects their pending input', async () => {
+    expect(await lifecycle.listManagedBindings()).toContain(activity.bindingId);
+    await ageIdle(120);
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    await finish();
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    await ageIdle(30);
+    expect(await lifecycle.claimReclamation(activity.bindingId)).not.toBeNull();
   });
   it('grants the application only necessary activity privileges and permits its queue trigger', async () => {
     const schema = process.env.PG_TEST_SCHEMA ?? 'oma_test';

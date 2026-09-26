@@ -1,8 +1,8 @@
 -- Apply before deploying the Host (production uses PG_ENSURE_SCHEMA=false).
--- Does not adopt, renew or delete resources; the trigger touches managed rows only.
+-- The Runner marks every durable binding managed after this schema is present;
+-- the trigger then touches managed rows only.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS lifecycle_managed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS idle_since TIMESTAMPTZ;
 ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS oma.sandbox_activities (
@@ -25,7 +25,7 @@ BEGIN
   SELECT COALESCE(delegation->>'sandboxSessionId', id) INTO binding
     FROM oma.sessions WHERE id = NEW.session_id;
   UPDATE oma.delegation_environments SET idle_since = NULL
-    WHERE id = binding AND lifecycle_managed = TRUE;
+    WHERE id = binding;
   RETURN NEW;
 END;
 $$;

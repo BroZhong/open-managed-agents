@@ -1,16 +1,11 @@
 import { PgSandboxLifecycleStore, type Pool } from '@oma-server/store';
 import type { SandboxManagerDeps } from '@oma-server/sandbox';
 
-/** Controlled rollout only: root Session IDs, never Workspace or Agent IDs. */
-export async function sandboxLifecycleFromEnv(pool: Pool, env: NodeJS.ProcessEnv): Promise<SandboxManagerDeps['lifecycle']> {
-  const ids = (env.SANDBOX_IDLE_BINDINGS ?? '').split(',').map(id => id.trim()).filter(Boolean);
-  if (!ids.length) return undefined;
-  if (ids.some(id => !/^[A-Za-z0-9_-]{1,128}$/.test(id))) throw new Error('SANDBOX_IDLE_BINDINGS must contain explicit root Session IDs');
+/** Every Sandbox uses the same lifecycle; activation is unconditional. */
+export async function sandboxLifecycle(pool: Pool): Promise<SandboxManagerDeps['lifecycle']> {
   const store = new PgSandboxLifecycleStore(pool);
   await store.assertReady();
-  const bindingIds = new Set(ids);
-  await store.assertBindings(bindingIds);
-  return { store, bindingIds };
+  return store;
 }
 
 /** No overlapping sweeps; failures retain resources and remain observable. */

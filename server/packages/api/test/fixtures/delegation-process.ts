@@ -37,7 +37,7 @@ if (process.env.TEST_DELETE_URL) {
   };
 }
 const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, executionActivities: {
-  begin: activity => activities.begin(activity, false), finish: activity => activities.finish(activity),
+  begin: activity => activities.begin(activity), finish: activity => activities.finish(activity),
 } });
 const workspaceMount = { bucket: "test", agentName: "test", pvName: "test", credentialProviderName: "test" };
 const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local: true,

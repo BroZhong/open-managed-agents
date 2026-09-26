@@ -42,10 +42,11 @@ describe("mounted Workspace Sandbox Manager", () => {
     let reclaim = false;
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      listManagedBindings: vi.fn(async () => ['root']),
       claimReclamation: vi.fn(async () => reclaim && storedId ? { bindingId: 'root', sandboxId: storedId } : null),
       completeReclamation: vi.fn(async () => { storedId = null; }),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store, bindingIds: new Set(['root']) } });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: store });
     const session = manager.open(specFor(), { id: 'root', withLock: async work => {
       const result = await work(storedId); storedId = result.sandboxId; return result.value;
     } });
@@ -70,10 +71,11 @@ describe("mounted Workspace Sandbox Manager", () => {
     const { client } = makeManager();
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      listManagedBindings: vi.fn(async () => ['root']),
       claimReclamation: vi.fn(async () => { throw new Error('database unavailable'); }),
       completeReclamation: vi.fn(async () => {}),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store, bindingIds: new Set(['root']) } });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: store });
     await expect(manager.sweepIdle()).rejects.toThrow('database');
     await expect(manager.reclaim('arbitrary')).rejects.toThrow('ticket');
     expect(client.destroyed).toEqual([]);
@@ -88,13 +90,33 @@ describe("mounted Workspace Sandbox Manager", () => {
     });
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      listManagedBindings: vi.fn(async () => ['one', 'two']),
       claimReclamation: vi.fn(async bindingId => ({ bindingId, sandboxId: bindingId === 'one' ? one.id : two.id })),
       completeReclamation: vi.fn(async () => {}),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: { store, bindingIds: new Set(['one', 'two']) } });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: store });
     await expect(manager.sweepIdle()).rejects.toThrow('first gateway');
     expect(client.destroyed).toEqual([two.id]);
     expect(store.completeReclamation).toHaveBeenCalledExactlyOnceWith({ bindingId: 'two', sandboxId: two.id });
+  });
+  it('enumerates all bindings dynamically in the all-bindings mode', async () => {
+    const client = new FakeSandboxClient();
+    const stored = await client.create();
+    const store: SandboxLifecycleStore = {
+      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
+      listManagedBindings: vi.fn(async () => ['dynamic']),
+      claimReclamation: vi.fn(async bindingId => ({ bindingId, sandboxId: stored.id })),
+      completeReclamation: vi.fn(async () => {}),
+    };
+    const manager = new DefaultSandboxManager({
+      sandboxClient: client,
+      provisionSources: {},
+      lifecycle: store,
+    });
+    await manager.sweepIdle();
+    expect(store.listManagedBindings).toHaveBeenCalledOnce();
+    expect(store.claimReclamation).toHaveBeenCalledWith('dynamic');
+    expect(store.completeReclamation).toHaveBeenCalledWith({ bindingId: 'dynamic', sandboxId: stored.id });
   });
   it("refreshes renamed Skills after a new Host attaches to a shared environment", async () => {
     const { client, provision, manager } = makeManager();
