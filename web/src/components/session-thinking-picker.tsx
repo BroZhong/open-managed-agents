@@ -72,9 +72,10 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
     </button>
     {open && <div role="dialog" aria-label="Session 思考强度" className="session-thinking-popover">
       <button type="button" className="session-thinking-reset" title="恢复 Agent 设置" aria-label="恢复 Agent 设置"
-        disabled={disabled || saving || draft === null} onClick={() => void save(null)}><RotateCcw size={18} /></button>
-      <div className="session-thinking-heading">{label}</div>
+        disabled={disabled || saving || draft === null} onClick={() => void save(null)}><RotateCcw size={16} /></button>
+      <div className="session-thinking-heading" title={draft === null ? "继承 Agent 设置" : "仅此 Session · 下个 Turn 生效"}>{label}</div>
       <p className="session-thinking-model">{modelLabel}</p>
+      <div className="session-thinking-track">
       <input type="range" min={0} max={levels.length - 1} step={1} value={index}
         aria-label="Session 思考强度" aria-valuetext={label} disabled={disabled || saving}
         className="thinking-slider session-thinking-slider"
@@ -83,9 +84,11 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
         onPointerUp={(event) => void save(levels[Number(event.currentTarget.value)])}
         onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) void save(levels[Number(event.currentTarget.value)]); }}
         onBlur={(event) => { if (draft !== null) void save(levels[Number(event.currentTarget.value)]); }} />
-      <div className="session-thinking-labels" aria-hidden="true">{labels.map(label => <span key={label}>{label}</span>)}</div>
-      <p className="session-thinking-note">{saving ? "保存中…" : draft === null ? "继承 Agent 设置" : "仅此 Session · 下个 Turn 生效"}</p>
-      <p className="session-thinking-note">按模型支持的等级适配；部分模型无法关闭思考。</p>
+      <div className="session-thinking-ticks" aria-hidden="true">
+        {levels.map((level, tick) => <span key={level} style={{ opacity: tick === index ? 0 : 1, background: tick < index ? "#ffffff80" : "#00000030" }} />)}
+      </div>
+      </div>
+      <p className="sr-only" aria-live="polite">{saving ? "保存中" : draft === null ? "继承 Agent 设置" : "仅此 Session，下个 Turn 生效"}。按模型支持的等级适配，部分模型无法关闭思考。</p>
     </div>}
     {error && <p role="alert" className="session-thinking-error">{error}</p>}
   </div>;
