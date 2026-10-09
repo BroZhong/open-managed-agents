@@ -35,7 +35,7 @@ parity tests:
 | --- | --- | --- |
 | Node.js | 22.23.2 | Pinned Host node-base image in `versions.json` |
 | Pi Coding Agent SDK | 0.83.0 | `pi-tools/package-lock.json` |
-| vfs-cli | 0.3.15 | [Official distribution](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.15) |
+| vfs-cli | 0.3.18 | [Official distribution](https://github.com/welltop-cn/vfs-cli-dist/releases/tag/v0.3.18) |
 | FFmpeg / ffprobe | 9.0.1 | [Official releases](https://ffmpeg.org/download.html) |
 | Gemini Python SDK (`google-genai`) | 2.22.0 | [Official SDK release](https://github.com/googleapis/python-genai/releases/tag/v2.22.0) |
 | mediakit-cli | 0.2.1 | [Official release](https://github.com/volcengine/mediakit-cli/releases/tag/v0.2.1) |
@@ -99,7 +99,7 @@ helpers, `prepare-search-binaries.py` and `prepare-ossutil.py`, must remain besi
 the auto-story-v2 directory. Python wheels and Debian
 packages still need a reachable package mirror during the build.
 
-The default tag is `auto-story-v2-0.2.2` in
+The default tag is `auto-story-v2-0.2.3` in
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox`.
 `REGISTRY`, `TAG`, `VERSION`, `BUILD_JOBS`, `BASE_IMAGE`, and `PIP_INDEX_URL`
 may be overridden. A base override must retain the clean ACS runtime contract
@@ -186,3 +186,16 @@ default to be `auto-story-v2`, then uses its installed `E2BSandboxClient` to cre
 a short-lived sandbox without an image override. It checks environment
 injection and file write/read/reconnect, runs the image acceptance checks
 through E2B commands, and reclaims the sandbox.
+
+## Targeted CLI updates
+
+`vfs-cli/build.sh` builds a CLI-only overlay from a pinned production parent.
+Run `PUSH=1 bash sandbox/auto-story-v2/vfs-cli/build.sh` on vfs-dev. It verifies
+the official archive and binary against `versions.json`, preserves other tools,
+updates the image's version/hash/smoke records, and runs image acceptance before
+publishing. Update the SandboxSet's immutable digest after verification. Keep
+that manifest and the clean-build version pins together in main; a live-only
+patch or an unmerged release branch can be overwritten by a later manifest apply.
+
+Existing claimed Sandboxes retain their filesystem. A template update alone is
+not proof of their CLI version; verify each existing instance separately.
