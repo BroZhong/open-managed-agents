@@ -70,13 +70,13 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
-  it("loads five Sessions per Workspace independently from other Workspaces and chats", async () => {
+  it("loads five Sessions initially and twenty more per Workspace independently from other Workspaces and chats", async () => {
     const agent = { id: "agent_pages", name: "Paginated Agent" };
     const workspaces = [
       { id: "workspace_alpha", name: "Project Alpha" },
       { id: "workspace_beta", name: "Project Beta" },
     ];
-    const sessions = (group: string, workspaceId: string) => Array.from({ length: 7 }, (_, index) => ({
+    const sessions = (group: string, workspaceId: string) => Array.from({ length: 25 }, (_, index) => ({
       id: `session_${group}_${index}`, agentId: agent.id, title: `${group} Session ${index + 1}`,
       status: "idle", workspaceId,
     }));
@@ -143,7 +143,7 @@ describe("Sidebar Session navigation", () => {
     for (const [input] of fetchMock.mock.calls) {
       const params = new URL(String(input)).searchParams;
       expect(params.get("agent_id")).toBe(agent.id);
-      expect(params.get("limit")).toBe("5");
+      expect(params.get("limit")).toBe(params.has("cursor") ? "20" : "5");
       expect(params.get("exclude_loop")).toBe("true");
       expect(params.get("exclude_delegated")).toBe("true");
     }
@@ -154,15 +154,15 @@ describe("Sidebar Session navigation", () => {
       ok: true,
       text: async () => JSON.stringify({ data: alpha.slice(5), has_more: false }),
     } as Response);
-    await alphaGroup.findByRole("link", { name: alpha[6].title });
-    expect(alphaGroup.getAllByRole("link")).toHaveLength(7);
+    await alphaGroup.findByRole("link", { name: alpha[24].title });
+    expect(alphaGroup.getAllByRole("link")).toHaveLength(25);
     expect(alphaGroup.queryByRole("button", { name: "Show more" })).toBeNull();
     expect(alphaGroup.queryByRole("button", { name: "Loading…" })).toBeNull();
     expect(betaGroup.getAllByRole("link")).toHaveLength(5);
     expect(chatsGroup.getAllByRole("link")).toHaveLength(5);
     fireEvent.click(alphaGroup.getByRole("button", { name: workspaces[0].name }));
     fireEvent.click(alphaGroup.getByRole("button", { name: workspaces[0].name }));
-    expect(alphaGroup.getAllByRole("link")).toHaveLength(7);
+    expect(alphaGroup.getAllByRole("link")).toHaveLength(25);
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 

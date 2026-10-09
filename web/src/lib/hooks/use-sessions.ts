@@ -78,7 +78,7 @@ function useNavigationSessions(agentId: string, workspaceId: string | undefined,
       params.set("exclude_loop", "true");
       params.set("exclude_delegated", "true");
       if (!workspaceId) params.set("exclude_named_workspaces", "true");
-      params.set("limit", "5");
+      params.set("limit", pageParam ? "20" : "5");
       if (pageParam) params.set("cursor", pageParam);
       return apiFetch<SessionsResponse>(`/v1/sessions?${params}`, { signal });
     },

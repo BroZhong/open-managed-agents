@@ -50,7 +50,7 @@ describe("Session list filters", () => {
       { agent_id: "agent_1", workspace_id: "workspace_b", exclude_loop: "true", exclude_delegated: "true", limit: "5" },
       { agent_id: "agent_1", exclude_loop: "true", exclude_delegated: "true", exclude_named_workspaces: "true", limit: "5" },
       { agent_id: "agent_1", workspace_id: "workspace_a", exclude_loop: "true", exclude_delegated: "true", limit: "5" },
-      { agent_id: "agent_1", workspace_id: "workspace_a", exclude_loop: "true", exclude_delegated: "true", limit: "5", cursor: "workspace_a_1" },
+      { agent_id: "agent_1", workspace_id: "workspace_a", exclude_loop: "true", exclude_delegated: "true", limit: "20", cursor: "workspace_a_1" },
     ]);
   });
 

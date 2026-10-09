@@ -201,9 +201,10 @@ Deleted Workspace IDs cannot be reused to create new Sessions.
 ## Console Session navigation
 
 The Agent sidebar discovers its named Workspaces independently of Session pages.
-Each expanded Workspace loads its own top-level, non-Loop Sessions in pages of
-five, with a Show more control inside that Workspace. Loose Sessions have a
-separate cursor and Show more control under chats. Loading one group does not
+Each expanded Workspace initially loads five top-level, non-Loop Sessions;
+its Show more control appends twenty at a time. Loose Sessions have the same
+initial and subsequent page sizes, with a separate cursor and Show more control
+under chats. Loading one group does not
 expand another; collapsed Workspaces do not request their Session histories.
 The Agent detail page retains its aggregate non-Loop Session list.
 
