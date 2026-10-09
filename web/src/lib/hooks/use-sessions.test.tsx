@@ -5,7 +5,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { apiFetch } from "@/lib/api";
-import { useAgentSessions, useLoopSessions, useSessions } from "./use-sessions";
+import { useAgentSessions, useLoopSessions, useLooseSessions, useSessions, useWorkspaceSessions } from "./use-sessions";
 
 vi.mock("@/lib/api", () => ({ apiFetch: vi.fn() }));
 const fetchMock = vi.mocked(apiFetch);
@@ -20,6 +20,40 @@ function setup() {
 }
 
 describe("Session list filters", () => {
+  it("keeps Workspace and loose Session pagination independent and loads a Workspace only when expanded", async () => {
+    fetchMock.mockImplementation(async (path) => {
+      const url = new URL(path, "http://localhost");
+      const group = url.searchParams.get("workspace_id") ?? "loose";
+      const next = url.searchParams.has("cursor");
+      return { data: [{ id: `${group}_${next ? 2 : 1}` }], has_more: !next, next_cursor: next ? undefined : `${group}_1` };
+    });
+    const { wrapper } = setup();
+    const { result, rerender } = renderHook(({ expanded }) => ({
+      a: useWorkspaceSessions("agent_1", "workspace_a", expanded),
+      b: useWorkspaceSessions("agent_1", "workspace_b", true),
+      loose: useLooseSessions("agent_1"),
+    }), { wrapper, initialProps: { expanded: false } });
+    await waitFor(() => expect(result.current.loose.isSuccess).toBe(true));
+    expect(result.current.a.data).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    rerender({ expanded: true });
+    await waitFor(() => expect(result.current.a.isSuccess).toBe(true));
+    await act(async () => { await result.current.a.fetchNextPage(); });
+    await waitFor(() => expect(result.current.a.data).toEqual([{ id: "workspace_a_1" }, { id: "workspace_a_2" }]));
+    expect(result.current.b.data).toEqual([{ id: "workspace_b_1" }]);
+    expect(result.current.loose.data).toEqual([{ id: "loose_1" }]);
+    expect(result.current.a.hasNextPage).toBe(false);
+    expect(result.current.b.hasNextPage).toBe(true);
+    expect(result.current.loose.hasNextPage).toBe(true);
+    expect(fetchMock.mock.calls.map(([url]) => Object.fromEntries(new URL(url, "http://localhost").searchParams))).toEqual([
+      { agent_id: "agent_1", workspace_id: "workspace_b", exclude_loop: "true", exclude_delegated: "true", limit: "5" },
+      { agent_id: "agent_1", exclude_loop: "true", exclude_delegated: "true", exclude_named_workspaces: "true", limit: "5" },
+      { agent_id: "agent_1", workspace_id: "workspace_a", exclude_loop: "true", exclude_delegated: "true", limit: "5" },
+      { agent_id: "agent_1", workspace_id: "workspace_a", exclude_loop: "true", exclude_delegated: "true", limit: "5", cursor: "workspace_a_1" },
+    ]);
+  });
+
   it.each([false, true])("loads every Agent page on demand with excludeDelegated=%s", async (excludeDelegated) => {
     fetchMock.mockResolvedValueOnce({ data: [{ id: "first" }], has_more: true, next_cursor: "first / cursor" });
     fetchMock.mockResolvedValueOnce({ data: [{ id: "second" }], has_more: true, next_cursor: "second" });

@@ -59,6 +59,7 @@ export class InMemorySessionStore implements SessionStore {
 
     let filtered = this.sessions.filter((s) => s.tenantId === tenantId && !s.deletedAt && !opts?.excludedWorkspaceIds?.includes(s.workspaceId));
     if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
+    if (opts?.workspaceId) filtered = filtered.filter((s) => s.workspaceId === opts.workspaceId);
     if (status) filtered = filtered.filter((s) => s.status === status);
     if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
     if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);

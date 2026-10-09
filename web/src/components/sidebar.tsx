@@ -28,14 +28,15 @@ import { Tooltip } from "@/components/ui/tooltip"
 import { useAgent } from "@/lib/hooks/use-agents"
 import {
   useSession,
-  useAgentSessions,
+  useWorkspaceSessions,
+  useLooseSessions,
   useCreateSession,
   useLoopSessions,
   useUpdateSession,
   type Session,
 } from "@/lib/hooks/use-sessions"
 import {
-  useWorkspaces,
+  useAgentWorkspaces,
   useCreateWorkspace,
   useUpdateWorkspace,
   useDeleteWorkspace,
@@ -296,17 +297,12 @@ function SessionLink({ session }: { session: Session }) {
  */
 function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: boolean }) {
   const location = useLocation()
+  const params = useParams()
   const navigate = useNavigate()
   const { data: agent } = useAgent(agentId)
-  const {
-    data: sessions,
-    hasNextPage,
-    fetchNextPage,
-    isFetching,
-    isFetchingNextPage,
-    isFetchNextPageError,
-  } = useAgentSessions(agentId, { excludeDelegated: true })
-  const { data: workspaces } = useWorkspaces()
+  const { data: activeSession } = useSession(location.pathname.startsWith("/sessions/") ? params.id ?? "" : "")
+  const chatsQuery = useLooseSessions(agentId)
+  const { data: workspaces, isLoading: workspacesLoading, isError: workspacesError, refetch: refetchWorkspaces } = useAgentWorkspaces(agentId)
   const { data: loops } = useAgentLoops(agentId)
   const createSession = useCreateSession()
   const createWorkspace = useCreateWorkspace()
@@ -333,28 +329,6 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
     )
   }
 
-  // Named workspaces this Agent actually uses = the intersection of the tenant's
-  // named Workspaces with the workspaceIds bound by this Agent's sessions.
-  const namedById = new Map<string, Workspace>()
-  for (const w of workspaces ?? []) {
-    if (w.name) namedById.set(w.id, w)
-  }
-  const sessionsByWorkspace = new Map<string, Session[]>()
-  const orderedSessions = runningSessionsFirst(sessions ?? [])
-  for (const s of orderedSessions) {
-    if (s.loopId) continue
-    const list = sessionsByWorkspace.get(s.workspaceId) ?? []
-    list.push(s)
-    sessionsByWorkspace.set(s.workspaceId, list)
-  }
-  const usedWorkspaces = [...namedById.values()].filter((w) =>
-    sessionsByWorkspace.has(w.id),
-  )
-  // Loose chats = sessions whose workspace is not a named one (anonymous).
-  const looseChats = orderedSessions.filter(
-    (s) => !s.loopId && !namedById.has(s.workspaceId),
-  )
-
   function newChat() {
     createSession.mutate(agentId, {
       onSuccess: (session) =>
@@ -377,6 +351,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           {
             onSuccess: (session) => {
               setNewWorkspaceName(null)
+              setOpenWorkspaces((prev) => ({ ...prev, [workspace.id]: true }))
               navigate(`/sessions/${session.id}`, {
                 state: { agentId: session.agentId },
               })
@@ -511,15 +486,23 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
         )}
         {workspacesOpen && (
           <div className="space-y-0.5 pl-2">
-            {usedWorkspaces.length === 0 && (
+            {workspacesLoading && (
+              <p className="px-2.5 py-1 text-xs text-neutral-400">Loading Workspaces…</p>
+            )}
+            {workspacesError && (
+              <button type="button" onClick={() => void refetchWorkspaces()} className="px-2.5 py-1 text-left text-xs text-red-500">
+                Could not load Workspaces. Retry
+              </button>
+            )}
+            {!workspacesLoading && !workspacesError && (workspaces ?? []).length === 0 && (
               <p className="px-2.5 py-1 text-xs text-neutral-400">None</p>
             )}
-            {usedWorkspaces.map((w) => (
+            {(workspaces ?? []).map((w) => (
               <WorkspaceRow
                 key={w.id}
                 workspace={w}
                 agentId={agentId}
-                sessions={sessionsByWorkspace.get(w.id) ?? []}
+                activeWorkspaceId={activeSession?.workspaceId}
                 open={openWorkspaces[w.id] ?? false}
                 onToggle={() =>
                   setOpenWorkspaces((prev) => ({ ...prev, [w.id]: !(prev[w.id] ?? false) }))
@@ -534,7 +517,7 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
       </div>
 
       {/* chats — flat list of loose (anonymous-workspace) sessions. */}
-      <div className="pt-2">
+      <div role="group" aria-label="Chats" className="pt-2">
         <div className="flex items-center pr-1">
           <p className="flex flex-1 items-center gap-1.5 px-2.5 pb-1 text-xs font-medium text-[var(--color-fg-subtle)]">
             <MessagesSquare className="h-3.5 w-3.5" />
@@ -552,31 +535,9 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           </Tooltip>
         </div>
         <div className="space-y-0.5 pl-2">
-          {looseChats.length === 0 && (
-            <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
-          )}
-          {looseChats.map((s) => (
-            <SessionLink key={s.id} session={s} />
-          ))}
+          <PaginatedSessionList query={chatsQuery} />
         </div>
       </div>
-      {hasNextPage && (
-        <div className="pl-2">
-          {isFetchNextPageError && (
-            <p role="alert" className="px-2.5 py-1 text-xs text-red-500">
-              Failed to load more Sessions.
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => void fetchNextPage({ cancelRefetch: false })}
-            disabled={isFetching}
-            className="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-[var(--color-accent)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
-          >
-            {isFetchingNextPage ? "Loading…" : isFetchNextPageError ? "Retry" : "Load more"}
-          </button>
-        </div>
-      )}
       <CreateLoopDialog
         agentId={agentId}
         open={createLoopOpen}
@@ -584,6 +545,31 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
       />
     </div>
   )
+}
+
+/** Each list owns its cursor, loading state, and retry action. */
+function PaginatedSessionList({ query }: { query: ReturnType<typeof useLooseSessions> }) {
+  const sessions = runningSessionsFirst((query.data ?? []).filter((session) => !session.loopId))
+  return <>
+    {query.isLoading && <p className="px-2.5 py-1 text-xs text-neutral-400">Loading Sessions…</p>}
+    {query.isError && <p role="alert" className="px-2.5 py-1 text-xs text-red-500">
+      {query.isFetchNextPageError ? "Failed to load more Sessions." : "Could not load Sessions."}
+    </p>}
+    {!query.isLoading && !query.isError && sessions.length === 0 && (
+      <p className="px-2.5 py-1 text-xs text-neutral-400">None yet</p>
+    )}
+    {sessions.map((session) => <SessionLink key={session.id} session={session} />)}
+    {(query.hasNextPage || query.isError) && <button
+      type="button"
+      onClick={() => void (query.isError && !query.isFetchNextPageError
+        ? query.refetch()
+        : query.fetchNextPage({ cancelRefetch: false }))}
+      disabled={query.isFetching}
+      className="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-fg)] disabled:opacity-50"
+    >
+      {query.isFetching ? "Loading…" : query.isError ? "Retry" : "Show more"}
+    </button>}
+  </>
 }
 
 function LoopRow({ loop }: { loop: Loop }) {
@@ -721,16 +707,16 @@ function LoopRow({ loop }: { loop: Loop }) {
  * Workspace's Sessions nested beneath it. Delete hides the Workspace; `+`
  * creates a Session bound to this Workspace and navigates into it.
  */
-function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }: {
+function WorkspaceRow({ workspace, agentId, activeWorkspaceId, open, onToggle, onExpand }: {
   workspace: Workspace
   agentId: string
-  sessions: Session[]
+  activeWorkspaceId?: string
   open: boolean
   onToggle: () => void
   onExpand: () => void
 }) {
   const navigate = useNavigate()
-  const location = useLocation()
+  const sessionsQuery = useWorkspaceSessions(agentId, workspace.id, open)
   const createSession = useCreateSession()
   const updateWorkspace = useUpdateWorkspace()
   const deleteWorkspace = useDeleteWorkspace()
@@ -744,9 +730,9 @@ function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }
     })
   }
 
-  return <div>
+  return <div role="group" aria-label={`Workspace ${workspace.name ?? workspace.id}`}>
     <div className="flex items-center rounded-lg text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-bg-muted)]">
-      <button type="button" onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5">
+      <button type="button" onClick={onToggle} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5">
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
         <FolderClosed className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{workspace.name}</span>
@@ -755,7 +741,7 @@ function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }
         onRename={(name) => updateWorkspace.mutateAsync({ id: workspace.id, name })}
         onDelete={async () => {
           await deleteWorkspace.mutateAsync(workspace.id)
-          if (sessions.some((session) => location.pathname === `/sessions/${session.id}`)) navigate(`/agents/${agentId}`)
+          if (activeWorkspaceId === workspace.id) navigate(`/agents/${agentId}`)
         }} />
       <Tooltip content="New session here">
         <button
@@ -770,7 +756,7 @@ function WorkspaceRow({ workspace, agentId, sessions, open, onToggle, onExpand }
       </Tooltip>
     </div>
     {open && <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
-      {sessions.map((session) => <SessionLink key={session.id} session={session} />)}
+      <PaginatedSessionList query={sessionsQuery} />
     </div>}
   </div>
 }

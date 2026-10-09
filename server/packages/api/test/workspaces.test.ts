@@ -91,6 +91,94 @@ describe("GET /v1/workspaces", () => {
     const body = await res.json();
     expect(body.data.map((w: { id: string }) => w.id)).toEqual(["a", "b"]);
   });
+
+  it("discovers named Workspaces independently for each Agent and Tenant", async () => {
+    const { app, stores } = createTestApp();
+    const input = { name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" as const };
+    const firstAgent = await stores.agentStore.create({ ...input, tenantId: "dev" });
+    const secondAgent = await stores.agentStore.create({ ...input, tenantId: "dev" });
+    const foreignAgent = await stores.agentStore.create({ ...input, tenantId: "other" });
+
+    for (const [id, agent] of [["first", firstAgent], ["second", secondAgent], ["foreign", foreignAgent]] as const) {
+      await stores.workspaceStore.create({ tenantId: agent.tenantId, id, name: id });
+      await stores.sessionStore.create({ tenantId: agent.tenantId, agentId: agent.id, agent, workspaceId: id });
+    }
+    await stores.workspaceStore.create({ tenantId: "dev", id: "empty", name: "Unused" });
+
+    for (const [agentId, expected] of [[firstAgent.id, ["first"]], [secondAgent.id, ["second"]], [foreignAgent.id, []], ["missing", []]] as const) {
+      const res = await app.request(`/v1/workspaces?agent_id=${agentId}`);
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.map((workspace: { id: string }) => workspace.id)).toEqual(expected);
+    }
+  });
+
+  it("excludes unnamed, deleted, Loop-only and delegated-only Workspaces from Agent discovery", async () => {
+    const { app, stores } = createTestApp();
+    const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    for (const id of ["visible", "unnamed", "empty_name", "deleted_workspace", "deleted_session", "loop_only", "child_only"]) {
+      await stores.workspaceStore.create({
+        tenantId: "dev",
+        id,
+        name: id === "unnamed" ? undefined : id === "empty_name" ? "" : id,
+      });
+      const session = await stores.sessionStore.create({
+        tenantId: "dev",
+        agentId: agent.id,
+        agent,
+        workspaceId: id,
+        loopId: id === "loop_only" ? "loop_test" : undefined,
+        delegation: id === "child_only" ? {
+          parentSessionId: "sess_parent",
+          parentTurnId: "turn_parent",
+          parentToolUseId: "tool_child",
+          sandboxSessionId: "sess_parent",
+        } : undefined,
+      });
+      if (id === "deleted_workspace") await stores.workspaceStore.softDelete("dev", id);
+      if (id === "deleted_session") await stores.sessionStore.softDelete(session.id);
+    }
+
+    const res = await app.request(`/v1/workspaces?agent_id=${agent.id}`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.map((workspace: { id: string }) => workspace.id)).toEqual(["visible"]);
+  });
+
+  it("finds a Workspace whose Sessions are beyond the Agent's first page", async () => {
+    const { app, stores } = createTestApp();
+    const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    await stores.workspaceStore.create({ tenantId: "dev", id: "early", name: "Early" });
+    await stores.workspaceStore.create({ tenantId: "dev", id: "later", name: "Later" });
+    for (let index = 0; index < 55; index++) {
+      await stores.sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "early" });
+    }
+    await stores.sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "later" });
+    const firstPage = await stores.sessionStore.list("dev", { agentId: agent.id });
+    expect(firstPage.data).toHaveLength(50);
+    expect(firstPage.data.every((session) => session.workspaceId === "early")).toBe(true);
+
+    const res = await app.request(`/v1/workspaces?agent_id=${agent.id}`);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.map((workspace: { id: string }) => workspace.id)).toEqual(["early", "later"]);
+  });
+
+  it("preserves unfiltered Workspace endpoints when no Session store is configured", async () => {
+    const stores = createMemoryStores();
+    const app = createApp({ apiKeyStore: makeApiKeyStore(), workspaceStore: stores.workspaceStore });
+    await stores.workspaceStore.create({ tenantId: "dev", id: "named", name: "Named" });
+    await stores.workspaceStore.create({ tenantId: "dev", id: "unnamed" });
+
+    const res = await app.request("/v1/workspaces");
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.map((workspace: { id: string }) => workspace.id)).toEqual(["named", "unnamed"]);
+    const scoped = await app.request("/v1/workspaces?agent_id=agent_test");
+    expect(scoped.status).toBe(503);
+  });
+
+  it("rejects an empty Agent filter rather than listing another Agent's Workspaces", async () => {
+    const { app } = createTestApp();
+    const res = await app.request("/v1/workspaces?agent_id=");
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("GET /v1/workspaces/:id", () => {
