@@ -20,6 +20,50 @@ function setup() {
 }
 
 describe("Session list filters", () => {
+  it.each([false, true])("loads every Agent page on demand with excludeDelegated=%s", async (excludeDelegated) => {
+    fetchMock.mockResolvedValueOnce({ data: [{ id: "first" }], has_more: true, next_cursor: "first / cursor" });
+    fetchMock.mockResolvedValueOnce({ data: [{ id: "second" }], has_more: true, next_cursor: "second" });
+    fetchMock.mockResolvedValueOnce({ data: [{ id: "last" }], has_more: false });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAgentSessions("agent_1", { excludeDelegated }), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual([{ id: "first" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(async () => { await result.current.fetchNextPage(); });
+    await waitFor(() => expect(result.current.data).toEqual([{ id: "first" }, { id: "second" }]));
+    expect(result.current.hasNextPage).toBe(true);
+    await act(async () => { await result.current.fetchNextPage(); });
+    await waitFor(() => expect(result.current.data).toEqual([{ id: "first" }, { id: "second" }, { id: "last" }]));
+    expect(result.current.hasNextPage).toBe(false);
+    const filter = excludeDelegated ? "&exclude_delegated=true" : "";
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `/v1/sessions?agent_id=agent_1&exclude_loop=true&limit=50${filter}`,
+      `/v1/sessions?agent_id=agent_1&exclude_loop=true&limit=50&cursor=first%20%2F%20cursor${filter}`,
+      `/v1/sessions?agent_id=agent_1&exclude_loop=true&limit=50&cursor=second${filter}`,
+    ]);
+  });
+
+  it("keeps loaded Agent Sessions after a page failure and retries the same cursor", async () => {
+    fetchMock.mockResolvedValueOnce({ data: [{ id: "first" }], has_more: true, next_cursor: "first" });
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    fetchMock.mockResolvedValueOnce({ data: [{ id: "last" }], has_more: false });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useAgentSessions("agent_1"), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await act(async () => { await result.current.fetchNextPage(); });
+    await waitFor(() => expect(result.current.isFetchNextPageError).toBe(true));
+    expect(result.current.data).toEqual([{ id: "first" }]);
+    expect(result.current.hasNextPage).toBe(true);
+
+    await act(async () => { await result.current.fetchNextPage(); });
+    await waitFor(() => expect(result.current.data).toEqual([{ id: "first" }, { id: "last" }]));
+    expect(result.current.hasNextPage).toBe(false);
+    expect(fetchMock.mock.calls[1][0]).toBe(fetchMock.mock.calls[2][0]);
+  });
+
   it("keeps parent-only and unfiltered lists in separate caches", async () => {
     fetchMock.mockImplementation(async (url) => ({
       data: [{ id: url.includes("exclude_delegated=true") ? "parent" : "child" }], has_more: false,
@@ -35,8 +79,10 @@ describe("Session list filters", () => {
     expect(result.current.parents.data).toEqual([{ id: "parent" }]);
     expect(client.getQueryData(["sessions", "all"])).toEqual([{ id: "child" }]);
     expect(client.getQueryData(["sessions", "all", "parents"])).toEqual([{ id: "parent" }]);
-    expect(client.getQueryData(["sessions", "byAgent", "agent_1", "parents"])).toEqual([{ id: "parent" }]);
-    expect(fetchMock).toHaveBeenCalledWith("/v1/sessions?agent_id=agent_1&exclude_loop=true&exclude_delegated=true", expect.anything());
+    expect(client.getQueryData(["sessions", "byAgent", "agent_1", "parents"])).toEqual({
+      pages: [{ data: [{ id: "parent" }], has_more: false }], pageParams: [undefined],
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/v1/sessions?agent_id=agent_1&exclude_loop=true&limit=50&exclude_delegated=true", expect.anything());
   });
 
   it("preserves the filter on every Loop page", async () => {
@@ -59,10 +105,12 @@ describe("Session list filters", () => {
     const { wrapper, client } = setup();
     const { result } = renderHook(() => ({ agent: useAgentSessions("agent_1"), loop: useLoopSessions("loop_1") }), { wrapper });
     await waitFor(() => expect(result.current.loop.isSuccess).toBe(true));
-    expect(client.getQueryData(["sessions", "byAgent", "agent_1"])).toEqual([]);
+    expect(client.getQueryData(["sessions", "byAgent", "agent_1"])).toEqual({
+      pages: [{ data: [], has_more: false }], pageParams: [undefined],
+    });
     expect(client.getQueryData(["sessions", "byLoop", "loop_1"])).toBeDefined();
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/v1/sessions?agent_id=agent_1&exclude_loop=true", "/v1/sessions?loop_id=loop_1&limit=50",
+      "/v1/sessions?agent_id=agent_1&exclude_loop=true&limit=50", "/v1/sessions?loop_id=loop_1&limit=50",
     ]);
   });
 });

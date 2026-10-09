@@ -228,7 +228,15 @@ export default function AgentDetailPage() {
 }
 
 function AgentSessionList({ agentId }: { agentId: string }) {
-  const { data: sessions, isLoading } = useAgentSessions(agentId);
+  const {
+    data: sessions,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetching,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = useAgentSessions(agentId);
 
   if (isLoading) {
     return <Skeleton className="mt-4 h-16 w-full" />;
@@ -256,6 +264,23 @@ function AgentSessionList({ agentId }: { agentId: string }) {
           <StatusBadge status={s.status} />
         </Link>
       ))}
+      {hasNextPage && (
+        <div className="space-y-2 pt-2">
+          {isFetchNextPageError && (
+            <p role="alert" className="text-sm text-red-600">
+              Failed to load more Sessions.
+            </p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isFetching}
+            onClick={() => void fetchNextPage({ cancelRefetch: false })}
+          >
+            {isFetchingNextPage ? "Loading…" : isFetchNextPageError ? "Retry" : "Load more"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

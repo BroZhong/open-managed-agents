@@ -45,15 +45,26 @@ export function useSessions(status?: string, options?: SessionListOptions) {
 
 /** Sessions belonging to a single Agent (nested under the Agent, not global). */
 export function useAgentSessions(agentId: string, options?: SessionListOptions) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["sessions", "byAgent", agentId, ...(options?.excludeDelegated ? ["parents"] : [])],
-    queryFn: ({ signal }) =>
-      apiFetch<SessionsResponse>(
-        `/v1/sessions?agent_id=${encodeURIComponent(agentId)}&exclude_loop=true${options?.excludeDelegated ? "&exclude_delegated=true" : ""}`,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam
+        ? `&cursor=${encodeURIComponent(pageParam)}`
+        : "";
+      return apiFetch<SessionsResponse>(
+        `/v1/sessions?agent_id=${encodeURIComponent(agentId)}&exclude_loop=true&limit=50${cursor}${options?.excludeDelegated ? "&exclude_delegated=true" : ""}`,
         { signal },
-      ).then((r) => r.data),
+      );
+    },
+    getNextPageParam: (lastPage) =>
+      lastPage.has_more ? lastPage.next_cursor : undefined,
     enabled: !!agentId,
   });
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.data),
+  };
 }
 
 export function useSession(id: string) {

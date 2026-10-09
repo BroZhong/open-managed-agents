@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
+  type InfiniteData,
   InfiniteQueryObserver,
   QueryClient,
   QueryClientProvider,
@@ -12,6 +13,19 @@ import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { summarizeTokenUsage } from "@/lib/token-usage";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
+
+interface SessionPage {
+  data: Session[];
+  has_more: boolean;
+  next_cursor?: string;
+}
+
+function sessionPages(sessions: Session[]): InfiniteData<SessionPage> {
+  return {
+    pages: [{ data: sessions, has_more: false }],
+    pageParams: [undefined],
+  };
+}
 
 afterEach(() => {
   cleanup();
@@ -467,11 +481,8 @@ describe("useSessionEvents history replay", () => {
     };
     queryClient.setQueryData(["sessions", session.id], session);
     queryClient.setQueryData(["sessions", "all"], [session]);
-    queryClient.setQueryData(["sessions", "byAgent", session.agentId], [session]);
-    queryClient.setQueryData(["sessions", "byLoop", session.loopId], {
-      pages: [{ data: [session], has_more: false }],
-      pageParams: [undefined],
-    });
+    queryClient.setQueryData(["sessions", "byAgent", session.agentId], sessionPages([session]));
+    queryClient.setQueryData(["sessions", "byLoop", session.loopId], sessionPages([session]));
 
     const runningEvent: SessionEvent = {
       seq: 1,
@@ -491,16 +502,16 @@ describe("useSessionEvents history replay", () => {
       queryClient.getQueryData<Session[]>(["sessions", "all"])?.[0].status,
     ).toBe("running");
     expect(
-      queryClient.getQueryData<Session[]>([
+      queryClient.getQueryData<InfiniteData<SessionPage>>([
         "sessions",
         "byAgent",
         session.agentId,
-      ])?.[0].status,
+      ])?.pages[0].data[0].status,
     ).toBe("running");
     expect(
-      queryClient.getQueryData<{
-        pages: Array<{ data: Session[] }>;
-      }>(["sessions", "byLoop", session.loopId])?.pages[0].data[0].status,
+      queryClient.getQueryData<InfiniteData<SessionPage>>(
+        ["sessions", "byLoop", session.loopId],
+      )?.pages[0].data[0].status,
     ).toBe("running");
   });
 
@@ -510,7 +521,7 @@ describe("useSessionEvents history replay", () => {
     });
     const session = sessionFixture("session_partial");
     queryClient.setQueryData(["sessions", session.id], session);
-    queryClient.setQueryData(["sessions", "byAgent", session.agentId], [session]);
+    queryClient.setQueryData(["sessions", "byAgent", session.agentId], sessionPages([session]));
     const runningEvent: SessionEvent = {
       seq: 50,
       type: "session.status_running",
@@ -558,11 +569,11 @@ describe("useSessionEvents history replay", () => {
       queryClient.getQueryData<Session>(["sessions", session.id])?.status,
     ).toBe("idle");
     expect(
-      queryClient.getQueryData<Session[]>([
+      queryClient.getQueryData<InfiniteData<SessionPage>>([
         "sessions",
         "byAgent",
         session.agentId,
-      ])?.[0].status,
+      ])?.pages[0].data[0].status,
     ).toBe("idle");
 
     await act(async () => {
@@ -580,11 +591,11 @@ describe("useSessionEvents history replay", () => {
       queryClient.getQueryData<Session>(["sessions", session.id])?.status,
     ).toBe("running");
     expect(
-      queryClient.getQueryData<Session[]>([
+      queryClient.getQueryData<InfiniteData<SessionPage>>([
         "sessions",
         "byAgent",
         session.agentId,
-      ])?.[0].status,
+      ])?.pages[0].data[0].status,
     ).toBe("running");
   });
 
@@ -594,7 +605,7 @@ describe("useSessionEvents history replay", () => {
     });
     const session = sessionFixture("session_terminated", "terminated");
     queryClient.setQueryData(["sessions", session.id], session);
-    queryClient.setQueryData(["sessions", "byAgent", session.agentId], [session]);
+    queryClient.setQueryData(["sessions", "byAgent", session.agentId], sessionPages([session]));
     stubHistoryOnly([{
       seq: 1,
       type: "session.status_idle",
@@ -611,15 +622,19 @@ describe("useSessionEvents history replay", () => {
       queryClient.getQueryData<Session>(["sessions", session.id])?.status,
     ).toBe("terminated");
     expect(
-      queryClient.getQueryData<Session[]>([
+      queryClient.getQueryData<InfiniteData<SessionPage>>([
         "sessions",
         "byAgent",
         session.agentId,
-      ])?.[0].status,
+      ])?.pages[0].data[0].status,
     ).toBe("terminated");
   });
 
-  it("does not cancel an explicit next-page load when status arrives", async () => {
+  it.each([
+    { scope: "byLoop", parents: false },
+    { scope: "byAgent", parents: false },
+    { scope: "byAgent", parents: true },
+  ])("preserves an explicit $scope next-page load when status arrives (parents: $parents)", async ({ scope, parents }) => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
@@ -627,15 +642,16 @@ describe("useSessionEvents history replay", () => {
       ...sessionFixture("session_paging"),
       loopId: "loop_paging",
     };
-    type SessionPage = {
-      data: Session[];
-      has_more: boolean;
-      next_cursor?: string;
-    };
+    const nextSession = sessionFixture("session_next_page");
     let resolveNextPage!: (page: SessionPage) => void;
     let nextPageAborted = false;
     const observer = new InfiniteQueryObserver(queryClient, {
-      queryKey: ["sessions", "byLoop", session.loopId],
+      queryKey: [
+        "sessions",
+        scope,
+        scope === "byLoop" ? session.loopId : session.agentId,
+        ...(parents ? ["parents"] : []),
+      ],
       initialPageParam: undefined as string | undefined,
       queryFn: ({ pageParam, signal }) => {
         if (pageParam === undefined) {
@@ -695,12 +711,13 @@ describe("useSessionEvents history replay", () => {
     try {
       await waitFor(() => expect(hook.result.current.status).toBe("running"));
       expect(nextPageAborted).toBe(false);
-      resolveNextPage({ data: [], has_more: false });
+      resolveNextPage({ data: [nextSession], has_more: false });
       await nextPage;
       expect(observer.getCurrentResult().data?.pages).toHaveLength(2);
       expect(
         observer.getCurrentResult().data?.pages[0].data[0].status,
       ).toBe("running");
+      expect(observer.getCurrentResult().data?.pages[1].data).toEqual([nextSession]);
     } finally {
       hook.unmount();
       unsubscribe();

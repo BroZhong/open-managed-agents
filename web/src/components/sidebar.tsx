@@ -298,7 +298,14 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
   const location = useLocation()
   const navigate = useNavigate()
   const { data: agent } = useAgent(agentId)
-  const { data: sessions } = useAgentSessions(agentId, { excludeDelegated: true })
+  const {
+    data: sessions,
+    hasNextPage,
+    fetchNextPage,
+    isFetching,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = useAgentSessions(agentId, { excludeDelegated: true })
   const { data: workspaces } = useWorkspaces()
   const { data: loops } = useAgentLoops(agentId)
   const createSession = useCreateSession()
@@ -553,6 +560,23 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
           ))}
         </div>
       </div>
+      {hasNextPage && (
+        <div className="pl-2">
+          {isFetchNextPageError && (
+            <p role="alert" className="px-2.5 py-1 text-xs text-red-500">
+              Failed to load more Sessions.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void fetchNextPage({ cancelRefetch: false })}
+            disabled={isFetching}
+            className="w-full rounded-lg px-2.5 py-1.5 text-left text-xs text-[var(--color-accent)] hover:bg-[var(--color-bg-muted)] disabled:opacity-50"
+          >
+            {isFetchingNextPage ? "Loading…" : isFetchNextPageError ? "Retry" : "Load more"}
+          </button>
+        </div>
+      )}
       <CreateLoopDialog
         agentId={agentId}
         open={createLoopOpen}

@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, type InfiniteData } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { AuthProvider } from "@/lib/auth";
 import { Sidebar } from "@/components/sidebar";
@@ -70,6 +70,130 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
+  it("loads older Sessions across workspaces and chats even when the first page has only Workspace Sessions", async () => {
+    const agent = { id: "agent_pages", name: "Paginated Agent" };
+    const workspace = { id: "workspace_pages", name: "Project history" };
+    const current = {
+      id: "session_current", agentId: agent.id, title: "Current Session",
+      status: "idle", workspaceId: workspace.id,
+    };
+    const older = { ...current, id: "session_older", title: "Older Workspace Session" };
+    const loose = {
+      ...current, id: "session_loose", title: "Older loose Session", workspaceId: "workspace_anonymous",
+    };
+    const cursor = "session_older/+?=&";
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity } },
+    });
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["workspaces"], [workspace]);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    let resolveNextPage!: (response: Response) => void;
+    const nextPage = new Promise<Response>((resolve) => { resolveNextPage = resolve; });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.has("cursor")) return nextPage;
+      return Promise.resolve({
+        ok: true,
+        text: async () => JSON.stringify({ data: [current], has_more: true, next_cursor: cursor }),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/agents/${agent.id}`]}>
+            <Routes><Route path="/agents/:id" element={<Sidebar />} /></Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: workspace.name }));
+    expect(screen.getByRole("link", { name: current.title })).toBeTruthy();
+    const loadMore = await screen.findByRole("button", { name: "Load more" });
+    fireEvent.click(loadMore);
+    const loading = await screen.findByRole("button", { name: "Loading…" });
+    expect((loading as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(loading);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("link", { name: current.title })).toBeTruthy();
+    for (const [input] of fetchMock.mock.calls) {
+      const params = new URL(String(input)).searchParams;
+      expect(params.get("agent_id")).toBe(agent.id);
+      expect(params.get("limit")).toBe("50");
+      expect(params.get("exclude_loop")).toBe("true");
+      expect(params.get("exclude_delegated")).toBe("true");
+    }
+    expect(new URL(String(fetchMock.mock.calls[0][0])).searchParams.has("cursor")).toBe(false);
+    expect(new URL(String(fetchMock.mock.calls[1][0])).searchParams.get("cursor")).toBe(cursor);
+
+    resolveNextPage({
+      ok: true,
+      text: async () => JSON.stringify({ data: [older, loose], has_more: false }),
+    } as Response);
+    expect(await screen.findByRole("link", { name: older.title })).toBeTruthy();
+    expect(screen.getByRole("link", { name: loose.title })).toBeTruthy();
+    expect(screen.getByRole("link", { name: current.title })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Loading…" })).toBeNull();
+  });
+
+  it("keeps loaded Sessions visible and retries a failed next page", async () => {
+    const agent = { id: "agent_retry", name: "Retry Agent" };
+    const current = {
+      id: "session_current", agentId: agent.id, title: "Current Session",
+      status: "idle", workspaceId: "workspace_anonymous",
+    };
+    const older = { ...current, id: "session_older", title: "Older Session" };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity } },
+    });
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["workspaces"], []);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    let nextPageAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (!url.searchParams.has("cursor")) {
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ data: [current], has_more: true, next_cursor: current.id }),
+        } as Response;
+      }
+      if (++nextPageAttempts === 1) {
+        return { ok: false, status: 503, json: async () => ({ message: "Try again" }) } as Response;
+      }
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ data: [older], has_more: false }),
+      } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/agents/${agent.id}`]}>
+            <Routes><Route path="/agents/:id" element={<Sidebar />} /></Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    expect(await screen.findByText("Failed to load more Sessions.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: current.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("link", { name: older.title })).toBeTruthy();
+    expect(screen.getByRole("link", { name: current.title })).toBeTruthy();
+    expect(screen.queryByText("Failed to load more Sessions.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(fetchMock.mock.calls.slice(1).map(([input]) => new URL(String(input)).searchParams.get("cursor")))
+      .toEqual([current.id, current.id]);
+  });
+
   it("requests parent Sessions without reusing a cached list containing children", async () => {
     const agent = { id: "agent_parents", name: "Parent list Agent" };
     const parent = {
@@ -84,7 +208,9 @@ describe("Sidebar Session navigation", () => {
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id], [child, parent]);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id], {
+      pages: [{ data: [child, parent], has_more: false }], pageParams: [undefined],
+    });
     queryClient.setQueryData(["workspaces"], []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -150,7 +276,9 @@ describe("Sidebar Session navigation", () => {
     });
     const sibling: Session = { ...session, id: "session_sibling", title: "Previous chat" };
     queryClient.setQueryData(["sessions", session.id], session);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], [sibling, session]);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], {
+      pages: [{ data: [sibling, session], has_more: false }], pageParams: [undefined],
+    });
     queryClient.setQueryData(["agents", agent.id], agent);
     queryClient.setQueryData(["agents", agent.id, "skills"], []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
@@ -217,7 +345,8 @@ describe("Sidebar Session navigation", () => {
     const activeLink = await screen.findByRole("link", { name: `${session.title}Session running` });
     const siblingLink = screen.getByRole("link", { name: sibling.title });
     expect(activeLink.compareDocumentPosition(siblingLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(queryClient.getQueryData<Session[]>(["sessions", "byAgent", agent.id, "parents"])?.map((s) => s.id))
+    expect(queryClient.getQueryData<InfiniteData<{ data: Session[] }>>(["sessions", "byAgent", agent.id, "parents"])
+      ?.pages.flatMap((page) => page.data.map((session) => session.id)))
       .toEqual([sibling.id, session.id]);
 
     streamController.enqueue(new TextEncoder().encode("event: session.status_idle\nid: 2\ndata: {}\n\n"));
@@ -404,7 +533,9 @@ describe("Sidebar Session navigation", () => {
       },
     });
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], [scheduled, loose]);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "parents"], {
+      pages: [{ data: [scheduled, loose], has_more: false }], pageParams: [undefined],
+    });
     queryClient.setQueryData(["sessions", "byLoop", loop.id, "parents"], {
       pages: [{
         data: [scheduled],
@@ -543,7 +674,7 @@ describe("Sidebar Session navigation", () => {
     queryClient.setQueryData(["sessions", sourceSession.id], sourceSession);
     queryClient.setQueryData(
       ["sessions", "byAgent", agent.id, "parents"],
-      [sourceSession, targetSession],
+      { pages: [{ data: [sourceSession, targetSession], has_more: false }], pageParams: [undefined] },
     );
     queryClient.setQueryData(["workspaces"], [workspace]);
     queryClient.setQueryData(["agents", agent.id], agent);
