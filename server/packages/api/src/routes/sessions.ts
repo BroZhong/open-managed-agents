@@ -18,6 +18,7 @@ type Env = {
 };
 
 export interface SessionRouteDeps {
+  thinkingOptions?: import("../lib/thinking-options.js").ThinkingOptionsReader;
   sessionShareStore?: SessionShareStore;
   sessionStore: SessionStore;
   agentStore: AgentStore;
@@ -48,6 +49,20 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     const share = c.get("tenant").share;
     if (!share || share.id !== c.req.param("id")) return c.json({ error: "Share credential required" }, 403);
     return c.json({ sessionId: share.sessionId, workspaceId: share.workspaceId });
+  });
+
+  registerContractRoute(router, getOpenApiRoute("getSessionThinkingOptions"), async (c) => {
+    const tenant = c.get("tenant");
+    const session = await deps.sessionStore.getById(c.req.param("id")!);
+    if (!session || session.tenantId !== tenant.tenantId || session.deletedAt) return c.json({ error: "Session not found" }, 404);
+    const workspace = await deps.workspaceStore.getById(tenant.tenantId, session.workspaceId);
+    if (!workspace || workspace.deletedAt) return c.json({ error: "Session not found" }, 404);
+    const liveAgent = session.loopId ? undefined : await deps.agentStore.getById(session.agentId);
+    const agent = liveAgent?.tenantId === tenant.tenantId ? liveAgent : session.agent;
+    if (agent.runtime !== "pi-agent" || !deps.thinkingOptions) return c.json({ error: "Thinking options unavailable" }, 503);
+    c.header("Cache-Control", "private, no-store");
+    try { return c.json(await deps.thinkingOptions(tenant.tenantId, agent.model)); }
+    catch { return c.json({ error: "Could not load model thinking options" }, 503); }
   });
 
   // POST /v1/sessions — Create session

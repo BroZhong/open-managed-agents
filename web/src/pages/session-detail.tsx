@@ -13,6 +13,7 @@ import { MessageInput } from "@/components/message-input";
 import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
 import type { DelegationExecution } from "@/lib/delegations";
+import { useThinkingOptions } from "@/lib/hooks/use-thinking-options";
 import { useAgent } from "@/lib/hooks/use-agents";
 import { useSession, useSessionThinking } from "@/lib/hooks/use-sessions";
 import { useWorkspaces } from "@/lib/hooks/use-workspaces";
@@ -47,6 +48,8 @@ function SessionDetail({ id }: { id: string }) {
   const { data: session, isLoading: sessionLoading, isError: sessionError, refetch: refetchSession } = useSession(id);
   const { data: currentAgent } = useAgent(session?.agentId ?? "");
   const thinkingMutation = useSessionThinking(id);
+  const composerAgent = session?.loopId ? session.agent : currentAgent ?? session?.agent;
+  const thinkingOptions = useThinkingOptions(id, composerAgent?.model, composerAgent?.runtime);
   const { data: workspaces = [] } = useWorkspaces();
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, fileChange, turnLifecycleNonce, isHistoryLoading, historyError } =
@@ -157,10 +160,13 @@ function SessionDetail({ id }: { id: string }) {
                 hasMoreQueuedInput={hasMoreQueuedInput}
                 skills={equippedSkills}
                 disabled={session?.status === "terminated"}
-                model={session.loopId ? session.agent.model : currentAgent?.model ?? session.agent.model}
+                model={composerAgent?.model}
+                thinkingOptions={thinkingOptions.data}
+                thinkingOptionsLoading={thinkingOptions.isFetching}
+                onRetryThinkingOptions={() => void thinkingOptions.refetch()}
                 thinking={session.thinking}
-                agentThinking={session.loopId ? session.agent.thinking : currentAgent ? currentAgent.thinking : session.agent.thinking}
-                onThinkingChange={thinkingMutation.mutateAsync}
+                agentThinking={composerAgent?.thinking}
+                onThinkingChange={composerAgent?.runtime === "pi-agent" ? thinkingMutation.mutateAsync : undefined}
                 running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
                 onInterrupt={handleInterrupt}
               />

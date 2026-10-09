@@ -1,3 +1,4 @@
+import { ThinkingOptionsSchema } from "../lib/thinking-options.js";
 import { modelProviderRoutes } from "./model-providers.js";
 import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
 import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
@@ -828,6 +829,12 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       200: jsonResponse(DeletedSchema, "Workspace hidden"),
       404: errorResponse("Workspace not found"),
     },
+  }),
+  protectedRoute({
+    method: "get", path: "/v1/sessions/{id}/thinking-options", operationId: "getSessionThinkingOptions",
+    summary: "Get distinct thinking levels supported by this Session's current model", tags: ["Sessions"],
+    request: { params: idParams },
+    responses: { 200: jsonResponse(ThinkingOptionsSchema, "Pi model capabilities without credentials"), 404: errorResponse("Session not found"), 503: errorResponse("Model capabilities unavailable") },
   }),
   protectedRoute({
     method: "post",

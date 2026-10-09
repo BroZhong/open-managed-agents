@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, RotateCcw } from "lucide-react";
-import type { Agent } from "@/lib/hooks/use-agents";
+import type { ThinkingLevel, ThinkingOptions } from "@/lib/hooks/use-thinking-options";
+export type { ThinkingLevel } from "@/lib/hooks/use-thinking-options";
+const labels: Record<ThinkingLevel, string> = { off: "关闭", minimal: "极低", low: "低", medium: "中", high: "高", xhigh: "很高", max: "最大" };
 
-export type ThinkingLevel = NonNullable<Agent["thinking"]>;
-const levels: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const labels = ["关闭", "极低", "低", "中", "高", "很高", "最大"];
-
-export function SessionThinkingPicker({ model, value, inherited, disabled, onChange }: {
+export function SessionThinkingPicker({ model, value, inherited, disabled, onChange, options, loading, onRetry }: {
   model?: string;
+  options?: ThinkingOptions;
+  loading?: boolean;
+  onRetry?: () => void;
   value?: ThinkingLevel | null;
   inherited?: ThinkingLevel | null;
   disabled?: boolean;
@@ -60,10 +61,13 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
       setSaving(false);
     }
   }
-  const effective = draft ?? inherited ?? "max";
-  const index = levels.indexOf(effective);
-  const label = labels[index];
-  const modelLabel = model?.split("/").at(-1) ?? "Model";
+  const choices = options?.choices ?? [];
+  const requested = draft ?? inherited;
+  const effective = requested == null ? options?.defaultLevel : options?.resolvedLevels[requested];
+  const index = Math.max(0, choices.findIndex(choice => choice.value === effective));
+  const label = choices[index] ? labels[choices[index].label] : loading ? "加载中" : "暂不可用";
+  const modelLabel = (options?.model ?? model)?.split("/").at(-1) ?? "Model";
+  const progress = choices.length > 1 ? index / (choices.length - 1) * 100 : 0;
   return <div ref={root} className="session-thinking-control">
     <button ref={trigger} type="button" className="session-thinking-trigger" disabled={disabled || saving}
       aria-label={`思考强度：${label}${draft === null ? "，继承 Agent" : ""}`} aria-haspopup="dialog" aria-expanded={open}
@@ -75,19 +79,21 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
         disabled={disabled || saving || draft === null} onClick={() => void save(null)}><RotateCcw size={16} /></button>
       <div className="session-thinking-heading" title={draft === null ? "继承 Agent 设置" : "仅此 Session · 下个 Turn 生效"}>{label}</div>
       <p className="session-thinking-model">{modelLabel}</p>
-      <div className="session-thinking-track">
-      <input type="range" min={0} max={levels.length - 1} step={1} value={index}
-        aria-label="Session 思考强度" aria-valuetext={label} disabled={disabled || saving}
+      {choices.length > 0 ? <div className="session-thinking-track">
+      <input type="range" min={0} max={Math.max(0, choices.length - 1)} step={1} value={index}
+        aria-label="Session 思考强度" aria-valuetext={label} disabled={disabled || saving || choices.length < 2}
         className="thinking-slider session-thinking-slider"
-        style={{ background: `linear-gradient(to right, var(--color-accent) ${index / (levels.length - 1) * 100}%, var(--color-bg-active) ${index / (levels.length - 1) * 100}%)` }}
-        onChange={(event) => setDraft(levels[Number(event.target.value)])}
-        onPointerUp={(event) => void save(levels[Number(event.currentTarget.value)])}
-        onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) void save(levels[Number(event.currentTarget.value)]); }}
-        onBlur={(event) => { if (draft !== null) void save(levels[Number(event.currentTarget.value)]); }} />
+        style={{ background: `linear-gradient(to right, var(--color-accent) ${progress}%, var(--color-bg-active) ${progress}%)` }}
+        onChange={(event) => setDraft(choices[Number(event.target.value)].value)}
+        onPointerUp={(event) => void save(choices[Number(event.currentTarget.value)].value)}
+        onKeyUp={(event) => { if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) void save(choices[Number(event.currentTarget.value)].value); }}
+        onBlur={(event) => { if (draft !== null) void save(choices[Number(event.currentTarget.value)].value); }} />
       <div className="session-thinking-ticks" aria-hidden="true">
-        {levels.map((level, tick) => <span key={level} style={{ opacity: tick === index ? 0 : 1, background: tick < index ? "#ffffff80" : "#00000030" }} />)}
+        {choices.map((choice, tick) => <span key={choice.value} style={{ opacity: tick === index ? 0 : 1, background: tick < index ? "#ffffff80" : "#00000030" }} />)}
       </div>
-      </div>
+      </div> : <p className="text-center text-xs text-neutral-500" role="status">
+        {loading ? "正在读取模型档位…" : <button type="button" className="underline" onClick={onRetry}>档位读取失败，重试</button>}
+      </p>}
       <p className="sr-only" aria-live="polite">{saving ? "保存中" : draft === null ? "继承 Agent 设置" : "仅此 Session，下个 Turn 生效"}。按模型支持的等级适配，部分模型无法关闭思考。</p>
     </div>}
     {error && <p role="alert" className="session-thinking-error">{error}</p>}

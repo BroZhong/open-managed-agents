@@ -19,6 +19,13 @@ to authenticated API requests. They do not start Sessions or load the managed Pi
 catalog; SDK loading remains lazy. API and Runner share only the provider-record
 encryption key for this feature, while Turn execution remains Runner-owned.
 
+Session thinking controls use a read-only capability endpoint on Runner's internal
+HTTP service. API authenticates the Session lookup and requests managed model
+metadata via `OMA_RUNNER_URL`; only supported/canonical levels are returned.
+API still does not load the managed Pi catalog or receive its credentials.
+Tenant model metadata is resolved lazily and without decrypting its stored key.
+This metadata lookup does not create a Turn or make an inference request.
+
 PostgreSQL owns accepted input, FIFO claims, leases and generations, execution
 and delegation state, Loop dispatch, Complete Events and termination cleanup.
 Only a committed ingress transaction authorizes HTTP acceptance. A Runner always
