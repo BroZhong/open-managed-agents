@@ -219,6 +219,70 @@ describe("PgSessionStore", () => {
     expect(result.data[0].agentId).toBe("agent_a");
   });
 
+  it("filters by Workspace, Agent and Tenant before paginating five Sessions", async () => {
+    const workspaceId = await newWorkspace();
+    const neighborId = await newWorkspace();
+    const input = { tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId };
+    const unrelated = [];
+    for (let index = 0; index < 8; index++) {
+      unrelated.push(await store.create({ ...input, workspaceId: neighborId }));
+    }
+    unrelated.push(await store.create({ ...input, agentId: "agent_other" }));
+    unrelated.push(await store.create({ ...input, tenantId: "tenant2" }));
+    unrelated.push(await store.create({ ...input, loopId: "loop_review" }));
+    unrelated.push(await store.create({ ...input, delegation: {
+      parentSessionId: "sess_parent", parentTurnId: "turn_parent", parentToolUseId: "tool_child", sandboxSessionId: "sess_parent",
+    } }));
+    const deleted = await store.create(input);
+    await store.softDelete(deleted.id);
+    unrelated.push(deleted);
+    // Put excluded records before the project's records in the actual SQL order.
+    for (const [index, session] of unrelated.entries()) {
+      await harness.pool.query("UPDATE sessions SET id = $2 WHERE id = $1", [session.id, `sess_a_${String(index).padStart(2, "0")}`]);
+    }
+    const expected = [];
+    for (let index = 0; index < 7; index++) {
+      const session = await store.create(input);
+      const id = `sess_z_${index}`;
+      await harness.pool.query("UPDATE sessions SET id = $2 WHERE id = $1", [session.id, id]);
+      expected.push(id);
+    }
+
+    const opts = { workspaceId, agentId: mockAgent.id, withoutLoop: true, excludeDelegated: true, limit: 5 };
+    const page1 = await store.list("tenant1", opts);
+    expect(page1.data.map((session) => session.id)).toEqual(expected.slice(0, 5));
+    expect(page1.hasMore).toBe(true);
+    const page2 = await store.list("tenant1", { ...opts, cursor: page1.data[4].id });
+    expect(page2.data.map((session) => session.id)).toEqual(expected.slice(5));
+    expect(page2.hasMore).toBe(false);
+    expect(await store.list("tenant1", { ...opts, excludedWorkspaceIds: [workspaceId] })).toEqual({ data: [], hasMore: false });
+  });
+
+  it("excludes named and deleted Workspace IDs before paginating loose Sessions", async () => {
+    const named = await newWorkspace();
+    const deleted = await newWorkspace();
+    const loose = await newWorkspace();
+    const input = { tenantId: "tenant1", agentId: mockAgent.id, agent: mockAgent, workspaceId: named };
+    for (let index = 0; index < 8; index++) {
+      const session = await store.create({ ...input, workspaceId: index % 2 ? named : deleted });
+      await harness.pool.query("UPDATE sessions SET id = $2 WHERE id = $1", [session.id, `sess_a_${index}`]);
+    }
+    const expected = [];
+    for (let index = 0; index < 7; index++) {
+      const session = await store.create({ ...input, workspaceId: loose });
+      const id = `sess_z_${index}`;
+      await harness.pool.query("UPDATE sessions SET id = $2 WHERE id = $1", [session.id, id]);
+      expected.push(id);
+    }
+    const opts = { agentId: mockAgent.id, excludedWorkspaceIds: [named, deleted], limit: 5 };
+    const page1 = await store.list("tenant1", opts);
+    expect(page1.data.map((session) => session.id)).toEqual(expected.slice(0, 5));
+    expect(page1.hasMore).toBe(true);
+    const page2 = await store.list("tenant1", { ...opts, cursor: page1.data[4].id });
+    expect(page2.data.map((session) => session.id)).toEqual(expected.slice(5));
+    expect(page2.hasMore).toBe(false);
+  });
+
   it("should list sessions with pagination", async () => {
     const workspaceId = await newWorkspace();
     for (let i = 0; i < 5; i++) {

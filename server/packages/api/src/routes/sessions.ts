@@ -115,10 +115,18 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor") || undefined;
     const agentId = c.req.query("agent_id") || undefined;
+    const workspaceId = c.req.query("workspace_id") || undefined;
+    const excludeNamedWorkspaces = c.req.query("exclude_named_workspaces");
     const status = c.req.query("status") || undefined;
     const loopId = c.req.query("loop_id") || undefined;
     const excludeLoop = c.req.query("exclude_loop");
     const excludeDelegated = c.req.query("exclude_delegated");
+    if (excludeNamedWorkspaces !== undefined && excludeNamedWorkspaces !== "true" && excludeNamedWorkspaces !== "false") {
+      return c.json({ error: "exclude_named_workspaces must be true or false" }, 400);
+    }
+    if (workspaceId && excludeNamedWorkspaces === "true") {
+      return c.json({ error: "workspace_id and exclude_named_workspaces=true cannot be combined" }, 400);
+    }
     if (excludeDelegated !== undefined && excludeDelegated !== "true" && excludeDelegated !== "false") {
       return c.json({ error: "exclude_delegated must be true or false" }, 400);
     }
@@ -139,10 +147,13 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
 
     const workspaces = await deps.workspaceStore.list(tenant.tenantId, true);
     const result = await deps.sessionStore.list(tenant.tenantId, {
-      excludedWorkspaceIds: workspaces.filter((w) => w.deletedAt).map((w) => w.id),
+      excludedWorkspaceIds: workspaces
+        .filter((w) => w.deletedAt || (excludeNamedWorkspaces === "true" && w.name))
+        .map((w) => w.id),
       limit,
       cursor,
       agentId,
+      workspaceId,
       status: status as any,
       loopId,
       withoutLoop: excludeLoop === "true",

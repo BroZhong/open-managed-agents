@@ -45,15 +45,55 @@ export function useSessions(status?: string, options?: SessionListOptions) {
 
 /** Sessions belonging to a single Agent (nested under the Agent, not global). */
 export function useAgentSessions(agentId: string, options?: SessionListOptions) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["sessions", "byAgent", agentId, ...(options?.excludeDelegated ? ["parents"] : [])],
-    queryFn: ({ signal }) =>
-      apiFetch<SessionsResponse>(
-        `/v1/sessions?agent_id=${encodeURIComponent(agentId)}&exclude_loop=true${options?.excludeDelegated ? "&exclude_delegated=true" : ""}`,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam
+        ? `&cursor=${encodeURIComponent(pageParam)}`
+        : "";
+      return apiFetch<SessionsResponse>(
+        `/v1/sessions?agent_id=${encodeURIComponent(agentId)}&exclude_loop=true&limit=50${cursor}${options?.excludeDelegated ? "&exclude_delegated=true" : ""}`,
         { signal },
-      ).then((r) => r.data),
+      );
+    },
+    getNextPageParam: (lastPage) =>
+      lastPage.has_more ? lastPage.next_cursor : undefined,
     enabled: !!agentId,
   });
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.data),
+  };
+}
+
+/** Each sidebar group owns its cursor; collapsed Workspaces do not fetch Sessions. */
+function useNavigationSessions(agentId: string, workspaceId: string | undefined, enabled: boolean) {
+  const query = useInfiniteQuery({
+    queryKey: ["sessions", "byAgent", agentId, ...(workspaceId ? ["workspace", workspaceId] : ["loose"]), "parents"],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ agent_id: agentId });
+      if (workspaceId) params.set("workspace_id", workspaceId);
+      params.set("exclude_loop", "true");
+      params.set("exclude_delegated", "true");
+      if (!workspaceId) params.set("exclude_named_workspaces", "true");
+      params.set("limit", pageParam ? "20" : "5");
+      if (pageParam) params.set("cursor", pageParam);
+      return apiFetch<SessionsResponse>(`/v1/sessions?${params}`, { signal });
+    },
+    getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.next_cursor : undefined,
+    enabled: Boolean(agentId) && enabled,
+  });
+  return { ...query, data: query.data?.pages.flatMap((page) => page.data) };
+}
+
+export function useWorkspaceSessions(agentId: string, workspaceId: string, enabled = true) {
+  return useNavigationSessions(agentId, workspaceId, Boolean(workspaceId) && enabled);
+}
+
+export function useLooseSessions(agentId: string) {
+  return useNavigationSessions(agentId, undefined, true);
 }
 
 export function useSession(id: string) {
@@ -114,6 +154,7 @@ export function useCreateSession() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     },
   });
 }
@@ -128,6 +169,7 @@ export function useUpdateSession() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     },
   });
 }

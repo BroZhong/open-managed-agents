@@ -26,6 +26,16 @@ export function useWorkspaces() {
   });
 }
 
+/** Discover every project independently of how many Sessions have been loaded. */
+export function useAgentWorkspaces(agentId: string) {
+  return useQuery({
+    queryKey: ["workspaces", "byAgent", agentId],
+    queryFn: ({ signal }) =>
+      apiFetch<WorkspacesResponse>(`/v1/workspaces?agent_id=${encodeURIComponent(agentId)}`, { signal }).then((r) => r.data),
+    enabled: Boolean(agentId),
+  });
+}
+
 /**
  * Create a named Workspace (POST /v1/workspaces, added in #55). Invalidates the
  * ["workspaces"] list on success so the sidebar's "workspaces" group refreshes.

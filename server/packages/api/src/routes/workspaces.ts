@@ -1,5 +1,5 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { WorkspaceMetadataStore } from "@oma-server/store";
+import type { SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import { workspaceObjectPrefix } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
@@ -22,6 +22,7 @@ type Env = {
  */
 export function workspaceEntityRoutes(
   workspaceStore: WorkspaceMetadataStore,
+  sessionStore?: SessionStore,
 ): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
 
@@ -63,6 +64,28 @@ export function workspaceEntityRoutes(
   registerContractRoute(router, getOpenApiRoute("listWorkspaces"), async (c) => {
     const tenant = c.get("tenant");
     const data = await workspaceStore.list(tenant.tenantId);
+    const agentId = c.req.query("agent_id");
+    if (agentId !== undefined) {
+      if (!sessionStore) return c.json({ error: "Session discovery is unavailable" }, 503);
+      // Discover every project independently of the Agent's Session page. Only
+      // check for one visible Session per named Workspace, never load its history.
+      const namedWorkspaces = data.filter((workspace) => workspace.name);
+      const matches = [];
+      for (let offset = 0; offset < namedWorkspaces.length; offset += 10) {
+        const batch = await Promise.all(namedWorkspaces.slice(offset, offset + 10).map(async (workspace) => {
+          const sessions = await sessionStore.list(tenant.tenantId, {
+            agentId,
+            workspaceId: workspace.id,
+            withoutLoop: true,
+            excludeDelegated: true,
+            limit: 1,
+          });
+          return sessions.data.length > 0 ? workspace : null;
+        }));
+        matches.push(...batch.filter((workspace) => workspace !== null));
+      }
+      return c.json({ data: matches });
+    }
     return c.json({ data });
   });
 

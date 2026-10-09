@@ -155,7 +155,7 @@ export function createApp(deps: AppDeps) {
 
   // Mount Workspace entity routes (create-named + list + get)
   if (deps.workspaceStore) {
-    app.route("/", workspaceEntityRoutes(deps.workspaceStore));
+    app.route("/", workspaceEntityRoutes(deps.workspaceStore, deps.sessionStore));
   }
 
   // Mount session routes

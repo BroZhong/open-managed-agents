@@ -767,9 +767,21 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/workspaces",
     operationId: "listWorkspaces",
     summary: "List Workspaces",
-    description: "Returns all Workspaces owned by the Tenant, ordered by creation time ascending. This endpoint is not paginated.",
+    description: "Returns all live Workspaces owned by the Tenant, ordered by creation time ascending. With agent_id, returns only named Workspaces with at least one visible non-Loop, non-delegated Session owned by that Agent. Workspace discovery is independent of Session pagination. This endpoint is not paginated.",
     tags: ["Workspaces"],
-    responses: { 200: jsonResponse(WorkspaceListSchema, "Tenant Workspaces") },
+    request: {
+      query: z.object({
+        agent_id: z.string().min(1).optional().openapi({
+          param: { name: "agent_id", in: "query" },
+          description: "Limit to named Workspaces used by this Agent's visible, non-Loop, non-delegated Sessions.",
+        }),
+      }),
+    },
+    responses: {
+      200: jsonResponse(WorkspaceListSchema, "Tenant Workspaces"),
+      400: errorResponse("Invalid Workspace list filters"),
+      503: errorResponse("Agent Workspace discovery is unavailable"),
+    },
   }),
   protectedRoute({
     method: "get",
@@ -890,6 +902,19 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
           .string()
           .optional()
           .openapi({ param: { name: "agent_id", in: "query" } }),
+        workspace_id: z.string().min(1).optional().openapi({
+          param: { name: "workspace_id", in: "query" },
+          description: "Limit to Sessions bound to this Workspace before pagination. Cannot be combined with exclude_named_workspaces=true.",
+        }),
+        exclude_named_workspaces: z
+          .enum(["true", "false"], {
+            error: "exclude_named_workspaces must be true or false",
+          })
+          .optional()
+          .openapi({
+            param: { name: "exclude_named_workspaces", in: "query" },
+            description: "Set to true to exclude Sessions in named Workspaces before pagination. Cannot be combined with workspace_id. Defaults to false.",
+          }),
         loop_id: z
           .string()
           .optional()

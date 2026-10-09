@@ -198,6 +198,16 @@ The console uses `POST /v1/sessions/{id}` with `deleted: true`; the existing
 `DELETE /v1/sessions/{id}` remains the separate execution-termination operation.
 Deleted Workspace IDs cannot be reused to create new Sessions.
 
+## Console Session navigation
+
+The Agent sidebar discovers its named Workspaces independently of Session pages.
+Each expanded Workspace initially loads five top-level, non-Loop Sessions;
+its Show more control appends twenty at a time. Loose Sessions have the same
+initial and subsequent page sizes, with a separate cursor and Show more control
+under chats. Loading one group does not
+expand another; collapsed Workspaces do not request their Session histories.
+The Agent detail page retains its aggregate non-Loop Session list.
+
 ## Workspace file API
 
 Workspace files are accessed through `/v1/workspaces/{id}/files`, using the
