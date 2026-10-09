@@ -50,3 +50,18 @@ Agent pagination) is
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:3b1740bc52a7973657239a143c8384bc723641978decbdd8cd9faac5b418bb99`.
 The previous API image is
 `registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server@sha256:2e766b60d27aa8bf855090d633e1bb8241b41f39ce0ebae5f629126c12f63483`.
+
+## Follow-up: append twenty per click
+
+Web commit `4c1dac8de2a9` retains the initial five Sessions and requests twenty
+on each subsequent Show more action, for both Workspace and chats lists.
+The existing sidebar regression verifies five followed by twenty, retaining
+independent groups. All 19 focused hook/sidebar tests and the build passed.
+
+Built on `vfs-dev` and rolled only `oma-web` to
+`registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-web@sha256:a0f2ad85db86d582daac879d763b3bd2fd907619a6d292fd18ff179c84ff099e`.
+The public page serves `index-C9LhoPgY.js`, whose scoped query uses the initial
+five/subsequent twenty limit. API readiness remained healthy. Read-only requests
+for the supplied Workspace returned `[5, 20, 20, 20, 20, 5]`, all 90 Sessions
+without duplicates. The preceding Web digest `34d7f5c8534637f89532b49965852b84b1083202c3de52e5a212071f2fefa27a`
+remains the compatible rollback for this page-size-only change.
