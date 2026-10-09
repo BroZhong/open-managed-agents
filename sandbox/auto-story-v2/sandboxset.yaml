@@ -1,5 +1,5 @@
 # Sole maintained sandbox template; captured from Shanghai on 2026-09-16.
-# Image advanced on 2026-09-21 via image-only patch; other live settings retained.
+# CLI advanced to v0.3.18 on 2026-10-09 via image-only patch; other live settings retained.
 # Secret references only. Replace the pinned image after building and publishing.
 ---
 apiVersion: agents.kruise.io/v1alpha1
@@ -118,7 +118,7 @@ spec:
             secretKeyRef:
               key: OPENGROVE_WW_ACCESS_TOKEN
               name: base-secret
-        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:8ec76b3feb5978abeaf2711511d609b26225218b9ef421ce39d78cfdfc1bcf47
+        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:6f5eedfc6c0b68056c79d316b9676487a481eb28dcc2f035ffed28d8db591eb8
         imagePullPolicy: IfNotPresent
         name: sandbox
         resources:
