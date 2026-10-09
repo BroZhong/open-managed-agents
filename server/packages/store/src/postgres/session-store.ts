@@ -79,6 +79,10 @@ export class PgSessionStore implements SessionStore {
       params.push(opts.agentId);
       where += ` AND agent_id = $${params.length}`;
     }
+    if (opts?.workspaceId) {
+      params.push(opts.workspaceId);
+      where += ` AND workspace_id = $${params.length}`;
+    }
     if (opts?.status) {
       params.push(opts.status);
       where += ` AND status = $${params.length}`;

@@ -96,7 +96,7 @@ function runtimeOperations(): string[] {
     mcpCatalogRoutes(),
     modelProviderRoutes(adapter),
     loopRoutes({ agentStore: adapter, loopStore: adapter }),
-    workspaceEntityRoutes(adapter),
+    workspaceEntityRoutes(adapter, adapter),
     sessionRoutes({
       sessionStore: adapter,
       agentStore: adapter,
@@ -177,7 +177,7 @@ describe("OpenAPI contract", () => {
       mcpCatalogRoutes(),
     modelProviderRoutes(adapter),
       loopRoutes({ agentStore: adapter, loopStore: adapter }),
-      workspaceEntityRoutes(adapter),
+      workspaceEntityRoutes(adapter, adapter),
       sessionRoutes({
         sessionStore: adapter,
         agentStore: adapter,

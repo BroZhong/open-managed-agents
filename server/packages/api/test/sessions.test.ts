@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createApp } from "../src/app.js";
-import { InMemoryEventLogStore } from "@oma-server/store-memory";
+import { InMemoryEventLogStore, InMemorySessionStore } from "@oma-server/store-memory";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
   AgentStore,
@@ -8,11 +8,6 @@ import type {
   AgentStoreCreateInput,
   AgentStoreUpdateInput,
   AgentStoreListOpts,
-  SessionStore,
-  Session,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  SessionStatus,
   PaginatedResult,
   WorkspaceMetadataStore,
   WorkspaceMetadataStoreCreateInput,
@@ -75,92 +70,6 @@ class InMemoryAgentStore implements AgentStore {
     if (idx < 0) return false;
     this.agents.splice(idx, 1);
     return true;
-  }
-}
-
-// In-memory SessionStore for testing
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      loopId: input.loopId,
-      delegation: input.delegation,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(
-    tenantId: string,
-    opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const cursor = opts?.cursor;
-    const agentId = opts?.agentId;
-    const status = opts?.status;
-    const loopId = opts?.loopId;
-    const withoutLoop = opts?.withoutLoop;
-
-    let filtered = this.sessions.filter((s) => s.tenantId === tenantId && !s.deletedAt && !opts?.excludedWorkspaceIds?.includes(s.workspaceId));
-    if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
-    if (status) filtered = filtered.filter((s) => s.status === status);
-    if (loopId) filtered = filtered.filter((s) => s.loopId === loopId);
-    if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
-    if (opts?.excludeDelegated) filtered = filtered.filter((s) => !s.delegation);
-
-    if (cursor) {
-      const idx = filtered.findIndex((s) => s.id === cursor);
-      if (idx >= 0) filtered = filtered.slice(idx + 1);
-    }
-
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    return { data, hasMore };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async softDelete(id: string): Promise<Session | null> {
-    const session = await this.getById(id);
-    if (session) session.deletedAt = new Date();
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    session.updatedAt = new Date();
-    return session;
   }
 }
 
@@ -569,6 +478,88 @@ describe("GET /v1/sessions", () => {
     const body = await res.json();
     expect(body.data).toHaveLength(1);
     expect(body.data[0].agentId).toBe(agent1.id);
+  });
+
+  it("paginates each Workspace independently within an Agent before filtering the page", async () => {
+    const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    await workspaceStore.create({ tenantId: "dev", id: "ws_project", name: "Project" });
+    const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_project" };
+    // A busy neighboring Workspace must not consume any of this project's five slots.
+    for (let index = 0; index < 8; index++) {
+      await sessionStore.create({ ...input, workspaceId: "ws_neighbor" });
+    }
+    await sessionStore.create({ ...input, agentId: "agent_other" });
+    await sessionStore.create({ ...input, tenantId: "other-tenant" });
+    await sessionStore.create({ ...input, loopId: "loop_review" });
+    await sessionStore.create({ ...input, delegation: {
+      parentSessionId: "sess_parent", parentTurnId: "turn_parent", parentToolUseId: "tool_child", sandboxSessionId: "sess_parent",
+    } });
+    const deleted = await sessionStore.create(input);
+    await sessionStore.softDelete(deleted.id);
+    const sessions = [];
+    for (let index = 0; index < 7; index++) sessions.push(await sessionStore.create(input));
+
+    const query = `agent_id=${agent.id}&workspace_id=ws_project&exclude_loop=true&exclude_delegated=true&limit=5`;
+    const first = await app.request(`/v1/sessions?${query}`);
+    expect(first.status).toBe(200);
+    const page1 = await first.json();
+    expect(page1.data.map((session: { id: string }) => session.id)).toEqual(sessions.slice(0, 5).map((session) => session.id));
+    expect(page1).toMatchObject({ has_more: true, next_cursor: sessions[4].id });
+    const second = await app.request(`/v1/sessions?${query}&cursor=${page1.next_cursor}`);
+    const page2 = await second.json();
+    expect(page2.data.map((session: { id: string }) => session.id)).toEqual(sessions.slice(5).map((session) => session.id));
+    expect(page2.has_more).toBe(false);
+    expect(page2.next_cursor).toBeUndefined();
+
+    await workspaceStore.softDelete("dev", "ws_project");
+    expect(await (await app.request(`/v1/sessions?${query}`)).json()).toEqual({ data: [], has_more: false });
+    expect(await (await app.request("/v1/sessions?workspace_id=ws_missing")).json()).toEqual({ data: [], has_more: false });
+  });
+
+  it("paginates loose Sessions without named or deleted Workspaces crowding them out", async () => {
+    const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_named" };
+    await workspaceStore.create({ tenantId: "dev", id: "ws_named", name: "Project" });
+    for (let index = 0; index < 8; index++) await sessionStore.create(input);
+    await workspaceStore.create({ tenantId: "dev", id: "ws_deleted" });
+    await workspaceStore.softDelete("dev", "ws_deleted");
+    await sessionStore.create({ ...input, workspaceId: "ws_deleted" });
+    await sessionStore.create({ ...input, workspaceId: "ws_loose", agentId: "agent_other" });
+    // Metadata belonging to another Tenant cannot hide this Tenant's unnamed Workspace.
+    await workspaceStore.create({ tenantId: "other-tenant", id: "ws_loose", name: "Foreign project" });
+    await workspaceStore.create({ tenantId: "dev", id: "ws_loose" });
+    await workspaceStore.create({ tenantId: "dev", id: "ws_empty_name", name: "" });
+    const sessions = [];
+    for (let index = 0; index < 6; index++) {
+      sessions.push(await sessionStore.create({ ...input, workspaceId: "ws_loose" }));
+    }
+    sessions.push(await sessionStore.create({ ...input, workspaceId: "ws_empty_name" }));
+
+    const query = `agent_id=${agent.id}&exclude_named_workspaces=true&exclude_loop=true&exclude_delegated=true&limit=5`;
+    const page1 = await (await app.request(`/v1/sessions?${query}`)).json();
+    expect(page1.data.map((session: { id: string }) => session.id)).toEqual(sessions.slice(0, 5).map((session) => session.id));
+    expect(page1).toMatchObject({ has_more: true, next_cursor: sessions[4].id });
+    const page2 = await (await app.request(`/v1/sessions?${query}&cursor=${page1.next_cursor}`)).json();
+    expect(page2.data.map((session: { id: string }) => session.id)).toEqual(sessions.slice(5).map((session) => session.id));
+    expect(page2.has_more).toBe(false);
+    expect(page2.next_cursor).toBeUndefined();
+    for (const filter of ["", "&exclude_named_workspaces=false"]) {
+      const result = await (await app.request(`/v1/sessions?agent_id=${agent.id}${filter}`)).json();
+      expect(result.data).toHaveLength(15);
+    }
+    const scoped = await (await app.request(`/v1/sessions?agent_id=${agent.id}&workspace_id=ws_named&exclude_named_workspaces=false`)).json();
+    expect(scoped.data).toHaveLength(8);
+  });
+
+  it.each([
+    "exclude_named_workspaces=invalid",
+    "exclude_named_workspaces=1",
+    "workspace_id=ws_project&exclude_named_workspaces=true",
+  ])("rejects invalid Workspace filters: %s", async (query) => {
+    const { app } = createTestApp();
+    expect((await app.request(`/v1/sessions?${query}`)).status).toBe(400);
   });
 
   it("excludes delegated children before pagination only when requested", async () => {

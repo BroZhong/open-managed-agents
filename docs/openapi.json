@@ -5911,9 +5911,22 @@
       "get": {
         "operationId": "listWorkspaces",
         "summary": "List Workspaces",
-        "description": "Returns all Workspaces owned by the Tenant, ordered by creation time ascending. This endpoint is not paginated.",
+        "description": "Returns all live Workspaces owned by the Tenant, ordered by creation time ascending. With agent_id, returns only named Workspaces with at least one visible non-Loop, non-delegated Session owned by that Agent. Workspace discovery is independent of Session pagination. This endpoint is not paginated.",
         "tags": [
           "Workspaces"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Limit to named Workspaces used by this Agent's visible, non-Loop, non-delegated Sessions."
+            },
+            "required": false,
+            "description": "Limit to named Workspaces used by this Agent's visible, non-Loop, non-delegated Sessions.",
+            "name": "agent_id",
+            "in": "query"
+          }
         ],
         "responses": {
           "200": {
@@ -5922,6 +5935,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WorkspaceList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid Workspace list filters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5938,6 +5961,16 @@
           },
           "403": {
             "description": "Share operation or resource denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agent Workspace discovery is unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -6548,6 +6581,31 @@
             },
             "required": false,
             "name": "agent_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Limit to Sessions bound to this Workspace before pagination. Cannot be combined with exclude_named_workspaces=true."
+            },
+            "required": false,
+            "description": "Limit to Sessions bound to this Workspace before pagination. Cannot be combined with exclude_named_workspaces=true.",
+            "name": "workspace_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Set to true to exclude Sessions in named Workspaces before pagination. Cannot be combined with workspace_id. Defaults to false."
+            },
+            "required": false,
+            "description": "Set to true to exclude Sessions in named Workspaces before pagination. Cannot be combined with workspace_id. Defaults to false.",
+            "name": "exclude_named_workspaces",
             "in": "query"
           },
           {

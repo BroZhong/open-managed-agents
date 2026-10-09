@@ -5,6 +5,8 @@ export interface SessionStoreListOpts {
   limit?: number;
   cursor?: string;
   agentId?: string;
+  /** Scope a Workspace's Session pagination before applying the page limit. */
+  workspaceId?: string;
   status?: SessionStatus;
   loopId?: string;
   /** Exclude Loop-created Sessions so loose Agent navigation is not crowded out. */
