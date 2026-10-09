@@ -1156,6 +1156,9 @@ export class SessionRouter {
       let currentAgent = claimedSession.loopId
         ? claimedSession.agent
         : await this.resolveCurrentAgent(agentConfig);
+      if (claimedSession.thinking != null) {
+        currentAgent = { ...currentAgent, thinking: claimedSession.thinking };
+      }
       // Child restrictions belong to the Session, including later direct user
       // input that has no DelegationExecution record for this pending event.
       if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };

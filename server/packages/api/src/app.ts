@@ -35,6 +35,7 @@ type Env = {
 };
 
 export interface AppDeps {
+  thinkingOptions?: import("./lib/thinking-options.js").ThinkingOptionsReader;
   modelProviderService?: ModelProviderService;
   sessionShareStore?: SessionShareStore;
   apiKeyStore: ApiKeyStore;
@@ -161,6 +162,7 @@ export function createApp(deps: AppDeps) {
   // Mount session routes
   if (deps.sessionStore && deps.agentStore && deps.workspaceStore) {
     app.route("/", sessionRoutes({
+      thinkingOptions: deps.thinkingOptions,
       sessionShareStore: deps.sessionShareStore,
       sessionStore: deps.sessionStore,
       agentStore: deps.agentStore,

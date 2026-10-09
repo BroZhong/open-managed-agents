@@ -113,6 +113,14 @@ export class InMemorySessionStore implements SessionStore {
     return session;
   }
 
+  async setThinking(id: string, thinking: Session["thinking"]): Promise<Session | null> {
+    const session = this.getRecord(id);
+    if (!session) return null;
+    session.thinking = thinking ?? null;
+    session.updatedAt = new Date();
+    return session;
+  }
+
   async softDelete(id: string): Promise<Session | null> {
     const session = this.sessions.find((s) => s.id === id);
     if (!session) return null;

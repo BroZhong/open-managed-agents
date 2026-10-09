@@ -84,6 +84,8 @@ export interface Workspace {
 export type SessionStatus = "idle" | "waiting" | "running" | "terminated";
 
 export interface Session {
+  /** Session preference; null/absent follows the Agent on each new Turn. */
+  thinking?: ThinkingLevel | null;
   deletedAt?: Date;
   id: string;
   tenantId: string;

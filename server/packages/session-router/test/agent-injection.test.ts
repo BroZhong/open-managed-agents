@@ -49,6 +49,7 @@ async function runOneTurn(deps: {
   skillStore?: InMemorySkillStore;
   skillArtifactStore?: InMemorySkillArtifactStore;
   agent?: Agent;
+  thinking?: Agent["thinking"];
 }) {
   const eventLogStore = new InMemoryEventLogStore();
   const pendingEventStore = new InMemoryPendingEventStore();
@@ -74,6 +75,7 @@ async function runOneTurn(deps: {
     agent,
     workspaceId: "ws_test",
   });
+  if (deps.thinking !== undefined) await sessionStore.setThinking(session.id, deps.thinking);
   await pendingEventStore.enqueue(session.id, {
     type: "user.message",
     data: { content: [{ type: "text", text: "hi" }] },
@@ -162,5 +164,15 @@ describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<sk
     const skillArtifactStore = new InMemorySkillArtifactStore();
     const input = await runOneTurn({ skillStore, skillArtifactStore });
     expect(input?.agent.skillPaths).toBeUndefined();
+  });
+});
+
+
+describe("Session thinking precedence", () => {
+  it.each([
+    [undefined, "medium"], [null, "medium"], ["off", "off"], ["max", "max"],
+  ] as const)("uses Session preference %s over Agent medium", async (thinking, expected) => {
+    const input = await runOneTurn({ agent: { ...AGENT, thinking: "medium" }, thinking });
+    expect(input?.agent.thinking).toBe(expected);
   });
 });

@@ -8,6 +8,7 @@ metadata:
   namespace: oma-infra
 data:
   PORT: '3000'
+  OMA_RUNNER_URL: http://oma-runner:3001
   API_BASE_PATH: /api
   PUBLIC_API_URL: https://agentry.welltop.tech/api
   AUTH_DISABLED: 'false'

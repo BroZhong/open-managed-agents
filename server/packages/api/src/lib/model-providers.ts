@@ -245,6 +245,16 @@ export class ModelProviderService {
     await this.store.save(record);
     return publicProvider(record);
   }
+  async thinkingOptions(tenantId: string, model: string, managed: (model: string) => Promise<import("@open-managed-agents/adapter-pi-agent").ThinkingOptions>) {
+    const providerId = model.split("/")[0];
+    if (!providerId.startsWith("custom-")) return managed(model);
+    const record = await this.store.get(tenantId, providerId);
+    if (!record) throw new ProviderError(404, { message: "Model provider not found" });
+    const { encryptedApiKey: _key, tenantId: _tenant, testedAt: _tested, ...definition } = record;
+    const { customThinkingOptions } = await import("@open-managed-agents/adapter-pi-agent");
+    return customThinkingOptions(model, definition);
+  }
+
   configureRuntime(
     sessions: SessionStore,
   ): NonNullable<PiAgentAdapterOptions["configureModelRuntime"]> {

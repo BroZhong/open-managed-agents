@@ -23,6 +23,32 @@ Provider payload conversion remains entirely in Pi; model metadata must accurate
 describe the upstream capabilities. A custom endpoint is not guaranteed to
 honor thinking controls just because it supports a compatible protocol.
 
+Session composers expose the same thinking preference in a model-labelled
+popover with a stepped slider. `POST /v1/sessions/{id}` with `thinking` stores
+an override for that Session; `null` restores Agent inheritance. It applies
+when the next Turn starts, including already queued input, and survives reloads.
+It does not alter a running Turn, another Session, or the Agent. Normal Sessions
+follow the live Agent; Loop Sessions retain their Agent snapshot. Apply
+`deploy/migrations/0019_session_thinking.sql` before deploying API/Runner.
+The console fetches `GET /v1/sessions/{id}/thinking-options` on entry and when
+the selected model changes, caching each Session/model result for one minute.
+The backend uses Pi's supported levels and clamp rules, and collapses aliases
+that map to the same provider effort. Thus Astra has five distinct stops;
+GLM/Kimi/DeepSeek have three under the managed definitions. Models that support
+a real off level retain it; non-reasoning models have a disabled, off-only slider.
+Persisted legacy preferences and inherited Agent levels resolve through the same
+Pi mapping. Failed reads offer retry instead of fabricated fallback levels.
+
+In a split deployment, API reads managed capabilities from the internal Runner
+service using `OMA_RUNNER_URL` (production: `http://oma-runner:3001`). Runner's
+read-only `/model-thinking-options` endpoint accepts managed model references
+only and returns a closed projection of capabilities, never endpoints, keys,
+Agent/Session data or provider configuration. It loads the same local Pi catalog
+as execution, with network model refresh disabled. It makes no inference request.
+Tenant-owned models are resolved on demand from isolated tenant metadata in API,
+without decrypting keys or loading the Host catalog. Deploy the updated Runner
+and API connection setting before exposing the new Web picker.
+
 Child executions inherit the Agent preference unless an explicit execution
 override is provided. Such overrides retain strict supported-level validation.
 A resumed Turn retains its recorded effective level. Agent forks copy the setting.

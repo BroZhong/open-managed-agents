@@ -303,6 +303,7 @@ export const LoopListSchema = z
 
 export const SessionSchema = z
   .object({
+    thinking: AgentSchema.shape.thinking,
     id: z.string().openapi({ example: "sess_abc123" }),
     tenantId: z.string(),
     agentId: z.string(),

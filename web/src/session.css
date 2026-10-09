@@ -96,3 +96,20 @@
   flex: none;
 }
 .share-preview * { scrollbar-width: none; }
+
+.session-thinking-control { position: relative; margin-left: auto; min-width: 0; max-width: 65%; }
+.session-thinking-trigger { display: flex; align-items: center; gap: 7px; max-width: 100%; padding: 6px 10px; border-radius: 999px; color: var(--color-fg-muted); font-size: 12px; white-space: nowrap; }
+.session-thinking-trigger:hover, .session-thinking-trigger[aria-expanded="true"] { background: var(--color-bg-active); }
+.session-thinking-popover { position: absolute; z-index: 30; bottom: calc(100% + 8px); right: 0; width: min(240px, calc(100vw - 96px)); padding: 12px 16px 16px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-bg-surface); box-shadow: 0 8px 24px #0002; }
+.session-thinking-heading { text-align: center; color: var(--color-accent); font-size: 14px; line-height: 20px; font-weight: 600; }
+.session-thinking-model { margin: 2px 20px 14px; text-align: center; color: var(--color-fg-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.session-thinking-reset { position: absolute; top: 10px; right: 10px; padding: 4px; color: var(--color-fg-muted); }
+.session-thinking-track { position: relative; display: flex; align-items: center; height: 20px; }
+.session-thinking-slider { width: 100%; margin: 0; }
+.session-thinking-ticks { position: absolute; inset: 0 10px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
+.session-thinking-ticks span { width: 3px; height: 3px; border-radius: 50%; }
+.session-thinking-error { position: absolute; right: 0; bottom: 100%; width: 180px; color: #dc2626; font-size: 12px; }
+.thinking-slider.session-thinking-slider { height: 14px; border-radius: 999px; }
+.thinking-slider.session-thinking-slider::-webkit-slider-thumb { width: 20px; height: 20px; border: 0; background: white; box-shadow: 0 1px 5px #0003; }
+.thinking-slider.session-thinking-slider::-moz-range-thumb { width: 20px; height: 20px; border: 0; background: white; box-shadow: 0 1px 5px #0003; }
+.thinking-slider.session-thinking-slider:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 4px; }

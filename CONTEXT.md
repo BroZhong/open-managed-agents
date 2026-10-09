@@ -43,6 +43,12 @@ _Avoid_: sandbox agent, isolated agent, Kubernetes agent
 A conversation and work history for a single **Agent**. A Session contains one or more **Turns** and keeps the Agent's working state between turns when the Agent is sandboxed. An Agent owns many Sessions; a Session belongs to exactly one Agent. A Session may also be created by one **Loop**, in which case it is listed under that Loop and still belongs to the Loop's Agent. The console is entered through an Agent, and its Sessions are listed within it.
 _Avoid_: chat, thread, run
 
+Session thinking intensity is an optional persisted override. An absent/null
+preference follows the current Agent on each new Turn; Loop Sessions retain
+their Agent snapshot. Changing it affects future Turns only, never another
+Session or the Agent itself. Explicit Delegation Execution settings and resumed
+wait checkpoints retain precedence. Pi adapts the preference to model capabilities.
+
 **Child Session**:
 A durable Session created by a parent's `Agent` tool. It belongs to the same configured Agent and Tenant, retains its creation parent Session/Turn/tool-use identity, and shares the Workspace and Sandbox binding by default. It does not copy the parent conversation. `childId` is the Session ID; `resume` submits a new Delegation Input to that same Child Session.
 _Avoid_: plugin child, business subtype, temporary agent

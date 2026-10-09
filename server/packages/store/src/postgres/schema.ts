@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS ${s}.sessions (
   terminated_at  TIMESTAMPTZ
 );
 ALTER TABLE ${s}.workspaces ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS thinking TEXT;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS loop_id TEXT;
 ALTER TABLE ${s}.sessions ADD COLUMN IF NOT EXISTS delegation JSONB;

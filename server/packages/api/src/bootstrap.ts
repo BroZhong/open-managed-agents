@@ -6,6 +6,7 @@ import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createApp } from "./app.js";
 import { workspaceStorageConfigFromEnv } from "./lib/workspace-config.js";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
+import { runnerThinkingOptions } from "./lib/thinking-options.js";
 import { ModelProviderService } from "./lib/model-providers.js";
 
 export type HostRole = "api" | "runner" | "combined";
@@ -59,9 +60,20 @@ export async function startHost(role: HostRole): Promise<void> {
   const deps = { ...stores, artifactStore, skillArtifactStore, eventStreamHub, turnStreamStore };
   const execution = role === "api" ? undefined : await (await import("./execution.js")).startExecution({ ...deps, pool, signals, local });
   const app = new Hono();
+  const modelProviders = new ModelProviderService(stores.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
+  const managedOptions = role === "api"
+    ? runnerThinkingOptions(process.env.OMA_RUNNER_URL ?? "http://127.0.0.1:3001")
+    : async (model: string) => (await import("@open-managed-agents/adapter-pi-agent")).managedThinkingOptions(model);
+  if (role === "runner") app.get("/model-thinking-options", async c => {
+    const model = c.req.query("model");
+    if (!model || model.length > 300 || model.startsWith("custom-")) return c.json({ error: "Invalid managed model" }, 400);
+    try { return c.json(await managedOptions(model)); }
+    catch { return c.json({ error: "Model capabilities unavailable" }, 503); }
+  });
   if (role !== "runner") app.route("/", createApp({
     ...deps, fullApiKeyStore: stores.apiKeyStore,
-    modelProviderService: new ModelProviderService(stores.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY),
+    modelProviderService: modelProviders,
+    thinkingOptions: (tenant, model) => modelProviders.thinkingOptions(tenant, model, managedOptions),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     sseCatchupIntervalMs: Number(process.env.SSE_CATCHUP_INTERVAL_MS ?? 2000),
   }));

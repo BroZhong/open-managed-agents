@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
 import { ArrowUp, Clock, Square, Sparkles, CornerDownRight } from "lucide-react";
+import { SessionThinkingPicker, type ThinkingLevel } from "@/components/session-thinking-picker";
 import { cn } from "@/lib/utils";
 import type { EquippedSkill } from "@/lib/hooks/use-skills";
 
@@ -15,6 +16,7 @@ interface MessageInputProps {
   disabled?: boolean;
   /** Whether the Host is still accepting the current send request. */
   sending?: boolean;
+  settingsPending?: boolean;
   /**
    * Input accepted by the Host but not yet executing, oldest first. Reflects the
    * server's queue rather than this component's own sends, so it stays correct
@@ -32,18 +34,31 @@ interface MessageInputProps {
   /** Whether a Turn of this Session is running right now. */
   running?: boolean;
   model?: string;
+  thinkingOptions?: import("@/lib/hooks/use-thinking-options").ThinkingOptions;
+  thinkingOptionsLoading?: boolean;
+  onRetryThinkingOptions?: () => void;
+  thinking?: ThinkingLevel | null;
+  agentThinking?: ThinkingLevel | null;
+  onThinkingChange?: (thinking: ThinkingLevel | null) => Promise<unknown>;
 }
 
 export function MessageInput({
   onSend,
   disabled = false,
   sending = false,
+  settingsPending = false,
   queuedInput = [],
   hasMoreQueuedInput = false,
   skills = [],
   onInterrupt,
   running = false,
   model,
+  thinking,
+  agentThinking,
+  onThinkingChange,
+  thinkingOptions,
+  thinkingOptionsLoading,
+  onRetryThinkingOptions,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [selectedSkillIndex, setSelectedSkillIndex] = useState(0);
@@ -96,7 +111,7 @@ export function MessageInput({
 
   async function handleSubmit() {
     const trimmed = text.trim();
-    if (!trimmed || disabled || sending || submittingRef.current) return;
+    if (!trimmed || disabled || sending || settingsPending || submittingRef.current) return;
     submittingRef.current = true;
     setSendError(null);
     try {
@@ -167,7 +182,7 @@ export function MessageInput({
 
   // Keep Stop reachable while a separate queue action accepts the next prompt.
   const showStop = running && Boolean(onInterrupt);
-  const canSend = text.trim().length > 0 && !disabled && !sending;
+  const canSend = text.trim().length > 0 && !disabled && !sending && !settingsPending;
   const buttonEnabled = showStop || canSend;
 
   return (
@@ -272,7 +287,7 @@ export function MessageInput({
               setSelectedSkillIndex(0);
               textareaRef.current?.focus();
             }}><Sparkles size={15} /><span>Skills</span></button>}
-            <span className="session-composer-model" title={model}>{model?.split("/").at(-1)}</span>
+            {onThinkingChange ? <SessionThinkingPicker key={model} options={thinkingOptions} loading={thinkingOptionsLoading} onRetry={onRetryThinkingOptions} model={model} value={thinking} inherited={agentThinking} disabled={disabled || sending} onChange={onThinkingChange} /> : <span className="session-composer-model" title={model}>{model?.split("/").at(-1)}</span>}
             {showStop && text.trim() && <button type="button" className="session-queue-send" disabled={!canSend} onClick={handleSubmit} aria-label="Queue message" title="Send after the current turn"><CornerDownRight size={15} /><span>Queue</span></button>}
           <button
             type="button"

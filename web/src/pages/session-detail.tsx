@@ -13,7 +13,9 @@ import { MessageInput } from "@/components/message-input";
 import { SessionUsageFooter } from "@/components/session-usage-footer";
 import { ChildSessionConversation } from "@/components/child-session-conversation";
 import type { DelegationExecution } from "@/lib/delegations";
-import { useSession } from "@/lib/hooks/use-sessions";
+import { useThinkingOptions } from "@/lib/hooks/use-thinking-options";
+import { useAgent } from "@/lib/hooks/use-agents";
+import { useSession, useSessionThinking } from "@/lib/hooks/use-sessions";
 import { useWorkspaces } from "@/lib/hooks/use-workspaces";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
@@ -44,6 +46,10 @@ function SessionDetail({ id }: { id: string }) {
   const location = useLocation();
   const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
   const { data: session, isLoading: sessionLoading, isError: sessionError, refetch: refetchSession } = useSession(id);
+  const { data: currentAgent } = useAgent(session?.agentId ?? "");
+  const thinkingMutation = useSessionThinking(id);
+  const composerAgent = session?.loopId ? session.agent : currentAgent ?? session?.agent;
+  const thinkingOptions = useThinkingOptions(id, composerAgent?.model, composerAgent?.runtime);
   const { data: workspaces = [] } = useWorkspaces();
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
   const { events, activeDeltas, status, fileChange, turnLifecycleNonce, isHistoryLoading, historyError } =
@@ -149,11 +155,18 @@ function SessionDetail({ id }: { id: string }) {
               <MessageInput
                 onSend={send}
                 sending={isPending}
+                settingsPending={thinkingMutation.isPending}
                 queuedInput={queuedInput}
                 hasMoreQueuedInput={hasMoreQueuedInput}
                 skills={equippedSkills}
                 disabled={session?.status === "terminated"}
-                model={session?.agent?.model}
+                model={composerAgent?.model}
+                thinkingOptions={thinkingOptions.data}
+                thinkingOptionsLoading={thinkingOptions.isFetching}
+                onRetryThinkingOptions={() => void thinkingOptions.refetch()}
+                thinking={session.thinking}
+                agentThinking={composerAgent?.thinking}
+                onThinkingChange={composerAgent?.runtime === "pi-agent" ? thinkingMutation.mutateAsync : undefined}
                 running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
                 onInterrupt={handleInterrupt}
               />

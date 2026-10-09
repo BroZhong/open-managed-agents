@@ -42,6 +42,18 @@ describe("PgSessionStore", () => {
     return ws.id;
   }
 
+  it("persists a Session thinking override independently of its Agent snapshot", async () => {
+    const session = await store.create({ tenantId: "tenant1", agentId: mockAgent.id,
+      agent: { ...mockAgent, thinking: "medium" }, workspaceId: await newWorkspace() });
+    expect(session.thinking).toBeNull();
+    await store.setThinking(session.id, "off");
+    const reloaded = await new PgSessionStore(harness.pool).getById(session.id);
+    expect(reloaded?.thinking).toBe("off");
+    expect(reloaded?.agent.thinking).toBe("medium");
+    await store.setThinking(session.id, null);
+    expect((await store.getById(session.id))?.thinking).toBeNull();
+  });
+
   it("should create a session with sess_ prefix and idle status", async () => {
     const workspaceId = await newWorkspace();
     const session = await store.create({

@@ -1,3 +1,4 @@
+import { ThinkingOptionsSchema } from "../lib/thinking-options.js";
 import { modelProviderRoutes } from "./model-providers.js";
 import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
 import { createRoute, z, type RouteConfig } from "@hono/zod-openapi";
@@ -830,21 +831,28 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     },
   }),
   protectedRoute({
+    method: "get", path: "/v1/sessions/{id}/thinking-options", operationId: "getSessionThinkingOptions",
+    summary: "Get distinct thinking levels supported by this Session's current model", tags: ["Sessions"],
+    request: { params: idParams },
+    responses: { 200: jsonResponse(ThinkingOptionsSchema, "Pi model capabilities without credentials"), 404: errorResponse("Session not found"), 503: errorResponse("Model capabilities unavailable") },
+  }),
+  protectedRoute({
     method: "post",
     path: "/v1/sessions/{id}",
     operationId: "updateSession",
-    summary: "Rename or soft-delete a Session",
-    description: "A title renames the Session. deleted=true hides it from lists without terminating execution or deleting any history or files. The DELETE endpoint retains its separate execution-termination semantics.",
+    summary: "Update Session title, thinking preference or soft-delete it",
+    description: "A title renames the Session. thinking sets a Session-only preference for subsequent Turns; null restores Agent inheritance. These updates are mutually exclusive. deleted=true hides it from lists without terminating execution or deleting any history or files. The DELETE endpoint retains its separate execution-termination semantics.",
     tags: ["Sessions"],
     request: {
       params: idParams,
       body: jsonBody(z.union([
-        z.object({ title: z.string().trim().min(1).max(500) }),
-        z.object({ deleted: z.literal(true) }),
+        z.object({ title: z.string().trim().min(1).max(500) }).strict(),
+        z.object({ thinking: AgentSchema.shape.thinking.unwrap() }).strict(),
+        z.object({ deleted: z.literal(true) }).strict(),
       ])),
     },
     responses: {
-      200: jsonResponse(z.union([SessionSchema, DeletedSchema]), "Session renamed or hidden"),
+      200: jsonResponse(z.union([SessionSchema, DeletedSchema]), "Session updated or hidden"),
       400: errorResponse("Invalid Session update"),
       404: errorResponse("Session not found"),
     },

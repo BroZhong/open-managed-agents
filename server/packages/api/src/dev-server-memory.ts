@@ -319,6 +319,7 @@ async function main() {
 
   const app = createApp({
     modelProviderService,
+    thinkingOptions: (tenant, model) => modelProviderService.thinkingOptions(tenant, model, async raw => (await import("@open-managed-agents/adapter-pi-agent")).managedThinkingOptions(raw)),
     sessionShareStore: stores.sessionShareStore,
     delegationStore: stores.delegationStore,
     apiKeyStore: stores.apiKeyStore,
