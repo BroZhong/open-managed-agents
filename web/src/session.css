@@ -100,15 +100,15 @@
 .session-thinking-control { position: relative; margin-left: auto; min-width: 0; max-width: 65%; }
 .session-thinking-trigger { display: flex; align-items: center; gap: 7px; max-width: 100%; padding: 6px 10px; border-radius: 999px; color: var(--color-fg-muted); font-size: 12px; white-space: nowrap; }
 .session-thinking-trigger:hover, .session-thinking-trigger[aria-expanded="true"] { background: var(--color-bg-active); }
-.session-thinking-popover { position: absolute; z-index: 30; bottom: calc(100% + 12px); right: 0; width: min(340px, calc(100vw - 48px)); padding: 20px 22px 14px; border: 1px solid var(--color-border); border-radius: 22px; background: var(--color-bg-surface); box-shadow: 0 10px 32px #0002; }
-.session-thinking-heading { text-align: center; color: var(--color-accent); font-size: 18px; font-weight: 600; }
-.session-thinking-model { margin: 6px 24px 22px; text-align: center; color: var(--color-fg-muted); font-size: 13px; overflow-wrap: anywhere; }
-.session-thinking-reset { position: absolute; top: 17px; right: 17px; padding: 4px; color: var(--color-fg-muted); }
+.session-thinking-popover { position: absolute; z-index: 30; bottom: calc(100% + 8px); right: 0; width: min(280px, calc(100vw - 96px)); padding: 16px 18px 12px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-bg-surface); box-shadow: 0 8px 24px #0002; }
+.session-thinking-heading { text-align: center; color: var(--color-accent); font-size: 16px; font-weight: 600; }
+.session-thinking-model { margin: 4px 20px 16px; text-align: center; color: var(--color-fg-muted); font-size: 13px; overflow-wrap: anywhere; }
+.session-thinking-reset { position: absolute; top: 13px; right: 13px; padding: 4px; color: var(--color-fg-muted); }
 .session-thinking-slider { width: 100%; }
 .session-thinking-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10px; color: var(--color-fg-muted); }
-.session-thinking-note { margin-top: 10px; text-align: center; font-size: 11px; color: var(--color-fg-subtle); }
+.session-thinking-note { margin-top: 8px; text-align: center; font-size: 11px; color: var(--color-fg-subtle); }
 .session-thinking-error { position: absolute; right: 0; bottom: 100%; width: 180px; color: #dc2626; font-size: 12px; }
-.thinking-slider.session-thinking-slider { height: 28px; border-radius: 999px; }
-.thinking-slider.session-thinking-slider::-webkit-slider-thumb { width: 34px; height: 34px; border: 0; background: white; box-shadow: 0 1px 5px #0003; }
-.thinking-slider.session-thinking-slider::-moz-range-thumb { width: 34px; height: 34px; border: 0; background: white; box-shadow: 0 1px 5px #0003; }
+.thinking-slider.session-thinking-slider { height: 18px; border-radius: 999px; }
+.thinking-slider.session-thinking-slider::-webkit-slider-thumb { width: 24px; height: 24px; border: 0; background: white; box-shadow: 0 1px 5px #0003; }
+.thinking-slider.session-thinking-slider::-moz-range-thumb { width: 24px; height: 24px; border: 0; background: white; box-shadow: 0 1px 5px #0003; }
 .thinking-slider.session-thinking-slider:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 4px; }
