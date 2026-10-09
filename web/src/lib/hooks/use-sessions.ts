@@ -6,7 +6,10 @@ import {
 } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 
+import type { Agent } from "./use-agents";
+
 export interface Session {
+  thinking?: Agent["thinking"];
   id: string;
   agentId: string;
   status: "idle" | "running" | "waiting" | "terminated";
@@ -16,7 +19,7 @@ export interface Session {
   workspaceId: string;
   /** Present when this Session was created by a scheduled Loop. */
   loopId?: string;
-  agent: { id: string; name: string; model: string; runtime: string };
+  agent: { id: string; name: string; model: string; runtime: string; thinking?: Agent["thinking"] };
   createdAt: string;
   updatedAt: string;
 }
@@ -170,6 +173,19 @@ export function useUpdateSession() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       void queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    },
+  });
+}
+
+export function useSessionThinking(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (thinking: Agent["thinking"]) => apiFetch<Session>(`/v1/sessions/${id}`, {
+      method: "POST", body: JSON.stringify({ thinking: thinking ?? null }),
+    }),
+    onSuccess: (session) => {
+      queryClient.setQueryData(["sessions", id], session);
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     },
   });
 }

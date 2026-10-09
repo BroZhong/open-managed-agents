@@ -46,6 +46,7 @@ export interface SessionStore {
    * set it once, on the first message, only when it is currently unset.
    */
   setTitle(id: string, title: string): Promise<Session | null>;
+  setThinking(id: string, thinking: Session["thinking"]): Promise<Session | null>;
   softDelete(id: string): Promise<Session | null>;
   terminate(id: string): Promise<Session | null>;
 }

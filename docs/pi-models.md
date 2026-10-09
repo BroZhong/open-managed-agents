@@ -23,6 +23,16 @@ Provider payload conversion remains entirely in Pi; model metadata must accurate
 describe the upstream capabilities. A custom endpoint is not guaranteed to
 honor thinking controls just because it supports a compatible protocol.
 
+Session composers expose the same thinking preference in a model-labelled
+popover with a stepped slider. `POST /v1/sessions/{id}` with `thinking` stores
+an override for that Session; `null` restores Agent inheritance. It applies
+when the next Turn starts, including already queued input, and survives reloads.
+It does not alter a running Turn, another Session, or the Agent. Normal Sessions
+follow the live Agent; Loop Sessions retain their Agent snapshot. Apply
+`deploy/migrations/0019_session_thinking.sql` before deploying API/Runner.
+The slider displays the preference, not a claim that all models support every
+level; in particular, models without an off level remain enabled.
+
 Child executions inherit the Agent preference unless an explicit execution
 override is provided. Such overrides retain strict supported-level validation.
 A resumed Turn retains its recorded effective level. Agent forks copy the setting.

@@ -215,7 +215,9 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
       await deps.sessionStore.softDelete(id);
       return c.json({ type: "session_deleted", id });
     }
-    const session = await deps.sessionStore.setTitle(id, body.title.trim());
+    const session = body.thinking !== undefined
+      ? await deps.sessionStore.setThinking(id, body.thinking)
+      : await deps.sessionStore.setTitle(id, body.title.trim());
     return c.json(publicSession(session!));
   });
 

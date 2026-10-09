@@ -6,6 +6,7 @@ import type { Agent, PaginatedResult, Session, SessionStatus } from "../types.js
 import { PendingEventClaimLostError } from "../errors.js";
 
 interface SessionRow {
+  thinking: Session["thinking"];
   deleted_at: Date | null;
   id: string;
   tenant_id: string;
@@ -32,6 +33,7 @@ function reviveAgent(agent: Agent): Agent {
 function rowToSession(row: SessionRow): Session {
   return {
     id: row.id,
+    thinking: row.thinking ?? null,
     deletedAt: row.deleted_at ? new Date(row.deleted_at) : undefined,
     tenantId: row.tenant_id,
     agentId: row.agent_id,
@@ -205,6 +207,14 @@ export class PgSessionStore implements SessionStore {
     const { rows } = await this.pool.query<SessionRow>(
       `UPDATE sessions SET title = $2, updated_at = $3 WHERE id = $1 RETURNING *`,
       [id, title, new Date()],
+    );
+    return rows[0] ? rowToSession(rows[0]) : null;
+  }
+
+  async setThinking(id: string, thinking: Session["thinking"]): Promise<Session | null> {
+    const { rows } = await this.pool.query<SessionRow>(
+      `UPDATE sessions SET thinking = $2, updated_at = $3 WHERE id = $1 RETURNING *`,
+      [id, thinking ?? null, new Date()],
     );
     return rows[0] ? rowToSession(rows[0]) : null;
   }
