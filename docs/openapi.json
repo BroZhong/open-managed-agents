@@ -1187,7 +1187,20 @@
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Workspace"
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Workspace"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "hasRunningSessions": {
+                      "type": "boolean",
+                      "description": "Present with agent_id: whether a visible non-Loop, non-delegated Session for this Agent is running or waiting, independent of pagination."
+                    }
+                  }
+                }
+              ]
             }
           }
         },

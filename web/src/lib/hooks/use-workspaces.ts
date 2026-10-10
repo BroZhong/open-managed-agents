@@ -11,6 +11,7 @@ export interface Workspace {
   tenantId: string;
   name?: string;
   createdAt: string;
+  hasRunningSessions?: boolean;
 }
 
 interface WorkspacesResponse {
@@ -33,6 +34,7 @@ export function useAgentWorkspaces(agentId: string) {
     queryFn: ({ signal }) =>
       apiFetch<WorkspacesResponse>(`/v1/workspaces?agent_id=${encodeURIComponent(agentId)}`, { signal }).then((r) => r.data),
     enabled: Boolean(agentId),
+    refetchInterval: 15_000,
   });
 }
 
