@@ -221,3 +221,64 @@ production behavior merely by extrapolating these shortened tests.
 - Full Sandbox package test suite: **5 files, 107 tests passed**.
 - Evidence JSON parsed and cleanup flags checked. No application behavior or
   schema changed; other package suites were not run for this verification change.
+
+## Standards review
+
+Final standards review (`d3a907d..58969ef`): **no hard standards violations or
+ actionable smells found**.
+
+- Ownership remains scoped to random run markers, recorded Sandbox identities,
+  source-filtered snapshot listings, and the isolated OSS object. Cleanup verifies
+  absence rather than treating a delete acknowledgement as completion.
+- SDK and Kubernetes requests have finite budgets; snapshot pagination and
+  observation loops are bounded. Command failures retain uncertainty without
+  replaying side effects.
+- Credentials are not persisted in evidence; localhost fault injection uses a
+  dummy key. Workspace verification reuses repository mount/storage contracts.
+- The delayed-pause JSON supports the revised retention finding: completion
+  remained false through 11:40:05, became true by 11:40:06, and deletion was
+  confirmed at 11:40:57. The unchanged 11:40:52 deadline therefore cannot supply
+  60 seconds after completion. The report appropriately distinguishes observation
+  times from physical transition timestamps.
+- All seven evidence files confirm Sandbox cleanup, totaling ten IDs; both snapshot
+  cases and the Workspace object have their additional cleanup confirmations.
+- The report explicitly preserves ADR-0017 and blocks dependent implementation
+  rather than silently changing policy.
+
+Possible smells: none worth raising. The expanded script still serves one bounded
+qualification workflow; phase branching alone does not justify abstraction or
+splitting.
+
+## Spec review
+
+**No actionable findings for the negative capability-gate delivery.**
+
+(a) Missing/partial requirements: Cold-start budget calibration remains incomplete
+against “具体时间依据现有请求/网关预算及冷启动观测确定.” The report explicitly identifies
+warm claims and defers calibration until platform correction; it does not promote
+experimental budgets into product guarantees. #218–#222 remain unimplemented,
+appropriately following “任一能力不满足时明确报告差异并阻塞依赖任务.” They must not be
+marked completed.
+
+(b) Scope creep: None. Snapshot overlap supplies an isolated delayed-pause
+reproduction for “从实际暂停起计算保留期并删除.” It introduces no application controller,
+policy workaround, or shared control-plane modification.
+
+(c) Incorrect implementation / overclaim: None requiring changes. The deployed
+evidence independently supports the negative result: pause remained incomplete
+through the observation at 11:40:05.312; completion was first observed at
+11:40:06.698; the unchanged deletion deadline was 11:40:52; absence was confirmed
+at 11:40:57.745. Even allowing the observation bracket, the configured 60-second
+completed-pause retention was not provided. The report appropriately warns that
+observations are not exact physical timestamps and that the condition timestamp
+is stale.
+
+The former independent evidence gaps are addressed: actual mounted OSS persistence
+includes host reads after resume and reconstruction; cancellation has post-budget
+observations; network timeout uses a real nonresponding local socket; deletion
+during a command retains partial output without replay. Cleanup covers the
+additional Sandbox, snapshot, and OSS resources.
+
+Review summary: Standards 0 actionable findings; Spec 0 actionable findings for
+this negative gate. Qualification remains failed pending platform correction and
+requalification; #218–#222 are not delivered.
