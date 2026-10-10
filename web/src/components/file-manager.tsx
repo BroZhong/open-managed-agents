@@ -65,7 +65,7 @@ export interface FileManagerProps {
     loading: boolean;
     active: boolean;
     error: Error | null;
-    refresh: () => Promise<FileNode[]>;
+    refresh: (reuseInFlight?: boolean) => Promise<FileNode[]>;
   };
   fileSelection?: { path: string; nonce: number };
   /** Injected by the host page (from its existing SSE). Not subscribed here. */
@@ -667,14 +667,14 @@ export function FileManager({ source, listing, fileSelection, turnStatus, refres
 
   const nested = source.capabilities.hierarchy === "nested" && actions.showDirs;
 
-  const refresh = useCallback(async (): Promise<FileNode[] | null> => {
+  const refresh = useCallback(async (reuseInFlight = false): Promise<FileNode[] | null> => {
     if (!refreshList) {
       setListLoading(true);
       setListError(null);
     }
     setSaved(false);
     try {
-      const nextNodes = await (refreshList ? refreshList() : source.list());
+      const nextNodes = await (refreshList ? refreshList(reuseInFlight) : source.list());
       nodesRef.current = nextNodes;
       if (!refreshList) setNodes(nextNodes);
       return nextNodes;
@@ -775,9 +775,9 @@ export function FileManager({ source, listing, fileSelection, turnStatus, refres
 
   /** Refresh the tree and reload/drop the selected file from the same snapshot. */
   const refreshSelected = useCallback(
-    async (path: string | null = selectedPath) => {
+    async (path: string | null = selectedPath, reuseInFlight = false) => {
       const version = readVersion.current;
-      const nextNodes = await refresh();
+      const nextNodes = await refresh(reuseInFlight);
       if (!nextNodes || !path || version !== readVersion.current) return;
       if (nextNodes.some((node) => node.path === path && !node.isDir)) {
         await openFile(path, false);
@@ -794,7 +794,10 @@ export function FileManager({ source, listing, fileSelection, turnStatus, refres
   const previousRefresh = useRef({ refreshKey, refreshScope });
   const pendingRefresh = useRef(false);
   const listingActive = listing?.active ?? true;
+  const previousActive = useRef(listingActive);
   useEffect(() => {
+    const resumed = listingActive && !previousActive.current;
+    previousActive.current = listingActive;
     const previous = previousRefresh.current;
     previousRefresh.current = { refreshKey, refreshScope };
     if (managedListing) {
@@ -804,7 +807,7 @@ export function FileManager({ source, listing, fileSelection, turnStatus, refres
     }
     let active = true;
     void Promise.resolve().then(() => {
-      if (active) return refreshSelected();
+      if (active) return refreshSelected(undefined, managedListing && resumed);
     });
     return () => { active = false; };
     // Selecting a file changes refreshSelected but must not refetch the list.

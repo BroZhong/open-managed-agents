@@ -236,6 +236,8 @@ it("defers hidden Workspace reads and refreshes when revealed", async () => {
   expect(list).toHaveBeenCalledTimes(1);
   view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={1} active />);
   await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(2);
 });
 
 it("reloads the selected preview after a successful Turn refresh", async () => {
@@ -289,4 +291,20 @@ it("finishes an in-flight linked preview when the owning Session changes", async
   view.rerender(<WorkspacePanel workspaceId="cached" refreshScope="b" refreshKey={0} />);
   await act(async () => { finish({ path: "cached.txt", text: "loaded preview", contentType: "text/plain", size: 14, isBinary: false }); });
   await screen.findByText("loaded preview");
+});
+
+it("reuses the post-change read started on reveal instead of cancelling and restarting it", async () => {
+  const list = cachedSource();
+  const view = render(<WorkspacePanel workspaceId="cached" refreshKey={0} />);
+  await screen.findByText("cached.txt");
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={1} active={false} />);
+  await act(async () => {});
+  let finish!: (nodes: { path: string; isDir: boolean }[]) => void;
+  list.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={1} active />);
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(2);
+  await act(async () => { finish([{ path: "latest.txt", isDir: false }]); });
+  await screen.findByText("latest.txt");
+  expect(list).toHaveBeenCalledTimes(2);
 });

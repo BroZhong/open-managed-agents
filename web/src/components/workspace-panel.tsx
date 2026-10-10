@@ -38,6 +38,7 @@ function WorkspaceFiles({ workspaceId, workspaceName, refreshKey, refreshScope, 
     if (changed) {
       // Mark stale even while hidden. FileManager refreshes the tree and its
       // selected preview together when visible, using a post-change read.
+      if (!active) void client.cancelQueries({ queryKey });
       void client.invalidateQueries({ queryKey, refetchType: "none" });
     } else if (ownerChanged && active) {
       // The observer survives same-Workspace navigation. Revalidate on return
@@ -46,13 +47,16 @@ function WorkspaceFiles({ workspaceId, workspaceName, refreshKey, refreshScope, 
     }
   }, [client, queryKey, source, refreshKey, refreshScope, active]);
   const { refetch } = query;
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (reuseInFlight = false) => {
     // Also fence an initial read with no cached data: it may have started
     // before a write/Turn completion and must not satisfy an explicit refresh.
+    if (reuseInFlight) {
+      return client.fetchQuery({ queryKey, queryFn: ({ signal }) => source.list({ signal }), staleTime: 30_000 });
+    }
     await client.cancelQueries({ queryKey });
     const result = await refetch({ throwOnError: true });
     return result.data!;
-  }, [client, queryKey, refetch]);
+  }, [client, queryKey, source, refetch]);
   // Let urgent composer updates commit before a new file tree is rendered.
   const nodes = useDeferredValue(query.data);
   const listing = useMemo(() => ({ nodes, active, loading: query.isFetching, error: query.error, refresh }), [nodes, active, query.isFetching, query.error, refresh]);
