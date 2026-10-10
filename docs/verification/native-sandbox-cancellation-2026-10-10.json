@@ -1,0 +1,149 @@
+{
+  "runId": "oma-native-09798e43-acb3-4ebc-91c9-cc54998d818f",
+  "startedAt": "2026-10-10T11:28:33.876Z",
+  "requested": {
+    "timeoutMs": 90000,
+    "retention": "60s",
+    "claimSeconds": 10,
+    "readySeconds": 3,
+    "failure": "nonexistent image; no successful readiness possible"
+  },
+  "sandboxIds": [
+    "sandbox-system--auto-story-v2-l47g9"
+  ],
+  "observations": [
+    {
+      "at": "2026-10-10T11:28:35.590Z",
+      "action": "create",
+      "elapsedMs": 1207,
+      "error": {
+        "name": "DOMException",
+        "notFound": false
+      }
+    },
+    {
+      "at": "2026-10-10T11:28:36.046Z",
+      "phase": "init-cancel",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-l47g9",
+          "uid": "1d536b31-ce08-42b1-9ae9-959f734e308d",
+          "createdAt": "2026-10-10T09:47:30Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:30:04Z",
+          "shutdownTime": "2026-10-10T11:31:04Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:28:34Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:28:34Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-l47g9",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:29:06.970Z",
+      "phase": "inspect",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-l47g9",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:30:37.958Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-l47g9",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:30:38.128Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-l47g9",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    }
+  ],
+  "sdkVersion": "2.24.0",
+  "deployment": [
+    {
+      "name": "sandbox-gateway",
+      "containers": [
+        {
+          "name": "gateway",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0"
+        }
+      ]
+    },
+    {
+      "name": "sandbox-manager",
+      "containers": [
+        {
+          "name": "controller",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11"
+        },
+        {
+          "name": "envoy-proxy",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara"
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "name": "gateway",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+      "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+    },
+    {
+      "name": "controller",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+    }
+  ],
+  "cleanupConfirmed": true
+}

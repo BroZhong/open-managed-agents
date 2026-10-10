@@ -1,0 +1,598 @@
+{
+  "runId": "oma-native-68112cf7-7ded-46b6-855b-4f4ad70df20b",
+  "startedAt": "2026-10-10T11:28:24.898Z",
+  "requested": {
+    "timeoutMs": 300000,
+    "retention": "60s",
+    "claimSeconds": 150,
+    "readySeconds": 150
+  },
+  "sandboxIds": [
+    "sandbox-system--auto-story-v2-mq99w",
+    "sandbox-system--auto-story-v2-8plxf"
+  ],
+  "observations": [
+    {
+      "at": "2026-10-10T11:28:27.081Z",
+      "action": "create",
+      "id": "sandbox-system--auto-story-v2-mq99w",
+      "elapsedMs": 907
+    },
+    {
+      "at": "2026-10-10T11:28:27.683Z",
+      "action": "verify-workspace",
+      "id": "sandbox-system--auto-story-v2-mq99w",
+      "sandboxRead": true,
+      "exactOssPrefixRead": true
+    },
+    {
+      "at": "2026-10-10T11:28:27.937Z",
+      "phase": "init-workspace",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "uid": "ed320e27-a90b-4226-892b-f88a5ea63226",
+          "createdAt": "2026-10-10T11:21:37Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:28:47Z",
+          "shutdownTime": "2026-10-10T11:29:47Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:23:27Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:23:27Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "state": "running",
+          "endAt": "2026-10-10T11:28:47.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:29:06.788Z",
+      "phase": "resume-workspace",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "uid": "ed320e27-a90b-4226-892b-f88a5ea63226",
+          "createdAt": "2026-10-10T11:21:37Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:29:47Z",
+          "shutdownTime": "2026-10-10T11:29:47Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:28:47Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:23:27Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "True",
+              "reason": "PauseSucceed",
+              "lastTransitionTime": "2026-10-10T11:28:47Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "state": "paused",
+          "endAt": "2026-10-10T11:29:47.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:29:07.585Z",
+      "action": "connect",
+      "from": "paused",
+      "id": "sandbox-system--auto-story-v2-mq99w",
+      "elapsedMs": 780
+    },
+    {
+      "at": "2026-10-10T11:29:07.850Z",
+      "phase": "resume-workspace",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "uid": "ed320e27-a90b-4226-892b-f88a5ea63226",
+          "createdAt": "2026-10-10T11:21:37Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:34:07Z",
+          "shutdownTime": "2026-10-10T11:35:07Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:23:27Z"
+            },
+            {
+              "type": "SandboxResumed",
+              "status": "True",
+              "reason": "ResumePod",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            },
+            {
+              "type": "RuntimeInitialized",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "state": "running",
+          "endAt": "2026-10-10T11:34:07.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:29:08.262Z",
+      "action": "verify-workspace",
+      "id": "sandbox-system--auto-story-v2-mq99w",
+      "sandboxRead": true,
+      "exactOssPrefixRead": true
+    },
+    {
+      "at": "2026-10-10T11:29:08.463Z",
+      "phase": "resume-workspace",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "uid": "ed320e27-a90b-4226-892b-f88a5ea63226",
+          "createdAt": "2026-10-10T11:21:37Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:29:28Z",
+          "shutdownTime": "2026-10-10T11:30:28Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:23:27Z"
+            },
+            {
+              "type": "SandboxResumed",
+              "status": "True",
+              "reason": "ResumePod",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            },
+            {
+              "type": "RuntimeInitialized",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "state": "running",
+          "endAt": "2026-10-10T11:29:28.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:30:20.789Z",
+      "phase": "rebuild-workspace",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "uid": "ed320e27-a90b-4226-892b-f88a5ea63226",
+          "createdAt": "2026-10-10T11:21:37Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:30:28Z",
+          "shutdownTime": "2026-10-10T11:30:28Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:29:28Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:23:27Z"
+            },
+            {
+              "type": "RuntimeInitialized",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:29:07Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "True",
+              "reason": "PauseSucceed",
+              "lastTransitionTime": "2026-10-10T11:29:28Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "state": "paused",
+          "endAt": "2026-10-10T11:30:28.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:30:20.796Z",
+      "action": "rebuild-workspace",
+      "error": {
+        "name": "AssertionError",
+        "type": "AssertionError",
+        "notFound": false
+      }
+    },
+    {
+      "at": "2026-10-10T11:36:52.201Z",
+      "phase": "rebuild-workspace",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:36:52.838Z",
+      "action": "rebuild-workspace",
+      "id": "sandbox-system--auto-story-v2-8plxf",
+      "elapsedMs": 621
+    },
+    {
+      "at": "2026-10-10T11:36:53.359Z",
+      "action": "verify-workspace",
+      "id": "sandbox-system--auto-story-v2-8plxf",
+      "sandboxRead": true,
+      "exactOssPrefixRead": true
+    },
+    {
+      "at": "2026-10-10T11:36:53.526Z",
+      "phase": "rebuild-workspace",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "uid": "0f87b1a0-9cb6-40f5-ae60-8b19b5b365b3",
+          "createdAt": "2026-10-10T08:53:59Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:41:52Z",
+          "shutdownTime": "2026-10-10T11:42:52Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T08:55:45Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T08:55:45Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "state": "running",
+          "endAt": "2026-10-10T11:41:52.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:37:44.853Z",
+      "phase": "delete-command",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "uid": "0f87b1a0-9cb6-40f5-ae60-8b19b5b365b3",
+          "createdAt": "2026-10-10T08:53:59Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:41:52Z",
+          "shutdownTime": "2026-10-10T11:42:52Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T08:55:45Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T08:55:45Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "state": "running",
+          "endAt": "2026-10-10T11:41:52.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:37:44.900Z",
+      "action": "connect",
+      "from": "running",
+      "id": "sandbox-system--auto-story-v2-8plxf",
+      "elapsedMs": 31
+    },
+    {
+      "at": "2026-10-10T11:37:45.159Z",
+      "phase": "delete-command",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "uid": "0f87b1a0-9cb6-40f5-ae60-8b19b5b365b3",
+          "createdAt": "2026-10-10T08:53:59Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:42:44Z",
+          "shutdownTime": "2026-10-10T11:43:44Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T08:55:45Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T08:55:45Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "state": "running",
+          "endAt": "2026-10-10T11:42:44.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:38:05.173Z",
+      "action": "delete-command",
+      "stdout": "ISSUED\n",
+      "result": {
+        "error": {
+          "name": "TimeoutError",
+          "type": "TimeoutError",
+          "notFound": false
+        }
+      },
+      "replayed": false
+    },
+    {
+      "at": "2026-10-10T11:38:05.609Z",
+      "phase": "delete-command",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:39:19.017Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:39:19.191Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-mq99w",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-8plxf",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    }
+  ],
+  "workspace": {
+    "tenant": "native-lifecycle-verification",
+    "id": "oma-native-68112cf7-7ded-46b6-855b-4f4ad70df20b"
+  },
+  "sdkVersion": "2.24.0",
+  "deployment": [
+    {
+      "name": "sandbox-gateway",
+      "containers": [
+        {
+          "name": "gateway",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0"
+        }
+      ]
+    },
+    {
+      "name": "sandbox-manager",
+      "containers": [
+        {
+          "name": "controller",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11"
+        },
+        {
+          "name": "envoy-proxy",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara"
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "name": "gateway",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+      "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+    },
+    {
+      "name": "controller",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+    }
+  ],
+  "cleanupConfirmed": true,
+  "workspaceCleanupConfirmed": true
+}

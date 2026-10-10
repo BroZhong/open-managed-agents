@@ -281,6 +281,35 @@
           }
         }
       ]
+    },
+    {
+      "at": "2026-10-10T11:28:34.208Z",
+      "action": "network-timeout",
+      "received": 1,
+      "elapsedMs": 204,
+      "error": {
+        "name": "DOMException",
+        "notFound": false
+      }
+    },
+    {
+      "at": "2026-10-10T11:28:34.210Z",
+      "action": "network-timeout",
+      "error": {
+        "name": "AssertionError",
+        "notFound": false
+      }
+    },
+    {
+      "at": "2026-10-10T11:28:47.905Z",
+      "action": "network-timeout",
+      "received": 1,
+      "elapsedMs": 205,
+      "error": {
+        "name": "TimeoutError",
+        "type": "DOMException",
+        "notFound": false
+      }
     }
   ],
   "sdkVersion": "2.24.0",

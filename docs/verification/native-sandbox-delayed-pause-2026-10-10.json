@@ -1,0 +1,958 @@
+{
+  "runId": "oma-native-8b7cadf2-6e8d-43a6-b222-800ac8ef65c9",
+  "startedAt": "2026-10-10T11:39:44.446Z",
+  "requested": {
+    "timeoutMs": 90000,
+    "retention": "60s",
+    "claimSeconds": 60,
+    "readySeconds": 90
+  },
+  "sandboxIds": [
+    "sandbox-system--auto-story-v2-lxs86"
+  ],
+  "observations": [
+    {
+      "at": "2026-10-10T11:39:45.296Z",
+      "action": "create",
+      "id": "sandbox-system--auto-story-v2-lxs86",
+      "elapsedMs": 326
+    },
+    {
+      "at": "2026-10-10T11:39:45.459Z",
+      "phase": "init",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:41:15Z",
+          "shutdownTime": "2026-10-10T11:42:15Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "running",
+          "endAt": "2026-10-10T11:41:15.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:39:46.086Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:41:15Z",
+          "shutdownTime": "2026-10-10T11:42:15Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "running",
+          "endAt": "2026-10-10T11:41:15.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:39:46.229Z",
+      "action": "connect",
+      "from": "running",
+      "id": "sandbox-system--auto-story-v2-lxs86",
+      "elapsedMs": 37
+    },
+    {
+      "at": "2026-10-10T11:39:46.400Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:44:46Z",
+          "shutdownTime": "2026-10-10T11:45:46Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "True",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "running",
+          "endAt": "2026-10-10T11:44:46.000Z",
+          "lifecycle": null
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:39:53.342Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:39:54.722Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:39:55.993Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:39:57.346Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:39:58.620Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:39:59.353Z",
+      "action": "delay-pause",
+      "snapshotId": "cp-uf600987gd3qlcwu7px0"
+    },
+    {
+      "at": "2026-10-10T11:39:59.973Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:40:01.251Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "WaitingForExistingCheckpoint",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:40:02.633Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "SetPause",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "auto-story-v2-lxs86-8z28hj9m",
+          "uid": "0c64a3d3-8f48-40ea-8e2e-89a00c1cc490",
+          "sandboxName": "auto-story-v2-lxs86",
+          "snapshotId": null,
+          "phase": "Succeeded",
+          "ttlAfterFinished": null,
+          "completionTime": "2026-10-10T11:40:02Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:40:04.028Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "SetPause",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "auto-story-v2-lxs86-8z28hj9m",
+          "uid": "0c64a3d3-8f48-40ea-8e2e-89a00c1cc490",
+          "sandboxName": "auto-story-v2-lxs86",
+          "snapshotId": null,
+          "phase": "Succeeded",
+          "ttlAfterFinished": null,
+          "completionTime": "2026-10-10T11:40:02Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:40:05.312Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "False",
+              "reason": "SetPause",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "auto-story-v2-lxs86-8z28hj9m",
+          "uid": "0c64a3d3-8f48-40ea-8e2e-89a00c1cc490",
+          "sandboxName": "auto-story-v2-lxs86",
+          "snapshotId": null,
+          "phase": "Succeeded",
+          "ttlAfterFinished": null,
+          "completionTime": "2026-10-10T11:40:02Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:40:06.698Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "True",
+              "reason": "PauseSucceed",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "auto-story-v2-lxs86-8z28hj9m",
+          "uid": "0c64a3d3-8f48-40ea-8e2e-89a00c1cc490",
+          "sandboxName": "auto-story-v2-lxs86",
+          "snapshotId": null,
+          "phase": "Succeeded",
+          "ttlAfterFinished": null,
+          "completionTime": "2026-10-10T11:40:02Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:40:06.950Z",
+      "phase": "delay-pause",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "True",
+              "reason": "PauseSucceed",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "auto-story-v2-lxs86-8z28hj9m",
+          "uid": "0c64a3d3-8f48-40ea-8e2e-89a00c1cc490",
+          "sandboxName": "auto-story-v2-lxs86",
+          "snapshotId": null,
+          "phase": "Succeeded",
+          "ttlAfterFinished": null,
+          "completionTime": "2026-10-10T11:40:02Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:40:36.254Z",
+      "phase": "inspect",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "uid": "e622beed-157d-42b9-9261-516c1e6d46bb",
+          "createdAt": "2026-10-10T11:28:34Z",
+          "deletionTimestamp": null,
+          "pauseTime": "2026-10-10T11:40:52Z",
+          "shutdownTime": "2026-10-10T11:40:52Z",
+          "paused": true,
+          "phase": "Paused",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "PodReady",
+              "lastTransitionTime": "2026-10-10T11:39:51Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "True",
+              "reason": "Succeeded",
+              "lastTransitionTime": "2026-10-10T11:30:09Z"
+            },
+            {
+              "type": "SandboxPaused",
+              "status": "True",
+              "reason": "PauseSucceed",
+              "lastTransitionTime": "2026-10-10T11:39:52Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "state": "paused",
+          "endAt": "2026-10-10T11:40:52.000Z",
+          "lifecycle": null
+        }
+      ],
+      "checkpoints": [
+        {
+          "name": "auto-story-v2-lxs86-8z28hj9m",
+          "uid": "0c64a3d3-8f48-40ea-8e2e-89a00c1cc490",
+          "sandboxName": "auto-story-v2-lxs86",
+          "snapshotId": null,
+          "phase": "Succeeded",
+          "ttlAfterFinished": null,
+          "completionTime": "2026-10-10T11:40:02Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:40:57.745Z",
+      "phase": "inspect",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:41:13.889Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:41:13.920Z",
+      "action": "delete-snapshot",
+      "snapshotId": "cp-uf600987gd3qlcwu7px0",
+      "deleted": true
+    },
+    {
+      "at": "2026-10-10T11:41:14.436Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:43:56.963Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ],
+      "checkpoints": []
+    },
+    {
+      "at": "2026-10-10T11:43:56.995Z",
+      "action": "delete-snapshot",
+      "snapshotId": "cp-uf600987gd3qlcwu7px0",
+      "deleted": true
+    },
+    {
+      "at": "2026-10-10T11:43:57.277Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-lxs86",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "type": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ],
+      "checkpoints": []
+    }
+  ],
+  "sdkVersion": "2.24.0",
+  "deployment": [
+    {
+      "name": "sandbox-gateway",
+      "containers": [
+        {
+          "name": "gateway",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0"
+        }
+      ]
+    },
+    {
+      "name": "sandbox-manager",
+      "containers": [
+        {
+          "name": "controller",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11"
+        },
+        {
+          "name": "envoy-proxy",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara"
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "name": "gateway",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+      "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+    },
+    {
+      "name": "controller",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+    }
+  ],
+  "snapshotRequested": true,
+  "snapshotSourceId": "sandbox-system--auto-story-v2-lxs86",
+  "snapshotId": "cp-uf600987gd3qlcwu7px0",
+  "snapshotCleanupConfirmed": true,
+  "cleanupConfirmed": true
+}

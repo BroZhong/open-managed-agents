@@ -1,155 +1,223 @@
 # Native Sandbox lifecycle capability gate (#217)
 
-## Decision: not qualified; #218–#222 remain blocked
+## Decision: failed retention contract; #218–#222 remain blocked
 
 The requested policy is 24 hours running, pause on expiry, retain for 24 hours
 **starting after actual pause completion**, then platform deletion; ordinary
 binding idle changes the running deadline to 30 minutes. Pi stays in the Runner.
 This report does not change ADR-0017 or activate the proposed policy.
 
-The isolated happy paths below passed. They do **not** establish the required
-retention anchor during delayed pause completion. The inspected upstream source
-starts retention when requesting pause, before completion. We cannot certify the
-deployment's delayed-pause behavior from these fast observations or map the
-deployed image digest to that upstream revision. This is a qualification blocker,
-not a claim that this run observed premature deletion or that all of #217 passed.
+An isolated delayed-pause experiment on the actual deployment demonstrated that
+retention starts before pause completion and is not re-anchored afterward. With
+60 seconds configured, the resource was already absent about 51 seconds after
+pause completion was first observed. This fails the required full retention
+period after actual pause; happy-path pause/resume support is insufficient.
 
 #217 explicitly requires: “任一能力不满足时明确报告差异并阻塞依赖任务，不悄悄改变策略、
-扩展到 Kubernetes 直接管理或新增控制器。” No application migration, schema removal,
-production rollout, shared control-plane modification, or business-resource
-cleanup was performed.
+扩展到 Kubernetes 直接管理或新增控制器。” Consequently #218–#222 have not been
+implemented. No application policy, schema or shared control plane was changed;
+no production release or business-resource cleanup was performed.
 
-## Retention contract gap
+## Reproduced retention failure
+
+[Delayed-pause evidence](native-sandbox-delayed-pause-2026-10-10.json), resource
+`sandbox-system--auto-story-v2-lxs86`:
+
+1. Allocate a dedicated Sandbox with a 60-second paused-retention extension.
+2. Write 512 MiB of random data to its local `/tmp`, then start a native filesystem
+   snapshot through the SDK. The snapshot request specifies a 60-second TTL.
+3. While that request is outstanding, shorten the Sandbox running deadline to
+   one second. No Kubernetes patches, custom probes or controller were used.
+4. Record control-plane state and Sandbox conditions until pause completes; exit
+   and let the platform delete the resource.
+
+| Observation time (UTC) | Actual completion condition | Scheduled deletion |
+| --- | --- | --- |
+| 11:39:53.342 | `SandboxPaused=False`, `WaitingForExistingCheckpoint` | 11:40:52 |
+| 11:40:01.251 | Still waiting for checkpoint | 11:40:52 |
+| 11:40:05.312 | `SandboxPaused=False`, `SetPause` | 11:40:52 |
+| 11:40:06.698 | First observation of `SandboxPaused=True`, `PauseSucceed` | Still 11:40:52 |
+| 11:40:57.745 | Resource absent; SDK typed `SandboxNotFoundError` | Already removed |
+
+The pause request was at 11:39:52. Its 60-second retention clock ran throughout
+checkpoint waiting and actual pause. At the first completion observation only
+about 45 seconds remained on the deadline. Deletion was confirmed about 51
+seconds after that observation, rather than a full 60-second retention period.
+The observations bracket completion; they are not a precise physical freeze
+or deletion timestamp. They nevertheless show that the platform never shifted
+the deadline to account for the roughly 13-second pause delay.
+
+Two other observations matter for future integration:
+
+- `getInfo.state` was already `paused` while `SandboxPaused=False`. It represents
+  a broader control-plane state, not proof of completed pause.
+- The condition's `lastTransitionTime` remained **11:39:52** even after it changed
+  from False to True. Use the timestamped observations to understand this run;
+  subtracting that stale field from the deadline would falsely report 60 seconds.
+
+The preceding [fast snapshot experiment](native-sandbox-pause-anchor-2026-10-10.json)
+waited for snapshot creation before requesting pause. It exposed the intermediate
+False condition but did not establish a multi-second pause delay. It is retained
+as an exploratory run, not presented as the decisive reproduction.
+
+## Corroborating upstream source
 
 Source examined: `openkruise/agents` at
 [`64915f0d061df97e650f2f022a69448fc2467d13`](https://github.com/openkruise/agents/tree/64915f0d061df97e650f2f022a69448fc2467d13).
-This is upstream source evidence, **not a verified source revision of the deployed
-ACK images**.
+This is **not a verified source revision of the deployed ACK images**. The live
+reproduction above is independent of that mapping.
 
 - [`handlePauseTimeout`](https://github.com/openkruise/agents/blob/64915f0d061df97e650f2f022a69448fc2467d13/pkg/controller/sandbox/sandbox_controller.go#L1068)
-  patches `Spec.Paused=true` and `ShutdownTime=now+retention` together. It also
-  replaces `PauseTime` with that deadline. It does not wait for
-  `SandboxPaused=True` before starting retention.
+  patches `Spec.Paused=true` and `ShutdownTime=now+retention` together, without
+  waiting for `SandboxPaused=True`.
 - [`handleShutdownTimeout`](https://github.com/openkruise/agents/blob/64915f0d061df97e650f2f022a69448fc2467d13/pkg/controller/sandbox/sandbox_controller.go#L1107)
-  defers deletion for a due pause only while `!Spec.Paused`. An incomplete pause
-  with `Spec.Paused=true` is not protected by this condition.
+  defers deletion for a due pause only while `!Spec.Paused`.
 - [`ensureStopPaused`](https://github.com/openkruise/agents/blob/64915f0d061df97e650f2f022a69448fc2467d13/pkg/controller/sandbox/core/util.go#L90)
-  records actual completion separately, after Pod deletion. That path does not
-  re-anchor `ShutdownTime`.
+  records completion separately, after Pod deletion, without re-anchoring the
+  deadline. This explains the contract gap in the inspected source; the deployed
+  runtime's exact implementation still needs to be identified by its maintainers.
 
-Consequently, in that source a pause requested at T and completed at T+D retains
-the Sandbox until T+R, giving R-D after completion instead of the required R.
-The live fast pauses completed within the same recorded second, so D was not
-distinguishable at the persisted timestamp resolution. They cannot resolve this
-gap. Do not change the product contract to “24 hours after pause request” silently.
+To unblock, the platform must guarantee retention from **completed** pause,
+including checkpoint-delayed pause, and pass this isolated reproduction again.
+Correct completion timestamps should also be verified. Do not silently change
+the product contract to “24 hours after requesting pause.” No platform fix or
+shared deployment change is included or authorized by this application task.
 
-To unblock: establish the deployed implementation's exact retention semantics
-and verify a delayed pause has a full retention period after completion. If it
-matches the inspected source, the platform needs a fix and isolated requalification
-outside this application-only change. No such platform change is authorized here.
-
-## Deployment and evidence
+## Deployment and successful cases
 
 Date: 2026-10-10 (Asia/Shanghai). JSON timestamps use UTC.
 
-- E2B JS SDK: **2.24.0**, with this repository's existing patch.
-- Gateway: **ack-sandbox-gateway:v0.3.0**.
-- Manager: **ack-sandbox-manager:v0.6.11**.
-- Exact running image IDs/digests are recorded in each JSON file below. Image tags
-  alone do not identify the source revision.
-- All resources were allocated through `Sandbox.create('auto-story-v2', ...)`
-  with an exact, random `oma.dev/native-lifecycle-verification` ownership marker.
-  Their CR creation timestamps can precede this run because the platform supplies
-  unclaimed warm-pool resources. No existing business Sandbox was selected.
-- Kubernetes access was read-only for deployment, ownership and condition evidence;
-  lifecycle mutations used E2B. Control-plane `getInfo` was used without data-plane
-  health checks and without automatic resume.
+- E2B JS SDK **2.24.0**, with the existing repository patch.
+- Gateway **ack-sandbox-gateway:v0.3.0**; Manager **ack-sandbox-manager:v0.6.11**.
+- Actual running image IDs/digests are recorded in every initialized evidence
+  file; tags alone do not identify source revisions.
+- Each resource came from `Sandbox.create('auto-story-v2', ...)`, with an exact
+  random `oma.dev/native-lifecycle-verification` marker. CR creation timestamps
+  can predate this run because the platform allocates unclaimed warm resources.
+  No existing business Sandbox was selected.
+- Kubernetes access was read-only for deployment/ownership/condition evidence.
+  Workspace configuration was read from the Runner's environment without logging
+  it. Lifecycle mutations used E2B. No data-plane health query was used to infer
+  resource deletion.
 
 | Case | Observed result | Evidence |
 | --- | --- | --- |
-| 90-second running deadline, 60-second paused retention, verifier exits | Paused at 11:17:22Z, deadline 11:18:22Z, then platform removal and typed `SandboxNotFoundError`; no OMA renewal or cleanup controller | [Lifecycle JSON](native-sandbox-lifecycle-2026-10-10.json) |
-| Connect while Running | Same ID; deadline extended from 11:20:19Z to 11:23:50Z | [Recovery JSON](native-sandbox-recovery-2026-10-10.json) |
-| Shorten with `setTimeout(20_000)` | Deadline shortened to 11:19:10Z; still paused instead of killed | Recovery JSON |
-| Pause during a command | `ISSUED` output retained; SDK `TimeoutError`; no reliable completion and no replay | Recovery JSON |
-| Connect while Paused | Same ID resumed in 684ms with a 300-second running deadline; subsequent tool exited 0 | Recovery JSON |
-| Observable side effect | Command appended once; after resume file had exactly one line | Recovery JSON |
-| Nonexistent image, 10-second claim budget, 3-second readiness budget | Server rejected create in 10,305ms, before the 35-second client timeout; three failed attempts discovered by exact marker | [Readiness JSON](native-sandbox-readiness-2026-10-10.json) |
-| Failed attempt cleanup | All three had finite shutdown deadlines; subsequent checks found no marked resources and typed NotFound for all recorded IDs | Readiness JSON |
+| Verifier exits after create, 90s run / 60s paused retention | Platform pause and deletion without OMA renewal or sweeper; typed NotFound afterward | [Lifecycle](native-sandbox-lifecycle-2026-10-10.json) |
+| Connect while Running | Same ID; running deadline extended | [Recovery](native-sandbox-recovery-2026-10-10.json) |
+| `setTimeout(20_000)` | Deadline shortened, expiry still paused rather than killed | Recovery |
+| Pause during a command | Preserved `ISSUED` output; SDK `TimeoutError`; no reliable completion and no replay | Recovery |
+| Connect while Paused | Same ID resumed in 684ms with 300s deadline; tool exited 0 | Recovery |
+| Observable command side effect | Appended exactly once; one line read after resume | Recovery |
+| Permanently unready image: 10s claim / 3s ready budget | Create rejected in 10,305ms, before 35s client timeout; three failed attempts, all with finite cleanup | [Readiness](native-sandbox-readiness-2026-10-10.json) |
+| Cancel create at 1.2s during failed readiness | Client returned in 1,207ms; one marked attempt; later check after server budget found no resource or continued replacements | [Cancellation](native-sandbox-cancellation-2026-10-10.json) |
+| Inject control-plane network timeout | Local socket accepts SDK request but sends no headers; ~205ms timeout, `name=TimeoutError`, constructor `DOMException`, not NotFound | Lifecycle |
+| Mounted OSS write, pause/resume and deletion/rebuild | Saved file matches through Sandbox reads and Host reads of the exact isolated OSS prefix at all three stages | [Workspace](native-sandbox-workspace-2026-10-10.json) |
+| Delete during a live command | Direct kill after `ISSUED`; command returned SDK TimeoutError with retained output, no replay; getInfo returned typed NotFound | Workspace |
 
-`getInfo` returned `state: running/paused` but omitted `lifecycle`; no lifecycle
-field was invented by the verifier. During failed creation it returned NotFound
-even while a marked, reserved failed CR was still present. Do not equate that
-response with complete physical cleanup of failed creates: inspect the exact
-ownership marker as well.
+The network experiment used a dummy credential on localhost, not a live key.
+Its first collector assertion incorrectly expected a `TimeoutError` constructor;
+Node fetch actually produced a `DOMException` whose **name** was `TimeoutError`.
+The failed assertion and corrected repeat are both preserved. This distinction
+must not be flattened into NotFound by future integration.
 
-The retained `/tmp` file is an observation of this template/runtime only. It is
-not an OSS persistence test or a promise that local files, processes, memory or
-command streams survive pause. Only successfully written and closed OSS Workspace
-files are intended to be guaranteed by the requested policy.
+During failed creation `getInfo` returned NotFound while reserved failed CRs were
+still visible under the exact marker. Thus that response alone does not prove
+physical cleanup of failed creates. Lifecycle confirmation checks both surfaces.
+`getInfo` omitted the optional `lifecycle` field; the verifier did not invent it.
 
-All five recorded IDs are absent and all three evidence files have
-`cleanupConfirmed: true`. Platform expiry performed the deletion; the cleanup
-phases needed no kill calls. No replacement resources remained under the markers
-at the final checks.
+The Workspace case used only the unique
+`native-lifecycle-verification/<runId>/saved.txt` object. It is the OSS evidence;
+the recovery case's `/tmp` file is only an observed side-effect marker. Neither
+case promises preservation of processes, memory, local dependencies or command
+streams. Only successfully written and closed OSS files are guaranteed by the
+requested product policy.
+
+## Cleanup
+
+All **10 Sandbox IDs**, both explicitly requested snapshots, and the isolated OSS
+object have been removed. Every evidence file has `cleanupConfirmed: true`;
+Workspace evidence additionally has `workspaceCleanupConfirmed: true`, and the
+two snapshot cases have `snapshotCleanupConfirmed: true`. Final reads found no
+marked replacements or associated Checkpoint CRs.
+
+The ordinary and delayed-pause resources expired through native platform policy.
+The Workspace replacement was explicitly killed during the deletion-stream test.
+Snapshot deletion used the exact IDs returned by our SDK requests; the final
+script also handles a lost snapshot response by listing only its recorded test
+source Sandbox. No arbitrary templates or business resources are deleted.
 
 ## Reproduction
 
-Install the locked server dependencies (`pnpm --dir server install --frozen-lockfile`).
-The script uses the configured Shanghai kubeconfig and reads the existing gateway
-key without writing it into evidence. `OMA_KUBECONFIG` and `E2B_DOMAIN` can select
-an explicitly authorized target. It never alters a template or controller.
-
-Run phases **sequentially**, with one fresh evidence filename per `init` or
-`init-failure`. Do not run two phases against the same file concurrently. Init
-uses exclusive file creation; the initial record survives a lost create response.
+Install server dependencies with `pnpm --dir server install --frozen-lockfile`.
+The script reads the Shanghai kubeconfig and gateway key without putting secrets
+in evidence. `OMA_KUBECONFIG`/`E2B_DOMAIN` can select an explicitly authorized
+compatible target; Workspace phases additionally use that cluster's Runner
+storage configuration. Run phases **sequentially** for each evidence file, with
+one fresh filename per init. Init refuses to overwrite existing evidence.
 
 ```sh
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs init /tmp/oma-native-lifecycle.json
-# Exit the verifier. Inspect around the 90s pause and after the following 60s retention.
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs inspect /tmp/oma-native-lifecycle.json
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/oma-native-lifecycle.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs init /tmp/lifecycle.json
+# Wait for 90s running + 60s retention, inspecting around each boundary.
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs inspect /tmp/lifecycle.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/lifecycle.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs network-timeout /tmp/lifecycle.json
 
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs init /tmp/oma-native-recovery.json
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs exercise /tmp/oma-native-recovery.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs init /tmp/recovery.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs exercise /tmp/recovery.json
 # Resume promptly, before the 60s paused retention expires.
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs resume /tmp/oma-native-recovery.json
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/oma-native-recovery.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs resume /tmp/recovery.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/recovery.json
 
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs init-failure /tmp/oma-native-readiness.json
-# This intentionally reports a create error and exits nonzero. Always follow with cleanup.
-node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/oma-native-readiness.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs init-failure /tmp/readiness.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/readiness.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs init-cancel /tmp/cancellation.json
+# Observe beyond the 10s server claim budget, then clean up.
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs inspect /tmp/cancellation.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/cancellation.json
+
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs init /tmp/delayed-pause.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs delay-pause /tmp/delayed-pause.json
+# Inspect after the deadline to observe platform deletion before explicit cleanup.
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs inspect /tmp/delayed-pause.json
+node deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/delayed-pause.json
 ```
 
-Cleanup discovers lost-response resources by exact run marker and uses direct
-kill only after rechecking the UID and marker. A kill acknowledgement alone is
-not reported as complete deletion. If asynchronous removal is still pending,
-cleanup exits nonzero; inspect or repeat cleanup until confirmed. A failed
-observation is not permission to clear a resource identity.
+`init-failure`/`init-cancel` intentionally exit nonzero; always clean up afterward.
+The snapshot overlap is bounded, creates local test data, and does not renew the
+resource. Cleanup uses direct kill with marker/UID verification and reports
+incomplete until resource absence is confirmed. Repeat cleanup when asynchronous
+removal is still pending; an acknowledgement alone is not successful deletion.
 
-The 60/90-second claim/readiness settings and 185-second request timeout are
-experimental budgets based on the existing client/ALB budget, not a product
-cold-start SLA. The failed-readiness case intentionally uses much shorter budgets.
+Workspace phases must use `tsx` to import the actual mount and OSS Store contracts:
 
-## Still required before #217 passes
+```sh
+pnpm --dir server --filter @oma-server/api exec tsx ../../../deploy/scripts/verify-native-sandbox-lifecycle.mjs init-workspace /tmp/workspace.json
+# Wait for Paused, but not the end of retention.
+pnpm --dir server --filter @oma-server/api exec tsx ../../../deploy/scripts/verify-native-sandbox-lifecycle.mjs resume-workspace /tmp/workspace.json
+# Wait for native deletion; rebuild refuses while the previous resource still exists.
+pnpm --dir server --filter @oma-server/api exec tsx ../../../deploy/scripts/verify-native-sandbox-lifecycle.mjs rebuild-workspace /tmp/workspace.json
+pnpm --dir server --filter @oma-server/api exec tsx ../../../deploy/scripts/verify-native-sandbox-lifecycle.mjs delete-command /tmp/workspace.json
+pnpm --dir server --filter @oma-server/api exec tsx ../../../deploy/scripts/verify-native-sandbox-lifecycle.mjs cleanup /tmp/workspace.json
+```
 
-- Resolve and verify the actual-pause retention anchor, including delayed pause.
-- Verify mounted OSS Workspace writes across pause, deletion and reconstruction;
-  the `/tmp` command marker does not provide this evidence.
-- Exercise client cancellation/disconnection during creation and observe that no
-  late replacement attempts continue after cancellation.
-- Distinguish injected control-plane network timeout from NotFound, and exercise
-  deletion during a live command stream. The paused-command SDK timeout above is
-  not a controlled network-timeout test.
-- Calibrate production claim/readiness budgets using mounted cold starts. The
-  measured happy creates were warm claims, not cold starts.
+The first live rebuild invocation was intentionally refused because deletion had
+not yet completed; a later attempt succeeded. Both are retained in the evidence.
+Scripts collect facts; a zero exit from an observation is **not** a pass for the
+entire #217 gate. Evaluate the recorded behavior against the issue contract.
 
-#218–#222 implementation and integrated acceptance are intentionally pending the
-capability gate. None of their acceptance criteria are claimed as delivered.
+## Remaining qualification after the platform fix
+
+The 185s client budget comes from the existing ALB/client configuration. Warm
+creates measured 307–907ms; mounted creates/rebuilds were also warm. Experimental
+60/90s or mounted 150/150s claim/readiness budgets are not a cold-start SLA. Once
+the retention defect is fixed, calibrate with actual mounted cold starts and
+repeat this gate before enabling #218–#222. This run does not certify 24-hour
+production behavior merely by extrapolating these shortened tests.
 
 ## Local verification
 
-- `node --check deploy/scripts/verify-native-sandbox-lifecycle.mjs`
+- `node --check deploy/scripts/verify-native-sandbox-lifecycle.mjs` passed.
 - Sandbox package typecheck passed.
 - Full Sandbox package test suite: **5 files, 107 tests passed**.
-- Application behavior and database schema are unchanged; other package suites
-  were not run for this evidence-only change.
+- Evidence JSON parsed and cleanup flags checked. No application behavior or
+  schema changed; other package suites were not run for this verification change.
