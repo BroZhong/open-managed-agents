@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderUI, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import type { FileSource } from "@/lib/file-source";
 
 const mockedSources = vi.hoisted(() => new Map<string, unknown>());
@@ -20,8 +22,15 @@ vi.mock("@/lib/file-source", async (importOriginal) => {
 
 import { WorkspacePanel } from "./workspace-panel";
 
+const clients: QueryClient[] = [];
+function render(element: ReactElement, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  clients.push(client);
+  return renderUI(element, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+}
+
 afterEach(() => {
   cleanup();
+  clients.splice(0).forEach((client) => client.clear());
   mockedSources.clear();
   vi.restoreAllMocks();
 });
@@ -178,4 +187,106 @@ it("reveals linked files through collapsed folders and search, including repeate
   view.rerender(<WorkspacePanel workspaceId="workspace-linked" refreshKey={0} fileSelection={{ path: "novel/reviews/check.txt", nonce: 2 }} />);
   await screen.findByText("Content of novel/reviews/check.txt");
   expect(screen.getByRole("button", { name: /check\.txt/ }).getAttribute("aria-current")).toBe("true");
+});
+
+function cachedSource() {
+  const list = vi.fn(async () => [{ path: "cached.txt", isDir: false }]);
+  mockedSources.set("cached", {
+    capabilities: { hierarchy: "nested", idleGated: false },
+    list,
+    read: async () => ({ path: "cached.txt", text: "preview", contentType: "text/plain", size: 7, isBinary: false }),
+  } satisfies FileSource);
+  return list;
+}
+
+it("reuses a fresh Workspace listing across panel remounts", async () => {
+  const list = cachedSource();
+  const client = new QueryClient();
+  const first = render(<WorkspacePanel workspaceId="cached" refreshKey={0} />, client);
+  await screen.findByText("cached.txt");
+  first.unmount();
+  render(<WorkspacePanel workspaceId="cached" refreshKey={0} />, client);
+  expect(screen.getByText("cached.txt")).toBeTruthy();
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(1);
+});
+
+it("shows stale cached files immediately while one background read is pending", async () => {
+  const list = cachedSource();
+  const client = new QueryClient();
+  client.setQueryData(["workspace-files", "cached"], [{ path: "old.txt", isDir: false }], { updatedAt: Date.now() - 60_000 });
+  let finish!: (nodes: { path: string; isDir: boolean }[]) => void;
+  list.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  render(<WorkspacePanel workspaceId="cached" refreshKey={0} />, client);
+  expect(screen.getByText("old.txt")).toBeTruthy();
+  expect(list).toHaveBeenCalledTimes(1);
+  await act(async () => { finish([{ path: "new.txt", isDir: false }]); });
+  expect(await screen.findByText("new.txt")).toBeTruthy();
+});
+
+it("defers hidden Workspace reads and refreshes when revealed", async () => {
+  const list = cachedSource();
+  const view = render(<WorkspacePanel workspaceId="cached" refreshKey={0} active={false} />);
+  await act(async () => {});
+  expect(list).not.toHaveBeenCalled();
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={0} active />);
+  await screen.findByText("cached.txt");
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={1} active={false} />);
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(1);
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={1} active />);
+  await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+});
+
+it("reloads the selected preview after a successful Turn refresh", async () => {
+  const list = cachedSource();
+  let text = "before";
+  const source = mockedSources.get("cached") as FileSource;
+  source.read = async () => ({ path: "cached.txt", text, contentType: "text/plain", size: text.length, isBinary: false });
+  const view = render(<WorkspacePanel workspaceId="cached" refreshScope="a" refreshKey={0} />);
+  fireEvent.click(await screen.findByText("cached.txt"));
+  await screen.findByText("before");
+  text = "after";
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshScope="a" refreshKey={1} />);
+  await screen.findByText("after");
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshScope="b" refreshKey={0} />);
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(2);
+});
+
+it("deduplicates concurrent observers for the same Workspace", async () => {
+  const list = cachedSource();
+  let finish!: (nodes: { path: string; isDir: boolean }[]) => void;
+  list.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+  render(<><WorkspacePanel workspaceId="cached" refreshKey={0} /><WorkspacePanel workspaceId="cached" refreshKey={0} /></>);
+  expect(list).toHaveBeenCalledTimes(1);
+  await act(async () => { finish([{ path: "shared.txt", isDir: false }]); });
+  await waitFor(() => expect(screen.getAllByText("shared.txt")).toHaveLength(2));
+});
+
+it("fences a pre-Turn initial read so it cannot overwrite the refreshed list", async () => {
+  const list = cachedSource();
+  let finishOld!: (nodes: { path: string; isDir: boolean }[]) => void;
+  list.mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }));
+  const view = render(<WorkspacePanel workspaceId="cached" refreshKey={0} />);
+  expect(list).toHaveBeenCalledTimes(1);
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshKey={1} />);
+  await screen.findByText("cached.txt");
+  await act(async () => { finishOld([{ path: "obsolete.txt", isDir: false }]); });
+  expect(screen.queryByText("obsolete.txt")).toBeNull();
+  expect(list).toHaveBeenCalledTimes(2);
+});
+
+it("finishes an in-flight linked preview when the owning Session changes", async () => {
+  cachedSource();
+  const source = mockedSources.get("cached") as FileSource;
+  let finish!: (content: Awaited<ReturnType<FileSource["read"]>>) => void;
+  source.read = vi.fn(() => new Promise<Awaited<ReturnType<FileSource["read"]>>>((resolve) => { finish = resolve; }));
+  const view = render(<WorkspacePanel workspaceId="cached" refreshScope="a" refreshKey={0} />);
+  await screen.findByText("cached.txt");
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshScope="a" refreshKey={0} fileSelection={{ path: "cached.txt", nonce: 1 }} />);
+  await waitFor(() => expect(source.read).toHaveBeenCalledTimes(1));
+  view.rerender(<WorkspacePanel workspaceId="cached" refreshScope="b" refreshKey={0} />);
+  await act(async () => { finish({ path: "cached.txt", text: "loaded preview", contentType: "text/plain", size: 14, isBinary: false }); });
+  await screen.findByText("loaded preview");
 });

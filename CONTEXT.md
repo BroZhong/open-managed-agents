@@ -217,6 +217,15 @@ with a separate cursor and Show more control. Loading one group does not
 expand another; collapsed Workspaces do not request their Session histories.
 The Agent detail page retains its aggregate non-Loop Session list.
 
+The Workspace file panel has a Workspace-scoped lifetime, independent of the
+Session composer and event projection. Same-Workspace Session navigation retains
+its file selection, directory state and drafts. File lists use a 30-second shared
+query cache; stale cached lists remain visible during background revalidation.
+Hidden panels defer reads. Turn completion and file mutations refresh the list;
+failed reads retain the last confirmed tree and preview. Explicit refreshes fence
+reads begun before the change. File content and signed URLs are not persisted in
+the list cache.
+
 ## Workspace file API
 
 Workspace files are accessed through `/v1/workspaces/{id}/files`, using the

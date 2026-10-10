@@ -155,6 +155,7 @@ function renderPage() {
   );
   return {
     ...result,
+    queryClient,
     navigate: (sessionId: string) => router.navigate(`/sessions/${sessionId}`),
   };
 }
@@ -373,3 +374,58 @@ it.each([
     expect(queued[OTHER_SESSION_ID] ?? []).toEqual([]);
   },
 );
+
+it("preserves the Workspace and its search when switching Sessions in the same Workspace", async () => {
+  const view = renderPage();
+  const search = await screen.findByRole("textbox", { name: "Search files" });
+  await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
+  fireEvent.change(search, { target: { value: "notes" } });
+  const listCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/workspaces/ws_1/files")).length;
+  expect(listCalls()).toBe(1);
+  await act(async () => { await view.navigate(OTHER_SESSION_ID); });
+  expect(screen.getByRole("textbox", { name: "Search files" })).toBe(search);
+  expect(search).toHaveProperty("value", "notes");
+  await waitFor(() => expect(screen.getByPlaceholderText("Send a message...")).toBeTruthy());
+  expect(listCalls()).toBe(1);
+});
+
+it("keeps typing and focus intact while a Workspace listing is pending and after it resolves", async () => {
+  const originalFetch = fetch;
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/workspaces/ws_1/files")) return new Promise<Response>((resolve) => { finish = resolve; });
+    return originalFetch(input, init);
+  }));
+  renderPage();
+  const composer = await screen.findByPlaceholderText("Send a message...");
+  composer.focus();
+  fireEvent.change(composer, { target: { value: "继续输入中文 draft" } });
+  expect(composer).toHaveProperty("disabled", false);
+  expect(document.activeElement).toBe(composer);
+  await act(async () => {
+    finish(new Response(JSON.stringify({ data: [{ path: "ready.txt", size: 3, updated_at: null }] })));
+  });
+  await screen.findByText("ready.txt");
+  expect(screen.getByPlaceholderText("Send a message...")).toBe(composer);
+  expect(composer).toHaveProperty("value", "继续输入中文 draft");
+  expect(document.activeElement).toBe(composer);
+});
+
+it("preserves the Workspace through an uncached Session metadata read", async () => {
+  const view = renderPage();
+  const search = await screen.findByRole("textbox", { name: "Search files" });
+  fireEvent.change(search, { target: { value: "keep this" } });
+  view.queryClient.removeQueries({ queryKey: ["sessions", OTHER_SESSION_ID], exact: true });
+  const originalFetch = fetch;
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith(`/sessions/${OTHER_SESSION_ID}`)) return new Promise<Response>((resolve) => { finish = resolve; });
+    return originalFetch(input, init);
+  }));
+  await act(async () => { await view.navigate(OTHER_SESSION_ID); });
+  expect(search.isConnected).toBe(true);
+  expect(screen.queryByRole("textbox", { name: "Search files" })).toBeNull();
+  await act(async () => { finish(new Response(JSON.stringify(otherSession))); });
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Search files" })).toBe(search));
+  expect(search).toHaveProperty("value", "keep this");
+});

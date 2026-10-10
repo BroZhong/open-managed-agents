@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { ChildSessionConversation } from "@/components/child-session-conversatio
 import type { DelegationExecution } from "@/lib/delegations";
 import { useThinkingOptions } from "@/lib/hooks/use-thinking-options";
 import { useAgent } from "@/lib/hooks/use-agents";
-import { useSession, useSessionThinking } from "@/lib/hooks/use-sessions";
+import { useSession, useSessionThinking, type Session } from "@/lib/hooks/use-sessions";
 import { useWorkspaces } from "@/lib/hooks/use-workspaces";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
 import { useSendMessage } from "@/lib/hooks/use-send-message";
@@ -36,30 +36,89 @@ type ChildTab = { execution: DelegationExecution; label: string };
 
 export default function SessionDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
-  // Route parameter changes reuse the page. Give each Session its own composer,
-  // queue observer, and event stream so none survive into another one.
-  return <SessionDetail key={id} id={id} />;
+  const navigate = useNavigate();
+  const { data: session, isLoading: sessionLoading, isError: sessionError, refetch: refetchSession } = useSession(id);
+  const { data: workspaces = [] } = useWorkspaces();
+  const stream = useSessionEvents(id);
+  // Keep the Workspace mounted through metadata reads, but hide it until the
+  // destination Session confirms ownership. Never carry Session state with it.
+  const [lastWorkspaceId, setLastWorkspaceId] = useState<string>();
+  if (session && session.workspaceId !== lastWorkspaceId) setLastWorkspaceId(session.workspaceId);
+  const workspaceId = session?.workspaceId ?? lastWorkspaceId;
+  const [selection, setSelection] = useState<{ sessionId: string; path: string; nonce: number }>();
+  const [selectionSessionId, setSelectionSessionId] = useState(id);
+  if (selectionSessionId !== id) {
+    setSelectionSessionId(id);
+    setSelection(undefined);
+  }
+  const selectionNonce = useRef(0);
+  const openWorkspaceFile = useCallback((path: string) => {
+    setSelection({ sessionId: id, path, nonce: ++selectionNonce.current });
+  }, [id]);
+  const fileSelection = selection?.sessionId === id ? selection : undefined;
+  const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
+  const effectiveStatus = session?.status === "terminated" ? "terminated" : stream.status === "running" || stream.status === "waiting" ? stream.status : (session?.status ?? "idle");
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Header */}
+      <div className="session-header session-detail-header">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Back to Agent"
+          onClick={() =>
+            navigate(session ? `/agents/${session.agentId}` : "/agents")
+          }
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <div className="session-heading">
+          <span className="session-title" title={session?.title || id}>
+            {session?.title || truncatedId}
+          </span>
+          {session?.agent && (
+            <>
+              <span className="text-[var(--color-border)]">|</span>
+              <span className="session-agent-name">
+                {session.agent.name}
+              </span>
+            </>
+          )}
+          <StatusBadge status={effectiveStatus as "idle" | "running" | "waiting" | "terminated"} />
+        </div>
+        {session && <SessionShareDialog key={id} sessionId={id} title={session.title || id} events={stream.events} loading={stream.isHistoryLoading} loadError={stream.historyError} />}
+      </div>
+
+      <SplitWorkbench
+        revealWorkspaceKey={fileSelection?.nonce}
+        workspace={(visible) => <div style={{ display: !session || sessionError ? "none" : "contents" }}>
+          {workspaceId && <WorkspacePanel workspaceId={workspaceId} workspaceName={workspaces.find((workspace) => workspace.id === workspaceId)?.name} active={visible && !!session && !sessionError} refreshScope={id} refreshKey={stream.fileChange.nonce} fileSelection={fileSelection} />}
+        </div>}
+        session={sessionLoading ? <SessionLoading /> : sessionError || !session ? <div role="alert" className="p-6 text-center">
+          Could not load Session. <button className="underline" onClick={() => void refetchSession()}>Retry</button>
+        </div> : <SessionConversation key={id} id={id} session={session} stream={stream} openWorkspaceFile={openWorkspaceFile} />}
+      />
+    </div>
+  );
 }
 
-function SessionDetail({ id }: { id: string }) {
-  const navigate = useNavigate();
+function SessionConversation({ id, session, stream, openWorkspaceFile }: {
+  id: string;
+  session: Session;
+  stream: ReturnType<typeof useSessionEvents>;
+  openWorkspaceFile: (path: string) => void;
+}) {
   const location = useLocation();
   const focusToolUseId = location.hash.startsWith("#tool-") ? decodeURIComponent(location.hash.slice(6)) : undefined;
-  const { data: session, isLoading: sessionLoading, isError: sessionError, refetch: refetchSession } = useSession(id);
-  const { data: currentAgent } = useAgent(session?.agentId ?? "");
+  const { data: currentAgent } = useAgent(session.agentId);
   const thinkingMutation = useSessionThinking(id);
   const composerAgent = session?.loopId ? session.agent : currentAgent ?? session?.agent;
   const thinkingOptions = useThinkingOptions(id, composerAgent?.model, composerAgent?.runtime);
-  const { data: workspaces = [] } = useWorkspaces();
   const { data: equippedSkills = [] } = useAgentSkills(session?.agentId ?? "");
-  const { events, activeDeltas, status, fileChange, turnLifecycleNonce, isHistoryLoading, historyError } =
-    useSessionEvents(id);
+  const { events, activeDeltas, status, turnLifecycleNonce, isHistoryLoading, historyError } = stream;
   const { send, isPending } = useSendMessage(id);
   const { interrupt, isPending: isInterrupting, requestAccepted: interruptRequested } = useInterrupt(id);
-  const [fileSelection, setFileSelection] = useState<{ path: string; nonce: number }>();
-  const openWorkspaceFile = useCallback((path: string) => {
-    setFileSelection((previous) => ({ path, nonce: (previous?.nonce ?? 0) + 1 }));
-  }, []);
   const [activeTab, setActiveTab] = useState("conversation");
   const [childTabState, setChildTabState] = useState<{ tabs: ChildTab[]; next: number }>({ tabs: [], next: 1 });
   const childTabs = childTabState.tabs;
@@ -94,94 +153,49 @@ function SessionDetail({ id }: { id: string }) {
     await interrupt().catch(() => false);
   }, [interrupt, isInterrupting]);
 
-  const truncatedId = id.length > 8 ? `${id.slice(0, 8)}...` : id;
-  const effectiveTurnStatus = session?.status === "terminated" ? "idle" : status;
-  const effectiveStatus = session?.status === "terminated" ? "terminated" : status === "running" || status === "waiting" ? status : (session?.status ?? "idle");
-
-  if (sessionLoading) return <SessionLoading />;
-  if (sessionError || !session) return <div role="alert" className="p-6 text-center">
-    Could not load Session. <button className="underline" onClick={() => void refetchSession()}>Retry</button>
-  </div>;
-
+  const effectiveTurnStatus = session.status === "terminated" ? "idle" : status;
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="session-header session-detail-header">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Back to Agent"
-          onClick={() =>
-            navigate(session ? `/agents/${session.agentId}` : "/agents")
-          }
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div className="session-heading">
-          <span className="session-title" title={session?.title || id}>
-            {session?.title || truncatedId}
-          </span>
-          {session?.agent && (
-            <>
-              <span className="text-[var(--color-border)]">|</span>
-              <span className="session-agent-name">
-                {session.agent.name}
-              </span>
-            </>
-          )}
-          <StatusBadge status={effectiveStatus as "idle" | "running" | "waiting" | "terminated"} />
-        </div>
-        {session && <SessionShareDialog key={id} sessionId={id} title={session.title || id} events={events} loading={isHistoryLoading} loadError={historyError} />}
-      </div>
-
+    <>
       {interruptRequested && (status === "running" || status === "waiting") && <p role="status" className="px-6 py-2 text-xs">Interrupt requested. Waiting for the Turn to stop.</p>}
-      <SplitWorkbench
-        revealWorkspaceKey={fileSelection?.nonce}
-        workspace={session && <WorkspacePanel workspaceId={session.workspaceId} workspaceName={workspaces.find((workspace) => workspace.id === session.workspaceId)?.name} refreshKey={fileChange.nonce} fileSelection={fileSelection} />}
-        session={
-          <>
-            <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
-              <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
-              <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Trajectry{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
-              {childTabs.map(({ execution, label }) => <div key={execution.childId} className="flex shrink-0 items-center" title={execution.prompt}>
-                <TabButton active={activeTab === execution.childId} onClick={() => setActiveTab(execution.childId)}>{label}</TabButton>
-                <button aria-label={`Close ${label}`} className="mr-2 rounded p-1 text-[var(--color-fg-subtle)] hover:bg-[var(--color-bg-muted)]" onClick={() => closeChildSession(execution.childId)}><X className="h-3 w-3" /></button>
-              </div>)}
-            </div>
-            <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
-              <div className="min-h-0 flex-1 overflow-hidden">
-                <ConversationView loading={isHistoryLoading} loadError={historyError} resources={session ? { agentId: session.agentId, skills: equippedSkills, onOpenWorkspacePath: openWorkspaceFile } : undefined} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
-              </div>
-              <MessageInput
-                onSend={send}
-                sending={isPending}
-                settingsPending={thinkingMutation.isPending}
-                queuedInput={queuedInput}
-                hasMoreQueuedInput={hasMoreQueuedInput}
-                skills={equippedSkills}
-                disabled={session?.status === "terminated"}
-                model={composerAgent?.model}
-                thinkingOptions={thinkingOptions.data}
-                thinkingOptionsLoading={thinkingOptions.isFetching}
-                onRetryThinkingOptions={() => void thinkingOptions.refetch()}
-                thinking={session.thinking}
-                agentThinking={composerAgent?.thinking}
-                onThinkingChange={composerAgent?.runtime === "pi-agent" ? thinkingMutation.mutateAsync : undefined}
-                running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
-                onInterrupt={handleInterrupt}
-              />
-              <SessionUsageFooter events={events} />
-            </div>
-            <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
-              {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TimelineView events={events} sessionId={id} />}
-            </div>
-            {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
-              <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />
-            </div>)}
-          </>
-        }
-      />
-    </div>
+      <div className="session-tabs overflow-x-auto" aria-label="Session tabs">
+        <TabButton active={activeTab === "conversation"} onClick={() => setActiveTab("conversation")}>Conversation</TabButton>
+        <TabButton active={activeTab === "timeline"} onClick={() => setActiveTab("timeline")}>Trajectry{events.length > 0 ? ` (${events.length})` : ""}</TabButton>
+        {childTabs.map(({ execution, label }) => <div key={execution.childId} className="flex shrink-0 items-center" title={execution.prompt}>
+          <TabButton active={activeTab === execution.childId} onClick={() => setActiveTab(execution.childId)}>{label}</TabButton>
+          <button aria-label={`Close ${label}`} className="mr-2 rounded p-1 text-[var(--color-fg-subtle)] hover:bg-[var(--color-bg-muted)]" onClick={() => closeChildSession(execution.childId)}><X className="h-3 w-3" /></button>
+        </div>)}
+      </div>
+      <div className="session-conversation-pane" hidden={activeTab !== "conversation"} inert={activeTab !== "conversation"}>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ConversationView loading={isHistoryLoading} loadError={historyError} resources={session ? { agentId: session.agentId, skills: equippedSkills, onOpenWorkspacePath: openWorkspaceFile } : undefined} sessionId={id} onOpenExecution={openExecution} focusToolUseId={focusToolUseId} events={events} activeDeltas={activeDeltas} sessionStatus={effectiveTurnStatus} />
+        </div>
+        <MessageInput
+          onSend={send}
+          sending={isPending}
+          settingsPending={thinkingMutation.isPending}
+          queuedInput={queuedInput}
+          hasMoreQueuedInput={hasMoreQueuedInput}
+          skills={equippedSkills}
+          disabled={session?.status === "terminated"}
+          model={composerAgent?.model}
+          thinkingOptions={thinkingOptions.data}
+          thinkingOptionsLoading={thinkingOptions.isFetching}
+          onRetryThinkingOptions={() => void thinkingOptions.refetch()}
+          thinking={session.thinking}
+          agentThinking={composerAgent?.thinking}
+          onThinkingChange={composerAgent?.runtime === "pi-agent" ? thinkingMutation.mutateAsync : undefined}
+          running={effectiveTurnStatus === "running" || effectiveTurnStatus === "waiting"}
+          onInterrupt={handleInterrupt}
+        />
+        <SessionUsageFooter events={events} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== "timeline"} inert={activeTab !== "timeline"}>
+        {isHistoryLoading ? <SessionLoading /> : historyError ? <p role="alert" className="p-6">{historyError}</p> : <TimelineView events={events} sessionId={id} />}
+      </div>
+      {childTabs.map(({ execution, label }) => <div key={execution.childId} aria-label={`${label} conversation`} className="min-h-0 flex-1 overflow-hidden" hidden={activeTab !== execution.childId} inert={activeTab !== execution.childId}>
+        <ChildSessionConversation onOpenExecution={openExecution} onOpenWorkspaceFile={openWorkspaceFile} sessionId={execution.childId} workspaceId={session?.workspaceId} />
+      </div>)}
+    </>
   );
 }
 

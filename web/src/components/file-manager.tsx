@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import {
   RefreshCw,
@@ -59,11 +59,20 @@ import {
  */
 export interface FileManagerProps {
   source: FileSource;
+  /** Optional shared listing; other file domains retain local ownership. */
+  listing?: {
+    nodes: FileNode[] | undefined;
+    loading: boolean;
+    active: boolean;
+    error: Error | null;
+    refresh: () => Promise<FileNode[]>;
+  };
   fileSelection?: { path: string; nonce: number };
   /** Injected by the host page (from its existing SSE). Not subscribed here. */
   turnStatus: TurnStatus;
   /** Bumped by the host on a file-change SSE event / turn end to force a refetch. */
   refreshKey?: number;
+  refreshScope?: string;
   /** Copy shown above the tree when it is empty. */
   emptyHint?: string;
   presentation?: "default" | "workbench";
@@ -107,7 +116,7 @@ function useFileDrop(onFiles?: (input: UploadInput) => void) {
   };
 }
 
-function TreeRow({
+const TreeRow = memo(function FileTreeRow({
   node,
   depth,
   selectedPath,
@@ -194,7 +203,7 @@ function TreeRow({
         ))}
     </>
   );
-}
+});
 
 function TreeKindIcon({ kind }: { kind: MediaKind }) {
   const c = "h-3.5 w-3.5 flex-shrink-0 text-[var(--color-fg-subtle)]";
@@ -597,7 +606,7 @@ function writeErrorMessage(err: unknown): string {
   return isLockedError(err) ? WRITE_LOCKED_RETRY : (err as Error).message;
 }
 
-export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0, emptyHint, presentation = "default", rootLabel = "Workspace", selectionHint = "Browse your Workspace to preview or edit a file alongside the Session." }: FileManagerProps) {
+export function FileManager({ source, listing, fileSelection, turnStatus, refreshKey = 0, refreshScope, emptyHint, presentation = "default", rootLabel = "Workspace", selectionHint = "Browse your Workspace to preview or edit a file alongside the Session." }: FileManagerProps) {
   const workbench = presentation === "workbench";
   const managerRef = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(managerRef, 520);
@@ -624,9 +633,16 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
   }, []);
   useEffect(() => () => invalidateRead(), [source, invalidateRead]);
   const scrolledRequest = useRef<number | undefined>(undefined);
-  const [nodes, setNodes] = useState<FileNode[]>([]);
-  const [listLoading, setListLoading] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
+  const [localNodes, setNodes] = useState<FileNode[]>([]);
+  const [localListLoading, setListLoading] = useState(false);
+  const [localListError, setListError] = useState<string | null>(null);
+
+  const nodes = listing?.nodes ?? localNodes;
+  const listLoading = listing ? listing.loading : localListLoading;
+  const listError = listing ? listing.error?.message : localListError;
+  const refreshList = listing?.refresh;
+  const managedListing = !!listing;
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [uploadDir, setUploadDir] = useState("");
@@ -652,21 +668,23 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
   const nested = source.capabilities.hierarchy === "nested" && actions.showDirs;
 
   const refresh = useCallback(async (): Promise<FileNode[] | null> => {
-    setListLoading(true);
-    setListError(null);
+    if (!refreshList) {
+      setListLoading(true);
+      setListError(null);
+    }
     setSaved(false);
     try {
-      const nextNodes = await source.list();
+      const nextNodes = await (refreshList ? refreshList() : source.list());
       nodesRef.current = nextNodes;
-      setNodes(nextNodes);
+      if (!refreshList) setNodes(nextNodes);
       return nextNodes;
     } catch (err) {
-      setListError((err as Error).message);
+      if (!refreshList) setListError((err as Error).message);
       return null;
     } finally {
-      setListLoading(false);
+      if (!refreshList) setListLoading(false);
     }
-  }, [source]);
+  }, [source, refreshList]);
 
   const revealPath = useCallback((path: string, directory: boolean) => {
     setSearch("");
@@ -727,18 +745,22 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
     invalidateRead();
     // Refresh first so a directory created by the latest Turn is classified
     // from the current listing before attempting any file read.
-    void source.list().then(async (nextNodes) => {
+    void (refreshList ? refreshList() : source.list()).then(async (nextNodes) => {
       if (cancelled) return;
       nodesRef.current = nextNodes;
-      setNodes(nextNodes);
-      setListError(null);
+      if (!refreshList) {
+        setNodes(nextNodes);
+        setListError(null);
+      }
       revealPath(fileSelection.path, isDirectoryPath(fileSelection.path, nextNodes));
       await openFile(fileSelection.path);
     }).catch((err: unknown) => {
       if (!cancelled) setListError(err instanceof Error ? err.message : "Failed to load files");
     });
-    return () => { cancelled = true; invalidateRead(); };
-  }, [fileSelection, source, openFile, revealPath, invalidateRead]);
+    // Removing a Session's reveal request must not cancel the selected
+    // Workspace preview. New selections and source teardown cancel it instead.
+    return () => { cancelled = true; };
+  }, [fileSelection, source, refreshList, openFile, revealPath, invalidateRead]);
 
   useEffect(() => {
     if (!fileSelection || scrolledRequest.current === fileSelection.nonce) return;
@@ -767,19 +789,27 @@ export function FileManager({ source, fileSelection, turnStatus, refreshKey = 0,
     [openFile, refresh, selectedPath],
   );
 
-  // A new source or Host refresh pulse is one atomic tree + selected-content
-  // refresh. `refreshSelected` is deliberately omitted: selecting a file changes
-  // that callback, but must not itself trigger a second network reload.
+  // Counter owners change on Session navigation without invalidating the
+  // Workspace. Hidden panels remember a refresh until they become visible.
+  const previousRefresh = useRef({ refreshKey, refreshScope });
+  const pendingRefresh = useRef(false);
+  const listingActive = listing?.active ?? true;
   useEffect(() => {
+    const previous = previousRefresh.current;
+    previousRefresh.current = { refreshKey, refreshScope };
+    if (managedListing) {
+      if (previous.refreshScope === refreshScope && previous.refreshKey !== refreshKey) pendingRefresh.current = true;
+      if (!listingActive || !pendingRefresh.current) return;
+      pendingRefresh.current = false;
+    }
     let active = true;
     void Promise.resolve().then(() => {
       if (active) return refreshSelected();
     });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
+    // Selecting a file changes refreshSelected but must not refetch the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, refreshKey]);
+  }, [source, refreshKey, refreshScope, managedListing, listingActive]);
 
   const toggle = useCallback((path: string) => {
     setUploadDir(path);
