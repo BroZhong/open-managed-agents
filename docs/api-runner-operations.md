@@ -90,8 +90,8 @@ explicitly. The following commands are for the separately authorized release:
 
 1. Record current Host/Web images, Service selectors, active Session/Turn IDs,
    pending depth, and controlled Sandbox lifecycle configuration. Back up the
-   database. The all-bindings lifecycle and its 30-second sweeper are always
-   enabled after migration 0014; no lifecycle environment variables are needed.
+   database. The native lifecycle in ADR-0019 requires migration 0020 with old Runners
+   stopped. There is no Sandbox sweeper or lifecycle environment switch.
    The split manifest does not own these externally injected values.
 2. Apply `deploy/migrations/0015_api_runner_split.sql` using the existing migration
    process. It adds the cleanup outbox and app-role grants, and discovers older
@@ -148,11 +148,11 @@ mix pre-split processes with split Runners. A Runner exit may produce
 `recovery_required` or the existing partial-Turn recovery error; queued unstarted
 inputs remain durable. API rollbacks do not require Runner restarts.
 
-Cleanup errors leave retryable rows. A stale lease or terminated Session is not
-proof a Sandbox operation stopped. Unknown activity records have no age timeout.
-Resolve them only using concrete execution-exit evidence and the ADR-0017 recovery
-procedure; do not delete them to make a dashboard look clean. Saved Workspace files
-and history survive termination and reclamation.
+Cleanup errors leave retryable rows. Lease loss is not execution settlement and
+does not request idle; native finite deadlines remain in force. Explicit termination
+can directly kill the resource after legitimate shared users are gone. Follow
+ADR-0019; no permanent activity table or resource sweeper remains. Saved Workspace
+files and history survive termination.
 
 
 ## Repeatable release regression
@@ -185,4 +185,4 @@ PG-backed completion while **isolated staging Redis** is stopped; rerun `basic`
 after recovery to require live deltas again. The script does not stop Redis or
 restart workloads itself. Wait for old Runner Pods to disappear before measuring
 normal termination cleanup: a task claimed by an exiting owner is an owner-loss
-case and retains unknown activity until exit is proven.
+case and preserves legitimate shared users before direct termination cleanup.

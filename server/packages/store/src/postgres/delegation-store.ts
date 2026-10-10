@@ -13,11 +13,6 @@ const tables: Record<DelegationTable, string> = { executions: "delegation_execut
 /** All writes use the same SQL transaction as existing Sessions and event queues. */
 export class PgDelegationStore extends TransactionalDelegationStore {
   constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) { super(); }
-  override async hasResourceUsers(bindingId: string): Promise<boolean> {
-    if (await super.hasResourceUsers(bindingId)) return true;
-    const result = await this.pool.query("SELECT 1 FROM sandbox_activities WHERE binding_id=$1 LIMIT 1", [bindingId]);
-    return result.rows.length > 0;
-  }
   private async checkpointRecord<R extends DelegationRecord>(record: R, decode: boolean): Promise<R> {
     if (!this.payloads || !("checkpoint" in record)) return record;
     return { ...record, checkpoint: await this.payloads.checkpoint(record.callerSessionId, record.checkpoint, decode) };
@@ -164,15 +159,15 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     await client.query("INSERT INTO events (session_id, seq, type, data, ts, session_thread_id, api_key_id, idempotency_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [sessionId, seq, input.type, JSON.stringify(data ?? null), ts, input.sessionThreadId, input.apiKeyId ?? null, input.idempotencyKey ?? null]);
     return { sessionId, seq, type: input.type, data: input.data, ts, sessionThreadId: input.sessionThreadId };
   }
-  async withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T> {
+  async withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("INSERT INTO delegation_environments (id, sandbox_id) VALUES ($1, NULL) ON CONFLICT (id) DO NOTHING", [bindingId]);
-      const row = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>("SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id = $1 FOR UPDATE", [bindingId]);
+      const row = await client.query<{ sandbox_id: string | null; reclaiming: boolean; creation_pending: boolean }>("SELECT sandbox_id, reclaiming, creation_pending FROM delegation_environments WHERE id = $1 FOR UPDATE", [bindingId]);
       if (row.rows[0].reclaiming) throw new Error('Sandbox reclamation in progress; retry input');
-      const result = await work(row.rows[0].sandbox_id);
-      await client.query("UPDATE delegation_environments SET sandbox_id = $2 WHERE id = $1", [bindingId, result.sandboxId]);
+      const result = await work(row.rows[0].sandbox_id, row.rows[0].creation_pending);
+      await client.query("UPDATE delegation_environments SET sandbox_id = $2, creation_pending = $3 WHERE id = $1", [bindingId, result.sandboxId, result.creationPending ?? row.rows[0].creation_pending]);
       await client.query("COMMIT");
       return result.value;
     } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }

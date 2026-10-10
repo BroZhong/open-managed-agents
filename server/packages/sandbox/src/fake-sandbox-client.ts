@@ -24,10 +24,11 @@ interface FakeSandbox {
   /**
    * Simulates the gateway reclaiming a sandbox after its lifetime: the handle
    * is still known here but no longer live. Ops against it fail as they would
-   * against a real reclaimed sandbox, and {@link isAlive} reports false — this
+   * against a real reclaimed sandbox, and {@link state} reports false — this
    * is the seam tests use to exercise the executor's liveness-rebuild path.
    */
   reclaimed: boolean;
+  paused?: boolean;
   createOpts: SandboxCreateOptions;
   mount?: WorkspaceMountTarget;
   mountFailure?: string;
@@ -66,6 +67,21 @@ export interface FakeSandboxClientOptions {
 export class FakeSandboxClient implements SandboxClient {
   /** All fake operations settle in-process; there is no remote command to lose. */
   hasUncertainExecution(_id: string): boolean { return false; }
+  resetExecutionUncertainty(_id: string): void {}
+  readonly deadlines: Array<{ id: string; seconds: number }> = [];
+  async setTimeout(id: string, seconds: number): Promise<void> { this.require(id); this.deadlines.push({ id, seconds }); }
+  pause(id: string): void { this.require(id).paused = true; }
+  async state(id: string): Promise<'running' | 'paused' | 'missing'> {
+    const sandbox = this.sandboxes.get(id);
+    if (!sandbox || sandbox.destroyed || sandbox.reclaimed) return 'missing';
+    return sandbox.paused ? 'paused' : 'running';
+  }
+  async reconnect(id: string, _metadata: Record<string, string>): Promise<boolean> {
+    if (await this.state(id) === 'missing') return false;
+    this.sandboxes.get(id)!.paused = false;
+    await this.setTimeout(id, 86400);
+    return true;
+  }
   readonly created: string[] = [];
   readonly destroyed: string[] = [];
   private readonly sandboxes = new Map<string, FakeSandbox>();
@@ -138,7 +154,7 @@ export class FakeSandboxClient implements SandboxClient {
   /**
    * Simulate the gateway reclaiming a live sandbox after its lifetime (test
    * helper): the handle stays known but every op against it fails and
-   * {@link isAlive} reports false, exactly like a real reclaimed sandbox. This
+   * {@link state} reports false, exactly like a real reclaimed sandbox. This
    * is how tests drive the executor's liveness-rebuild path.
    */
   reclaim(id: string): void {
@@ -183,7 +199,7 @@ export class FakeSandboxClient implements SandboxClient {
 
   /** Fault injection at the same mount verification port production uses. */
   setMountFailure(id: string, reason?: string): void {
-    this.require(id).mountFailure = reason;
+    this.sandboxes.get(id)!.mountFailure = reason;
   }
 
   setMountIdentity(id: string, target: WorkspaceMountTarget): void {
@@ -223,7 +239,7 @@ export class FakeSandboxClient implements SandboxClient {
   async readFile(id: string, path: string): Promise<string> {
     const sandbox = this.require(id);
     const file = sandbox.files.get(path);
-    if (!file) throw new Error(`readFile: no such file ${path}`);
+    if (!file) throw Object.assign(new Error(`readFile: no such file ${path}`), { code: "ENOENT" });
     return typeof file.content === "string"
       ? file.content
       : new TextDecoder().decode(file.content);
@@ -232,7 +248,7 @@ export class FakeSandboxClient implements SandboxClient {
   async readFileBytes(id: string, path: string): Promise<Uint8Array> {
     const sandbox = this.require(id);
     const file = sandbox.files.get(path);
-    if (!file) throw new Error(`readFileBytes: no such file ${path}`);
+    if (!file) throw Object.assign(new Error(`readFileBytes: no such file ${path}`), { code: "ENOENT" });
     return typeof file.content === "string"
       ? new TextEncoder().encode(file.content)
       : new Uint8Array(file.content);
@@ -286,11 +302,6 @@ export class FakeSandboxClient implements SandboxClient {
     return entries;
   }
 
-  async isAlive(id: string): Promise<boolean> {
-    const sandbox = this.sandboxes.get(id);
-    return sandbox != null && !sandbox.destroyed && !sandbox.reclaimed;
-  }
-
   async destroy(id: string): Promise<void> {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox || sandbox.destroyed) return;
@@ -331,6 +342,8 @@ export class FakeSandboxClient implements SandboxClient {
     const sandbox = this.sandboxes.get(id);
     if (!sandbox) throw new Error(`No sandbox ${id}`);
     if (sandbox.destroyed) throw new Error(`Sandbox ${id} is destroyed`);
+    if (sandbox.paused) throw new Error(`Sandbox ${id} is paused`);
+    if (sandbox.mountFailure) throw new WorkspaceMountUnavailable();
     if (sandbox.reclaimed) throw new Error(`Sandbox ${id} was reclaimed`);
     return sandbox;
   }

@@ -706,7 +706,8 @@ export class SessionRouter {
     }
     await this.delegationStore?.reconcileTerminatedExecutions(sessionId);
     const bindingId = session.delegation?.sandboxSessionId ?? session.id;
-    if (await this.delegationStore?.hasResourceUsers(bindingId)) return false;
+    // Disposal rechecks shared users under binding coordination. A confirmed
+    // missing resource can also clear an obsolete pointer despite old unknown use.
     const sandbox = this.sandboxFor(sessionId, session, session.agent, []);
     if (sandbox) await sandbox.dispose();
     this.sessions.delete(sessionId);
@@ -822,6 +823,7 @@ export class SessionRouter {
         id: bindingId,
         withLock: (work) => this.delegationStore!.withEnvironmentLock(bindingId, work),
         canReclaim: async () => !await this.delegationStore!.hasResourceUsers(bindingId),
+        canExecute: async () => (await this.sessionStore.getById(sessionId))?.status !== "terminated",
       } : undefined);
       this.sessions.set(sessionId, sandbox);
     }
@@ -1881,7 +1883,7 @@ export class SessionRouter {
                     return;
                   }
                 }
-                // An endless or stuck runtime remains unknown, never reclaimed.
+                // Unknown execution does not trigger idle; the platform retains its finite deadline.
               })().catch(error => this.reportDrainError(sessionId, error))
                 .finally(closeAbandonedIterator);
             } else {

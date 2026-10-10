@@ -83,6 +83,8 @@ export interface DelegationCommand extends DelegationCaller {
   appliedEventSeq?: number;
 }
 export interface ResourceUseLease {
+  /** Settlement is owned by the Sandbox Turn, not result publication. */
+  managedTurn?: boolean;
   sessionId: string;
   sandboxSessionId: string;
   pendingEventId: string;
@@ -97,7 +99,7 @@ export interface DelegationStore {
   getChild(tenantId: string, childId: string): Promise<Session | null>;
   getExecution(tenantId: string, executionId: string): Promise<DelegationExecution | null>;
   listExecutions(tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }): Promise<DelegationExecution[]>;
-  withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T>;
+  withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
   get(tenantId: string, callerSessionId: string, childId: string, executionId?: string): Promise<DelegationExecution | null>;
   getByPendingEventId(pendingEventId: string): Promise<DelegationExecution | null>;
   list(tenantId: string, callerSessionId: string): Promise<DelegationExecution[]>;

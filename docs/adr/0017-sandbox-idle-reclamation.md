@@ -2,10 +2,9 @@
 
 ## Status
 
-Accepted. The implementation supports all durable Session bindings by default
-when the lifecycle sweep is enabled. This supersedes the one-hour Sandbox
-lifetime assumption in ADR-0002 and ADR-0005. In the test deployment every
-durable binding is managed automatically; there is no per-binding adoption gate.
+Superseded by ADR-0019. The content below records the historical policy only;
+its infinite retention, activity table and sweeper are not supported by the new
+implementation. Do not follow its rollout or recovery instructions.
 
 ## Decision
 

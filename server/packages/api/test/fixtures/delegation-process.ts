@@ -30,15 +30,16 @@ const activities = new PgSandboxLifecycleStore(pool);
 const client = new FakeSandboxClient();
 // External cleanup fault injection has a process-independent observer.
 if (process.env.TEST_DELETE_URL) {
-  client.reconnect = async () => {};
+  const deleted = new Set<string>();
+  client.state = async id => deleted.has(id) ? 'missing' : 'running';
+  client.reconnect = async () => true;
   client.destroy = async id => {
     const response = await fetch(`${process.env.TEST_DELETE_URL}/${id}`, { method: "DELETE" });
     if (!response.ok) throw new Error("Injected gateway delete failure");
+    deleted.add(id);
   };
 }
-const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, executionActivities: {
-  begin: activity => activities.begin(activity), finish: activity => activities.finish(activity),
-} });
+const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: activities });
 const workspaceMount = { bucket: "test", agentName: "test", pvName: "test", credentialProviderName: "test" };
 const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local: true,
   artifactStore: new InMemoryArtifactStore(), skillArtifactStore: new InMemorySkillArtifactStore() };

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
@@ -118,6 +119,8 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
     if (!pg.pathname.startsWith("/oma_local")) throw new Error("Split tests require an oma_local database");
     pool = createPgPool({ connectionString: pgUrl, schema });
     stores = await createPgStores(pool, { schema });
+    const migration = await readFile(new URL("../../../../deploy/migrations/0020_native_sandbox_lifecycle.sql", import.meta.url), "utf8");
+    await pool.query(migration.replaceAll("oma.", `${schema}.`));
     const key = await stores.apiKeyStore.create("test", "split-tests");
     headers = { "x-api-key": key.rawKey, "content-type": "application/json" };
     firstApi = await start("api", 53170);
@@ -290,7 +293,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
     }
   }, 30_000);
 
-  it("two Runners retry cleanup after owner exit and retain shared or unknown execution resources", async () => {
+  it("two Runners retry cleanup after owner exit and preserve legitimate shared users", async () => {
     const deletes = new Map<string, number>();
     const gateway = createServer((req, res) => {
       const id = req.url!.slice(1); const count = (deletes.get(id) ?? 0) + 1; deletes.set(id, count);
@@ -306,7 +309,10 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
       await stores.delegationStore.withEnvironmentLock(session.id, async () => ({ sandboxId: "retry-sandbox", value: undefined }));
       await request(api1, `sessions/${session.id}`, undefined, "DELETE");
       workers.push(await fixture(override), await fixture(override));
-      await until(async () => stores.delegationStore.withEnvironmentLock(session.id, async id => ({ sandboxId: id, value: id })), id => id === null);
+      await until(async () => {
+        try { return await stores.delegationStore.withEnvironmentLock(session.id, async id => ({ sandboxId: id, value: id })); }
+        catch { return "cleanup-pending"; }
+      }, id => id === null);
       expect(deletes.get("retry-sandbox")).toBe(2);
       expect((await request(api2, `sessions/${session.id}`)).status).toBe("terminated");
 
@@ -331,8 +337,7 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
       await activities.finish(activity);
       await delay(600); expect(deletes.has("unknown-sandbox")).toBe(false);
       await request(api2, `sessions/${child.childId}`, undefined, "DELETE");
-      await delay(600); expect(deletes.has("unknown-sandbox")).toBe(false);
-      await activities.finish(childActivity);
+      // Explicit termination of the final user may directly kill unknown remote work.
       await until(async () => deletes.get("unknown-sandbox"), count => count === 1);
       await delay(300); expect(deletes.get("unknown-sandbox")).toBe(1);
     } finally {

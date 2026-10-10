@@ -1,5 +1,13 @@
 # Native Sandbox lifecycle capability gate (#217)
 
+## Subsequent accepted contract
+
+After this report, the user explicitly accepted the small pause-duration difference
+at the 24-hour scale and authorized implementation of #218–#222. The maintained
+contract is now approximately 24 hours from **pause initiation**, including pause
+operation time (ADR-0019). The historical strict-gate result and all observations
+below remain unchanged; they no longer block this approved implementation.
+
 ## Decision: failed retention contract; #218–#222 remain blocked
 
 The requested policy is 24 hours running, pause on expiry, retain for 24 hours

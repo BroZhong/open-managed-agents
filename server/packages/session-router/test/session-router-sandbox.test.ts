@@ -1147,7 +1147,7 @@ async function collectEventTypes(sub: {
 }
 
 describe("SessionRouter — Workspace availability after completed writes", () => {
-  it("retains a completed answer when the storage check fails, blocks the next Turn, then recovers without replay", async () => {
+  it("does not probe after a completed answer; verifies the next Turn and recovers without replay", async () => {
     const sandboxClient = new FakeSandboxClient();
     let adapterRuns = 0;
     const adapter: Adapter = {
@@ -1173,7 +1173,7 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     const firstTurn = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(firstTurn.filter((event) => event.type === "agent.message")).toHaveLength(1);
     expect(firstTurn.find((event) => event.type === "agent.message")?.data).toMatchObject({ content: [{ type: "text", text: "answer-1" }] });
-    expect(firstTurn.find((event) => event.type === "session.error")?.data).toMatchObject({ error: { code: "workspace_storage_error", message: expect.stringContaining("answer is retained") } });
+    expect(firstTurn.find((event) => event.type === "session.error")).toBeUndefined();
     expect(firstTurn.filter((event) => event.type === "session.turn_completed")).toHaveLength(1);
     expect(firstTurn.filter((event) => event.type === "workspace.file_change")).toHaveLength(0);
     expect((await collectEventTypes(sub))).toContain("session.status_idle");
@@ -1582,5 +1582,34 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         }],
       },
     ]);
+  });
+});
+
+describe('SessionRouter — recoverable environment faults', () => {
+  it('continues within one Turn after a paused tool failure without replaying its write', async () => {
+    const sandboxClient = new FakeSandboxClient();
+    const errors: string[] = [];
+    let runs = 0;
+    const adapter: Adapter = { async *run(input) {
+      runs++;
+      await input.toolExecutor!.writeFile('effect.txt', 'once');
+      sandboxClient.pause(sandboxClient.created[0]);
+      try { await input.toolExecutor!.writeFile('effect.txt', 'twice'); }
+      catch (error) { errors.push(String(error)); }
+      const saved = await input.toolExecutor!.readFile('effect.txt');
+      yield { id: 'continued', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: saved }] };
+    } };
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({ adapter, sandboxClient });
+    const session = await sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });
+    await enqueue(pendingEventStore, session.id, 'continue after environment recovery');
+    await router.handleNewEvent(session.id, sandboxedAgent);
+    expect(runs).toBe(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('not replayed');
+    const events = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
+    expect(events.filter(event => event.type === 'session.turn_completed')).toHaveLength(1);
+    expect(events.filter(event => event.type === 'session.turn_aborted')).toHaveLength(0);
+    expect(events.find(event => event.type === 'agent.message')?.data).toMatchObject({ content: [{ type: 'text', text: 'once' }] });
+    expect(sandboxClient.created).toHaveLength(1);
   });
 });

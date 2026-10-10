@@ -7,6 +7,7 @@ import type {
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import { SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
 import type { SandboxClient, SandboxFsAccess } from "./sandbox-client.js";
 import type { SandboxActivity, SandboxLifecycleStore } from '@oma-server/store';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -35,13 +36,10 @@ export interface EnvSpec {
 }
 
 export interface SandboxManagerDeps {
-  /** Settlement records for termination safety; does not enable idle reclamation. */
-  executionActivities?: Pick<SandboxLifecycleStore, "begin" | "finish">;
-  /** Durable lifecycle controller; every durable binding uses this store. */
+  /** Business execution/queue coordination and explicit termination only. */
   lifecycle?: SandboxLifecycleStore;
   sandboxClient: SandboxClient;
   provisionSources: Record<string, ProvisionSource>;
-  defaults?: { lifetimeSeconds?: number };
 }
 export interface SandboxDescriptor {
   sandboxId: string;
@@ -56,11 +54,12 @@ export class SandboxSessionClosed extends Error {
   }
 }
 
+class BindingCreationPending extends Error {}
+
 /** Creates independent Session resources; their OSS Workspace may be shared. */
 export interface SandboxManager {
   beginActivity?(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean>;
   finishActivity?(activity: SandboxActivity): Promise<void>;
-  sweepIdle?(): Promise<void>;
   open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession;
   list(filter?: {
     tenantId?: string;
@@ -72,7 +71,8 @@ export interface SandboxManager {
 /** Infrastructure capability supplied separately from the serializable recipe. */
 export interface SandboxEnvironmentBinding {
   id?: string;
-  withLock<T>(callback: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T>;
+  withLock<T>(callback: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  canExecute?(): Promise<boolean>;
   /** Evaluated inside withLock immediately before reclamation. */
   canReclaim?(): Promise<boolean>;
 }
@@ -96,39 +96,19 @@ export class DefaultSandboxManager implements SandboxManager {
   constructor(private readonly deps: SandboxManagerDeps) {}
   async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
     const lifecycle = this.deps.lifecycle;
-    const store = lifecycle ?? this.deps.executionActivities;
+    const store = lifecycle;
     if (!store) return false;
+    const deadline = Date.now() + 185_000;
     while (!await store.begin(activity)) {
+      if (Date.now() >= deadline) throw new Error('Sandbox termination cleanup is still pending; retry later');
       await delay(250, undefined, { signal });
     }
     return true;
   }
   async finishActivity(activity: SandboxActivity): Promise<void> {
     const lifecycle = this.deps.lifecycle;
-    const store = lifecycle ?? this.deps.executionActivities;
-    await store?.finish(activity);
-  }
-  async sweepIdle(): Promise<void> {
-    const lifecycle = this.deps.lifecycle;
-    if (!lifecycle) return;
-    const errors: unknown[] = [];
-    const bindingIds = await lifecycle.listManagedBindings();
-    for (const bindingId of bindingIds) {
-      try {
-        const ticket = await lifecycle.claimReclamation(bindingId);
-        if (!ticket) continue;
-        // Ticket commits before external I/O. A lost DB connection cannot reopen
-        // this binding while a delayed destroy is still in flight.
-        await this.deps.sandboxClient.reconnect?.(ticket.sandboxId, {});
-        await this.deps.sandboxClient.destroy(ticket.sandboxId);
-        await lifecycle.completeReclamation(ticket);
-      } catch (error) {
-        // One failed gateway deletion must not starve other known-idle bindings.
-        errors.push(error);
-      }
-    }
-    if (errors.length === 1) throw errors[0];
-    if (errors.length) throw new AggregateError(errors, 'Sandbox idle sweep failed for multiple bindings');
+    const store = lifecycle;
+    await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
   }
   open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession {
     if (this.deps.lifecycle && !binding?.id) throw new Error('Managed Sandbox lifecycle requires durable environment bindings');
@@ -148,7 +128,7 @@ export class DefaultSandboxManager implements SandboxManager {
 
 class SandboxSessionImpl implements SandboxSession {
   executionSettled(): boolean {
-    return !this.pendingCleanupId && (!this.sandboxId || !this.deps.sandboxClient.hasUncertainExecution(this.sandboxId));
+    return !this.uncertainTurn && (!this.sandboxId || !this.deps.sandboxClient.hasUncertainExecution(this.sandboxId));
   }
   readonly fileSystem: ToolFileSystem;
   private readonly target: WorkspaceMountTarget;
@@ -156,11 +136,15 @@ class SandboxSessionImpl implements SandboxSession {
   /** Targets that may contain files, including a partially failed projection. */
   private readonly projectedPaths = new Set<string>();
   private sandboxId?: string;
-  private pendingCleanupId?: string;
   /** Only an in-flight create/rebuild is shared; failed provisioning can be retried. */
   private ensuring?: Promise<string>;
   private disposing?: Promise<void>;
   private closed = false;
+  private prepared = false;
+  private generation = 0;
+  private uncertainTurn = false;
+  private creationUnconfirmed = false;
+  private recovering?: Promise<void>;
 
   constructor(
     private readonly deps: SandboxManagerDeps,
@@ -189,24 +173,25 @@ class SandboxSessionImpl implements SandboxSession {
 
     // Keep identity stable across sandbox reclamation: Pi scopes mutation
     // queues to this capability while each operation resolves the live handle.
-    const current = async (options?: ToolFileSystemOptions) => {
+    const native = <T>(options: ToolFileSystemOptions | undefined, work: (fs: ToolFileSystem) => Promise<T>) => {
       options?.signal?.throwIfAborted();
-      const id = await this.ensure();
-      options?.signal?.throwIfAborted();
-      if (!this.deps.sandboxClient.fileSystem) throw new Error("Sandbox client does not support native filesystem primitives");
-      return this.deps.sandboxClient.fileSystem(id);
+      return this.perform(async id => {
+        options?.signal?.throwIfAborted();
+        if (!this.deps.sandboxClient.fileSystem) throw new Error('Sandbox client does not support native filesystem primitives');
+        return work(this.deps.sandboxClient.fileSystem(id));
+      });
     };
     this.fileSystem = {
-      readFile: async (path, options) => (await current(options)).readFile(this.resolve(path), options),
-      writeFile: async (path, content, options) => (await current(options)).writeFile(this.resolve(path), content, options),
-      appendFile: async (path, content, options) => (await current(options)).appendFile(this.resolve(path), content, options),
-      access: async (path, mode, options) => (await current(options)).access(this.resolve(path), mode, options),
-      stat: async (path, options) => (await current(options)).stat(this.resolve(path), options),
-      lstat: async (path, options) => (await current(options)).lstat(this.resolve(path), options),
-      realpath: async (path, options) => (await current(options)).realpath(this.resolve(path), options),
-      readdir: async (path, options) => (await current(options)).readdir(this.resolve(path), options),
-      mkdir: async (path, options) => (await current(options)).mkdir(this.resolve(path), options),
-      createTempFile: async (options) => (await current(options)).createTempFile(options),
+      readFile: (path, options) => native(options, fs => fs.readFile(this.resolve(path), options)),
+      writeFile: (path, content, options) => native(options, fs => fs.writeFile(this.resolve(path), content, options)),
+      appendFile: (path, content, options) => native(options, fs => fs.appendFile(this.resolve(path), content, options)),
+      access: (path, mode, options) => native(options, fs => fs.access(this.resolve(path), mode, options)),
+      stat: (path, options) => native(options, fs => fs.stat(this.resolve(path), options)),
+      lstat: (path, options) => native(options, fs => fs.lstat(this.resolve(path), options)),
+      realpath: (path, options) => native(options, fs => fs.realpath(this.resolve(path), options)),
+      readdir: (path, options) => native(options, fs => fs.readdir(this.resolve(path), options)),
+      mkdir: (path, options) => native(options, fs => fs.mkdir(this.resolve(path), options)),
+      createTempFile: options => native(options, fs => fs.createTempFile(options)),
     };
 
 
@@ -217,32 +202,69 @@ class SandboxSessionImpl implements SandboxSession {
     opts?: ExecOptions,
   ): AsyncIterable<ExecOutputChunk> {
     const id = await this.ensure();
-    yield* this.deps.sandboxClient.exec(id, command, {
-      cwd: this.resolve(opts?.cwd ?? "."),
-      timeoutSeconds: opts?.timeoutSeconds,
-      env: opts?.env,
-      signal: opts?.signal,
-      onExit: opts?.onExit,
-    });
+    const generation = this.generation;
+    try {
+      yield* this.deps.sandboxClient.exec(id, command, {
+        cwd: this.resolve(opts?.cwd ?? '.'), timeoutSeconds: opts?.timeoutSeconds,
+        env: opts?.env, signal: opts?.signal, onExit: opts?.onExit,
+      });
+    } catch (error) { await this.operationFailed(id, generation, error); }
   }
   async readFile(path: string): Promise<string> {
-    const id = await this.ensure();
-    return this.deps.sandboxClient.readFile(id, this.resolve(path));
+    return this.perform(id => this.deps.sandboxClient.readFile(id, this.resolve(path)));
   }
   async writeFile(path: string, content: string): Promise<void> {
-    const id = await this.ensure();
-    await this.deps.sandboxClient.writeFile(id, this.resolve(path), content);
+    return this.perform(id => this.deps.sandboxClient.writeFile(id, this.resolve(path), content));
   }
   async list(globOrDir?: string): Promise<FileListEntry[]> {
+    const pattern = globOrDir?.includes('*') ? globOrDir : undefined;
+    const entries = await this.perform(id => this.deps.sandboxClient.list(id, this.resolve(pattern ? '.' : (globOrDir ?? '.'))));
+    return entries.map(entry => ({ ...entry, path: this.toRelative(entry.path) }))
+      .filter(entry => !pattern || matchGlob(pattern, entry.path));
+  }
+  private async perform<T>(operation: (id: string) => Promise<T>): Promise<T> {
     const id = await this.ensure();
-    const pattern = globOrDir?.includes("*") ? globOrDir : undefined;
-    const entries = await this.deps.sandboxClient.list(
-      id,
-      this.resolve(pattern ? "." : (globOrDir ?? ".")),
-    );
-    return entries
-      .map((entry) => ({ ...entry, path: this.toRelative(entry.path) }))
-      .filter((entry) => !pattern || matchGlob(pattern, entry.path));
+    const generation = this.generation;
+    try { return await operation(id); }
+    catch (error) { return this.operationFailed(id, generation, error); }
+  }
+  private async operationFailed(id: string, generation: number, error: unknown): Promise<never> {
+    if (this.deps.sandboxClient.hasUncertainExecution(id)) this.uncertainTurn = true;
+    // Ordinary tool errors and user Interrupt are not environment failures.
+    if (error && typeof error === 'object' && (
+      'exitCode' in error || ('name' in error && ['AbortError', 'FileNotFoundError', 'InvalidArgumentError'].includes(String(error.name))) ||
+      ('code' in error && ['ENOENT', 'EACCES', 'EPERM', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EINVAL'].includes(String(error.code)))
+    )) throw error;
+    this.uncertainTurn = true;
+    let recovered = false;
+    try {
+      if (!this.recovering && generation === this.generation) {
+        this.prepared = false;
+        this.recovering = this.recover(id).finally(() => { this.recovering = undefined; });
+      }
+      await this.recovering;
+      recovered = this.prepared;
+    } catch { /* Unknown control-plane outcomes cannot justify replacement. */ }
+    throw new Error(`Sandbox operation outcome is unconfirmed and may have side effects. The original operation was not replayed. ${recovered ? 'The environment is available for subsequent tools.' : 'Environment recovery is unconfirmed; a subsequent tool may retry preparation.'} Inspect files or external effects before deciding whether to request the operation again.`);
+  }
+  private async recover(failedId: string): Promise<void> {
+    const restore = async (storedId: string | null) => {
+      await this.assertExecutable();
+      const id = storedId ?? this.sandboxId;
+      if (!id) return { sandboxId: null, value: undefined };
+      const state = await this.deps.sandboxClient.state(id);
+      if (state === 'missing') {
+        this.sandboxId = undefined;
+        return { sandboxId: null, value: undefined };
+      }
+      // Never replace Running or unknown resources. Refresh a Running handle
+      // only after an exception; ordinary tools do not perform this I/O.
+      await this.prepareExisting(id);
+      return { sandboxId: id, value: undefined };
+    };
+    if (this.binding) await this.binding.withLock(restore);
+    else await restore(failedId);
+    // A known missing environment stays cold until the next tool requests it.
   }
 
   async prepare(
@@ -250,48 +272,54 @@ class SandboxSessionImpl implements SandboxSession {
   ): Promise<void> {
     this.assertOpen();
     this.assertProjections(projections);
-    this.projections = projections;
     if (this.ensuring) await this.ensuring;
-    this.assertOpen();
-    const refresh = async (id: string | null) => {
+    if (this.recovering) await this.recovering;
+    this.projections = projections;
+    this.prepared = false;
+    this.uncertainTurn = false;
+    const refresh = async (id: string | null, creationPending = false) => {
+      await this.assertExecutable();
+      if (creationPending) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
       this.sandboxId = id ?? undefined;
       if (!id) return { sandboxId: null, value: undefined };
-      if (await this.deps.sandboxClient.reconnect?.(id, this.metadata()) === false ||
-        !(await this.deps.sandboxClient.isAlive(id))) {
+      if (!await this.deps.sandboxClient.reconnect(id, this.metadata())) {
         this.sandboxId = undefined;
         return { sandboxId: null, value: undefined };
       }
-      await this.verify(id);
-      if (this.binding) {
-        // Only Host-managed Skill roots live under /skills. Discover old roots
-        // after restart so renamed/unequipped projections can be removed.
-        // Agents without equipped Skills need no /skills directory. Probe it
-        // read-only: the ordinary Sandbox user cannot create paths under /.
-        for (const entry of await this.deps.sandboxClient.list(id, "/skills", { missingOk: true })) {
-          const name = /^\/skills\/([^/]+)\//.exec(entry.path)?.[1];
-          if (name && name !== "." && name !== "..") this.projectedPaths.add(`/skills/${name}`);
-        }
-      }
-      for (const path of new Set([...this.projectedPaths, ...projections.map((projection) => projection.targetPath)])) {
-        await this.deps.sandboxClient.remove(id, path);
-        this.projectedPaths.delete(path);
-      }
-      await this.projectAll(id);
+      this.deps.sandboxClient.resetExecutionUncertainty(id);
+      await this.prepareExisting(id, false);
       return { sandboxId: id, value: undefined };
     };
-    if (this.binding) await this.binding.withLock(refresh);
-    else await refresh(this.sandboxId ?? null);
+    await this.withPreparationLock(refresh);
   }
-
+  private async prepareExisting(id: string, connect = true): Promise<void> {
+    if (connect && !await this.deps.sandboxClient.reconnect(id, this.metadata())) {
+      throw new Error('Sandbox disappeared during preparation; retry a subsequent tool');
+    }
+    await this.verify(id);
+    if (this.binding) {
+      for (const entry of await this.deps.sandboxClient.list(id, '/skills', { missingOk: true })) {
+        const name = /^\/skills\/([^/]+)\//.exec(entry.path)?.[1];
+        if (name && name !== '.' && name !== '..') this.projectedPaths.add(`/skills/${name}`);
+      }
+    }
+    for (const path of new Set([...this.projectedPaths, ...this.projections.map(projection => projection.targetPath)])) {
+      await this.deps.sandboxClient.remove(id, path);
+      this.projectedPaths.delete(path);
+    }
+    await this.projectAll(id);
+    this.sandboxId = id;
+    this.prepared = true;
+    this.generation++;
+  }
   async checkWorkspace(): Promise<void> {
     this.assertOpen();
-    if (this.ensuring) await this.ensuring;
-    if (!this.sandboxId) return;
-    // A vanished Sandbox leaves completed OSS writes intact, but availability
-    // cannot be claimed until the next tool operation recreates and verifies it.
-    if (!(await this.deps.sandboxClient.isAlive(this.sandboxId)))
-      throw new WorkspaceMountUnavailable();
-    await this.verify(this.sandboxId);
+    // No probe at Turn end: this cannot prove that arbitrary open handles saved.
+    if (this.uncertainTurn) throw new WorkspaceMountUnavailable();
+  }
+  private async assertExecutable(): Promise<void> {
+    this.assertOpen();
+    if (this.binding?.canExecute && !await this.binding.canExecute()) throw new SandboxSessionClosed();
   }
 
   dispose(): Promise<void> {
@@ -301,24 +329,32 @@ class SandboxSessionImpl implements SandboxSession {
       try {
         await this.ensuring;
       } catch {
-        /* Failed create cleans up its resource. */
+        /* An ambiguous create keeps its finite native deadline and durable intent. */
       }
       const lifecycle = this.deps.lifecycle;
       const bindingId = this.binding?.id;
       if (lifecycle && bindingId) {
-        const ticket = await lifecycle.claimReclamation(bindingId, true);
+        const ticket = await lifecycle.claimReclamation(bindingId);
         if (ticket) {
-          await this.deps.sandboxClient.reconnect?.(ticket.sandboxId, this.metadata());
           await this.deps.sandboxClient.destroy(ticket.sandboxId);
           await lifecycle.completeReclamation(ticket);
         }
         if (ticket) this.sandboxId = undefined;
+        else if (this.binding) await this.binding.withLock(async id => {
+          // Unknown business users may retain a pointer beyond native expiry.
+          // Control-plane NotFound is sufficient to clear that vanished resource;
+          // a Running/Paused resource remains untouched and is never resumed.
+          if (id && await this.deps.sandboxClient.state(id) === 'missing') {
+            this.sandboxId = undefined;
+            return { sandboxId: null, value: undefined };
+          }
+          return { sandboxId: id, value: undefined };
+        });
         return;
       }
       const destroy = async (id: string | null) => {
         if (this.binding?.canReclaim && !await this.binding.canReclaim()) return { sandboxId: id, value: undefined };
         if (id) {
-          await this.deps.sandboxClient.reconnect?.(id, this.metadata());
           await this.deps.sandboxClient.destroy(id);
         }
         return { sandboxId: null, value: undefined };
@@ -326,10 +362,7 @@ class SandboxSessionImpl implements SandboxSession {
       if (this.binding) await this.binding.withLock(destroy);
       else await destroy(this.sandboxId ?? null);
       this.sandboxId = undefined;
-      if (this.pendingCleanupId) {
-        await this.deps.sandboxClient.destroy(this.pendingCleanupId);
-        this.pendingCleanupId = undefined;
-      }
+
     })().catch((error) => {
       this.disposing = undefined;
       throw error;
@@ -356,59 +389,75 @@ class SandboxSessionImpl implements SandboxSession {
   }
   private async ensure(): Promise<string> {
     this.assertOpen();
-    if (!this.ensuring) {
-      const ensure = this.binding
-        ? this.binding.withLock(async (storedId) => {
-            this.sandboxId = storedId ?? undefined;
-            if (storedId && await this.deps.sandboxClient.reconnect?.(storedId, this.metadata()) === false) this.sandboxId = undefined;
-            const id = await this.ensureLive();
-            return { sandboxId: id, value: id };
-          })
-        : this.ensureLive();
-      this.ensuring = ensure.finally(() => {
-        this.ensuring = undefined;
-      });
-    }
+    if (this.recovering) await this.recovering;
+    if (this.creationUnconfirmed) throw new Error('Sandbox creation or binding commit is unconfirmed; automatic replacement is disabled');
+    if (this.prepared && this.sandboxId) return this.sandboxId;
+    if (!this.ensuring) this.ensuring = this.ensurePrepared().finally(() => { this.ensuring = undefined; });
     const id = await this.ensuring;
     this.assertOpen();
     return id;
   }
-  private async ensureLive(): Promise<string> {
-    if (this.pendingCleanupId) {
-      await this.deps.sandboxClient.destroy(this.pendingCleanupId);
-      this.pendingCleanupId = undefined;
-    }
-    if (this.sandboxId) {
-      if (await this.deps.sandboxClient.isAlive(this.sandboxId)) {
-        await this.verify(this.sandboxId);
-        return this.sandboxId;
-      }
-      const old = this.sandboxId;
-      await this.deps.sandboxClient.destroy(old);
-      this.sandboxId = undefined;
-    }
-    const managed = Boolean(this.deps.lifecycle && this.binding?.id);
-    const handle = await this.deps.sandboxClient.create({
-      image: this.spec.image,
-      env: this.spec.env,
-      ...(managed ? { neverTimeout: true } : { timeoutSeconds: this.deps.defaults?.lifetimeSeconds ?? 3600 }),
-      metadata: this.metadata(),
-    });
-    try {
-      await this.verify(handle.id);
-      this.projectedPaths.clear(); // The replacement Sandbox has no old projections.
-      await this.projectAll(handle.id);
-      this.assertOpen();
-      this.sandboxId = handle.id;
-      return handle.id;
-    } catch (error) {
+  private async withPreparationLock<T>(work: (id: string | null) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
+    if (!this.binding) return (await work(this.sandboxId ?? null)).value;
+    const deadline = Date.now() + 185_000;
+    for (;;) {
       try {
-        await this.deps.sandboxClient.destroy(handle.id);
-      } catch {
-        this.pendingCleanupId = handle.id;
+        return await this.binding.withLock(async (id, pending) => {
+          await this.assertExecutable();
+          if (pending) throw new BindingCreationPending();
+          return work(id);
+        });
+      } catch (error) {
+        if (!(error instanceof BindingCreationPending)) throw error;
+        if (Date.now() >= deadline) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
+        await delay(100);
       }
-      throw error;
     }
+  }
+  private async ensurePrepared(): Promise<string> {
+    // Commit intent before issuing create. A lost response or Runner crash must
+    // leave an explicit ambiguous binding, not permission to allocate again.
+    const reserve = async (id: string | null, creationPending = false) => {
+      await this.assertExecutable();
+      if (creationPending) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
+      if (id) {
+        if (await this.deps.sandboxClient.reconnect(id, this.metadata())) {
+          await this.prepareExisting(id, false);
+          return { sandboxId: id, value: id };
+        }
+      }
+      return { sandboxId: null, creationPending: true, value: null };
+    };
+    let existing: string | null;
+    try { existing = await this.withPreparationLock(reserve); }
+    catch (error) { this.prepared = false; throw error; }
+    if (existing) return existing;
+    this.creationUnconfirmed = true;
+    const handle = await this.deps.sandboxClient.create({
+      image: this.spec.image, env: this.spec.env,
+      timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: this.metadata(),
+    }).catch(() => { throw new Error('Sandbox creation response is unconfirmed; automatic replacement is disabled. The platform retains a finite lifetime for any allocated resource.'); });
+    const initialize = async (id: string | null) => {
+      await this.assertExecutable();
+      if (id && id !== handle.id) throw new Error('Sandbox binding changed during creation');
+      let failure: unknown;
+      try {
+        await this.verify(handle.id);
+        this.projectedPaths.clear();
+        await this.projectAll(handle.id);
+      } catch (error) { failure = error; }
+      // Retain a known finite-lived resource even on preparation failure. The
+      // next Turn can retry preparation, not allocate an untracked replacement.
+      return { sandboxId: handle.id, creationPending: false, value: failure };
+    };
+    const failure = this.binding ? await this.binding.withLock(initialize) : (await initialize(null)).value;
+    this.sandboxId = handle.id;
+    this.creationUnconfirmed = false;
+    if (failure) throw failure;
+    this.assertOpen();
+    this.prepared = true;
+    this.generation++;
+    return handle.id;
   }
   private metadata(): Record<string, string> {
     return {

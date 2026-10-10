@@ -1,4 +1,3 @@
-export { SANDBOX_IDLE_MS } from './interfaces/sandbox-lifecycle-store.js';
 export type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation } from './interfaces/sandbox-lifecycle-store.js';
 export { PgSandboxLifecycleStore } from './postgres/sandbox-lifecycle-store.js';
 export type {

@@ -25,7 +25,7 @@ const identity = (caller: DelegationCaller) => JSON.stringify([caller.tenantId, 
 const callerFilter = (caller: DelegationCaller) => ({ tenantId: caller.tenantId, callerSessionId: caller.callerSessionId, callerTurnId: caller.callerTurnId, callerToolUseId: caller.callerToolUseId });
 export abstract class TransactionalDelegationStore implements DelegationStore {
   protected abstract transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T>;
-  abstract withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T>;
+  abstract withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
   private async execution(tx: DelegationTransaction, id: string): Promise<DelegationExecution> {
     const row = (await tx.read<DelegationExecution>("executions", { id }))[0];
     if (!row) throw new Error("Delegation execution not found");
@@ -222,7 +222,8 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       command.status = "not_applied";
       await tx.put("commands", command.id, command);
     }
-    await tx.remove("resource_uses", execution.pendingEventId);
+    const use = (await tx.read<ResourceUseLease>("resource_uses", { pendingEventId: execution.pendingEventId }))[0];
+    if (!use?.managedTurn) await tx.remove("resource_uses", execution.pendingEventId);
     await tx.put("executions", execution.id, execution);
     return execution;
   }
@@ -339,6 +340,10 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
   hasResourceUsers(sandboxSessionId: string) {
     return this.transaction(async (tx) => {
       for (const use of await tx.read<ResourceUseLease>("resource_uses", { sandboxSessionId })) {
+        if (use.managedTurn) {
+          if ((await tx.sessions.getById(use.sessionId))?.status !== "terminated") return true;
+          continue;
+        }
         if (await tx.pending.ownsClaim?.(use.sessionId, use.pendingEventId, use)) return true;
         await tx.remove("resource_uses", use.pendingEventId);
       }

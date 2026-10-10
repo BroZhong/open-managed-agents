@@ -10,6 +10,7 @@ import {
 import { ExecAbortedBeforeStartError, SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import { createSandboxFileSystem } from "./sandbox-file-system.js";
+import { SANDBOX_RUNNING_SECONDS } from "./sandbox-client.js";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -81,6 +82,7 @@ export type CreateSandboxFn = (
     metadata?: Record<string, string>;
     envs?: Record<string, string>;
     timeoutMs?: number;
+    lifecycle: { onTimeout: "pause"; autoResume: false };
     requestTimeoutMs: number;
   },
 ) => Promise<E2BSandbox>;
@@ -99,7 +101,10 @@ export interface E2BSandboxClientOptions {
    * pass a fake so the client can be exercised with no network.
    */
   createSandbox?: CreateSandboxFn;
-  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number }) => Promise<E2BSandbox>;
+  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number; timeoutMs: number }) => Promise<E2BSandbox>;
+  getSandboxInfo?: (id: string) => Promise<{ state: string }>;
+  killSandbox?: (id: string) => Promise<unknown>;
+  setSandboxTimeout?: (id: string, timeoutMs: number) => Promise<void>;
   /** Slightly exceeds ALB 180s so its timeout response can reach the SDK. */
   requestTimeoutMs?: number;
   /** Host OSS readback proves the mount writes into the exact trusted prefix. */
@@ -129,6 +134,9 @@ export class E2BSandboxClient implements SandboxClient {
   private readonly defaultTemplate: string;
   private readonly createSandbox: CreateSandboxFn;
   private readonly connectSandbox: NonNullable<E2BSandboxClientOptions["connectSandbox"]>;
+  private readonly getSandboxInfo: NonNullable<E2BSandboxClientOptions["getSandboxInfo"]>;
+  private readonly killSandbox: NonNullable<E2BSandboxClientOptions["killSandbox"]>;
+  private readonly setSandboxTimeout: NonNullable<E2BSandboxClientOptions["setSandboxTimeout"]>;
   private readonly requestTimeoutMs: number;
   private readonly verifyWorkspaceProbe: E2BSandboxClientOptions["verifyWorkspaceProbe"];
   private readonly creationMetadata = new Map<string, Record<string, string>>();
@@ -160,6 +168,10 @@ export class E2BSandboxClient implements SandboxClient {
     this.connectSandbox = opts.connectSandbox ?? ((id, options) => Sandbox.connect(id, options));
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 185_000;
     this.verifyWorkspaceProbe = opts.verifyWorkspaceProbe;
+    const control = { apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs };
+    this.getSandboxInfo = opts.getSandboxInfo ?? (id => Sandbox.getInfo(id, control));
+    this.killSandbox = opts.killSandbox ?? (id => Sandbox.kill(id, control));
+    this.setSandboxTimeout = opts.setSandboxTimeout ?? ((id, timeoutMs) => Sandbox.setTimeout(id, timeoutMs, control));
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
@@ -168,13 +180,14 @@ export class E2BSandboxClient implements SandboxClient {
       requestTimeoutMs: this.requestTimeoutMs,
       apiKey: this.apiKey,
       domain: this.domain,
-      metadata: { ...opts.metadata, ...(opts.neverTimeout ? { 'e2b.agents.kruise.io/never-timeout': 'true' } : {}) },
+      metadata: { ...opts.metadata,
+        'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
+        'e2b.agents.kruise.io/claim-timeout-seconds': '150',
+        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '150',
+      },
+      lifecycle: { onTimeout: 'pause', autoResume: false },
       ...(opts.env ? { envs: opts.env } : {}),
-      // Sandbox timeout=0 is NOT unlimited on the deployed ACK gateway.
-      // Only the separately verified never-timeout extension removes expiry.
-      ...(!opts.neverTimeout && opts.timeoutSeconds != null
-        ? { timeoutMs: opts.timeoutSeconds * 1000 }
-        : {}),
+      timeoutMs: (opts.timeoutSeconds ?? SANDBOX_RUNNING_SECONDS) * 1000,
     });
     this.sandboxes.set(sandbox.sandboxId, sandbox);
     this.creationMetadata.set(sandbox.sandboxId, { ...opts.metadata });
@@ -363,27 +376,29 @@ export class E2BSandboxClient implements SandboxClient {
     return parseFindOutput(res.stdout);
   }
 
-  async isAlive(id: string): Promise<boolean> {
-    const sandbox = this.sandboxes.get(id);
-    if (!sandbox) return false; // never created here, or already destroyed.
+  resetExecutionUncertainty(id: string): void { this.uncertain.delete(id); }
+  async state(id: string): Promise<"running" | "paused" | "missing"> {
     try {
-      return await sandbox.isRunning();
+      const info = await this.getSandboxInfo(id);
+      if (info.state === 'running' || info.state === 'paused') return info.state;
+      throw new Error('Sandbox control-plane state is unknown');
     } catch (error) {
-      if (error instanceof SandboxNotFoundError) return false;
-      // A network failure is not evidence that an active Sandbox vanished.
+      if (error instanceof SandboxNotFoundError) { this.forget(id); return 'missing'; }
       throw error;
     }
   }
+  async setTimeout(id: string, seconds: number): Promise<void> {
+    await this.setSandboxTimeout(id, seconds * 1000);
+  }
 
   async reconnect(id: string, metadata: Record<string, string>): Promise<boolean> {
-    if (this.sandboxes.has(id)) return true;
     let sandbox: E2BSandbox;
     try {
       sandbox = await this.connectSandbox(id, {
-        apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs,
+        apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs, timeoutMs: SANDBOX_RUNNING_SECONDS * 1000,
       });
     } catch (error) {
-      if (error instanceof SandboxNotFoundError) return false;
+      if (error instanceof SandboxNotFoundError) { this.forget(id); return false; }
       throw error;
     }
     this.sandboxes.set(id, sandbox);
@@ -394,13 +409,16 @@ export class E2BSandboxClient implements SandboxClient {
   }
 
   async destroy(id: string): Promise<void> {
-    const sandbox = this.sandboxes.get(id);
-    if (!sandbox) return; // already gone — idempotent.
     try {
-      await sandbox.kill();
+      await this.killSandbox(id);
+      if (await this.state(id) !== 'missing') throw new Error('Sandbox deletion is not yet confirmed');
     } catch (error) {
       if (!(error instanceof SandboxNotFoundError)) throw error;
     }
+    this.forget(id);
+  }
+
+  private forget(id: string): void {
     this.sandboxes.delete(id);
     this.creationMetadata.delete(id);
     this.fileSystems.delete(id);

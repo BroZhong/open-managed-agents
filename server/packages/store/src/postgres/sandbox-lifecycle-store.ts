@@ -1,20 +1,13 @@
 import type { Pool, PoolClient } from './connection.js';
-import { SANDBOX_IDLE_MS, type SandboxActivity, type SandboxLifecycleStore, type SandboxReclamation } from '../interfaces/sandbox-lifecycle-store.js';
+import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation } from '../interfaces/sandbox-lifecycle-store.js';
 
-/** Tracks all Sandbox use and only reclaims resources after observed idle time. */
+/** Coordinates business execution and explicit termination. No idle scanner or resource clock. */
 export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
-  constructor(private readonly pool: Pool, private readonly clock?: () => Date) {}
+  constructor(private readonly pool: Pool) {}
   async assertReady(): Promise<void> {
-    const result = await this.pool.query("SELECT 1 FROM pg_trigger WHERE tgname = 'sandbox_input_activity' AND tgrelid = 'pending_events'::regclass AND tgfoid = 'invalidate_sandbox_idle()'::regprocedure AND tgenabled IN ('O', 'A')");
-    if (!result.rows.length) throw new Error('Sandbox lifecycle requires migration 0014 and its input activity trigger');
+    const result = await this.pool.query("SELECT 1 FROM pg_trigger WHERE tgname = 'sandbox_input_coordination' AND tgrelid = 'pending_events'::regclass AND tgfoid = 'lock_sandbox_binding()'::regprocedure AND tgenabled IN ('O', 'A')");
+    if (!result.rows.length) throw new Error('Sandbox execution requires the native lifecycle migration and input coordination trigger');
   }
-  async listManagedBindings(): Promise<readonly string[]> {
-    const result = await this.pool.query<{ id: string }>(
-      'SELECT id FROM delegation_environments WHERE sandbox_id IS NOT NULL ORDER BY id',
-    );
-    return result.rows.map(row => row.id);
-  }
-
   private async locked<T>(bindingId: string, work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
@@ -27,64 +20,63 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     finally { client.release(); }
   }
-
   async begin(activity: SandboxActivity): Promise<boolean> {
     return this.locked(activity.bindingId, async client => {
       const { rows: [environment] } = await client.query<{ reclaiming: boolean }>('SELECT reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]);
       if (environment.reclaiming) return false;
-      // Validate ownership in the same transaction as registering an attempt.
       const fence = activity.fence;
       const owned = await client.query(`SELECT p.id FROM pending_events p JOIN sessions s ON s.id=p.session_id
         WHERE p.session_id=$1 AND p.id=$2 AND p.claim_owner=$3 AND p.claim_generation=$4
           AND p.claim_expires_at > clock_timestamp() AND s.status <> 'terminated'
           AND COALESCE(s.delegation->>'sandboxSessionId',s.id)=$5`, [activity.sessionId, fence.eventId, fence.ownerId, fence.generation, activity.bindingId]);
-      if (!owned.rows.length) throw new Error('Cannot protect Sandbox for a stale Turn owner');
-      await client.query('UPDATE delegation_environments SET idle_since = NULL WHERE id = $1', [activity.bindingId]);
-      await client.query('INSERT INTO sandbox_activities (id, binding_id, session_id, pending_event_id, owner_id, generation) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING', [activityKey(activity), activity.bindingId, activity.sessionId, fence.eventId, fence.ownerId, fence.generation]);
+      if (!owned.rows.length) throw new Error('Cannot admit Sandbox use for a stale Turn owner');
+      // Expiry itself never invokes idle. Only a newly admitted Turn supersedes
+      // abandoned generations; its preparation installs a fresh finite deadline.
+      await client.query(`DELETE FROM delegation_resource_uses u WHERE u.record->>'sandboxSessionId'=$1
+        AND NOT EXISTS (SELECT 1 FROM pending_events p WHERE p.id=u.record->>'pendingEventId'
+          AND p.claim_owner=u.record->>'ownerId' AND p.claim_generation=(u.record->>'generation')::bigint
+          AND p.claim_expires_at > clock_timestamp())`, [activity.bindingId]);
+      const record = { sessionId: activity.sessionId, sandboxSessionId: activity.bindingId,
+        pendingEventId: fence.eventId, ownerId: fence.ownerId, generation: fence.generation, managedTurn: true };
+      await client.query('INSERT INTO delegation_resource_uses (id, record) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET record=EXCLUDED.record', [fence.eventId, JSON.stringify(record)]);
       return true;
     });
   }
-
-  async finish(activity: SandboxActivity): Promise<void> {
+  async finish(activity: SandboxActivity, idle?: (id: string) => Promise<void>): Promise<void> {
     await this.locked(activity.bindingId, async client => {
-      const removed = await client.query('DELETE FROM sandbox_activities WHERE id = $1 RETURNING id', [activityKey(activity)]);
-      // Duplicate/delayed callbacks must not reset another generation's clock.
-      if (removed.rows.length) await client.query('UPDATE delegation_environments SET idle_since = NULL WHERE id = $1', [activity.bindingId]);
+      const removed = await client.query(`DELETE FROM delegation_resource_uses WHERE id=$1
+        AND record->>'ownerId'=$2 AND (record->>'generation')::bigint=$3 RETURNING id`,
+      [activity.fence.eventId, activity.fence.ownerId, activity.fence.generation]);
+      if (!removed.rows.length) return; // A duplicate or superseded callback cannot shorten another Turn.
+      const busy = await client.query(`SELECT 1 FROM delegation_resource_uses WHERE record->>'sandboxSessionId'=$1
+        UNION ALL SELECT 1 FROM pending_events p JOIN sessions s ON s.id=p.session_id
+        WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=$1 LIMIT 1`, [activity.bindingId]);
+      if (busy.rows.length) return;
+      const { rows: [binding] } = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>('SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id=$1', [activity.bindingId]);
+      if (binding.sandbox_id && !binding.reclaiming) await idle?.(binding.sandbox_id);
+      // External timeout writes have no fencing token. A remote late response
+      // may beat a newer 24h write even though normal admission is serialized.
     });
   }
-
-  async claimReclamation(bindingId: string, explicit = false): Promise<SandboxReclamation | null> {
+  async claimReclamation(bindingId: string): Promise<SandboxReclamation | null> {
     return this.locked(bindingId, async client => {
-      const { rows: [row] } = await client.query<{ sandbox_id: string | null; reclaiming: boolean; idle_since: Date | null; now: Date }>('SELECT sandbox_id, reclaiming, idle_since, clock_timestamp() AS now FROM delegation_environments WHERE id = $1', [bindingId]);
-      const now = this.clock?.() ?? new Date(row.now);
+      const { rows: [row] } = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>('SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id=$1', [bindingId]);
       if (!row.sandbox_id) return null;
-      // A committed deletion ticket fences all future execution until cleanup.
-      // A retry after Host death repeats only the idempotent deletion of this ID.
       if (row.reclaiming) return { bindingId, sandboxId: row.sandbox_id };
-      const busy = await client.query(`SELECT 1 FROM sandbox_activities WHERE binding_id = $1
-        UNION ALL SELECT 1 FROM pending_events p JOIN sessions s ON s.id = p.session_id
-        WHERE COALESCE(s.delegation->>'sandboxSessionId', s.id) = $1 LIMIT 1`, [bindingId]);
-      if (busy.rows.length) {
-        await client.query('UPDATE delegation_environments SET idle_since = NULL WHERE id = $1', [bindingId]);
-        return null;
-      }
-      if (!explicit && !row.idle_since) {
-        await client.query('UPDATE delegation_environments SET idle_since = $2 WHERE id = $1', [bindingId, now]);
-        return null;
-      }
-      if (!explicit && now.getTime() - new Date(row.idle_since!).getTime() < SANDBOX_IDLE_MS) return null;
-      await client.query('UPDATE delegation_environments SET reclaiming = TRUE WHERE id = $1', [bindingId]);
+      const busy = await client.query(`SELECT 1 FROM delegation_resource_uses u JOIN sessions s ON s.id=u.record->>'sessionId'
+        WHERE u.record->>'sandboxSessionId'=$1 AND s.status <> 'terminated'
+        UNION ALL SELECT 1 FROM pending_events p JOIN sessions s ON s.id=p.session_id
+        WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=$1 AND s.status <> 'terminated' LIMIT 1`, [bindingId]);
+      if (busy.rows.length) return null;
+      await client.query('UPDATE delegation_environments SET reclaiming=TRUE WHERE id=$1', [bindingId]);
       return { bindingId, sandboxId: row.sandbox_id };
     });
   }
-
   async completeReclamation(ticket: SandboxReclamation): Promise<void> {
     await this.locked(ticket.bindingId, async client => {
-      await client.query('UPDATE delegation_environments SET sandbox_id = NULL, idle_since = NULL, reclaiming = FALSE WHERE id = $1 AND sandbox_id = $2 AND reclaiming = TRUE', [ticket.bindingId, ticket.sandboxId]);
+      const result = await client.query('UPDATE delegation_environments SET sandbox_id=NULL, reclaiming=FALSE WHERE id=$1 AND sandbox_id=$2 AND reclaiming=TRUE RETURNING id', [ticket.bindingId, ticket.sandboxId]);
+      if (result.rows.length) await client.query(`DELETE FROM delegation_resource_uses u USING sessions s
+        WHERE s.id=u.record->>'sessionId' AND s.status='terminated' AND u.record->>'sandboxSessionId'=$1`, [ticket.bindingId]);
     });
   }
-}
-
-function activityKey(activity: SandboxActivity): string {
-  return JSON.stringify([activity.bindingId, activity.sessionId, activity.fence.eventId, activity.fence.ownerId, activity.fence.generation]);
 }

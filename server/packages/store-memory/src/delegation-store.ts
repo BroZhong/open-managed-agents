@@ -7,6 +7,7 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private records = new Map<DelegationTable, Map<string, DelegationRecord>>();
   private queue: Promise<void> = Promise.resolve();
   private environments = new Map<string, string | null>();
+  private creationPending = new Map<string, boolean>();
   private environmentQueue: Promise<void> = Promise.resolve();
   constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">) { super(); }
   protected transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
@@ -32,8 +33,9 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
     this.queue = result.then(() => {}, () => {});
     return result;
   }
-  withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null) => Promise<{ sandboxId: string | null; value: T }>): Promise<T> {
-    const perform = async () => { const result = await work(this.environments.get(bindingId) ?? null); this.environments.set(bindingId, result.sandboxId); return result.value; };
+  withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
+    const perform = async () => { const result = await work(this.environments.get(bindingId) ?? null, this.creationPending.get(bindingId) ?? false); this.environments.set(bindingId, result.sandboxId);
+      if (result.creationPending !== undefined) this.creationPending.set(bindingId, result.creationPending); return result.value; };
     const result = this.environmentQueue.then(perform, perform);
     this.environmentQueue = result.then(() => {}, () => {});
     return result;

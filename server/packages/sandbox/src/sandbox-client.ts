@@ -1,3 +1,6 @@
+export const SANDBOX_RUNNING_SECONDS = 24 * 60 * 60;
+export const SANDBOX_IDLE_SECONDS = 30 * 60;
+
 import type { WorkspaceMountTarget } from "./workspace-mount.js";
 
 /**
@@ -48,8 +51,6 @@ export interface SandboxFileEntry {
 
 /** Options for creating a sandbox. */
 export interface SandboxCreateOptions {
-  /** Verified gateway extension; independent of command timeout and SDK zero. */
-  neverTimeout?: boolean;
   /** Container image / e2b template the sandbox runtime should use. */
   image?: string;
   /** Environment variables baked into the sandbox runtime. */
@@ -74,13 +75,17 @@ export interface SandboxHandle {
 export interface SandboxClient {
   /** Transport loss is not an observed remote process exit. */
   hasUncertainExecution(id: string): boolean;
+  resetExecutionUncertainty(id: string): void;
+  /** Read-only control-plane state; unknown transport errors must throw. */
+  state(id: string): Promise<"running" | "paused" | "missing">;
+  setTimeout(id: string, seconds: number): Promise<void>;
   /** Native I/O primitives at absolute sandbox paths, separate from persistence. */
   fileSystem?(id: string): ToolFileSystem;
 
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
   /** Attach a Host to a persisted, trusted Sandbox identity without creating it. */
-  reconnect?(id: string, metadata: Record<string, string>): Promise<boolean>;
+  reconnect(id: string, metadata: Record<string, string>): Promise<boolean>;
 
   /** Verify the real OSS mount, exact prefix and ordinary-user read/write access. */
   verifyWorkspaceMount(id: string, target: WorkspaceMountTarget): Promise<void>;
@@ -109,14 +114,6 @@ export interface SandboxClient {
 
   /** List recursively; missingOk returns empty only when the root is confirmed ENOENT. */
   list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]>;
-
-  /**
-   * True when the Sandbox is live. Explicit reclamation and legacy gateway
-   * deadlines can invalidate cached handles; managed bindings have no deadline
-   * (ADR-0017). A confirmed missing resource returns false. Transport failures
-   * throw because they do not prove that a resource disappeared.
-   */
-  isAlive(id: string): Promise<boolean>;
 
   /** Tear the sandbox down. Idempotent — destroying twice is a no-op. */
   destroy(id: string): Promise<void>;

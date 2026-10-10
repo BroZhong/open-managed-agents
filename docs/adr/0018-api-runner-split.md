@@ -3,7 +3,8 @@
 ## Status
 
 Accepted for #197–#203. Implementation and local verification only; production
-cutover is a separate operation. Extends ADR-0007, ADR-0010, ADR-0016 and ADR-0017.
+cutover is a separate operation. Extends ADR-0007, ADR-0010 and ADR-0016.
+ADR-0019 supersedes the original ADR-0017-based Sandbox lifetime portion.
 
 ## Decision
 
@@ -72,13 +73,14 @@ pending with a retry time. Cleanup reconstructs the Sandbox from its durable
 binding, coordinates child outcomes, and preserves saved Workspace files/history.
 Gateway cleanup cannot block the independent pending-input scan.
 
-Runners record actual Sandbox execution activities for termination safety across
-all lifecycle-managed bindings. These records set never-timeout for newly
-created Sandboxes and enable idle sweeping. Only observed
-execution settlement releases them; owner expiry and termination do not. Cleanup
-checks resource users and these activities, retains unknown execution indefinitely,
-and rechecks whether disposal actually cleared the binding before completing its
-outbox request. Managed bindings still use ADR-0017's committed deletion tickets.
+Runners coordinate current business execution generations and shared queued input
+under ADR-0019. Only observed settlement may shorten a resource's native deadline;
+unknown execution does not request idle. There is no permanent resource activity
+table or Sandbox sweeper. Native finite deadlines bound resources after Runner
+loss. Explicit cleanup directly kills only when legitimate shared users are gone,
+or clears a pointer after control-plane NotFound confirms native deletion. The
+existing committed deletion ticket and cleanup outbox remain retryable across
+Runners. Saved Workspace files and history are unaffected.
 
 ## Release boundary
 

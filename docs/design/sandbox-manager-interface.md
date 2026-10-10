@@ -1,8 +1,8 @@
 # Sandbox Manager interface
 
-Current contract: [ADR-0008](../adr/0008-oss-mounted-workspaces.md), superseding the hydrate/sync design in ADR-0005.
+Current contracts: [ADR-0019](../adr/0019-native-sandbox-lifecycle.md) for lifetime and [ADR-0008](../adr/0008-oss-mounted-workspaces.md) for mounts, superseding the hydrate/sync design in ADR-0005.
 
-The Host resolves ownership, computes the OSS prefix and supplies the Environment Spec. The Manager creates a Sandbox lazily, verifies the mount before tool operations, refreshes Skills, rebuilds expired resources and disposes execution resources. The Adapter uses a per-Turn injected ToolExecutor and knows no storage SDK.
+The Host resolves ownership, computes the OSS prefix and supplies the Environment Spec. The Manager creates a Sandbox lazily, verifies the mount during Turn preparation, refreshes Skills, recovers Paused or confirmed missing resources and disposes execution resources. The Adapter uses a per-Turn injected ToolExecutor and knows no storage SDK.
 
 ```ts
 interface EnvSpec {
@@ -33,7 +33,7 @@ interface SandboxSession extends ToolExecutor {
 }
 ```
 
-`open` starts no Sandbox. `prepare` checks an existing mount and reconciles Skills; cold Sessions remain cold. Every filesystem/command operation obtains a live verified handle. `checkWorkspace` checks current availability, creates no Sandbox and scans no business files. It is not a saved-files receipt. `dispose` destroys only execution resources; successfully closed Workspace writes already exist in OSS. Failed disposal retains the handle for a cleanup retry.
+`open` starts no Sandbox. `prepare` checks an existing mount and reconciles Skills; cold Sessions remain cold. Normal filesystem/command operations reuse the prepared handle. Only an exceptional tool failure queries control-plane state; the failed operation is never replayed. `checkWorkspace` reports known uncertainty without a network probe or file scan. It is not a saved-files receipt. `dispose` destroys only execution resources; successfully closed Workspace writes already exist in OSS. Failed disposal retains the handle for a cleanup retry.
 
 The current `list` hook remains an unimplemented lifecycle reservation, as before; there is no active orphan sweep. TTL bounds abandoned instances. It must not be used as a production active-Session inventory: use Session metadata and the actual cluster Sandbox list for maintenance.
 

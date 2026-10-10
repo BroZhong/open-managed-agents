@@ -195,6 +195,14 @@ function makeClient(
     apiKey: "gw-key",
     defaultTemplate: "configured-template",
     createSandbox,
+    getSandboxInfo: async id => {
+      const sandbox = sandboxes.find(item => item.sandboxId === id);
+      if (!sandbox || sandbox.killed) throw new SandboxNotFoundError('not found');
+      if (sandbox.isRunningThrows) throw new Error('network unavailable');
+      return { state: sandbox.running ? 'running' : 'paused' };
+    },
+    killSandbox: async id => { await sandboxes.find(item => item.sandboxId === id)?.kill(); },
+    setSandboxTimeout: async () => {},
     verifyWorkspaceProbe: opts?.verifyWorkspaceProbe ?? (async () => {}),
   });
   return { client, factoryCalls, sandboxes };
@@ -222,13 +230,19 @@ describe('managed Sandbox lifetime and exit evidence', () => {
     const { id } = await client.create();
     sandboxes[0].kill = async () => { throw new Error('getaddrinfo ENOTFOUND gateway'); };
     await expect(client.destroy(id)).rejects.toThrow('ENOTFOUND');
-    expect(await client.isAlive(id)).toBe(true);
+    expect(await client.state(id)).toBe("running");
   });
-  it('uses the verified gateway extension without sending a finite lifetime', async () => {
+  it('requests one finite native lifecycle and bounded server creation budgets', async () => {
     const { client, factoryCalls } = makeClient();
-    await client.create({ neverTimeout: true, timeoutSeconds: 3600, metadata: { 'oma.dev/binding': 'parent' } });
-    expect(factoryCalls[0].opts.metadata).toEqual({ 'oma.dev/binding': 'parent', 'e2b.agents.kruise.io/never-timeout': 'true' });
-    expect(factoryCalls[0].opts.timeoutMs).toBeUndefined();
+    await client.create({ metadata: { 'oma.dev/binding': 'parent' } });
+    expect(factoryCalls[0].opts).toMatchObject({
+      timeoutMs: 86400000, lifecycle: { onTimeout: 'pause', autoResume: false },
+      metadata: { 'oma.dev/binding': 'parent',
+        'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
+        'e2b.agents.kruise.io/claim-timeout-seconds': '150',
+        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '150' },
+    });
+    expect(factoryCalls[0].opts.metadata).not.toHaveProperty('e2b.agents.kruise.io/never-timeout');
   });
   it('retains uncertainty after a lost command stream, even if a later command exits', async () => {
     const { client, sandboxes } = makeClient();
@@ -312,7 +326,7 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].opts.apiKey).toBe("gw-key");
     expect(factoryCalls[0].opts.domain).toBe("sandbox.example.com");
     expect(factoryCalls[0].opts.envs).toEqual({ FOO: "bar" });
-    expect(factoryCalls[0].opts.metadata).toEqual({ sessionId: "s1" });
+    expect(factoryCalls[0].opts.metadata).toMatchObject({ sessionId: "s1" });
     expect(factoryCalls[0].opts.timeoutMs).toBe(30_000);
   });
 
@@ -727,27 +741,27 @@ describe("E2BSandboxClient", () => {
     );
   });
 
-  it("isAlive reflects the sandbox isRunning state", async () => {
+  it("control-plane state distinguishes Running and Paused without a health request", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create();
-    expect(await client.isAlive(id)).toBe(true);
+    expect(await client.state(id)).toBe("running");
     sandboxes[0].running = false;
-    expect(await client.isAlive(id)).toBe(false);
+    expect(await client.state(id)).toBe("paused");
   });
 
-  it("isAlive returns false for an unknown/destroyed id", async () => {
+  it("control-plane state distinguishes a missing Sandbox", async () => {
     const { client } = makeClient();
-    expect(await client.isAlive("never-created")).toBe(false);
+    expect(await client.state("never-created")).toBe("missing");
     const { id } = await client.create();
     await client.destroy(id);
-    expect(await client.isAlive(id)).toBe(false);
+    expect(await client.state(id)).toBe("missing");
   });
 
   it("does not reclaim a potentially live Sandbox on a transport error", async () => {
     const { client, sandboxes } = makeClient();
     const { id } = await client.create();
     sandboxes[0].isRunningThrows = true;
-    await expect(client.isAlive(id)).rejects.toThrow();
+    await expect(client.state(id)).rejects.toThrow();
   });
 
   it("destroy kills the sandbox and is idempotent", async () => {
@@ -768,7 +782,7 @@ describe("E2BSandboxClient", () => {
     await expect(client.destroy(id)).rejects.toThrow(/temporarily unavailable/);
     await client.destroy(id);
     expect(kill).toHaveBeenCalledTimes(2);
-    expect(await client.isAlive(id)).toBe(false);
+    expect(await client.state(id)).toBe("missing");
   });
 
   it("destroy swallows a kill failure (idempotent)", async () => {
@@ -816,5 +830,27 @@ describe("resolveTemplate", () => {
     expect(resolveTemplate("repo/image", "configured-template")).toBe(
       "configured-template",
     );
+  });
+});
+
+describe('direct lifecycle control-plane operations', () => {
+  it('deletes an uncached Paused identity without connecting, and requires deletion confirmation', async () => {
+    const kill = vi.fn(async () => true);
+    const info = vi.fn().mockResolvedValueOnce({ state: 'paused' }).mockRejectedValueOnce(new SandboxNotFoundError('missing'));
+    const connect = vi.fn();
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {},
+      killSandbox: kill, getSandboxInfo: info, connectSandbox: connect });
+    await expect(client.destroy('paused-from-another-runner')).rejects.toThrow(/not yet confirmed/);
+    await client.destroy('paused-from-another-runner');
+    expect(kill).toHaveBeenCalledTimes(2);
+    expect(connect).not.toHaveBeenCalled();
+  });
+  it('refreshes the 24h deadline on every explicit reconnect, including a cached identity', async () => {
+    const connect = vi.fn(async () => new FakeSandbox('same-id'));
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
+    await client.reconnect('same-id', {});
+    await client.reconnect('same-id', {});
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenLastCalledWith('same-id', expect.objectContaining({ timeoutMs: 86400000, requestTimeoutMs: 185000 }));
   });
 });

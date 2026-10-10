@@ -1,0 +1,121 @@
+{
+  "runId": "native-c4c8602f-e019-455e-888d-ced37194935b",
+  "schema": "native_a193da1809214a99ac1392214ddcef46",
+  "ids": [
+    "sandbox-system--auto-story-v2-qbwft",
+    "sandbox-system--cp-uf600987oh43jdug07u9-lcq7t"
+  ],
+  "observations": [
+    {
+      "at": "2026-10-10T14:57:37.991Z",
+      "phase": "init",
+      "created": "sandbox-system--auto-story-v2-qbwft",
+      "template": "auto-story-v2",
+      "elapsedMs": 756,
+      "productionPolicyVerified": true,
+      "testRetention": "100s"
+    },
+    {
+      "at": "2026-10-10T14:57:39.124Z",
+      "phase": "init",
+      "runningDeadlineSeconds": 1800,
+      "observedRemainingSeconds": 1800
+    },
+    {
+      "at": "2026-10-10T14:57:39.572Z",
+      "phase": "init",
+      "runningDeadlineSeconds": 86400,
+      "observedRemainingSeconds": 86399
+    },
+    {
+      "at": "2026-10-10T14:57:39.668Z",
+      "phase": "init",
+      "runningDeadlineSeconds": 86400,
+      "observedRemainingSeconds": 86399
+    },
+    {
+      "at": "2026-10-10T14:57:40.136Z",
+      "phase": "init",
+      "runningDeadlineSeconds": 1800,
+      "observedRemainingSeconds": 1800
+    },
+    {
+      "at": "2026-10-10T14:57:48.859Z",
+      "phase": "init",
+      "lazyChat": true,
+      "reusedAcrossTurns": true,
+      "sharedQueueProtected": true,
+      "mountChecks": 3,
+      "connects": 2,
+      "snapshotId": "cp-uf600987oh43jdug07u9",
+      "pauseInSeconds": 20
+    },
+    {
+      "at": "2026-10-10T14:58:36.760Z",
+      "phase": "resume",
+      "runningDeadlineSeconds": 1800,
+      "observedRemainingSeconds": 1799
+    },
+    {
+      "at": "2026-10-10T14:58:36.786Z",
+      "phase": "resume",
+      "restoredSameId": "sandbox-system--auto-story-v2-qbwft",
+      "workspacePreserved": true,
+      "pauseInSeconds": 20
+    },
+    {
+      "at": "2026-10-10T15:02:42.304Z",
+      "phase": "rebuild",
+      "created": "sandbox-system--cp-uf600987oh43jdug07u9-lcq7t",
+      "template": "cp-uf600987oh43jdug07u9",
+      "elapsedMs": 105017,
+      "productionPolicyVerified": true,
+      "testRetention": "100s"
+    },
+    {
+      "at": "2026-10-10T15:02:44.037Z",
+      "phase": "rebuild",
+      "rebuilt": "sandbox-system--cp-uf600987oh43jdug07u9-lcq7t",
+      "workspacePreserved": true,
+      "sharedTerminationProtected": true,
+      "directReleaseConfirmed": true
+    },
+    {
+      "at": "2026-10-10T15:05:46.631Z",
+      "phase": "cleanup",
+      "failed": true,
+      "errorType": "AssertionError"
+    },
+    {
+      "at": "2026-10-10T15:07:19.416Z",
+      "phase": "cleanup",
+      "cleanupConfirmed": true,
+      "resourceIds": [
+        "sandbox-system--auto-story-v2-qbwft",
+        "sandbox-system--cp-uf600987oh43jdug07u9-lcq7t"
+      ],
+      "snapshotRemoved": true,
+      "workspaceRemoved": true,
+      "schemaRemoved": true
+    }
+  ],
+  "tenant": "native-integration",
+  "workspace": "ws-3fa9ccb3-34c6-4550-a2b6-f3a8a0d73026",
+  "root": "sess_ykDxKvzJrcPo4CZ_S88nA",
+  "child": "sess_1KKRrUNuzHNhzJfT5QtmR",
+  "snapshotId": "cp-uf600987oh43jdug07u9",
+  "sdkVersion": "2.24.0",
+  "platform": [
+    {
+      "name": "gateway",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+      "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+    },
+    {
+      "name": "controller",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+    }
+  ],
+  "cleanupConfirmed": true
+}
