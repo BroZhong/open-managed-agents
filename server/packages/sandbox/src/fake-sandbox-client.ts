@@ -1,4 +1,4 @@
-import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import {
   WorkspaceMountUnavailable,
   type WorkspaceMountTarget,
@@ -227,13 +227,16 @@ export class FakeSandboxClient implements SandboxClient {
     command: string[],
     opts?: SandboxExecOptions,
   ): AsyncIterable<SandboxExecChunk> {
+    if (opts?.signal?.aborted) throw new ExecAbortedBeforeStartError();
     const sandbox = this.require(id);
     const custom = this.execHandler?.(command, sandbox.files, opts);
     if (custom) {
       yield* custom;
+      opts?.onExit?.({ exitCode: 0 });
       return;
     }
     yield* this.builtinExec(command, sandbox.files);
+    opts?.onExit?.({ exitCode: 0 });
   }
 
   async readFile(id: string, path: string): Promise<string> {

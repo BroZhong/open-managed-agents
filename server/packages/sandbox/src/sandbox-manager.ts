@@ -6,7 +6,7 @@ import type {
   ToolFileSystem,
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
-import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
+import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import { SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
 import type { SandboxClient, SandboxFsAccess } from "./sandbox-client.js";
 import type { SandboxActivity, SandboxLifecycleStore } from '@oma-server/store';
@@ -95,8 +95,7 @@ export interface SandboxSession {
 export class DefaultSandboxManager implements SandboxManager {
   constructor(private readonly deps: SandboxManagerDeps) {}
   async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
-    const lifecycle = this.deps.lifecycle;
-    const store = lifecycle;
+    const store = this.deps.lifecycle;
     if (!store) return false;
     const deadline = Date.now() + 185_000;
     while (!await store.begin(activity)) {
@@ -106,8 +105,7 @@ export class DefaultSandboxManager implements SandboxManager {
     return true;
   }
   async finishActivity(activity: SandboxActivity): Promise<void> {
-    const lifecycle = this.deps.lifecycle;
-    const store = lifecycle;
+    const store = this.deps.lifecycle;
     await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
   }
   open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession {
@@ -203,13 +201,24 @@ class SandboxSessionImpl implements SandboxSession {
   ): AsyncIterable<ExecOutputChunk> {
     const id = await this.ensure();
     const generation = this.generation;
+    let settled = false;
     try {
       yield* this.deps.sandboxClient.exec(id, command, {
         cwd: this.resolve(opts?.cwd ?? '.'), timeoutSeconds: opts?.timeoutSeconds,
-        env: opts?.env, signal: opts?.signal, onExit: opts?.onExit,
+        env: opts?.env, signal: opts?.signal,
+        onExit: result => { settled = true; opts?.onExit?.(result); },
       });
-    } catch (error) { await this.operationFailed(id, generation, error); }
+    } catch (error) {
+      if (error instanceof ExecAbortedBeforeStartError) { settled = true; throw error; }
+      if (settled && error instanceof Error && error.name === 'AbortError') throw error;
+      await this.operationFailed(id, generation, error);
+    } finally {
+      // return()/consumer abandonment bypasses catch. Reliable exit evidence,
+      // not a sibling's reset of a shared transport flag, settles this command.
+      if (!settled) this.uncertainTurn = true;
+    }
   }
+
   async readFile(path: string): Promise<string> {
     return this.perform(id => this.deps.sandboxClient.readFile(id, this.resolve(path)));
   }
@@ -230,7 +239,12 @@ class SandboxSessionImpl implements SandboxSession {
   }
   private async operationFailed(id: string, generation: number, error: unknown): Promise<never> {
     if (this.deps.sandboxClient.hasUncertainExecution(id)) this.uncertainTurn = true;
-    // Ordinary tool errors and user Interrupt are not environment failures.
+    if (error instanceof ExecAbortedBeforeStartError) throw error;
+    if (error instanceof Error && error.name === 'AbortError') {
+      this.uncertainTurn = true; // No local exit evidence on a file/RPC abort.
+      throw error;
+    }
+    // Ordinary tool errors are not environment failures.
     if (error && typeof error === 'object' && (
       'exitCode' in error || ('name' in error && ['AbortError', 'FileNotFoundError', 'InvalidArgumentError'].includes(String(error.name))) ||
       ('code' in error && ['ENOENT', 'EACCES', 'EPERM', 'EEXIST', 'ENOTDIR', 'EISDIR', 'EINVAL'].includes(String(error.code)))

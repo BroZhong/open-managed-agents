@@ -406,6 +406,7 @@ describe("mounted Workspace Sandbox Manager", () => {
       timeoutSeconds: 0,
       signal,
       env: { FOO: "bar" },
+      onExit: expect.any(Function),
     });
   });
 

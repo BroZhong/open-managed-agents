@@ -36,7 +36,7 @@ All eight server package typechecks passed. The MCP catalog now declares the sam
 Node 22 development types as the other server packages, fixing its inherited old
 `BufferEncoding` definition during the full typecheck. No runtime dependency changed.
 
-Full server tests passed: **1,018 tests**, with opt-in external cases skipped in
+Full server tests passed before review: **1,018 tests**, with opt-in external cases skipped in
 that default run. Adapter dependencies had to be installed from their existing
 lockfile before the Pi-context integration test could load; the final full run
 was clean.
@@ -120,3 +120,20 @@ Migration 0020 and the complete new Runner build must be released together with
 old Runners stopped. No production migration, application deployment or existing
 business-resource cleanup was performed. Historical verification results remain
 historical; the maintained policy is exclusively ADR-0019.
+
+## Review correction
+
+Standards review of `e0f23a8..4ca0f88` found no hard violations or actionable smells.
+Spec review found one correctness issue: abandoning a command iterator bypassed
+`catch`, leaving uncertainty only in a shared client flag that a sibling Turn
+could reset. #219 requires unknown execution not to be treated as idle.
+
+The manager now tracks reliable `onExit` evidence for each command and latches
+Turn-local uncertainty in `finally`, including iterator abandonment. A command
+conclusively aborted before issuance remains settled; confirmed Interrupt exit
+evidence is preserved. File/RPC abort without local exit evidence is uncertain.
+The transport fake now reports normal exit through the same public callback.
+
+The new abandonment/sibling-preparation regression failed before the fix and
+passed afterward. A second regression verifies pre-issuance abort and normal exit
+remain distinct. Focused Sandbox and Router checks passed after the correction.

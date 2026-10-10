@@ -115,3 +115,38 @@ describe('native lifecycle concurrency and late writes', () => {
     expect(await session.readFile('effect')).toBe('once');
   });
 });
+
+describe('Turn-scoped remote exit evidence', () => {
+  it('retains uncertainty after iterator abandonment even when a sibling prepares the shared resource', async () => {
+    const { client, manager } = setup();
+    let id: string | null = null;
+    const binding = { withLock: async <T>(work: (id: string | null) => Promise<{ sandboxId: string | null; value: T }>) => {
+      const result = await work(id); id = result.sandboxId; return result.value;
+    } };
+    const parent = manager.open(spec, binding);
+    await parent.writeFile('saved', 'kept');
+    vi.spyOn(client, 'exec').mockImplementationOnce(async function* () {
+      yield { stream: 'stdout' as const, text: 'PARTIAL' };
+      // A consumer return() ends this iterator without remote exit evidence.
+    });
+    const iterator = parent.exec(['long-command'])[Symbol.asyncIterator]();
+    await iterator.next();
+    await iterator.return!();
+    const sibling = manager.open(spec, binding);
+    await sibling.prepare();
+    expect(parent.executionSettled!()).toBe(false);
+    expect(sibling.executionSettled!()).toBe(true);
+  });
+});
+
+it('distinguishes commands aborted before issuance from an unknown remote exit', async () => {
+  const { session } = setup();
+  await session.writeFile('saved', 'value');
+  const controller = new AbortController(); controller.abort();
+  await expect((async () => { for await (const _ of session.exec(['never-issued'], { signal: controller.signal })) {} })()).rejects.toMatchObject({ code: 'EXEC_ABORTED_BEFORE_START' });
+  expect(session.executionSettled!()).toBe(true);
+  const exits = vi.fn();
+  for await (const _ of session.exec(['echo', 'completed'], { onExit: exits })) {}
+  expect(exits).toHaveBeenCalledExactlyOnceWith({ exitCode: 0 });
+  expect(session.executionSettled!()).toBe(true);
+});
