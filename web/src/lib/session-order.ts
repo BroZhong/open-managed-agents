@@ -7,7 +7,7 @@ export function runningSessionsFirst(sessions: readonly Session[]): Session[] {
   return [...sessions].sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
 }
 
-/** Match Workspace pagination order, including after live cache updates. */
+/** Match sidebar Session pagination order, including after live cache updates. */
 export function recentlyUpdatedSessionsFirst(sessions: readonly Session[]): Session[] {
   return [...sessions].sort((a, b) =>
     Date.parse(b.updatedAt) - Date.parse(a.updatedAt)

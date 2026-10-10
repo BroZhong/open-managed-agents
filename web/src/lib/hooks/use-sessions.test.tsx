@@ -46,11 +46,14 @@ describe("Session list filters", () => {
     expect(result.current.a.hasNextPage).toBe(false);
     expect(result.current.b.hasNextPage).toBe(true);
     expect(result.current.loose.hasNextPage).toBe(true);
+    await act(async () => { await result.current.loose.fetchNextPage(); });
+    await waitFor(() => expect(result.current.loose.data).toEqual([{ id: "loose_1" }, { id: "loose_2" }]));
     expect(fetchMock.mock.calls.map(([url]) => Object.fromEntries(new URL(url, "http://localhost").searchParams))).toEqual([
       { agent_id: "agent_1", workspace_id: "workspace_b", order: "updated_at", exclude_loop: "true", exclude_delegated: "true", limit: "5" },
-      { agent_id: "agent_1", exclude_loop: "true", exclude_delegated: "true", exclude_named_workspaces: "true", limit: "5" },
+      { agent_id: "agent_1", order: "updated_at", exclude_loop: "true", exclude_delegated: "true", exclude_named_workspaces: "true", limit: "5" },
       { agent_id: "agent_1", workspace_id: "workspace_a", order: "updated_at", exclude_loop: "true", exclude_delegated: "true", limit: "5" },
       { agent_id: "agent_1", workspace_id: "workspace_a", order: "updated_at", exclude_loop: "true", exclude_delegated: "true", limit: "20", cursor: "workspace_a_1" },
+      { agent_id: "agent_1", order: "updated_at", exclude_loop: "true", exclude_delegated: "true", exclude_named_workspaces: "true", limit: "20", cursor: "loose_1" },
     ]);
   });
 

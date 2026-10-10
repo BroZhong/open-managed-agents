@@ -554,10 +554,10 @@ describe("useSessionEvents history replay", () => {
     expect(queryClient.getQueryData<InfiniteData<SessionPage>>(key)?.pages[0].data).toEqual([session]);
   });
 
-  it("uses authoritative recency for timestamp-less lifecycle frames without reverting a newer status", async () => {
+  it.each(["workspace", "loose"])("uses authoritative recency in %s lists for timestamp-less lifecycle frames without reverting a newer status", async (scope) => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const session = sessionFixture("session_live");
-    const key = ["sessions", "byAgent", session.agentId, "workspace", session.workspaceId, "parents"];
+    const key = ["sessions", "byAgent", session.agentId, ...(scope === "workspace" ? ["workspace", session.workspaceId] : ["loose"]), "parents"];
     queryClient.setQueryData(["sessions", session.id], session);
     queryClient.setQueryData(key, sessionPages([session]));
     let resolveDetail!: (response: Response) => void;
@@ -594,11 +594,21 @@ describe("useSessionEvents history replay", () => {
     expect(queryClient.getQueryData<Session>(["sessions", session.id])).toMatchObject({ status, updatedAt });
   });
 
-  it("refreshes an off-page Workspace Session even when its detail already has the latest timestamp", async () => {
+  it.each(["workspace", "loose"])("refreshes an off-page %s Session even when its detail already has the latest timestamp", async (scope) => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     const session = { ...sessionFixture("session_offpage"), updatedAt: "2026-07-14T02:00:00.000Z" };
     const older = sessionFixture("session_visible");
-    const key = ["sessions", "byAgent", session.agentId, "workspace", session.workspaceId, "parents"];
+    const key = ["sessions", "byAgent", session.agentId, ...(scope === "workspace" ? ["workspace", session.workspaceId] : ["loose"]), "parents"];
+    const unrelatedKeys = [
+      ["sessions", "byAgent", "other_agent", "loose", "parents"],
+      ["sessions", "byAgent", session.agentId, "workspace", "other_workspace", "parents"],
+      ["sessions", "byAgent", session.agentId, "parents"],
+    ];
+    if (scope === "workspace") {
+      queryClient.setQueryData(["workspaces", "byAgent", session.agentId], [{ id: session.workspaceId, name: "Project" }]);
+      unrelatedKeys.push(["sessions", "byAgent", session.agentId, "loose", "parents"]);
+    }
+    for (const unrelatedKey of unrelatedKeys) queryClient.setQueryData(unrelatedKey, sessionPages([older]));
     queryClient.setQueryData(["sessions", session.id], session);
     queryClient.setQueryData(key, sessionPages([older]));
     const queryFn = vi.fn().mockResolvedValue({ data: [session, older], has_more: false });
@@ -615,6 +625,89 @@ describe("useSessionEvents history replay", () => {
       await act(async () => emit("idle", 1));
       await waitFor(() => expect(observer.getCurrentResult().data?.pages[0].data[0].id).toBe(session.id));
       expect(queryFn).toHaveBeenCalledOnce();
+      for (const unrelatedKey of unrelatedKeys) {
+        expect(queryClient.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
+        expect(queryClient.getQueryData(unrelatedKey)).toEqual(sessionPages([older]));
+      }
+    } finally { hook.unmount(); unsubscribe(); }
+  });
+
+  it.each(["child", "loop"])("keeps an off-page %s Session out of loose navigation", async (kind) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const session = {
+      ...sessionFixture("session_excluded"),
+      ...(kind === "loop" ? { loopId: "loop_1" } : {
+        delegation: { parentSessionId: "parent", parentTurnId: "turn_1", parentToolUseId: "tool_1" },
+      }),
+    };
+    const older = sessionFixture("session_visible");
+    const key = ["sessions", "byAgent", session.agentId, "loose", "parents"];
+    queryClient.setQueryData(["sessions", session.id], session);
+    queryClient.setQueryData(key, sessionPages([older]));
+    // The filtered list, rather than Session detail, owns navigation membership.
+    const queryFn = vi.fn().mockResolvedValue({ data: [older], has_more: false });
+    const observer = new InfiniteQueryObserver(queryClient, {
+      queryKey: key, queryFn, initialPageParam: undefined as string | undefined,
+      getNextPageParam: () => undefined,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const emit = stubLifecycleStream(vi.fn());
+    const hook = renderHook(() => useSessionEvents(session.id), { wrapper: queryWrapper(queryClient) });
+    try {
+      await waitFor(() => expect(hook.result.current.isConnected).toBe(true));
+      await act(async () => emit("running", 1, "2026-07-14T02:00:00.000Z"));
+      expect(queryFn).toHaveBeenCalledTimes(kind === "child" ? 1 : 0);
+      expect(observer.getCurrentResult().data?.pages[0].data).toEqual([older]);
+    } finally { hook.unmount(); unsubscribe(); }
+  });
+
+  it("waits for loose Show more to finish before refreshing an off-page Session", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const session = { ...sessionFixture("session_offpage"), updatedAt: "2026-07-14T02:00:00.000Z" };
+    const older = sessionFixture("session_visible");
+    const nextSession = sessionFixture("session_next_page");
+    const key = ["sessions", "byAgent", session.agentId, "loose", "parents"];
+    queryClient.setQueryData(["sessions", session.id], session);
+    queryClient.setQueryData(key, {
+      pages: [{ data: [older], has_more: true, next_cursor: "older" }], pageParams: [undefined],
+    });
+    let resolveNextPage!: (page: SessionPage) => void;
+    let pendingNextPage = true;
+    let nextPageAborted = false;
+    const queryFn = vi.fn(({ pageParam, signal }: { pageParam: string | undefined; signal: AbortSignal }): Promise<SessionPage> => {
+      if (pageParam === undefined) return Promise.resolve({ data: [session, older], has_more: true, next_cursor: "older" });
+      if (!pendingNextPage) return Promise.resolve({ data: [nextSession], has_more: false });
+      return new Promise<SessionPage>((resolve, reject) => {
+        resolveNextPage = resolve;
+        signal.addEventListener("abort", () => {
+          nextPageAborted = true;
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      });
+    });
+    const observer = new InfiniteQueryObserver(queryClient, {
+      queryKey: key, queryFn, initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.next_cursor : undefined,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const nextPage = observer.fetchNextPage();
+    const emit = stubLifecycleStream(vi.fn().mockResolvedValue(Response.json(session)));
+    const hook = renderHook(() => useSessionEvents(session.id), { wrapper: queryWrapper(queryClient) });
+    try {
+      await waitFor(() => expect(hook.result.current.isConnected).toBe(true));
+      await act(async () => emit("idle", 1));
+      expect(queryFn).toHaveBeenCalledOnce();
+      expect(nextPageAborted).toBe(false);
+      await act(async () => {
+        pendingNextPage = false;
+        resolveNextPage({ data: [nextSession], has_more: false });
+        await nextPage;
+      });
+      await waitFor(() => expect(observer.getCurrentResult().data?.pages[0].data[0].id).toBe(session.id));
+      expect(observer.getCurrentResult().data?.pages).toHaveLength(2);
+      expect(observer.getCurrentResult().data?.pages[1].data).toEqual([nextSession]);
+      expect(queryFn).toHaveBeenCalledTimes(3);
+      expect(nextPageAborted).toBe(false);
     } finally { hook.unmount(); unsubscribe(); }
   });
 
