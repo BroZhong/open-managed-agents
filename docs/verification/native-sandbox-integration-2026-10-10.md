@@ -36,7 +36,7 @@ All eight server package typechecks passed. The MCP catalog now declares the sam
 Node 22 development types as the other server packages, fixing its inherited old
 `BufferEncoding` definition during the full typecheck. No runtime dependency changed.
 
-Full server tests passed before review: **1,018 tests**, with opt-in external cases skipped in
+Final full server tests passed after review: **1,020 tests**, with opt-in external cases skipped in
 that default run. Adapter dependencies had to be installed from their existing
 lockfile before the Pi-context integration test could load; the final full run
 was clean.
@@ -137,3 +137,26 @@ The transport fake now reports normal exit through the same public callback.
 The new abandonment/sibling-preparation regression failed before the fix and
 passed afterward. A second regression verifies pre-issuance abort and normal exit
 remain distinct. Focused Sandbox and Router checks passed after the correction.
+
+## Standards
+
+Standards review (`e0f23a8..4ca0f88`): no hard standards violations or actionable smells found.
+
+- ADR-0019 explicitly supersedes the old retention policy; CONTEXT.md and operational documentation consistently use the accepted pause-initiation contract.
+- Manager preparation preserves cold pure-chat behavior and caches prepared handles for ordinary tools. Exceptional recovery does not replay operations or replace Running/unknown resources.
+- Durable creation intent precedes allocation. Failed preparation retains known identity, while ambiguous creation or binding commit prevents automatic replacement.
+- Business-use records carry ownership and generation; settlement and queue checks coordinate under the binding lock. Superseded callbacks cannot remove newer records.
+- Explicit deletion uses direct kill, confirms absence, and matches the recorded Sandbox ID before clearing the binding. The old idle scanner is removed.
+- Verification documentation separates accelerated tests, observed cold-start latency, accepted remote-ordering limitations, and the still-undeployed migration.
+
+Possible smells: none warrant changes. The remaining lifecycle branches represent distinct required transitions; introducing another abstraction or resource ledger would obscure the documented ownership model.
+
+## Spec
+
+Original P1 resolved in `5892098`. Manager.exec now records reliable exit evidence locally and latches Turn-local uncertainty in finally, including iterator abandonment. Sibling preparation cannot clear that latch. Conclusive pre-issuance aborts remain settled, and confirmed user aborts do not trigger environment recovery.
+
+The regression exercises the previously missing sequence: partial output, iterator return without exit evidence, sibling preparation, original session still unsettled. The normal-exit and pre-issuance-abort tests cover the corresponding safe paths.
+
+No new actionable spec findings in this delta. The fake transport's onExit callbacks align successful completion with the production contract.
+
+Final review summary: Standards 0 actionable findings; Spec 0 outstanding actionable findings (one P1 fixed and re-reviewed). Final full server run passed 1,020 tests. The dedicated local PostgreSQL and Redis containers were removed after the infrastructure tests; live resource and OSS cleanup remain confirmed in the JSON.
