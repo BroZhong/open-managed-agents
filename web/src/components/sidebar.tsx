@@ -738,9 +738,8 @@ function WorkspaceRow({ workspace, agentId, activeWorkspaceId, open, onToggle, o
         <FolderClosed className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-left">{workspace.name}</span>
         {!open && workspace.hasRunningSessions && (
-          <span role="status" aria-label="Workspace has running Sessions" title="Workspace has running Sessions" className="inline-flex shrink-0 items-center gap-1 text-[10px] text-[var(--color-fg-muted)]">
+          <span role="status" aria-label="Workspace has running Sessions" title="Workspace has running Sessions" className="inline-flex shrink-0 text-[var(--color-fg-muted)]">
             <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
-            Running
           </span>
         )}
       </button>

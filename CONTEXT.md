@@ -218,7 +218,7 @@ expand another; collapsed Workspaces do not request their Session histories.
 The Agent detail page retains its aggregate non-Loop Session list.
 Agent-scoped Workspace discovery also reports whether any visible non-Loop,
 non-delegated Session is running or waiting, independently of loaded pages.
-Collapsed Workspace rows show a Running indicator; expanded rows retain each
+Collapsed Workspace rows show a spinner without visible status text; expanded rows retain each
 Session's indicator. Workspace summaries refresh every 15 seconds and on observed
 Session status changes.
 

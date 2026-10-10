@@ -90,7 +90,7 @@ describe("Sidebar Session navigation", () => {
       </Routes></MemoryRouter>
     </AuthProvider></QueryClientProvider>);
     const project = within(screen.getByRole("group", { name: "Workspace Project" }));
-    expect(project.getByRole("status").textContent).toBe("Running");
+    expect(project.getByRole("status").textContent).toBe("");
     expect(within(screen.getByRole("group", { name: "Workspace Idle" })).queryByRole("status")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(project.getByRole("button", { name: /^Project/, expanded: false }));
