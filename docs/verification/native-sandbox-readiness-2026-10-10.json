@@ -1,0 +1,228 @@
+{
+  "runId": "oma-native-5f716940-53e8-40ab-9def-fe8736bc0758",
+  "startedAt": "2026-10-10T11:21:32.240Z",
+  "requested": {
+    "timeoutMs": 90000,
+    "retention": "60s",
+    "claimSeconds": 10,
+    "readySeconds": 3,
+    "failure": "nonexistent image; no successful readiness possible"
+  },
+  "sandboxIds": [
+    "sandbox-system--auto-story-v2-425hw",
+    "sandbox-system--auto-story-v2-4l8m8",
+    "sandbox-system--auto-story-v2-l8mpk"
+  ],
+  "observations": [
+    {
+      "at": "2026-10-10T11:21:43.211Z",
+      "action": "create",
+      "elapsedMs": 10305,
+      "error": {
+        "name": "SandboxError",
+        "notFound": false
+      }
+    },
+    {
+      "at": "2026-10-10T11:21:43.622Z",
+      "phase": "init-failure",
+      "resources": [
+        {
+          "id": "sandbox-system--auto-story-v2-425hw",
+          "uid": "848b81de-d015-430c-926f-c65da10a2bd2",
+          "createdAt": "2026-10-10T11:18:49Z",
+          "deletionTimestamp": null,
+          "pauseTime": null,
+          "shutdownTime": "2026-10-10T11:22:10Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:21:37Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:21:37Z"
+            }
+          ]
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-4l8m8",
+          "uid": "29668340-1ae0-4a4c-b97c-42d99e995185",
+          "createdAt": "2026-10-10T09:59:41Z",
+          "deletionTimestamp": null,
+          "pauseTime": null,
+          "shutdownTime": "2026-10-10T11:22:13Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:21:42Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:21:42Z"
+            }
+          ]
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-l8mpk",
+          "uid": "75e680f3-504e-4960-a88a-206fbe48efb5",
+          "createdAt": "2026-10-10T10:19:46Z",
+          "deletionTimestamp": null,
+          "pauseTime": null,
+          "shutdownTime": "2026-10-10T11:22:06Z",
+          "paused": false,
+          "phase": "Running",
+          "pauseStrategy": null,
+          "retention": "60s",
+          "conditions": [
+            {
+              "type": "Ready",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:21:33Z"
+            },
+            {
+              "type": "InplaceUpdate",
+              "status": "False",
+              "reason": "InplaceUpdating",
+              "lastTransitionTime": "2026-10-10T11:21:33Z"
+            }
+          ]
+        }
+      ],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-425hw",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-4l8m8",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-l8mpk",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:22:47.616Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-425hw",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-4l8m8",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-l8mpk",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-10-10T11:22:47.826Z",
+      "phase": "cleanup",
+      "resources": [],
+      "infos": [
+        {
+          "id": "sandbox-system--auto-story-v2-425hw",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-4l8m8",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        },
+        {
+          "id": "sandbox-system--auto-story-v2-l8mpk",
+          "error": {
+            "name": "SandboxNotFoundError",
+            "notFound": true
+          }
+        }
+      ]
+    }
+  ],
+  "sdkVersion": "2.24.0",
+  "deployment": [
+    {
+      "name": "sandbox-gateway",
+      "containers": [
+        {
+          "name": "gateway",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0"
+        }
+      ]
+    },
+    {
+      "name": "sandbox-manager",
+      "containers": [
+        {
+          "name": "controller",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11"
+        },
+        {
+          "name": "envoy-proxy",
+          "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/envoy:v1.4.0-gf4e7213-apsara"
+        }
+      ]
+    }
+  ],
+  "images": [
+    {
+      "name": "gateway",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-gateway:v0.3.0",
+      "imageID": "sha256:0195c1e9fba9116c94042fcaca48b3a743d8752cea77aff7db4b4659f3c8b6a3"
+    },
+    {
+      "name": "controller",
+      "image": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager:v0.6.11",
+      "imageID": "registry-cn-shanghai-vpc.ack.aliyuncs.com/acs/ack-sandbox-manager@sha256:89b9bad44978bad1d9f6a9e8e43f76d0ef93cc333fd437ec7a892a98ecd58149"
+    }
+  ],
+  "cleanupConfirmed": true
+}
