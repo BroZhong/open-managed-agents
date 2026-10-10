@@ -216,6 +216,11 @@ Loose Sessions under chats use the same modification ordering and page sizes,
 with a separate cursor and Show more control. Loading one group does not
 expand another; collapsed Workspaces do not request their Session histories.
 The Agent detail page retains its aggregate non-Loop Session list.
+Agent-scoped Workspace discovery also reports whether any visible non-Loop,
+non-delegated Session is running or waiting, independently of loaded pages.
+Collapsed Workspace rows show a Running indicator; expanded rows retain each
+Session's indicator. Workspace summaries refresh every 15 seconds and on observed
+Session status changes.
 
 The Workspace file panel has a Workspace-scoped lifetime, independent of the
 Session composer and event projection. Same-Workspace Session navigation retains

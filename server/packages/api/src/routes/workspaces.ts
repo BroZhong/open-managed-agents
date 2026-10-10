@@ -73,14 +73,21 @@ export function workspaceEntityRoutes(
       const matches = [];
       for (let offset = 0; offset < namedWorkspaces.length; offset += 10) {
         const batch = await Promise.all(namedWorkspaces.slice(offset, offset + 10).map(async (workspace) => {
-          const sessions = await sessionStore.list(tenant.tenantId, {
+          const filters = {
             agentId,
             workspaceId: workspace.id,
             withoutLoop: true,
             excludeDelegated: true,
             limit: 1,
-          });
-          return sessions.data.length > 0 ? workspace : null;
+          };
+          const sessions = await sessionStore.list(tenant.tenantId, filters);
+          if (sessions.data.length === 0) return null;
+          // Status filtering happens before pagination, including Sessions that
+          // have never been loaded by the sidebar.
+          const active = await Promise.all((["running", "waiting"] as const).map(
+            (status) => sessionStore.list(tenant.tenantId, { ...filters, status }),
+          ));
+          return { ...workspace, hasRunningSessions: active.some((page) => page.data.length > 0) };
         }));
         matches.push(...batch.filter((workspace) => workspace !== null));
       }

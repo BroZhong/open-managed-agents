@@ -240,7 +240,11 @@ export const WorkspaceSchema = z
   .openapi("Workspace");
 
 export const WorkspaceListSchema = z
-  .object({ data: z.array(WorkspaceSchema) })
+  .object({ data: z.array(WorkspaceSchema.extend({
+    hasRunningSessions: z.boolean().optional().openapi({
+      description: "Present with agent_id: whether a visible non-Loop, non-delegated Session for this Agent is running or waiting, independent of pagination.",
+    }),
+  })) })
   .openapi("WorkspaceList");
 
 export const SessionStatusSchema = z

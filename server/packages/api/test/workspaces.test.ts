@@ -143,6 +143,35 @@ describe("GET /v1/workspaces", () => {
     expect((await res.json()).data.map((workspace: { id: string }) => workspace.id)).toEqual(["visible"]);
   });
 
+  it("summarizes activity beyond loaded pages and excludes other Agents, Loops, children and deleted Sessions", async () => {
+    const { app, stores } = createTestApp();
+    const input = { tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" as const };
+    const agent = await stores.agentStore.create(input);
+    const other = await stores.agentStore.create(input);
+    await stores.workspaceStore.create({ tenantId: "dev", id: "project", name: "Project" });
+    for (let index = 0; index < 6; index++) {
+      await stores.sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "project" });
+    }
+    const active = await stores.sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "project" });
+    for (const kind of ["other", "loop", "child", "deleted"]) {
+      const owner = kind === "other" ? other : agent;
+      const session = await stores.sessionStore.create({
+        tenantId: "dev", agentId: owner.id, agent: owner, workspaceId: "project",
+        loopId: kind === "loop" ? "loop" : undefined,
+        delegation: kind === "child" ? { parentSessionId: active.id, parentTurnId: "turn", parentToolUseId: "tool", sandboxSessionId: active.id } : undefined,
+      });
+      await stores.sessionStore.updateStatus(session.id, "running");
+      if (kind === "deleted") await stores.sessionStore.softDelete(session.id);
+    }
+    for (const status of ["running", "waiting", "idle", "terminated"] as const) {
+      await stores.sessionStore.updateStatus(active.id, status);
+      const response = await app.request(`/v1/workspaces?agent_id=${agent.id}`);
+      expect((await response.json()).data).toEqual([expect.objectContaining({
+        id: "project", hasRunningSessions: status === "running" || status === "waiting",
+      })]);
+    }
+  });
+
   it("finds a Workspace whose Sessions are beyond the Agent's first page", async () => {
     const { app, stores } = createTestApp();
     const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });

@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -70,6 +71,39 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
+  it("shows live activity on collapsed Workspaces without loading Session pages", async () => {
+    const agent = { id: "agent_activity", name: "Activity Agent" };
+    const workspace = { id: "project", name: "Project", hasRunningSessions: true };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const workspaceKey = ["workspaces", "byAgent", agent.id];
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(workspaceKey, [workspace, { id: "idle", name: "Idle", hasRunningSessions: false }]);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
+      pages: [{ data: [], has_more: false }], pageParams: [undefined],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [], has_more: false })));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QueryClientProvider client={queryClient}><AuthProvider>
+      <MemoryRouter initialEntries={[`/agents/${agent.id}`]}><Routes>
+        <Route path="/agents/:id" element={<Sidebar />} />
+      </Routes></MemoryRouter>
+    </AuthProvider></QueryClientProvider>);
+    const project = within(screen.getByRole("group", { name: "Workspace Project" }));
+    expect(project.getByRole("status").textContent).toBe("Running");
+    expect(within(screen.getByRole("group", { name: "Workspace Idle" })).queryByRole("status")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(project.getByRole("button", { name: /^Project/, expanded: false }));
+    expect(project.queryByRole("status")).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    fireEvent.click(project.getByRole("button", { expanded: true }));
+    expect(project.getByRole("status")).toBeTruthy();
+    act(() => { queryClient.setQueryData(workspaceKey, [{ ...workspace, hasRunningSessions: false }]); });
+    await waitFor(() => expect(project.queryByRole("status")).toBeNull());
+    act(() => { queryClient.setQueryData(workspaceKey, [workspace]); });
+    await waitFor(() => expect(project.getByRole("status")).toBeTruthy());
+  });
+
   it.each(["workspace", "chats"] as const)("orders %s Sessions by modification time across loaded pages, regardless of creation time or status", (scope) => {
     const agent = { id: "agent_recency", name: "Recency Agent" };
     const workspace = { id: "workspace_recency", name: "Project Recency" };

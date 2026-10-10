@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Plus,
   FolderClosed,
+  LoaderCircle,
   MessagesSquare,
   Repeat2,
   MoreHorizontal,
@@ -735,7 +736,13 @@ function WorkspaceRow({ workspace, agentId, activeWorkspaceId, open, onToggle, o
       <button type="button" onClick={onToggle} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5">
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
         <FolderClosed className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{workspace.name}</span>
+        <span className="min-w-0 flex-1 truncate text-left">{workspace.name}</span>
+        {!open && workspace.hasRunningSessions && (
+          <span role="status" aria-label="Workspace has running Sessions" title="Workspace has running Sessions" className="inline-flex shrink-0 items-center gap-1 text-[10px] text-[var(--color-fg-muted)]">
+            <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+            Running
+          </span>
+        )}
       </button>
       <SidebarItemActions kind="Workspace" label={workspace.name ?? workspace.id}
         onRename={(name) => updateWorkspace.mutateAsync({ id: workspace.id, name })}
