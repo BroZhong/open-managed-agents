@@ -295,6 +295,18 @@ describe("parseSessionSseFrame", () => {
       },
     });
   });
+
+  it.each([
+    { payload: { ts: "2026-07-14T01:00:00.000Z", data: {} }, timestamp: "2026-07-14T01:00:00.000Z" },
+    { payload: { timestamp: "2026-07-14T02:00:00.000Z" }, timestamp: "2026-07-14T02:00:00.000Z" },
+    { payload: {}, timestamp: undefined },
+    { payload: { ts: "invalid" }, timestamp: undefined },
+    { payload: { data: { ts: "2026-07-14T03:00:00.000Z" } }, timestamp: undefined },
+  ])("distinguishes supplied lifecycle timestamps from display fallbacks: $payload", ({ payload, timestamp }) => {
+    const parsed = parseSessionSseFrame(`event: session.status_running\nid: 1\ndata: ${JSON.stringify(payload)}`);
+    expect(parsed?.kind).toBe("event");
+    if (parsed?.kind === "event") expect(parsed.timestamp).toBe(timestamp);
+  });
 });
 
 describe("sessionEventStreamUrl", () => {

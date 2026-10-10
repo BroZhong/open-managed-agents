@@ -7,6 +7,7 @@ import {
   useRef,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
 import {
@@ -19,6 +20,20 @@ import {
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const STORAGE_KEY = "oma_api_key";
 
+function newerTimestamp(updatedAt: string | undefined, current: unknown): boolean {
+  if (!updatedAt || !Number.isFinite(Date.parse(updatedAt))) return false;
+  const previous = typeof current === "string" ? Date.parse(current) : NaN;
+  return !Number.isFinite(previous) || Date.parse(updatedAt) > previous;
+}
+
+function collectionSomeSession(value: unknown, matches: (session: Record<string, unknown>) => boolean): boolean {
+  if (Array.isArray(value)) return value.some((item) => collectionSomeSession(item, matches));
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (typeof record.id === "string" && matches(record)) || ["data", "pages"].some((key) =>
+    collectionSomeSession(record[key], matches));
+}
+
 export interface WorkspaceFileChange {
   /** Refresh counter advanced by the Host Turn completion state. */
   nonce: number;
@@ -27,12 +42,13 @@ export interface WorkspaceFileChange {
 function projectStatusIntoSessionCollection(
   value: unknown,
   sessionId: string,
-  status: Session["status"],
+  status: Session["status"] | undefined,
+  updatedAt?: string,
 ): unknown {
   if (Array.isArray(value)) {
     let changed = false;
     const next = value.map((item) => {
-      const projected = projectStatusIntoSessionCollection(item, sessionId, status);
+      const projected = projectStatusIntoSessionCollection(item, sessionId, status, updatedAt);
       changed ||= projected !== item;
       return projected;
     });
@@ -42,14 +58,16 @@ function projectStatusIntoSessionCollection(
 
   const record = value as Record<string, unknown>;
   if (record.id === sessionId && typeof record.status === "string") {
-    if (record.status === "terminated") return value;
-    return record.status === status ? value : { ...record, status };
+    const nextStatus = record.status === "terminated" ? "terminated" : status ?? record.status;
+    const nextUpdatedAt = newerTimestamp(updatedAt, record.updatedAt) ? updatedAt : record.updatedAt;
+    return record.status === nextStatus && record.updatedAt === nextUpdatedAt
+      ? value : { ...record, status: nextStatus, updatedAt: nextUpdatedAt };
   }
 
   let projected = value;
   for (const key of ["data", "pages"] as const) {
     if (!(key in record)) continue;
-    const child = projectStatusIntoSessionCollection(record[key], sessionId, status);
+    const child = projectStatusIntoSessionCollection(record[key], sessionId, status, updatedAt);
     if (child !== record[key]) {
       projected = { ...(projected as Record<string, unknown>), [key]: child };
     }
@@ -121,9 +139,23 @@ export function useSessionEvents(sessionId: string) {
     setFileChange({ nonce: 0 });
   }
 
-  const projectStatus = useCallback((nextStatus: Session["status"]) => {
+  const projectStatus = useCallback((
+    nextStatus: Session["status"] | undefined,
+    updatedAt?: string,
+    authoritativeSession?: Session,
+  ) => {
     const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
-    if (session?.status === "terminated") return;
+    if (session?.status === "terminated" && nextStatus !== undefined && nextStatus !== "terminated") return;
+
+    const workspaceSession = session ?? authoritativeSession;
+    const workspaceQueries = workspaceSession && updatedAt
+      ? queryClient.getQueryCache().findAll({
+        queryKey: ["sessions", "byAgent", workspaceSession.agentId, "workspace", workspaceSession.workspaceId],
+      }).filter((query) => query.state.data &&
+        !collectionSomeSession(query.state.data, (entry) => entry.id === sessionId) &&
+        (newerTimestamp(updatedAt, session?.updatedAt) ||
+          collectionSomeSession(query.state.data, (entry) => newerTimestamp(updatedAt, entry.updatedAt))))
+      : [];
 
     const fetchingSessionQueries = queryClient.getQueryCache().findAll({
       predicate: (query) => {
@@ -153,6 +185,7 @@ export function useSessionEvents(sessionId: string) {
             value,
             sessionId,
             nextStatus,
+            updatedAt,
           ),
         );
       }, () => undefined);
@@ -161,7 +194,7 @@ export function useSessionEvents(sessionId: string) {
     const inFlightQueries = fetchingSessionQueries.filter(
       (query) => !query.state.fetchMeta?.fetchMore,
     );
-    if (inFlightQueries.length > 0) {
+    if (nextStatus !== undefined && inFlightQueries.length > 0) {
       void Promise.all(inFlightQueries.map((query) =>
         queryClient.cancelQueries(
           { queryKey: query.queryKey, exact: true },
@@ -176,11 +209,9 @@ export function useSessionEvents(sessionId: string) {
       )));
     }
 
-    setStatus(nextStatus);
+    if (nextStatus !== undefined) setStatus(nextStatus);
     queryClient.setQueryData<Session>(["sessions", sessionId], (current) =>
-      current && current.status !== "terminated"
-        ? { ...current, status: nextStatus }
-        : current,
+      projectStatusIntoSessionCollection(current, sessionId, nextStatus, updatedAt) as Session | undefined,
     );
     queryClient.setQueriesData(
       {
@@ -196,28 +227,44 @@ export function useSessionEvents(sessionId: string) {
         value,
         sessionId,
         nextStatus,
+        updatedAt,
       ),
     );
+
+    for (const query of workspaceQueries) {
+      // A directly opened Session may lie beyond the loaded pages. Let the
+      // server decide membership (including Child Sessions), after any
+      // explicit Show more request has finished.
+      const refresh = () => queryClient.invalidateQueries(
+        { queryKey: query.queryKey, exact: true },
+        { cancelRefetch: false },
+      );
+      if (query.state.fetchMeta?.fetchMore && query.promise) {
+        void query.promise.then(refresh, () => undefined);
+      } else {
+        void refresh();
+      }
+    }
   }, [queryClient, sessionId]);
 
-  const addEvent = useCallback((event: SessionEvent) => {
+  const addEvent = useCallback((event: SessionEvent, updatedAt?: string) => {
     // Retain every durable event, including historical event types.
     dispatch({ type: "event.received", event });
 
     if (event.type === "session.status_running") {
-      projectStatus("running");
+      projectStatus("running", updatedAt);
       setTurnLifecycleNonce((n) => n + 1);
     }
     if (event.type === "session.status_waiting") {
-      projectStatus("waiting");
+      projectStatus("waiting", updatedAt);
       setTurnLifecycleNonce((n) => n + 1);
     }
     if (event.type === "session.status_idle") {
-      projectStatus("idle");
+      projectStatus("idle", updatedAt);
       setTurnLifecycleNonce((n) => n + 1);
     }
     if (event.type === "session.status_terminated") {
-      projectStatus("terminated");
+      projectStatus("terminated", updatedAt);
       setTurnLifecycleNonce((n) => n + 1);
       setFileChange((prev) => ({ nonce: prev.nonce + 1 }));
     }
@@ -243,6 +290,32 @@ export function useSessionEvents(sessionId: string) {
     const abortController = new AbortController();
     const { signal } = abortController;
     let historyLoaded = false;
+    let refreshingRecency = false;
+    let recencyRequested = false;
+
+    async function refreshRecency() {
+      recencyRequested = true;
+      if (refreshingRecency) return;
+      refreshingRecency = true;
+      try {
+        do {
+          recencyRequested = false;
+          // Host-owned lifecycle SSE frames can omit their stored timestamp.
+          // Read the Session rather than treating replay receipt as activity.
+          const session = await apiFetch<Session>(`/v1/sessions/${sessionId}`, {
+            signal,
+            headers: { Accept: "application/json" },
+          });
+          if (signal.aborted || !isCurrentGeneration()) return;
+          if (session.id === sessionId) projectStatus(undefined, session.updatedAt, session);
+        } while (recencyRequested);
+      } catch {
+        // Status is already projected; a later transition or list read can
+        // recover recency after a transient Session-detail read failure.
+      } finally {
+        refreshingRecency = false;
+      }
+    }
 
     // Reads the SSE stream to completion, parsing frames and feeding events
     // into durable history or the active Delta projection. Shared by both the
@@ -302,7 +375,10 @@ export function useSessionEvents(sessionId: string) {
           // Only durable events advance Last-Event-ID. Deltas have their own
           // Redis identity and never fabricate a Session sequence number.
           lastSeqRef.current = parsed.event.seq;
-          addEvent(parsed.event);
+          addEvent(parsed.event, parsed.timestamp);
+          if (parsed.timestamp === undefined && [
+            "session.status_running", "session.status_waiting", "session.status_idle", "session.status_terminated",
+          ].includes(parsed.event.type)) void refreshRecency();
         }
       }
     }
@@ -364,19 +440,19 @@ export function useSessionEvents(sessionId: string) {
       for (let i = historicalEvents.length - 1; i >= 0; i--) {
         const evt = historicalEvents[i];
         if (evt.type === "session.status_terminated") {
-          projectStatus("terminated");
+          projectStatus("terminated", evt.ts);
           break;
         }
         if (evt.type === "session.status_running") {
-          projectStatus("running");
+          projectStatus("running", evt.ts);
           break;
         }
         if (evt.type === "session.status_waiting") {
-          projectStatus("waiting");
+          projectStatus("waiting", evt.ts);
           break;
         }
         if (evt.type === "session.status_idle") {
-          projectStatus("idle");
+          projectStatus("idle", evt.ts);
           break;
         }
       }

@@ -99,6 +99,29 @@ function stubHistoryOnly(history: SessionEvent[], hasMore = false) {
   );
 }
 
+function stubLifecycleStream(readSession: () => Promise<Response>) {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (!url.pathname.endsWith("/events")) return readSession();
+    if (new Headers(init?.headers).get("Accept") === "application/json") {
+      return Promise.resolve(Response.json({ data: [], has_more: false }));
+    }
+    return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+      start(streamController) {
+        controller = streamController;
+        init?.signal?.addEventListener("abort", () => controller.close(), { once: true });
+      },
+    })));
+  }));
+  return (status: Session["status"], seq: number, timestamp?: string) => {
+    const data = timestamp ? { ts: timestamp, data: {} } : {};
+    controller.enqueue(new TextEncoder().encode(
+      `event: session.status_${status}\nid: ${seq}\ndata: ${JSON.stringify(data)}\n\n`,
+    ));
+  };
+}
+
 describe("useSessionEvents history replay", () => {
   it("projects durable Session termination after another API accepted deletion", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -501,6 +524,8 @@ describe("useSessionEvents history replay", () => {
     expect(
       queryClient.getQueryData<Session[]>(["sessions", "all"])?.[0].status,
     ).toBe("running");
+    expect(queryClient.getQueryData<Session>(["sessions", session.id])?.updatedAt).toBe(runningEvent.ts);
+    expect(queryClient.getQueryData<Session[]>(["sessions", "all"])?.[0].updatedAt).toBe(runningEvent.ts);
     expect(
       queryClient.getQueryData<InfiniteData<SessionPage>>([
         "sessions",
@@ -513,6 +538,84 @@ describe("useSessionEvents history replay", () => {
         ["sessions", "byLoop", session.loopId],
       )?.pages[0].data[0].status,
     ).toBe("running");
+  });
+
+  it("opening old history preserves a later title or thinking modification time", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const session = { ...sessionFixture("session_renamed"), title: "New title", thinking: "high" as const,
+      updatedAt: "2026-07-15T00:00:00.000Z" };
+    const key = ["sessions", "byAgent", session.agentId, "workspace", session.workspaceId, "parents"];
+    queryClient.setQueryData(["sessions", session.id], session);
+    queryClient.setQueryData(key, sessionPages([session]));
+    stubHistoryOnly([{ seq: 1, type: "session.status_idle", data: {}, ts: "2026-07-14T01:00:00.000Z" }]);
+    const { result } = renderHook(() => useSessionEvents(session.id), { wrapper: queryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isConnected).toBe(true));
+    expect(queryClient.getQueryData(["sessions", session.id])).toEqual(session);
+    expect(queryClient.getQueryData<InfiniteData<SessionPage>>(key)?.pages[0].data).toEqual([session]);
+  });
+
+  it("uses authoritative recency for timestamp-less lifecycle frames without reverting a newer status", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const session = sessionFixture("session_live");
+    const key = ["sessions", "byAgent", session.agentId, "workspace", session.workspaceId, "parents"];
+    queryClient.setQueryData(["sessions", session.id], session);
+    queryClient.setQueryData(key, sessionPages([session]));
+    let resolveDetail!: (response: Response) => void;
+    const idleAt = "2026-07-14T02:00:00.000Z";
+    const readSession = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveDetail = resolve; }))
+      .mockResolvedValue(Response.json({ ...session, updatedAt: idleAt }));
+    const emit = stubLifecycleStream(readSession);
+    const { result } = renderHook(() => useSessionEvents(session.id), { wrapper: queryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isConnected).toBe(true));
+    await act(async () => emit("running", 1));
+    expect(result.current.status).toBe("running");
+    expect(queryClient.getQueryData<Session>(["sessions", session.id])?.updatedAt).toBe(session.updatedAt);
+    await act(async () => emit("idle", 2));
+    expect(readSession).toHaveBeenCalledTimes(1);
+    await act(async () => resolveDetail(Response.json({ ...session, status: "running", updatedAt: "2026-07-14T01:00:00.000Z" })));
+    await waitFor(() => expect(readSession).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(queryClient.getQueryData<Session>(["sessions", session.id])?.updatedAt).toBe(idleAt));
+    expect(result.current.status).toBe("idle");
+    expect(queryClient.getQueryData<InfiniteData<SessionPage>>(key)?.pages[0].data[0]).toMatchObject({ status: "idle", updatedAt: idleAt });
+  });
+
+  it.each(["idle", "terminated"] as const)("uses stored time for timestamp-less %s replay", async (status) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const session = sessionFixture("session_replay");
+    queryClient.setQueryData(["sessions", session.id], session);
+    const updatedAt = status === "terminated" ? "2026-07-14T01:00:00.000Z" : session.updatedAt;
+    const readSession = vi.fn().mockResolvedValue(Response.json({ ...session, status, updatedAt }));
+    const emit = stubLifecycleStream(readSession);
+    const { result } = renderHook(() => useSessionEvents(session.id), { wrapper: queryWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isConnected).toBe(true));
+    await act(async () => emit(status, 1));
+    await waitFor(() => expect(readSession).toHaveBeenCalledOnce());
+    expect(queryClient.getQueryData<Session>(["sessions", session.id])).toMatchObject({ status, updatedAt });
+  });
+
+  it("refreshes an off-page Workspace Session even when its detail already has the latest timestamp", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const session = { ...sessionFixture("session_offpage"), updatedAt: "2026-07-14T02:00:00.000Z" };
+    const older = sessionFixture("session_visible");
+    const key = ["sessions", "byAgent", session.agentId, "workspace", session.workspaceId, "parents"];
+    queryClient.setQueryData(["sessions", session.id], session);
+    queryClient.setQueryData(key, sessionPages([older]));
+    const queryFn = vi.fn().mockResolvedValue({ data: [session, older], has_more: false });
+    const observer = new InfiniteQueryObserver(queryClient, {
+      queryKey: key, queryFn, initialPageParam: undefined as string | undefined,
+      getNextPageParam: () => undefined,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const readSession = vi.fn().mockResolvedValue(Response.json(session));
+    const emit = stubLifecycleStream(readSession);
+    const hook = renderHook(() => useSessionEvents(session.id), { wrapper: queryWrapper(queryClient) });
+    try {
+      await waitFor(() => expect(hook.result.current.isConnected).toBe(true));
+      await act(async () => emit("idle", 1));
+      await waitFor(() => expect(observer.getCurrentResult().data?.pages[0].data[0].id).toBe(session.id));
+      expect(queryFn).toHaveBeenCalledOnce();
+    } finally { hook.unmount(); unsubscribe(); }
   });
 
   it("does not let partial history overwrite authoritative Session caches", async () => {
@@ -692,7 +795,7 @@ describe("useSessionEvents history replay", () => {
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(
-              "event: session.status_running\nid: 1\ndata: {}\n\n",
+              'event: session.status_running\nid: 1\ndata: {"ts":"2026-07-14T01:00:00.000Z","data":{}}\n\n',
             ));
             init?.signal?.addEventListener(
               "abort",
@@ -717,6 +820,7 @@ describe("useSessionEvents history replay", () => {
       expect(
         observer.getCurrentResult().data?.pages[0].data[0].status,
       ).toBe("running");
+      expect(observer.getCurrentResult().data?.pages[0].data[0].updatedAt).toBe("2026-07-14T01:00:00.000Z");
       expect(observer.getCurrentResult().data?.pages[1].data).toEqual([nextSession]);
     } finally {
       hook.unmount();

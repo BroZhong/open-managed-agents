@@ -21,7 +21,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { runningSessionsFirst } from "@/lib/session-order"
+import { recentlyUpdatedSessionsFirst, runningSessionsFirst } from "@/lib/session-order"
 import { useAuth } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Tooltip } from "@/components/ui/tooltip"
@@ -548,8 +548,12 @@ function AgentContextNav({ agentId, collapsed }: { agentId: string; collapsed: b
 }
 
 /** Each list owns its cursor, loading state, and retry action. */
-function PaginatedSessionList({ query }: { query: ReturnType<typeof useLooseSessions> }) {
-  const sessions = runningSessionsFirst((query.data ?? []).filter((session) => !session.loopId))
+function PaginatedSessionList({ query, order = "running" }: {
+  query: ReturnType<typeof useLooseSessions>
+  order?: "running" | "updated"
+}) {
+  const sortSessions = order === "updated" ? recentlyUpdatedSessionsFirst : runningSessionsFirst
+  const sessions = sortSessions((query.data ?? []).filter((session) => !session.loopId))
   return <>
     {query.isLoading && <p className="px-2.5 py-1 text-xs text-neutral-400">Loading Sessions…</p>}
     {query.isError && <p role="alert" className="px-2.5 py-1 text-xs text-red-500">
@@ -756,7 +760,7 @@ function WorkspaceRow({ workspace, agentId, activeWorkspaceId, open, onToggle, o
       </Tooltip>
     </div>
     {open && <div className="ml-3 space-y-0.5 border-l border-[var(--color-border)] pl-1">
-      <PaginatedSessionList query={sessionsQuery} />
+      <PaginatedSessionList query={sessionsQuery} order="updated" />
     </div>}
   </div>
 }

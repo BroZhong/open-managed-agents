@@ -69,6 +69,15 @@ function createMemHarness(noAstCoverageCheck = false): PgTestHarness {
       impure: true,
       implementation: () => new Date(),
     });
+    db.public.registerFunction({
+      name: "to_char",
+      args: [DataType.timestamptz, DataType.text],
+      returns: DataType.text,
+      implementation: (value: Date, format: string) => {
+        if (format !== 'YYYY-MM-DD"T"HH24:MI:SS.USTZH:TZM') throw new Error(`Unsupported test timestamp format: ${format}`);
+        return value.toISOString();
+      },
+    });
     const { Pool } = db.adapters.createPg();
     pool = new Pool() as unknown as Pool;
     // pg-mem is schema-agnostic for our unqualified queries; apply DDL to the
