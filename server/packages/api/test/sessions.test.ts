@@ -517,6 +517,58 @@ describe("GET /v1/sessions", () => {
     expect(await (await app.request("/v1/sessions?workspace_id=ws_missing")).json()).toEqual({ data: [], has_more: false });
   });
 
+  it("lists recently modified Workspace Sessions first across stable cursor pages", async () => {
+    const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    await workspaceStore.create({ tenantId: "dev", id: "ws_project", name: "Project" });
+    const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_project" };
+    const sessions = [];
+    for (let index = 0; index < 7; index++) {
+      const session = await sessionStore.create(input);
+      session.createdAt = new Date(`2026-09-0${index + 1}T00:00:00.000Z`);
+      session.updatedAt = new Date(index === 6 ? "2026-10-07T00:00:00.000Z" : "2026-10-08T00:00:00.000Z");
+      sessions.push(session);
+    }
+    sessions[0].updatedAt = new Date("2026-10-10T00:00:00.000Z");
+    sessions[1].updatedAt = new Date("2026-10-09T00:00:00.000Z");
+    const neighbor = await sessionStore.create({ ...input, workspaceId: "ws_neighbor" });
+    neighbor.updatedAt = new Date("2026-10-11T00:00:00.000Z");
+    const query = `agent_id=${agent.id}&workspace_id=ws_project&exclude_loop=true&exclude_delegated=true&limit=5`;
+
+    const first = await app.request(`/v1/sessions?${query}&order=updated_at`);
+    expect(first.status).toBe(200);
+    const page1 = await first.json();
+    const expected = [sessions[0], sessions[1], sessions[5], sessions[4], sessions[3], sessions[2], sessions[6]];
+    expect(page1.data.map((session: { id: string }) => session.id)).toEqual(expected.slice(0, 5).map((session) => session.id));
+    expect(page1.has_more).toBe(true);
+    expect(page1.next_cursor).toMatch(/^updated_at:/);
+
+    await sessionStore.setTitle(sessions[3].id, "Modified since the previous page");
+    await sessionStore.softDelete(sessions[3].id);
+    const second = await app.request(`/v1/sessions?${query}&order=updated_at&cursor=${encodeURIComponent(page1.next_cursor)}`);
+    expect(second.status).toBe(200);
+    const page2 = await second.json();
+    expect(page2.data.map((session: { id: string }) => session.id)).toEqual(expected.slice(5).map((session) => session.id));
+    expect(page2.has_more).toBe(false);
+    expect(page2.next_cursor).toBeUndefined();
+
+    // Omitting the order keeps the established list contract.
+    const defaultPage = await (await app.request(`/v1/sessions?${query}`)).json();
+    expect(defaultPage.data.map((session: { id: string }) => session.id)).toEqual(sessions.filter((session) => !session.deletedAt).slice(0, 5).map((session) => session.id));
+  });
+
+  it.each([
+    "order=created_at",
+    "order=",
+    "order=updated_at&cursor=sess_1",
+    "order=updated_at&cursor=updated_at:invalid",
+    `order=updated_at&cursor=updated_at:${Buffer.from(JSON.stringify(["yesterday", "sess_1"])).toString("base64url")}`,
+    `order=updated_at&cursor=updated_at:${Buffer.from(JSON.stringify(["2026-02-30T00:00:00.000Z", "sess_1"])).toString("base64url")}`,
+  ])("rejects invalid Session order or cursor: %s", async (query) => {
+    const { app } = createTestApp();
+    expect((await app.request(`/v1/sessions?${query}`)).status).toBe(400);
+  });
+
   it("paginates loose Sessions without named or deleted Workspaces crowding them out", async () => {
     const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
     const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });

@@ -4,10 +4,10 @@ import type {
   SessionStore,
   SessionStoreCreateInput,
   SessionStoreListOpts,
-  PaginatedResult,
+  SessionStoreListResult,
   PendingEventFence,
 } from "@oma-server/store";
-import { PendingEventClaimLostError } from "@oma-server/store";
+import { PendingEventClaimLostError, encodeSessionUpdatedAtCursor, decodeSessionUpdatedAtCursor } from "@oma-server/store";
 
 export class InMemorySessionStore implements SessionStore {
   private sessions: Session[] = [];
@@ -49,7 +49,7 @@ export class InMemorySessionStore implements SessionStore {
   async list(
     tenantId: string,
     opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
+  ): Promise<SessionStoreListResult> {
     const limit = opts?.limit ?? 50;
     const cursor = opts?.cursor;
     const agentId = opts?.agentId;
@@ -65,17 +65,32 @@ export class InMemorySessionStore implements SessionStore {
     if (withoutLoop) filtered = filtered.filter((s) => !s.loopId);
     if (opts?.excludeDelegated) filtered = filtered.filter((s) => !s.delegation);
 
-    if (loopId) {
+    if (opts?.order === "updated_at") {
+      filtered = filtered.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()
+        || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    } else if (loopId) {
       filtered = filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     }
 
     if (cursor) {
-      const idx = filtered.findIndex((s) => s.id === cursor);
-      if (idx >= 0) filtered = filtered.slice(idx + 1);
+      if (opts?.order === "updated_at") {
+        const boundary = decodeSessionUpdatedAtCursor(cursor);
+        if (!boundary) return { data: [], hasMore: false };
+        const updatedAt = Date.parse(boundary.updatedAt);
+        filtered = filtered.filter((s) => s.updatedAt.getTime() < updatedAt
+          || (s.updatedAt.getTime() === updatedAt && s.id < boundary.id));
+      } else {
+        const idx = filtered.findIndex((s) => s.id === cursor);
+        if (idx >= 0) filtered = filtered.slice(idx + 1);
+      }
     }
 
     const data = filtered.slice(0, limit);
     const hasMore = filtered.length > limit;
+    if (hasMore && opts?.order === "updated_at" && data.length > 0) {
+      const last = data[data.length - 1];
+      return { data, hasMore, nextCursor: encodeSessionUpdatedAtCursor(last.updatedAt.toISOString(), last.id) };
+    }
     return { data, hasMore };
   }
 

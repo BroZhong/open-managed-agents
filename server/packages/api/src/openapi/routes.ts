@@ -906,6 +906,10 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Sessions"],
     request: {
       query: paginationQuery.extend({
+        order: z.enum(["updated_at"]).optional().openapi({
+          param: { name: "order", in: "query" },
+          description: "Set to updated_at to list most recently modified Sessions first, with ID descending for ties. Pass the returned opaque next_cursor with the same order and filters for subsequent pages. Defaults to ID ascending, or creation time descending when loop_id is set.",
+        }),
         agent_id: z
           .string()
           .optional()

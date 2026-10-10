@@ -1,6 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
-import { workspaceObjectPrefix } from "@oma-server/store";
+import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession, sharedSession } from "../lib/public-projection.js";
@@ -129,6 +129,13 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     const tenant = c.get("tenant");
     const limitParam = c.req.query("limit");
     const cursor = c.req.query("cursor") || undefined;
+    const order = c.req.query("order");
+    if (order !== undefined && order !== "updated_at") {
+      return c.json({ error: "order must be updated_at" }, 400);
+    }
+    if (order === "updated_at" && cursor && !decodeSessionUpdatedAtCursor(cursor)) {
+      return c.json({ error: "cursor must be an updated_at cursor returned by this endpoint" }, 400);
+    }
     const agentId = c.req.query("agent_id") || undefined;
     const workspaceId = c.req.query("workspace_id") || undefined;
     const excludeNamedWorkspaces = c.req.query("exclude_named_workspaces");
@@ -167,6 +174,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
         .map((w) => w.id),
       limit,
       cursor,
+      order,
       agentId,
       workspaceId,
       status: status as any,
@@ -181,7 +189,7 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     };
 
     if (result.hasMore && result.data.length > 0) {
-      response.next_cursor = result.data[result.data.length - 1].id;
+      response.next_cursor = result.nextCursor ?? result.data[result.data.length - 1].id;
     }
 
     return c.json(response);

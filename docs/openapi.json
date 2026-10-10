@@ -6889,6 +6889,19 @@
           },
           {
             "schema": {
+              "type": "string",
+              "enum": [
+                "updated_at"
+              ],
+              "description": "Set to updated_at to list most recently modified Sessions first, with ID descending for ties. Pass the returned opaque next_cursor with the same order and filters for subsequent pages. Defaults to ID ascending, or creation time descending when loop_id is set."
+            },
+            "required": false,
+            "description": "Set to updated_at to list most recently modified Sessions first, with ID descending for ties. Pass the returned opaque next_cursor with the same order and filters for subsequent pages. Defaults to ID ascending, or creation time descending when loop_id is set.",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string"
             },
             "required": false,

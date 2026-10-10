@@ -77,7 +77,10 @@ function useNavigationSessions(agentId: string, workspaceId: string | undefined,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({ agent_id: agentId });
-      if (workspaceId) params.set("workspace_id", workspaceId);
+      if (workspaceId) {
+        params.set("workspace_id", workspaceId);
+        params.set("order", "updated_at");
+      }
       params.set("exclude_loop", "true");
       params.set("exclude_delegated", "true");
       if (!workspaceId) params.set("exclude_named_workspaces", "true");

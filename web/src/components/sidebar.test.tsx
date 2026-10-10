@@ -70,6 +70,60 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
+  it("orders Workspace Sessions by modification time across loaded pages, regardless of creation time or status", () => {
+    const agent = { id: "agent_recency", name: "Recency Agent" };
+    const workspace = { id: "workspace_recency", name: "Project Recency" };
+    const session = {
+      agentId: agent.id, workspaceId: workspace.id, status: "idle",
+      createdAt: "2026-07-14T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z",
+    };
+    const newestCreated = { ...session, id: "session_new", title: "Newly created" };
+    const running = {
+      ...session, id: "session_running", title: "Older running", status: "running",
+      createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-13T00:00:00.000Z",
+    };
+    const recentlyModified = {
+      ...session, id: "session_recent", title: "Recently modified",
+      createdAt: "2026-07-10T00:00:00.000Z", updatedAt: "2026-07-15T00:00:00.000Z",
+    };
+    const sameTime = { ...recentlyModified, id: "session_tie", title: "Same modification time" };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { gcTime: Infinity, retry: false, staleTime: Infinity } },
+    });
+    const pages = [
+      { data: [newestCreated, running], has_more: true, next_cursor: "cursor" },
+      { data: [recentlyModified, sameTime], has_more: false },
+    ];
+    queryClient.setQueryData(["agents", agent.id], agent);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], [workspace]);
+    queryClient.setQueryData(["loops", "byAgent", agent.id], []);
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "workspace", workspace.id, "parents"], {
+      pages, pageParams: [undefined, "cursor"],
+    });
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
+      pages: [{ data: [], has_more: false }], pageParams: [undefined],
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/agents/${agent.id}`]}>
+            <Routes><Route path="/agents/:id" element={<Sidebar />} /></Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    const group = within(screen.getByRole("group", { name: `Workspace ${workspace.name}` }));
+    fireEvent.click(group.getByRole("button", { name: workspace.name }));
+    expect(group.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
+      [sameTime, recentlyModified, newestCreated, running].map((item) => `/sessions/${item.id}`),
+    );
+    expect(pages.flatMap((page) => page.data.map((item) => item.id))).toEqual(
+      [newestCreated, running, recentlyModified, sameTime].map((item) => item.id),
+    );
+  });
+
   it("loads five Sessions initially and twenty more per Workspace independently from other Workspaces and chats", async () => {
     const agent = { id: "agent_pages", name: "Paginated Agent" };
     const workspaces = [
@@ -146,6 +200,7 @@ describe("Sidebar Session navigation", () => {
       expect(params.get("limit")).toBe(params.has("cursor") ? "20" : "5");
       expect(params.get("exclude_loop")).toBe("true");
       expect(params.get("exclude_delegated")).toBe("true");
+      expect(params.get("order")).toBe(params.has("workspace_id") ? "updated_at" : null);
     }
     expect(new URL(String(fetchMock.mock.calls[3][0])).searchParams.get("cursor")).toBe(cursor);
     expect(new URL(String(fetchMock.mock.calls[3][0])).searchParams.get("workspace_id")).toBe(workspaces[0].id);
@@ -397,7 +452,7 @@ describe("Sidebar Session navigation", () => {
             }
             controller.enqueue(
               new TextEncoder().encode(
-                `event: session.status_${status}\nid: 1\ndata: {}\n\n`,
+                `event: session.status_${status}\nid: 1\ndata: {"ts":"2026-07-14T01:00:00.000Z","data":{}}\n\n`,
               ),
             );
             init?.signal?.addEventListener(
@@ -442,10 +497,11 @@ describe("Sidebar Session navigation", () => {
       ?.pages.flatMap((page) => page.data.map((session) => session.id)))
       .toEqual([sibling.id, session.id]);
 
-    streamController.enqueue(new TextEncoder().encode("event: session.status_idle\nid: 2\ndata: {}\n\n"));
+    streamController.enqueue(new TextEncoder().encode('event: session.status_idle\nid: 2\ndata: {"ts":"2026-07-14T02:00:00.000Z","data":{}}\n\n'));
     await waitFor(() => {
       expect(screen.queryByRole("link", { name: `${session.title}Session running` })).toBeNull();
-      expect(siblingLink.compareDocumentPosition(activeLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const [first, second] = group === "workspace" ? [activeLink, siblingLink] : [siblingLink, activeLink];
+      expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
   });
 

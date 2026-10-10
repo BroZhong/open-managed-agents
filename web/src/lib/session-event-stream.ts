@@ -17,7 +17,7 @@ export type SessionEventStreamAction =
   | { type: "delta.received"; delta: SessionDelta };
 
 export type ParsedSessionSseFrame =
-  | { kind: "event"; event: SessionEvent }
+  | { kind: "event"; event: SessionEvent; timestamp?: string }
   | { kind: "delta"; delta: SessionDelta };
 
 export const initialSessionEventStreamState: SessionEventStreamState = {
@@ -72,6 +72,12 @@ function timestampOf(data: Record<string, unknown>): string {
   return new Date().toISOString();
 }
 
+function authoritativeTimestamp(data: Record<string, unknown> | undefined): string | undefined {
+  const timestamp = data?.ts ?? data?.timestamp;
+  return typeof timestamp === "string" && Number.isFinite(Date.parse(timestamp))
+    ? timestamp : undefined;
+}
+
 /** Parse one complete SSE frame into either durable history or a transient Delta. */
 export function parseSessionSseFrame(frame: string): ParsedSessionSseFrame | null {
   let eventId = "";
@@ -111,6 +117,9 @@ export function parseSessionSseFrame(frame: string): ParsedSessionSseFrame | nul
     if (!Number.isFinite(seq)) return null;
     return {
       kind: "event",
+      // Keep receipt time for display compatibility, but expose whether the
+      // Host actually supplied a timestamp before projecting Session recency.
+      timestamp: authoritativeTimestamp(record),
       event: {
         seq,
         type,

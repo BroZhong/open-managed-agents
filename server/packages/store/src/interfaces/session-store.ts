@@ -4,6 +4,8 @@ import type { PendingEventFence } from "./pending-event-store.js";
 export interface SessionStoreListOpts {
   limit?: number;
   cursor?: string;
+  /** Most recently modified first; its opaque cursor snapshots the ordering boundary. */
+  order?: "updated_at";
   agentId?: string;
   /** Scope a Workspace's Session pagination before applying the page limit. */
   workspaceId?: string;
@@ -14,6 +16,11 @@ export interface SessionStoreListOpts {
   excludedWorkspaceIds?: string[];
   /** Exclude delegated child Sessions before applying pagination. */
   excludeDelegated?: boolean;
+}
+
+export interface SessionStoreListResult extends PaginatedResult<Session> {
+  /** Supplied for updated_at ordering; legacy lists continue to use the last Session ID. */
+  nextCursor?: string;
 }
 
 export interface SessionStoreCreateInput {
@@ -33,7 +40,7 @@ export interface SessionStoreCreateInput {
 export interface SessionStore {
   create(input: SessionStoreCreateInput): Promise<Session>;
   getById(id: string): Promise<Session | null>;
-  list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>>;
+  list(tenantId: string, opts?: SessionStoreListOpts): Promise<SessionStoreListResult>;
   updateStatus(id: string, status: SessionStatus): Promise<Session | null>;
   /** PG-backed fenced variant used by a claimed turn owner. */
   updateStatusIfClaimed?(

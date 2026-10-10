@@ -1,9 +1,10 @@
 import { nanoid } from "nanoid";
 import type { Pool } from "./connection.js";
-import type { SessionStore, SessionStoreCreateInput, SessionStoreListOpts } from "../interfaces/session-store.js";
+import type { SessionStore, SessionStoreCreateInput, SessionStoreListOpts, SessionStoreListResult } from "../interfaces/session-store.js";
 import type { PendingEventFence } from "../interfaces/pending-event-store.js";
-import type { Agent, PaginatedResult, Session, SessionStatus } from "../types.js";
+import type { Agent, Session, SessionStatus } from "../types.js";
 import { PendingEventClaimLostError } from "../errors.js";
+import { encodeSessionUpdatedAtCursor, decodeSessionUpdatedAtCursor } from "../session-list-cursor.js";
 
 interface SessionRow {
   thinking: Session["thinking"];
@@ -69,7 +70,7 @@ export class PgSessionStore implements SessionStore {
     return rows[0] ? rowToSession(rows[0]) : null;
   }
 
-  async list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>> {
+  async list(tenantId: string, opts?: SessionStoreListOpts): Promise<SessionStoreListResult> {
     const limit = opts?.limit ?? 20;
     const params: unknown[] = [tenantId];
     let where = `tenant_id = $1 AND deleted_at IS NULL`;
@@ -100,7 +101,15 @@ export class PgSessionStore implements SessionStore {
       where += ` AND loop_id IS NULL`;
     }
     if (opts?.cursor) {
-      if (opts.loopId) {
+      if (opts.order === "updated_at") {
+        const cursor = decodeSessionUpdatedAtCursor(opts.cursor);
+        if (!cursor) return { data: [], hasMore: false };
+        params.push(cursor.updatedAt);
+        const updatedAtParam = params.length;
+        params.push(cursor.id);
+        where += ` AND (updated_at < $${updatedAtParam}
+          OR (updated_at = $${updatedAtParam} AND id < $${params.length}))`;
+      } else if (opts.loopId) {
         const cursor = await this.pool.query<Pick<SessionRow, "created_at">>(
           `SELECT created_at FROM sessions
            WHERE tenant_id = $1 AND loop_id = $2 AND id = $3`,
@@ -118,16 +127,24 @@ export class PgSessionStore implements SessionStore {
       }
     }
     params.push(limit + 1);
-    const order = opts?.loopId
-      ? "created_at DESC, id DESC"
-      : "id ASC";
-    const { rows } = await this.pool.query<SessionRow>(
-      `SELECT * FROM sessions WHERE ${where} ORDER BY ${order} LIMIT $${params.length}`,
+    const order = opts?.order === "updated_at"
+      ? "updated_at DESC, id DESC"
+      : opts?.loopId ? "created_at DESC, id DESC" : "id ASC";
+    const selection = opts?.order === "updated_at"
+      ? `*, to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.USTZH:TZM') AS cursor_updated_at`
+      : "*";
+    const { rows } = await this.pool.query<SessionRow & { cursor_updated_at: string }>(
+      `SELECT ${selection} FROM sessions WHERE ${where} ORDER BY ${order} LIMIT $${params.length}`,
       params,
     );
 
     const hasMore = rows.length > limit;
-    const data = (hasMore ? rows.slice(0, limit) : rows).map(rowToSession);
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const data = page.map(rowToSession);
+    if (hasMore && opts?.order === "updated_at" && page.length > 0) {
+      const last = page[page.length - 1];
+      return { data, hasMore, nextCursor: encodeSessionUpdatedAtCursor(last.cursor_updated_at, last.id) };
+    }
     return { data, hasMore };
   }
 

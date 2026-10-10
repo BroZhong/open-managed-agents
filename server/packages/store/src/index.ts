@@ -59,7 +59,10 @@ export type {
   SessionStore,
   SessionStoreCreateInput,
   SessionStoreListOpts,
+  SessionStoreListResult,
 } from "./interfaces/session-store.js";
+
+export { encodeSessionUpdatedAtCursor, decodeSessionUpdatedAtCursor } from "./session-list-cursor.js";
 
 export type {
   LoopStore,
