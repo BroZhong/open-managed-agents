@@ -84,7 +84,7 @@ export interface FileSource {
   // ── required core (all three domains) ──────────────────────────────────────
 
   /** List the file tree (flat sources return depth-1 files only). */
-  list(): Promise<FileNode[]>;
+  list(options?: { signal?: AbortSignal }): Promise<FileNode[]>;
   /** Read one file: text body for the editor, or binary metadata (see previewUrl). */
   read(path: string, options?: FileReadOptions): Promise<FileContent>;
   /** Static traits driving the UI (see {@link FileSourceCapabilities}). */
@@ -304,8 +304,8 @@ function createWorkspaceReader(workspaceId: string, access: {
   return {
     capabilities: { hierarchy: "nested", idleGated: false },
 
-    async list(): Promise<FileNode[]> {
-      const res = await access.json<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`);
+    async list(options?: { signal?: AbortSignal }): Promise<FileNode[]> {
+      const res = await access.json<{ data: WorkspaceFileEntry[] }>(`${apiPath}/files`, { signal: options?.signal });
       if (!Array.isArray(res?.data)) {
         throw new Error("File status is unconfirmed: the Workspace list response is incomplete. Retry Refresh.");
       }
@@ -317,7 +317,15 @@ function createWorkspaceReader(workspaceId: string, access: {
         updatedAt: f.updated_at ?? undefined,
       }));
       // Some storage listings include a folder entry without a directory flag.
-      return nodes.map((node) => ({ ...node, isDir: node.isDir || nodes.some((child) => child.path.startsWith(`${node.path}/`)) }));
+      const directories = new Set<string>();
+      for (const node of nodes) {
+        let slash = node.path.indexOf("/");
+        while (slash !== -1) {
+          directories.add(node.path.slice(0, slash));
+          slash = node.path.indexOf("/", slash + 1);
+        }
+      }
+      return nodes.map((node) => ({ ...node, isDir: node.isDir || directories.has(node.path) }));
     },
 
     async read(path: string, options: FileReadOptions = {}): Promise<FileContent> {

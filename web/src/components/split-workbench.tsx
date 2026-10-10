@@ -9,7 +9,7 @@ const DEFAULT = 58;
 const clamp = (value: number) => Math.min(MAX, Math.max(MIN, value));
 
 /** One mounted instance of each pane preserves editors and drafts on resize. */
-export function SplitWorkbench({ workspace, session, revealWorkspaceKey }: { workspace: ReactNode; session: ReactNode; revealWorkspaceKey?: number }) {
+export function SplitWorkbench({ workspace, session, revealWorkspaceKey }: { workspace: ReactNode | ((visible: boolean) => ReactNode); session: ReactNode; revealWorkspaceKey?: number }) {
   const container = useRef<HTMLDivElement>(null);
   const compact = useCompactPanel(container, 820);
   const [pane, setPane] = useState<"workspace" | "session">("session");
@@ -17,8 +17,10 @@ export function SplitWorkbench({ workspace, session, revealWorkspaceKey }: { wor
   const [lastRevealKey, setLastRevealKey] = useState(revealWorkspaceKey);
   if (lastRevealKey !== revealWorkspaceKey) {
     setLastRevealKey(revealWorkspaceKey);
-    setWorkspaceOpen(true);
-    setPane("workspace");
+    if (revealWorkspaceKey !== undefined) {
+      setWorkspaceOpen(true);
+      setPane("workspace");
+    }
   }
   const [width, setWidth] = useState(() => {
     const stored = localStorage.getItem(WIDTH_KEY);
@@ -62,7 +64,7 @@ export function SplitWorkbench({ workspace, session, revealWorkspaceKey }: { wor
         style={{ "--workspace-share": `${width}fr`, "--session-share": `${100 - width}fr` } as CSSProperties}
       >
         <section className="workbench-workspace" aria-label="Workspace panel" hidden={!showWorkspace} inert={!showWorkspace}>
-          {workspace}
+          {typeof workspace === "function" ? workspace(showWorkspace) : workspace}
         </section>
         {!compact && workspaceOpen && (
           <div
