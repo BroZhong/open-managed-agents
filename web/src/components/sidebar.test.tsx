@@ -70,7 +70,7 @@ describe("Sidebar global navigation", () => {
 });
 
 describe("Sidebar Session navigation", () => {
-  it("orders Workspace Sessions by modification time across loaded pages, regardless of creation time or status", () => {
+  it.each(["workspace", "chats"] as const)("orders %s Sessions by modification time across loaded pages, regardless of creation time or status", (scope) => {
     const agent = { id: "agent_recency", name: "Recency Agent" };
     const workspace = { id: "workspace_recency", name: "Project Recency" };
     const session = {
@@ -95,12 +95,12 @@ describe("Sidebar Session navigation", () => {
       { data: [recentlyModified, sameTime], has_more: false },
     ];
     queryClient.setQueryData(["agents", agent.id], agent);
-    queryClient.setQueryData(["workspaces", "byAgent", agent.id], [workspace]);
+    queryClient.setQueryData(["workspaces", "byAgent", agent.id], scope === "workspace" ? [workspace] : []);
     queryClient.setQueryData(["loops", "byAgent", agent.id], []);
-    queryClient.setQueryData(["sessions", "byAgent", agent.id, "workspace", workspace.id, "parents"], {
+    queryClient.setQueryData(["sessions", "byAgent", agent.id, ...(scope === "workspace" ? ["workspace", workspace.id] : ["loose"]), "parents"], {
       pages, pageParams: [undefined, "cursor"],
     });
-    queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
+    if (scope === "workspace") queryClient.setQueryData(["sessions", "byAgent", agent.id, "loose", "parents"], {
       pages: [{ data: [], has_more: false }], pageParams: [undefined],
     });
 
@@ -114,8 +114,8 @@ describe("Sidebar Session navigation", () => {
       </QueryClientProvider>,
     );
 
-    const group = within(screen.getByRole("group", { name: `Workspace ${workspace.name}` }));
-    fireEvent.click(group.getByRole("button", { name: workspace.name }));
+    const group = within(screen.getByRole("group", { name: scope === "workspace" ? `Workspace ${workspace.name}` : "Chats" }));
+    if (scope === "workspace") fireEvent.click(group.getByRole("button", { name: workspace.name }));
     expect(group.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
       [sameTime, recentlyModified, newestCreated, running].map((item) => `/sessions/${item.id}`),
     );
@@ -200,7 +200,7 @@ describe("Sidebar Session navigation", () => {
       expect(params.get("limit")).toBe(params.has("cursor") ? "20" : "5");
       expect(params.get("exclude_loop")).toBe("true");
       expect(params.get("exclude_delegated")).toBe("true");
-      expect(params.get("order")).toBe(params.has("workspace_id") ? "updated_at" : null);
+      expect(params.get("order")).toBe("updated_at");
     }
     expect(new URL(String(fetchMock.mock.calls[3][0])).searchParams.get("cursor")).toBe(cursor);
     expect(new URL(String(fetchMock.mock.calls[3][0])).searchParams.get("workspace_id")).toBe(workspaces[0].id);
@@ -500,8 +500,7 @@ describe("Sidebar Session navigation", () => {
     streamController.enqueue(new TextEncoder().encode('event: session.status_idle\nid: 2\ndata: {"ts":"2026-07-14T02:00:00.000Z","data":{}}\n\n'));
     await waitFor(() => {
       expect(screen.queryByRole("link", { name: `${session.title}Session running` })).toBeNull();
-      const [first, second] = group === "workspace" ? [activeLink, siblingLink] : [siblingLink, activeLink];
-      expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(activeLink.compareDocumentPosition(siblingLink) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
   });
 

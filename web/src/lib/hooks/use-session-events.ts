@@ -10,6 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
+import type { Workspace } from "@/lib/hooks/use-workspaces";
 import {
   initialSessionEventStreamState,
   parseSessionSseFrame,
@@ -147,10 +148,16 @@ export function useSessionEvents(sessionId: string) {
     const session = queryClient.getQueryData<Session>(["sessions", sessionId]);
     if (session?.status === "terminated" && nextStatus !== undefined && nextStatus !== "terminated") return;
 
-    const workspaceSession = session ?? authoritativeSession;
-    const workspaceQueries = workspaceSession && updatedAt
+    const navigationSession = session ?? authoritativeSession;
+    const namedWorkspace = navigationSession && queryClient.getQueryData<Workspace[]>(
+      ["workspaces", "byAgent", navigationSession.agentId],
+    )?.some((workspace) => workspace.id === navigationSession.workspaceId && workspace.name);
+    const navigationQueries = navigationSession && !navigationSession.loopId && updatedAt
       ? queryClient.getQueryCache().findAll({
-        queryKey: ["sessions", "byAgent", workspaceSession.agentId, "workspace", workspaceSession.workspaceId],
+        queryKey: ["sessions", "byAgent", navigationSession.agentId],
+        predicate: ({ queryKey }) =>
+          (queryKey[3] === "workspace" && queryKey[4] === navigationSession.workspaceId) ||
+          (queryKey[3] === "loose" && !namedWorkspace),
       }).filter((query) => query.state.data &&
         !collectionSomeSession(query.state.data, (entry) => entry.id === sessionId) &&
         (newerTimestamp(updatedAt, session?.updatedAt) ||
@@ -231,10 +238,10 @@ export function useSessionEvents(sessionId: string) {
       ),
     );
 
-    for (const query of workspaceQueries) {
+    for (const query of navigationQueries) {
       // A directly opened Session may lie beyond the loaded pages. Let the
-      // server decide membership (including Child Sessions), after any
-      // explicit Show more request has finished.
+      // server decide membership (including Child Sessions and anonymous
+      // Workspaces), after any explicit Show more request has finished.
       const refresh = () => queryClient.invalidateQueries(
         { queryKey: query.queryKey, exact: true },
         { cancelRefetch: false },
