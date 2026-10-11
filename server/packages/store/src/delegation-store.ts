@@ -334,7 +334,12 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
   releaseResourceUse(sessionId: string, fence: PendingEventFence) {
     return this.transaction(async (tx) => {
       const lease = (await tx.read<ResourceUseLease>("resource_uses", { sessionId, pendingEventId: fence.eventId }))[0];
-      if (lease?.ownerId === fence.ownerId && lease.generation === fence.generation) await tx.remove("resource_uses", fence.eventId);
+      // Router completion is history/queue bookkeeping, not remote settlement.
+      // The Sandbox lifecycle owner removes managed Turns only after observed
+      // exit and performs its idle decision in that same binding transaction.
+      if (lease && !lease.managedTurn && lease.ownerId === fence.ownerId && lease.generation === fence.generation) {
+        await tx.remove("resource_uses", fence.eventId);
+      }
     });
   }
   hasResourceUsers(sandboxSessionId: string) {

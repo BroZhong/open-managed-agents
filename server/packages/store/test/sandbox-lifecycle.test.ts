@@ -43,6 +43,17 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await lifecycle.finish(activity, idle);
     expect(idle).toHaveBeenCalledTimes(1);
   });
+  it('preserves managed execution through Router completion bookkeeping until settlement requests idle', async () => {
+    const idle = vi.fn(async () => {});
+    // SessionRouter.completeTurn releases ordinary delegation use before ack.
+    // This must not consume the managed execution's settlement token.
+    await stores.delegationStore.releaseResourceUse(activity.sessionId, activity.fence);
+    await ack();
+    await lifecycle.finish(activity, idle);
+    expect(idle).toHaveBeenCalledExactlyOnceWith('sandbox-original');
+    await lifecycle.finish(activity, idle);
+    expect(idle).toHaveBeenCalledTimes(1);
+  });
   it.each(['user.message', 'delegation_input', 'delegation_result'])('protects queued %s input', async origin => {
     const idle = vi.fn(async () => {});
     await stores.pendingEventStore.enqueue(activity.sessionId, { type: origin, data: {}, sessionThreadId: 'sthr_primary' });
