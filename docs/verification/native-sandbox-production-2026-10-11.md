@@ -183,3 +183,31 @@ adopted or mass-deleted.
 No outstanding review finding remains in the two production corrections. The
 silent, deliberately unlimited-stream boundary above is an explicit limitation;
 no default command timeout or hidden resource probe was introduced.
+
+## Subsequent three-hour wait fallback
+
+The user subsequently requested a maximum three-hour fallback. Commit `36174ec`
+supersedes the deliberately unlimited Host-wait limitation described earlier in
+this historical report. Every native tool execution stream now has a 10,800-second
+Host ceiling; shorter valid bash timeouts retain five seconds of response grace
+within that ceiling. Larger explicit timeouts cannot extend Host waiting. Native
+arguments and validation are unchanged; expiry still reports uncertainty and does
+not automatically replay commands or certify remote process termination.
+
+Four added/updated deadline cases failed against the old implementation, then
+passed with the change. All **290 Pi Adapter tests** and its typecheck passed.
+Standards and Spec reviews found no actionable findings. This uses the same SDK
+transport deadline whose paused-runtime recovery was verified above; a wall-clock
+three-hour production wait was not performed.
+
+The Server image for this follow-up is `36174ec6fa22`, digest
+`sha256:6d428258be77b5c173a76b673f5b82bebaef173209de726dc44847fe0fc9553b`.
+No schema migration is needed. Before the update, production had no running
+Sessions or queued input. The API and Runner were updated together; Web and the
+existing migration backup remain unchanged.
+
+Both follow-up rollouts completed and public `/api/ready` returned healthy.
+An in-image protocol-boundary check on the deployed Runner observed 10,800s for
+bash without timeout, 20s for explicit 15s bash, 10,800s for explicit 4h bash,
+and 10,800s for read. This check used an in-memory executor, created no production
+Sandbox, and confirms the deployed registrations' actual timeout parameters.
