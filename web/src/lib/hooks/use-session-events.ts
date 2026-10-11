@@ -149,6 +149,9 @@ export function useSessionEvents(sessionId: string) {
     if (session?.status === "terminated" && nextStatus !== undefined && nextStatus !== "terminated") return;
 
     const navigationSession = session ?? authoritativeSession;
+    if (navigationSession && nextStatus !== undefined && nextStatus !== session?.status) {
+      void queryClient.invalidateQueries({ queryKey: ["workspaces", "byAgent", navigationSession.agentId] });
+    }
     const namedWorkspace = navigationSession && queryClient.getQueryData<Workspace[]>(
       ["workspaces", "byAgent", navigationSession.agentId],
     )?.some((workspace) => workspace.id === navigationSession.workspaceId && workspace.name);
