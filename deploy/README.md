@@ -5,25 +5,24 @@ cluster in `cn-shanghai`. This document and the manifests in this directory are
 the current deployment reference. Dated E2E reports under `docs/` describe their
 original runs and must not be used as current runbooks.
 
-Default Sandbox idle reclamation has a separate
-[rollout and rollback procedure](../docs/sandbox-lifecycle-deployment.md).
-Migration 0014 is required. The Runner automatically manages every durable
-Sandbox binding. There is no lifecycle environment variable or selector; the
-30-second sweeper is always enabled after migration 0014.
-The [2026-09-23 production canary report](../docs/verification/sandbox-lifecycle-release-2026-09-23.md)
-records the deployed image, lifecycle checks, live model compatibility fix and
-real-time acceptance evidence.
+Native finite Sandbox lifetime follows [ADR-0019](../docs/adr/0019-native-sandbox-lifecycle.md)
+and its [deployment procedure](../docs/sandbox-lifecycle-deployment.md).
+Migration 0020 replaces the historical activity table/idle scanner with binding
+coordination. Current production uses split `oma-api` / `oma-runner`; the legacy
+combined `oma-server` Deployment is scaled to zero. Release the actual split
+Deployment image fields; the legacy `deploy-app.sh` does not target them.
+See [the 2026-10-11 native lifecycle release](../docs/verification/native-sandbox-production-2026-10-11.md).
 
 ## Topology
 
 | Scope | Namespace | Resources |
 | --- | --- | --- |
-| OMA application | `oma-infra` | `oma-server`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
+| OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
 | Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
-`/api/*` to `oma-server` and all other paths to `oma-web`. The Server therefore
+`/api/*` to the API Service and all other paths to `oma-web`. The Server therefore
 runs with `API_BASE_PATH=/api`, and its readiness endpoint is `/api/health`.
 Use `https://agentry.welltop.tech/api` as the API base URL; `/v1/*` examples are
 relative to it. The deployed OpenAPI document is available at

@@ -1,0 +1,324 @@
+{
+  "runId": "native-production-1791678592573",
+  "checks": [
+    {
+      "at": "2026-10-11T00:29:52.721Z",
+      "phase": "init",
+      "name": "Session creation stays cold",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:29:57.844Z",
+      "phase": "init",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:29:57.846Z",
+      "phase": "init",
+      "name": "pure chat stays cold",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:30:10.051Z",
+      "phase": "init",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:30:10.051Z",
+      "phase": "init",
+      "name": "real Pi tool wrote the verification marker",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:30:11.429Z",
+      "phase": "init",
+      "ok": false,
+      "errorType": "AuthenticationError"
+    },
+    {
+      "at": "2026-10-11T00:30:59.439Z",
+      "phase": "reuse",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:30:59.440Z",
+      "phase": "reuse",
+      "name": "saved OSS file is readable",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:30:59.473Z",
+      "phase": "reuse",
+      "name": "Turn reuses the same Sandbox ID",
+      "ok": true,
+      "data": {
+        "original": "sandbox-system--auto-story-v2-tklfl",
+        "current": "sandbox-system--auto-story-v2-tklfl"
+      }
+    },
+    {
+      "at": "2026-10-11T00:35:00.108Z",
+      "phase": "reuse",
+      "ok": false,
+      "errorType": "Error"
+    },
+    {
+      "at": "2026-10-11T00:36:33.495Z",
+      "phase": "reuse",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:36:33.496Z",
+      "phase": "reuse",
+      "name": "saved OSS file is readable",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:36:33.530Z",
+      "phase": "reuse",
+      "name": "Turn reuses the same Sandbox ID",
+      "ok": true,
+      "data": {
+        "original": "sandbox-system--auto-story-v2-tklfl",
+        "current": "sandbox-system--auto-story-v2-tklfl"
+      }
+    },
+    {
+      "at": "2026-10-11T00:36:33.545Z",
+      "phase": "reuse",
+      "name": "idle deadline is approximately 30 minutes",
+      "ok": true,
+      "data": {
+        "id": "sandbox-system--auto-story-v2-tklfl",
+        "remainingSeconds": 1798
+      }
+    },
+    {
+      "at": "2026-10-11T00:36:41.330Z",
+      "phase": "paused",
+      "ok": false,
+      "errorType": "TypeError"
+    },
+    {
+      "at": "2026-10-11T00:37:19.715Z",
+      "phase": "paused",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:37:19.716Z",
+      "phase": "paused",
+      "name": "saved OSS file is readable",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:37:19.749Z",
+      "phase": "paused",
+      "name": "Turn reuses the same Sandbox ID",
+      "ok": true,
+      "data": {
+        "original": "sandbox-system--auto-story-v2-tklfl",
+        "current": "sandbox-system--auto-story-v2-tklfl"
+      }
+    },
+    {
+      "at": "2026-10-11T00:37:19.763Z",
+      "phase": "paused",
+      "name": "idle deadline is approximately 30 minutes",
+      "ok": true,
+      "data": {
+        "id": "sandbox-system--auto-story-v2-tklfl",
+        "remainingSeconds": 1798
+      }
+    },
+    {
+      "at": "2026-10-11T00:37:53.813Z",
+      "phase": "rebuild",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:37:53.815Z",
+      "phase": "rebuild",
+      "name": "saved OSS file is readable",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:37:53.849Z",
+      "phase": "rebuild",
+      "name": "confirmed deletion rebuilds with a new ID",
+      "ok": true,
+      "data": {
+        "original": "sandbox-system--auto-story-v2-tklfl",
+        "current": "sandbox-system--auto-story-v2-rrjr8"
+      }
+    },
+    {
+      "at": "2026-10-11T00:37:53.864Z",
+      "phase": "rebuild",
+      "name": "idle deadline is approximately 30 minutes",
+      "ok": true,
+      "data": {
+        "id": "sandbox-system--auto-story-v2-rrjr8",
+        "remainingSeconds": 1799
+      }
+    },
+    {
+      "at": "2026-10-11T00:38:42.683Z",
+      "phase": "child",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:38:43.018Z",
+      "phase": "child",
+      "name": "one child execution completed",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:38:43.033Z",
+      "phase": "child",
+      "name": "Child Session inherits parent binding",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:38:43.381Z",
+      "phase": "child",
+      "name": "child read shared OSS file",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:38:43.381Z",
+      "phase": "child",
+      "name": "parent retained delegation history",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:38:43.523Z",
+      "phase": "child",
+      "name": "idle deadline is approximately 30 minutes",
+      "ok": true,
+      "data": {
+        "id": "sandbox-system--auto-story-v2-rrjr8",
+        "remainingSeconds": 1798
+      }
+    },
+    {
+      "at": "2026-10-11T00:43:01.628Z",
+      "phase": "recover-tool",
+      "ok": false,
+      "errorType": "Error"
+    },
+    {
+      "at": "2026-10-11T00:49:23.911Z",
+      "phase": "recover-tool",
+      "name": "Turn completed without interruption or session error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:49:23.912Z",
+      "phase": "recover-tool",
+      "name": "same Turn contains honest uncertain tool error",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:49:23.913Z",
+      "phase": "recover-tool",
+      "name": "same Turn continues with a successful inspection",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:49:25.768Z",
+      "phase": "recover-tool",
+      "name": "uncertain command effect was not replayed",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:49:25.803Z",
+      "phase": "recover-tool",
+      "name": "recovered resource retains finite active deadline",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:49:49.708Z",
+      "phase": "terminate",
+      "name": "termination cleared binding",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:49:49.727Z",
+      "phase": "terminate",
+      "name": "Paused Sandbox deleted",
+      "ok": true,
+      "data": {
+        "id": "sandbox-system--auto-story-v2-rrjr8"
+      }
+    },
+    {
+      "at": "2026-10-11T00:49:52.917Z",
+      "phase": "terminate",
+      "name": "OSS file remains after termination",
+      "ok": true
+    },
+    {
+      "at": "2026-10-11T00:50:03.527Z",
+      "phase": "cleanup",
+      "name": "test resources removed; audit history retained",
+      "ok": true,
+      "data": {
+        "sessions": [
+          "sess_2LN48GsAwIq2dqzTw6Gmg",
+          "sess_WPQCcixldfgOa9FUNPTXO"
+        ],
+        "sandboxes": [
+          "sandbox-system--auto-story-v2-tklfl",
+          "sandbox-system--auto-story-v2-rrjr8"
+        ]
+      }
+    }
+  ],
+  "sandboxes": [
+    "sandbox-system--auto-story-v2-tklfl",
+    "sandbox-system--auto-story-v2-rrjr8"
+  ],
+  "sessions": [
+    "sess_WPQCcixldfgOa9FUNPTXO",
+    "sess_2LN48GsAwIq2dqzTw6Gmg"
+  ],
+  "agent": "agent_H8OS2835zAzi6r8C4nRfU",
+  "root": "sess_WPQCcixldfgOa9FUNPTXO",
+  "workspace": "ws_Hl4Ckv1wIgFqOnTrWkxXa",
+  "effectFiles": [
+    "native-recovery-effects.txt",
+    "native-recovery-effects-1791679724396.txt"
+  ],
+  "cleanupConfirmed": true,
+  "release": {
+    "main": "1a964e48b0adbd99b7a34260108e423de2f06ee4",
+    "mergeCommit": "5cbdf66aaf70",
+    "finalCodeCommit": "d19bb17229bd",
+    "serverDigest": "sha256:30333f28d3cae850e37ddf421ac33a3ccec8f8d0223651f8d07a26223d9a2ece",
+    "webDigest": "sha256:ef373d2de948e41c16b3f58b151423c4479b16b87cf75e9423bd76638feb4487",
+    "migration": "0020_native_sandbox_lifecycle.sql",
+    "backupSchema": "oma_native_backup_20261011"
+  },
+  "finalAudit": {
+    "at": "2026-10-11T00:51:35.912365+00:00",
+    "activeTestApiKeys": 0,
+    "unterminatedTestSessions": 0,
+    "unresolvedTestBindings": 0,
+    "queuedTestInputs": 0,
+    "testAgents": 0,
+    "testSandboxResources": 0,
+    "testWorkspaceFiles": 0,
+    "apiReadyReplicas": 1,
+    "runnerReadyReplicas": 1,
+    "webReadyReplicas": 1,
+    "legacyCombinedReplicas": 0,
+    "publicHealth": "ok"
+  }
+}
