@@ -76,3 +76,8 @@ Gateway and Manager versions and the isolated native platform tests. The origina
 strict retention gate failed; the later user-approved approximate contract accepts
 that observed behavior. Retain the original observations rather than rewriting
 history. See the integration report for the application changes and final checks.
+
+All native tool execution streams now have a three-hour Host wait ceiling.
+Shorter explicit bash timeouts retain five seconds of response grace within that
+ceiling. Commands may still have effects after the caller stops waiting: expiry
+is unconfirmed execution, not a successful kill or permission to replay.

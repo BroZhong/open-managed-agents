@@ -13,6 +13,7 @@ import { SANDBOX_TOOL_RUNTIME } from "./sandbox-tool-runtime.js";
 
 type Result = Awaited<ReturnType<ToolDefinition["execute"]>>;
 const MAX_TIMER_SECONDS = (2 ** 31 - 1) / 1000;
+const MAX_TOOL_WAIT_SECONDS = 3 * 60 * 60;
 const mutationQueues = new WeakMap<ToolFileSystem, Map<string, Promise<void>>>();
 
 /** Public customTools registrations. Native execute/render callbacks never run on Host. */
@@ -39,8 +40,10 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
           // A paused Sandbox freezes Pi's internal timer. Mirror an explicitly
           // requested bash deadline on the Host transport, allowing five seconds
           // for Pi to terminate its process group and return the settled frame.
+          // All tools have a three-hour Host wait ceiling, even with no native
+          // timeout. Expiry is uncertainty, not proof of remote termination.
           native.name === "bash" && typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0 && input.timeout <= MAX_TIMER_SECONDS
-            ? Math.min(input.timeout + 5, MAX_TIMER_SECONDS) : 0);
+            ? Math.min(input.timeout + 5, MAX_TOOL_WAIT_SECONDS) : MAX_TOOL_WAIT_SECONDS);
         if (native.name !== "edit" && native.name !== "write") return run();
         // Normalize only the lock key; native execute receives the original syntax.
         let lockPath = String(input.path).replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "").replace(/^~(?=\/|$)/, "/home/user");
@@ -59,7 +62,7 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
 }
 
 async function executeSandboxTool(executor: ToolExecutor, request: object, signal?: AbortSignal,
-  onUpdate?: (result: Result) => void, transportTimeoutSeconds = 0): Promise<Result> {
+  onUpdate?: (result: Result) => void, transportTimeoutSeconds = MAX_TOOL_WAIT_SECONDS): Promise<Result> {
   const fs = executorFileSystem(executor);
   const requestPath = await fs.createTempFile({ signal });
   let accepted = false;

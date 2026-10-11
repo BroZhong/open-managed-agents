@@ -80,3 +80,15 @@ cleanup. Mixed old/new lifecycle operation is unsupported.
 
 See `docs/sandbox-lifecycle-deployment.md` and the native lifecycle verification
 reports for platform versions, shortened isolated acceptance, and limitations.
+
+## Host tool wait ceiling
+
+On 2026-10-11 the user approved a three-hour maximum Host wait for native tool
+execution streams. Every native tool uses this ceiling, including bash without
+an explicit timeout. A shorter valid bash timeout retains its five-second response
+grace, capped at three hours; larger explicit timeouts cannot extend Host waiting.
+Native argument validation and command parameters are preserved. The ceiling
+bounds waiting for the execution stream, not the lifetime of a process or an
+entire Turn; preparation and bounded exceptional recovery are separate operations.
+Expiry follows the existing unconfirmed-result/recovery path, preserves output
+and never automatically replays the operation. It is not a user Interrupt.

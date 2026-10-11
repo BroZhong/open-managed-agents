@@ -50,7 +50,7 @@ describe("sandbox native tool protocol", () => {
   });
 });
 
-describe('host-side explicit bash deadline', () => {
+describe('host-side three-hour tool deadline', () => {
   it('keeps the requested timeout plus response grace outside the pausable runtime', async () => {
     const executor = new ProtocolExecutor();
     const exec = vi.spyOn(executor, 'exec');
@@ -58,9 +58,21 @@ describe('host-side explicit bash deadline', () => {
     expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(20);
     expect(executor.requests[0].args.timeout).toBe(15);
   });
-  it('does not invent a deadline when bash did not request one', async () => {
+  it('bounds bash without an explicit timeout to three hours', async () => {
     const executor = new ProtocolExecutor(); const exec = vi.spyOn(executor, 'exec');
     await invoke(executor, 'bash', { command: 'long-task' });
-    expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(0);
+    expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(10800);
   });
+  it.each([10800, 14400])('caps explicit timeout %s, including grace, at three hours', async timeout => {
+    const executor = new ProtocolExecutor(); const exec = vi.spyOn(executor, 'exec');
+    await invoke(executor, 'bash', { command: 'long-task', timeout });
+    expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(10800);
+    expect(executor.requests[0].args.timeout).toBe(timeout);
+  });
+  it('also bounds non-bash native tool streams', async () => {
+    const executor = new ProtocolExecutor(); const exec = vi.spyOn(executor, 'exec');
+    await invoke(executor, 'read', { path: 'file.txt' });
+    expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(10800);
+  });
+
 });
