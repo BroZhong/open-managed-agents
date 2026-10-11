@@ -12,6 +12,7 @@ import { canonicalMutationPath } from "./mutation-path.js";
 import { SANDBOX_TOOL_RUNTIME } from "./sandbox-tool-runtime.js";
 
 type Result = Awaited<ReturnType<ToolDefinition["execute"]>>;
+const MAX_TIMER_SECONDS = (2 ** 31 - 1) / 1000;
 const mutationQueues = new WeakMap<ToolFileSystem, Map<string, Promise<void>>>();
 
 /** Public customTools registrations. Native execute/render callbacks never run on Host. */
@@ -38,8 +39,8 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
           // A paused Sandbox freezes Pi's internal timer. Mirror an explicitly
           // requested bash deadline on the Host transport, allowing five seconds
           // for Pi to terminate its process group and return the settled frame.
-          native.name === "bash" && typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0
-            ? input.timeout + 5 : 0);
+          native.name === "bash" && typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0 && input.timeout <= MAX_TIMER_SECONDS
+            ? Math.min(input.timeout + 5, MAX_TIMER_SECONDS) : 0);
         if (native.name !== "edit" && native.name !== "write") return run();
         // Normalize only the lock key; native execute receives the original syntax.
         let lockPath = String(input.path).replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "").replace(/^~(?=\/|$)/, "/home/user");
