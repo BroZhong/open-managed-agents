@@ -854,3 +854,15 @@ describe('direct lifecycle control-plane operations', () => {
     expect(connect).toHaveBeenLastCalledWith('same-id', expect.objectContaining({ timeoutMs: 86400000, requestTimeoutMs: 185000 }));
   });
 });
+
+describe('environmental stream failure', () => {
+  it('returns uncertainty without issuing a destructive cleanup RPC that can stall on Paused', async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    sandboxes[0].processWait = async () => { throw new Error('transport timeout while paused'); };
+    await expect(collect(client.exec(id, ['long-command']))).rejects.toThrow('transport timeout');
+    expect(sandboxes[0].processKill).not.toHaveBeenCalled();
+    expect(sandboxes[0].processDisconnect).toHaveBeenCalledOnce();
+    expect(client.hasUncertainExecution(id)).toBe(true);
+  });
+});

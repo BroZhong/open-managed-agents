@@ -34,7 +34,12 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
         signal?.throwIfAborted();
         const input = { ...(args as Record<string, unknown>) };
         const run = () => executeSandboxTool(executor, { sdkVersion: VERSION, id, name: native.name,
-          args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT, model: context?.model }, signal, onUpdate);
+          args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT, model: context?.model }, signal, onUpdate,
+          // A paused Sandbox freezes Pi's internal timer. Mirror an explicitly
+          // requested bash deadline on the Host transport, allowing five seconds
+          // for Pi to terminate its process group and return the settled frame.
+          native.name === "bash" && typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0
+            ? input.timeout + 5 : 0);
         if (native.name !== "edit" && native.name !== "write") return run();
         // Normalize only the lock key; native execute receives the original syntax.
         let lockPath = String(input.path).replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "").replace(/^~(?=\/|$)/, "/home/user");
@@ -53,7 +58,7 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
 }
 
 async function executeSandboxTool(executor: ToolExecutor, request: object, signal?: AbortSignal,
-  onUpdate?: (result: Result) => void): Promise<Result> {
+  onUpdate?: (result: Result) => void, transportTimeoutSeconds = 0): Promise<Result> {
   const fs = executorFileSystem(executor);
   const requestPath = await fs.createTempFile({ signal });
   let accepted = false;
@@ -98,7 +103,7 @@ async function executeSandboxTool(executor: ToolExecutor, request: object, signa
     signal?.throwIfAborted();
     signal?.addEventListener("abort", cancel, { once: true });
     for await (const chunk of executor.exec(["node", "--input-type=module", "-e", SANDBOX_TOOL_RUNTIME, requestPath], {
-      cwd: ".", timeoutSeconds: 0, onExit: exit => { exitCode = exit.exitCode; },
+      cwd: ".", timeoutSeconds: transportTimeoutSeconds, onExit: exit => { exitCode = exit.exitCode; },
     })) {
       if (chunk.stream === "stdout") consume(chunk.bytes ? decoder.decode(chunk.bytes, { stream: true }) : chunk.text);
       else diagnostic = (diagnostic + chunk.text).slice(-4096);
