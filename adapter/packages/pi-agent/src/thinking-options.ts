@@ -1,7 +1,8 @@
-import { clampThinkingLevel, getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createCustomProvider, type CustomProviderDefinition } from "./custom-provider.js";
+import type { CustomModelDefinition, CustomProviderDefinition, CustomProviderProtocol } from "./custom-provider.js";
+import { resolveCustomModel, type CapabilityReference, type CapabilityRecommendation } from "./custom-capabilities.js";
 import { resolveModel } from "./model-resolver.js";
 
 const levels: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -10,6 +11,10 @@ export interface ThinkingOptions {
   choices: { value: ModelThinkingLevel; label: ModelThinkingLevel }[];
   resolvedLevels: Record<ModelThinkingLevel, ModelThinkingLevel>;
   defaultLevel: ModelThinkingLevel;
+  control?: "app" | "provider";
+  source?: "manual" | "upstream" | "catalog" | "default";
+  reference?: CapabilityReference;
+  recommendations?: CapabilityRecommendation[];
 }
 
 /** Pi owns support/clamping; the UI only collapses equivalent provider efforts. */
@@ -38,7 +43,14 @@ export async function managedThinkingOptions(raw: string): Promise<ThinkingOptio
 
 /** API-safe: isolated tenant metadata, no Host catalog, credentials or inference. */
 export async function customThinkingOptions(raw: string, definition: Omit<CustomProviderDefinition, "apiKey">): Promise<ThinkingOptions> {
-  const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false });
-  runtime.registerNativeProvider(createCustomProvider({ ...definition, apiKey: "" }, async () => { throw new Error("Metadata lookup cannot perform inference"); }));
-  return thinkingOptions(resolveModel(raw, runtime));
+  const selected = definition.models.find(model => `${definition.id}/${model.id}` === raw.trim());
+  if (!selected) throw new Error(`Custom model ${raw} is unavailable.`);
+  const resolved = resolveCustomModel(definition, selected);
+  return { ...thinkingOptions(resolved.model), control: "app", ...resolved.capabilities };
+}
+
+/** Preview the exact same metadata before a provider has been saved. */
+export function customModelThinkingOptions(api: CustomProviderProtocol, model: CustomModelDefinition): ThinkingOptions {
+  const resolved = resolveCustomModel({ id: "custom-preview", api, baseUrl: "" }, model);
+  return { ...thinkingOptions(resolved.model), control: "app", ...resolved.capabilities };
 }

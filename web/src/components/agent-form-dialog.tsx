@@ -1,5 +1,7 @@
 import { useModelProviders } from "@/lib/hooks/use-model-providers";
-import { useState, useEffect } from "react";
+import { useModelThinkingOptions, type ThinkingLevel } from "@/lib/hooks/use-thinking-options";
+import { AgentThinkingPicker } from "@/components/agent-thinking-picker";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Dialog, DialogHeader, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -17,10 +19,6 @@ import {
   PI_MODELS,
 } from "@/lib/agent-runtime";
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-const THINKING_LABELS = ["关闭", "极低", "低", "中", "高", "很高", "最大"] as const;
-type ThinkingLevel = typeof THINKING_LEVELS[number];
-
 interface AgentFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -37,17 +35,20 @@ export function AgentFormDialog({
   const providers = useModelProviders(open);
   const choices = [...PI_MODELS, ...(providers.data ?? []).flatMap(provider => provider.models.map(model => ({ value: `${provider.id}/${model.id}`, label: `${model.name} · ${provider.name}` })))];
   const isEdit = !!agent;
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [system, setSystem] = useState("");
-  const [model, setModel] = useState<string>(DEFAULT_MODEL);
-  const [thinking, setThinking] = useState<ThinkingLevel | undefined>();
+  const [name, setName] = useState(agent?.name ?? "");
+  const [description, setDescription] = useState(agent?.description ?? "");
+  const [system, setSystem] = useState(agent?.system ?? "");
+  const [model, setModel] = useState<string>(agent?.model ?? DEFAULT_MODEL);
+  const [thinking, setThinking] = useState<ThinkingLevel | undefined>(agent?.thinking ?? undefined);
+  const [lastInput, setLastInput] = useState({ open, agent });
+  const thinkingOptions = useModelThinkingOptions(model, open);
   const runtime = LOCKED_RUNTIME;
 
   const createMutation = useCreateAgent();
   const updateMutation = useUpdateAgent();
 
-  useEffect(() => {
+  if (lastInput.open !== open || lastInput.agent !== agent) {
+    setLastInput({ open, agent });
     if (open) {
       if (agent) {
         setName(agent.name);
@@ -63,7 +64,7 @@ export function AgentFormDialog({
         setThinking(undefined);
       }
     }
-  }, [open, agent]);
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -184,34 +185,8 @@ export function AgentFormDialog({
               <option value={agent.model}>{`${agent.model} (current)`}</option>
             )}
           </Select>
-          <div className="space-y-2 rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <label htmlFor="agent-thinking" className="text-sm font-medium text-neutral-700">思考强度</label>
-              <span className="text-xs font-medium text-neutral-500">
-                {thinking ? THINKING_LABELS[THINKING_LEVELS.indexOf(thinking)] : "自动 · 模型最高"}
-              </span>
-            </div>
-            <div className="relative px-1 pt-1">
-              <input
-                id="agent-thinking"
-                type="range"
-                min={0}
-                max={THINKING_LEVELS.length - 1}
-                step={1}
-                value={thinking ? THINKING_LEVELS.indexOf(thinking) : THINKING_LEVELS.length - 1}
-                aria-label="思考强度"
-                aria-valuetext={thinking ? THINKING_LABELS[THINKING_LEVELS.indexOf(thinking)] : "自动 · 模型最高"}
-                onChange={(e) => setThinking(THINKING_LEVELS[Number(e.target.value)])}
-                style={{ background: `linear-gradient(to right, var(--color-accent) ${(thinking ? THINKING_LEVELS.indexOf(thinking) : THINKING_LEVELS.length - 1) / (THINKING_LEVELS.length - 1) * 100}%, var(--color-bg-active) ${(thinking ? THINKING_LEVELS.indexOf(thinking) : THINKING_LEVELS.length - 1) / (THINKING_LEVELS.length - 1) * 100}%)` }}
-                className="thinking-slider w-full"
-              />
-              <div className="mt-1 flex justify-between px-0.5 text-[10px] text-neutral-400" aria-hidden="true">
-                {THINKING_LABELS.map((label) => <span key={label}>{label}</span>)}
-              </div>
-            </div>
-            <button type="button" onClick={() => setThinking(undefined)} className="text-xs text-neutral-500 underline" aria-label="重置思考强度">恢复自动</button>
-            <p className="text-xs leading-5 text-neutral-500">按模型支持的等级自动适配；不支持思考的模型保持关闭。强度越高，通常耗时越长。</p>
-          </div>
+          <AgentThinkingPicker value={thinking} onChange={setThinking} options={thinkingOptions.isError ? undefined : thinkingOptions.data}
+            loading={thinkingOptions.isFetching} error={thinkingOptions.error?.message} onRetry={() => void thinkingOptions.refetch()} />
           <p className="text-xs text-neutral-500">{providers.error ? "Custom models could not be loaded. " : ""}<a href="/model-providers" className="underline">Manage model providers</a></p>
           <Textarea
             id="agent-system"

@@ -200,3 +200,113 @@ it("uses stored credentials for discovery while editing", async () => {
   await screen.findByRole("checkbox", { name: /Private Model A/ });
   expect(request).toHaveBeenCalledOnce();
 });
+
+it("adds an unknown model without a reasoning checkbox and only adopts a suggested reference after confirmation", async () => {
+  const basic = {
+    model: "gateway/alias", source: "default", control: "app",
+    choices: [{ value: "off", label: "off" }, { value: "minimal", label: "minimal" }, { value: "low", label: "low" }, { value: "medium", label: "medium" }, { value: "high", label: "high" }],
+    resolvedLevels: { off: "off", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" }, defaultLevel: "high",
+    recommendations: [{ provider: "openai", modelId: "gpt-known", name: "Known model", reason: "Matches the model ID after a routing prefix" }],
+  };
+  const request = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/capability-references?")) return Response.json({ data: [{ provider: "openai", modelId: "gpt-known", name: "Known model", reasoning: true }], recommendations: basic.recommendations });
+    if (url.endsWith("/thinking-options")) {
+      const body = JSON.parse(String(init?.body));
+      return Response.json(body.model.capabilityReference ? { ...basic, source: "manual", reference: body.model.capabilityReference, recommendations: [] } : basic);
+    }
+    if (url.endsWith("/test")) return Response.json({ verificationToken: "proof", testedAt: "2026-10-12T00:00:00Z" });
+    if (init?.method === "POST") return Response.json({ id: "saved" });
+    return Response.json({ data: [] });
+  });
+  vi.stubGlobal("fetch", request);
+  setup();
+  fillConnection();
+  fireEvent.click(screen.getByText("Enter a model ID manually"));
+  fireEvent.change(screen.getByLabelText("Custom model ID"), { target: { value: "gateway/alias" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+  fireEvent.click(screen.getByText("Model settings"));
+  expect(screen.queryByLabelText("Supports reasoning")).toBeNull();
+  fireEvent.click(screen.getByText("高级思考设置"));
+  await screen.findByText("基础能力 · 自动使用高");
+  const preview = request.mock.calls.find(([url]) => url.endsWith("/thinking-options"))!;
+  expect(JSON.parse(String(preview[1]?.body)).model).toMatchObject({ reasoningSource: "default", capabilityVersion: 1 });
+  expect(JSON.parse(String(preview[1]?.body)).model.reasoning).not.toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
+  await screen.findByText(/All selected models responded/);
+  let testBody = JSON.parse(String(request.mock.calls.filter(([url]) => url.endsWith("/test")).at(-1)![1]?.body));
+  expect(testBody.models[0].capabilityReference).toBeUndefined();
+  fireEvent.click(screen.getByRole("button", { name: "使用 Known model" }));
+  await screen.findByText("手动参照 · 自动使用高");
+  expect(screen.getByRole("button", { name: "Save provider" })).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
+  await screen.findByText(/All selected models responded/);
+  testBody = JSON.parse(String(request.mock.calls.filter(([url]) => url.endsWith("/test")).at(-1)![1]?.body));
+  expect(testBody.models[0]).toMatchObject({ id: "gateway/alias", capabilityReference: { provider: "openai", modelId: "gpt-known" } });
+  fireEvent.click(screen.getByRole("button", { name: "清除参照，恢复自动识别" }));
+  await screen.findByText("基础能力 · 自动使用高");
+  expect(screen.getByRole("button", { name: "Save provider" })).toHaveProperty("disabled", true);
+  fireEvent.change(screen.getByLabelText("Search capability references for gateway/alias"), { target: { value: "Known" } });
+  fireEvent.click(screen.getByLabelText("Capability reference"));
+  fireEvent.click(screen.getByRole("button", { name: "Known model · openai/gpt-known" }));
+  await screen.findByText("手动参照 · 自动使用高");
+  fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
+  await screen.findByText(/All selected models responded/);
+  fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+  await waitFor(() => expect(request.mock.calls.some(([url, init]) => url.endsWith("/model-providers") && init?.method === "POST")).toBe(true));
+  const saved = request.mock.calls.find(([url, init]) => url.endsWith("/model-providers") && init?.method === "POST")!;
+  expect(JSON.parse(String(saved[1]?.body)).models[0]).toMatchObject({ id: "gateway/alias", capabilityReference: { provider: "openai", modelId: "gpt-known" } });
+});
+
+it.each([false, true])("reloads an invalid reference and lets the user clear and save it without replacing the model (legacy=%s)", async (legacy) => {
+  const provider = { id: "custom-one", name: "Gateway", api: "openai-completions", baseUrl: "https://models.example.com/v1", hasApiKey: true,
+    testedAt: "2026-10-12T00:00:00Z", models: [{ ...model, reasoningSource: "legacy", capabilityVersion: 1,
+      ...(legacy ? { catalogProvider: "openai" } : { capabilityReference: { provider: "openai", modelId: "retired" } }) }] };
+  const request = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/capability-references?")) return Response.json({ data: [], recommendations: [] });
+    if (url.endsWith("/thinking-options")) {
+      const body = JSON.parse(String(init?.body));
+      return body.model.capabilityReference || body.model.catalogProvider ? Response.json({ error: "Capability reference is no longer available" }, { status: 422 }) : Response.json({
+        model: model.id, source: "upstream", choices: [{ value: "off", label: "off" }], defaultLevel: "off",
+        resolvedLevels: { off: "off", minimal: "off", low: "off", medium: "off", high: "off", xhigh: "off", max: "off" },
+      });
+    }
+    if (url.endsWith("/test")) return Response.json({ verificationToken: "proof", testedAt: "2026-10-12T00:00:00Z" });
+    if (init?.method === "POST") return Response.json(provider);
+    return Response.json({ data: [provider] });
+  });
+  vi.stubGlobal("fetch", request);
+  setup([provider]);
+  fireEvent.click(screen.getByRole("button", { name: "Edit Gateway" }));
+  fireEvent.click(screen.getByText("Model settings"));
+  fireEvent.click(screen.getByText("高级思考设置"));
+  await screen.findByText(/Capability reference is no longer available/);
+  expect(screen.getByLabelText("Capability reference").textContent).toContain(legacy ? `openai/${model.id}` : "openai/retired");
+  fireEvent.click(screen.getByRole("button", { name: "清除参照，恢复自动识别" }));
+  await screen.findByText("接入服务声明 · 不支持思考");
+  fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
+  await screen.findByText(/All selected models responded/);
+  fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+  await waitFor(() => expect(request.mock.calls.some(([url, init]) => url.endsWith("/model-providers") && init?.method === "POST")).toBe(true));
+  const saved = request.mock.calls.find(([url, init]) => url.endsWith("/model-providers") && init?.method === "POST")!;
+  const body = JSON.parse(String(saved[1]?.body));
+  expect(body).toMatchObject({ id: "custom-one", apiKey: "", verificationToken: "proof", models: [{ id: model.id }] });
+  expect(body.models[0].capabilityReference).toBeUndefined();
+  expect(body.models[0].catalogProvider).toBeUndefined();
+});
+
+it("refreshes upstream capability declarations while keeping the selected manual reference", async () => {
+  const reference = { provider: "openai", modelId: "known" };
+  const provider = { id: "custom-one", name: "Gateway", api: "openai-completions", baseUrl: "https://models.example.com/v1", hasApiKey: true,
+    testedAt: "2026-10-12T00:00:00Z", models: [{ ...model, name: "My display name", reasoning: true, reasoningSource: "default", capabilityReference: reference }] };
+  const request = vi.fn(async (url: string) => url.endsWith("/discover") ? Response.json({ data: [{ ...model, reasoning: false, reasoningSource: "upstream", capabilityVersion: 1 }] }) : Response.json({ verificationToken: "proof", testedAt: "2026-10-12T00:00:00Z" }));
+  vi.stubGlobal("fetch", request);
+  setup([provider]);
+  fireEvent.click(screen.getByRole("button", { name: "Edit Gateway" }));
+  fireEvent.click(screen.getByRole("button", { name: "Fetch models" }));
+  await screen.findByRole("checkbox", { name: /Private Model A/ });
+  fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
+  await screen.findByText(/All selected models responded/);
+  const calls = request.mock.calls as unknown as [string, RequestInit][];
+  const tested = calls.find(([url]) => url.endsWith("/test"))!;
+  expect(JSON.parse(String(tested[1]?.body)).models[0]).toMatchObject({ name: "My display name", reasoning: false, reasoningSource: "upstream", capabilityVersion: 1, capabilityReference: reference });
+});

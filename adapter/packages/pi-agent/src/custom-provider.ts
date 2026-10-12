@@ -7,15 +7,14 @@ import {
   type Api,
   type ProviderStreams,
   type RefreshModelsContext,
+  getSupportedThinkingLevels,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import {
-  getBuiltinProviders,
-  getBuiltinModels,
-} from "@earendil-works/pi-ai/providers/all";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { resolveCustomModel } from "./custom-capabilities.js";
+import { safeCustomProviderStream } from "./custom-provider-errors.js";
 
 import { type CustomProviderProtocol } from "./custom-provider-protocols.js";
 export {
@@ -27,7 +26,11 @@ export interface CustomModelDefinition {
   name: string;
   contextWindow: number;
   maxTokens: number;
-  reasoning: boolean;
+  reasoning?: boolean;
+  reasoningSource?: "upstream" | "default" | "legacy";
+  capabilityVersion?: 1;
+  capabilityReference?: { provider: string; modelId: string };
+  thinkingMode?: "app" | "provider";
   input: ("text" | "image")[];
   /** Optional reference to Pi's metadata, including provider compatibility flags. */
   catalogProvider?: string;
@@ -58,37 +61,11 @@ export function createCustomProvider(
   // tool calls, streaming and error interpretation for both probes and Turns.
   const api: ProviderStreams = {
     stream: (model, context, options) =>
-      native.stream(model, context, { ...options, fetch: requestFetch }),
+      safeCustomProviderStream(requestFetch, fetch => native.stream(model, context, { ...options, fetch })),
     streamSimple: (model, context, options) =>
-      native.streamSimple(model, context, { ...options, fetch: requestFetch }),
+      safeCustomProviderStream(requestFetch, fetch => native.streamSimple(model, context, { ...options, fetch })),
   };
-  const models: Model<Api>[] = definition.models.map(
-    ({ catalogProvider, ...model }) => {
-      const catalog =
-        catalogProvider &&
-        getBuiltinProviders().includes(catalogProvider as never)
-          ? getBuiltinModels(catalogProvider as never).find(
-              (item) => item.id === model.id && item.api === definition.api,
-            )
-          : undefined;
-      return {
-        ...model,
-        api: definition.api,
-        provider: definition.id,
-        baseUrl: definition.baseUrl,
-        cost: catalog?.cost ?? {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-        },
-        ...(catalog?.compat ? { compat: catalog.compat } : {}),
-        ...(catalog?.thinkingLevelMap
-          ? { thinkingLevelMap: catalog.thinkingLevelMap }
-          : {}),
-      };
-    },
-  );
+  const models = definition.models.map(model => resolveCustomModel(definition, model).model);
   return createProvider({
     id: definition.id,
     name: definition.name,
@@ -134,7 +111,7 @@ export async function testCustomProvider(
           { role: "user", content: "Reply with OK.", timestamp: Date.now() },
         ],
       },
-      { maxTokens: 128, signal: AbortSignal.timeout(30_000) },
+      { maxTokens: 128, reasoning: getSupportedThinkingLevels(model).filter(level => level !== "off").at(-1), signal: AbortSignal.timeout(30_000) },
     );
     if (
       reply.stopReason === "error" ||
@@ -144,7 +121,7 @@ export async function testCustomProvider(
       // Upstream errors can echo credentials or requests. Never persist or
       // return the raw error message from a user-controlled endpoint.
       throw new Error(
-        `Model ${model.id} did not complete a test request. Check the protocol, URL, API key and model access.`,
+        reply.errorMessage ?? `Model ${model.id} did not complete a test request. Check the protocol, URL, API key and model access.`,
       );
     }
   }

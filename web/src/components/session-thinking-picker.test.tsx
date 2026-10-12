@@ -65,3 +65,26 @@ it("displays five Astra stops and resolves an inherited minimal alias to low", (
   expect(screen.getByRole("slider").getAttribute("max")).toBe("4");
   expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("低");
 });
+
+it("disables unsupported thinking without changing the saved preference", () => {
+  const onChange = vi.fn();
+  render(<SessionThinkingPicker options={{ ...options, choices: [{ value: "off", label: "off" }], defaultLevel: "off",
+    resolvedLevels: { off: "off", minimal: "off", low: "off", medium: "off", high: "off", xhigh: "off", max: "off" },
+  }} value="max" onChange={onChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "思考强度：不支持思考" }));
+  expect(screen.getByRole("slider")).toHaveProperty("disabled", true);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+it("keeps an adapted legacy override until the user actually changes the slider", async () => {
+  const onChange = vi.fn().mockResolvedValue(undefined);
+  render(<SessionThinkingPicker options={options} value="minimal" onChange={onChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "思考强度：低" }));
+  const slider = screen.getByRole("slider");
+  fireEvent.focus(slider);
+  fireEvent.blur(slider);
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.change(slider, { target: { value: "2" } });
+  fireEvent.blur(slider);
+  await waitFor(() => expect(onChange).toHaveBeenCalledWith("high"));
+});

@@ -1,4 +1,5 @@
 import { modelProviderRoutes } from "./routes/model-providers.js";
+import { modelThinkingOptionsRoutes } from "./routes/model-thinking-options.js";
 import type { ModelProviderService } from "./lib/model-providers.js";
 import { cors } from "hono/cors";
 import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
@@ -112,6 +113,7 @@ export function createApp(deps: AppDeps) {
 
   // Host-owned MCP catalog exposes metadata only; runtime definitions stay private.
   app.route("/", mcpCatalogRoutes());
+  app.route("/", modelThinkingOptionsRoutes(deps.thinkingOptions));
 
   if (deps.modelProviderService) app.route("/", modelProviderRoutes(deps.modelProviderService));
 

@@ -1,4 +1,5 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
+import { HTTPException } from "hono/http-exception";
 import type { SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
 import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -62,7 +63,10 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
     if (agent.runtime !== "pi-agent" || !deps.thinkingOptions) return c.json({ error: "Thinking options unavailable" }, 503);
     c.header("Cache-Control", "private, no-store");
     try { return c.json(await deps.thinkingOptions(tenant.tenantId, agent.model)); }
-    catch { return c.json({ error: "Could not load model thinking options" }, 503); }
+    catch (error) {
+      if (error instanceof HTTPException && (error.status === 404 || error.status === 422)) return error.getResponse();
+      return c.json({ error: "Could not load model thinking options" }, 503);
+    }
   });
 
   // POST /v1/sessions — Create session

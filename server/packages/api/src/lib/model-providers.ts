@@ -15,6 +15,8 @@ import type {
   discoverCustomProviderModels,
   testCustomProvider,
   CustomProviderDefinition,
+  CustomModelDefinition,
+  CustomProviderProtocol,
   PiAgentAdapterOptions,
 } from "@open-managed-agents/adapter-pi-agent";
 import {
@@ -39,6 +41,7 @@ export function publicProvider(record: ModelProviderRecord) {
   const { encryptedApiKey: _key, tenantId: _tenant, ...metadata } = record;
   return { ...metadata, hasApiKey: true };
 }
+
 export class ModelProviderService {
   constructor(
     readonly store: ModelProviderStore,
@@ -54,6 +57,18 @@ export class ModelProviderService {
         await import("@open-managed-agents/adapter-pi-agent")
       ).discoverCustomProviderModels(...args),
   ) {}
+  async capabilityReferences(api: CustomProviderProtocol, model?: string) {
+    const { capabilityReferences } = await import("@open-managed-agents/adapter-pi-agent");
+    return capabilityReferences(api, model);
+  }
+  async previewThinkingOptions(api: CustomProviderProtocol, model: CustomModelDefinition) {
+    const { customModelThinkingOptions } = await import("@open-managed-agents/adapter-pi-agent");
+    try {
+      return await customModelThinkingOptions(api, model);
+    } catch {
+      throw new ProviderError(422, { message: "Model capability configuration is unavailable or incompatible with this protocol. Select a valid capability reference or clear it." });
+    }
+  }
   private key() {
     if (!this.encryptionKey || !/^[a-f\d]{64}$/i.test(this.encryptionKey)) {
       throw new ProviderError(503, {
@@ -113,13 +128,22 @@ export class ModelProviderService {
           "Use a public HTTPS provider URL without credentials, query parameters or fragments.",
       });
     }
+    const models = input.models.map((model) => ({
+      ...model,
+      reasoning: model.reasoningSource === "upstream" ? model.reasoning ?? true : true,
+      reasoningSource: model.reasoningSource ?? "default" as const,
+      capabilityVersion: 1 as const,
+    }));
+    // Validate against exactly the metadata used for probes, storage and Turns.
+    // No request is sent while resolving capability references.
+    for (const model of models) await this.previewThinkingOptions(input.api, model);
     return {
       id: existing?.id ?? "custom-probe",
       name: input.name,
       api: input.api,
       baseUrl,
       apiKey,
-      models: input.models,
+      models,
     };
   }
   private fingerprint(definition: CustomProviderDefinition) {
@@ -166,15 +190,9 @@ export class ModelProviderService {
       try {
         const response = await request(url, init);
         if (!response.ok) {
-          const hint =
-            response.status === 401 || response.status === 403
-              ? "Check the API key and model access."
-              : response.status === 404 || response.status === 405
-                ? "Check that the Base URL supports the selected protocol's inference endpoint. A model list alone does not prove protocol support."
-                : response.status === 429
-                  ? "The provider rejected the request due to a rate limit or quota. Check your provider account and retry later."
-                  : "Check the provider's availability, model access and protocol.";
-          diagnostic = `Provider returned HTTP ${response.status}. ${hint}`;
+          const { customProviderFailureMessage } = await import("@open-managed-agents/adapter-pi-agent");
+          // providerFetch has already bounded and sanitized this body.
+          diagnostic = customProviderFailureMessage(response.status, await response.clone().text());
         }
         return response;
       } catch (error) {
@@ -186,13 +204,15 @@ export class ModelProviderService {
       await this.probe(definition, observedFetch);
     } catch (error) {
       // Only our SDK helper's fixed message is safe to expose.
+      const { customProviderFailureMessage } = await import("@open-managed-agents/adapter-pi-agent");
+      const thinkingRejection = customProviderFailureMessage(400, "Unsupported thinking parameter");
       const message =
         error instanceof Error &&
-        definition.models.some(
+        (error.message === thinkingRejection || definition.models.some(
           (model) =>
             error.message ===
             `Model ${model.id} did not complete a test request. Check the protocol, URL, API key and model access.`,
-        )
+        ))
           ? error.message
           : "Provider test failed. Check the endpoint, protocol, API key and model access.";
       throw new ProviderError(422, { message: diagnostic ?? message });
@@ -252,7 +272,11 @@ export class ModelProviderService {
     if (!record) throw new ProviderError(404, { message: "Model provider not found" });
     const { encryptedApiKey: _key, tenantId: _tenant, testedAt: _tested, ...definition } = record;
     const { customThinkingOptions } = await import("@open-managed-agents/adapter-pi-agent");
-    return customThinkingOptions(model, definition);
+    try {
+      return await customThinkingOptions(model, definition);
+    } catch {
+      throw new ProviderError(422, { message: "Model capability configuration is unavailable or incompatible with this protocol. Select a valid capability reference or clear it." });
+    }
   }
 
   configureRuntime(

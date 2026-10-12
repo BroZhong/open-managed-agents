@@ -45,6 +45,54 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("Tenant provider configuration", () => {
+  it("preserves a sanitized HTTP 200 SSE thinking rejection through the test endpoint", async () => {
+    vi.stubEnv("AUTH_DISABLED", "true");
+    const stores = createMemoryStores();
+    const service = new ModelProviderService(stores.modelProviderStore, "ab".repeat(32));
+    const app = createApp({ ...stores, modelProviderService: service });
+    const request = vi.fn<typeof fetch>(async () => new Response(
+      `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: `Unsupported parameter: thinking.budget_tokens; ${input.apiKey}` } })}\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+    vi.stubGlobal("fetch", request);
+    const response = await app.request("/v1/model-providers/test", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, api: "anthropic-messages" }),
+    });
+    expect(response.status).toBe(422);
+    const body = await response.text();
+    expect(body).toContain("rejected a thinking control parameter");
+    expect(body).not.toContain(input.apiKey);
+    expect(request).toHaveBeenCalledOnce();
+  });
+  it("previews unsaved capabilities and compatible references without keys, discovery or inference", async () => {
+    vi.stubEnv("AUTH_DISABLED", "true");
+    const { stores, probe, discover } = fixture();
+    const service = new ModelProviderService(stores.modelProviderStore, undefined, probe, discover);
+    const app = createApp({ apiKeyStore: stores.apiKeyStore, modelProviderService: service });
+    const preview = (model: unknown) => app.request("/v1/model-providers/thinking-options", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ api: "openai-responses", model }),
+    });
+    const { reasoning: _legacy, ...model } = input.models[0];
+    const result = await preview(model);
+    expect(result.status).toBe(200);
+    expect(result.headers.get("cache-control")).toBe("no-store");
+    expect(await result.json()).toMatchObject({ source: "default", defaultLevel: "high", choices: [
+      { value: "off", label: "off" }, { value: "minimal", label: "minimal" },
+      { value: "low", label: "low" }, { value: "medium", label: "medium" }, { value: "high", label: "high" },
+    ] });
+    const catalog = await app.request("/v1/model-providers/capability-references?api=openai-responses&model=vendor%2Fgpt-5.4");
+    expect(catalog.status).toBe(200);
+    const references = await catalog.json();
+    expect(references.data).toContainEqual(expect.objectContaining({ provider: "openai", modelId: "gpt-5.4" }));
+    expect(references.recommendations).toContainEqual(expect.objectContaining({ modelId: "gpt-5.4", reason: expect.any(String) }));
+    expect((await preview({ ...model, capabilityReference: { provider: "no-provider", modelId: "private-key" } })).status).toBe(422);
+    expect((await preview({ ...model, thinkingMode: "provider" })).status).toBe(400);
+    expect(probe).not.toHaveBeenCalled();
+    expect(discover).not.toHaveBeenCalled();
+    expect(await stores.modelProviderStore.list("dev")).toEqual([]);
+  });
   it("preserves DNS rejection through the real Pi probe without exposing transport secrets", async () => {
     const stores = createMemoryStores();
     const service = new ModelProviderService(
@@ -74,7 +122,7 @@ describe("Tenant provider configuration", () => {
   it.each([
     [401, "API key"],
     [404, "protocol"],
-    [429, "rate limit"],
+    [429, "rate-limited"],
   ])(
     "preserves upstream HTTP %s through the real Pi probe",
     async (status, hint) => {
@@ -105,6 +153,40 @@ describe("Tenant provider configuration", () => {
       expect(body).not.toContain(input.apiKey);
     },
   );
+  it("reports explicit thinking-parameter rejection safely without retrying or confusing authentication failures", async () => {
+    const stores = createMemoryStores();
+    const service = new ModelProviderService(stores.modelProviderStore, "ab".repeat(32));
+    const request = vi.fn(async () => Response.json({ error: { message: `Unsupported parameter: reasoning_effort; ${input.apiKey}` } }, { status: 400 }));
+    vi.stubGlobal("fetch", request);
+    let response: Response | undefined;
+    try { await service.test("a", input); } catch (error) { response = (error as { res: Response }).res; }
+    expect(response?.status).toBe(422);
+    const body = await response!.text();
+    expect(body).toContain("rejected a thinking control parameter");
+    expect(body).not.toContain(input.apiKey);
+    expect(request).toHaveBeenCalledTimes(1);
+    request.mockImplementation(async () => Response.json({ error: { message: "Unsupported reasoning_effort" } }, { status: 401 }));
+    try { await service.test("a", input); } catch (error) { response = (error as { res: Response }).res; }
+    expect(await response!.text()).toContain("Check the API key");
+  });
+  it("persists capability provenance and binds the test proof to manual references", async () => {
+    const { service, stores, probe } = fixture();
+    const unknown: ProviderInput = { ...input, api: "openai-responses", models: [{ ...input.models[0], reasoning: undefined }] };
+    const tested = await service.test("a", unknown);
+    const saved = await service.save("a", unknown, tested.verificationToken);
+    expect(saved.models[0]).toMatchObject({ reasoning: true, reasoningSource: "default", capabilityVersion: 1 });
+    expect((await stores.modelProviderStore.get("a", saved.id))?.models).toEqual(saved.models);
+    const reference = { provider: "openai", modelId: "gpt-5.4" };
+    await expect(service.save("a", { ...unknown, models: [{ ...unknown.models[0], capabilityReference: reference }] }, tested.verificationToken)).rejects.toMatchObject({ status: 400 });
+    const configured = { ...unknown, models: [{ ...unknown.models[0], capabilityReference: reference }] };
+    const proof = await service.test("a", configured);
+    const withReference = await service.save("a", configured, proof.verificationToken);
+    expect(withReference.models[0].capabilityReference).toEqual(reference);
+    expect(probe.mock.lastCall?.[0].models[0].id).toBe("vendor/model");
+    const explicit = { ...unknown, models: [{ ...unknown.models[0], reasoning: false, reasoningSource: "upstream" as const }] };
+    const explicitProof = await service.test("a", explicit);
+    expect((await service.save("a", explicit, explicitProof.verificationToken)).models[0]).toMatchObject({ reasoning: false, reasoningSource: "upstream", capabilityVersion: 1 });
+  });
   it("requires a successful test of the exact configuration and encrypts stored credentials", async () => {
     const { service, stores } = fixture();
     const proof = await service.test("a", input);

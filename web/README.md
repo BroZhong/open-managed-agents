@@ -2,6 +2,31 @@
 
 The web console for Open Managed Agents (React + TypeScript + Vite).
 
+## Thinking settings
+
+Agent creation and editing load the selected model's supported thinking levels
+before a Session exists. Automatic uses the model's highest level. A Session
+inherits its Agent until its compact thinking slider is changed; the reset icon
+restores inheritance. Existing preferences are retained when a model maps them
+to a different effective level, and changes affect future Turns only. A failed
+capability lookup displays an error and retry action rather than fixed choices.
+
+Model Providers no longer require a Supports reasoning checkbox. Models without
+an explicit capability declaration use Pi's basic levels (off through high);
+known unsupported models remain disabled. Under Model settings → 高级思考设置,
+you can inspect automatic recognition, confirm a suggested same-protocol Pi
+reference, or select and clear a manual reference. References change capability
+configuration, while requests retain your original model ID, endpoint and key.
+Suggestions are never applied automatically. A missing saved reference displays
+an error so it can be corrected or cleared.
+
+Every configuration change still requires an explicit connection test before
+saving. A successful response verifies connectivity, not the execution of a
+particular thinking level. Saving refreshes both Agent and Session capabilities.
+The proposed “由接入服务决定” mode is not available in this build; release of
+default-enabled BYOK thinking is gated on the Pi SDK support described in
+[the model-provider documentation](../docs/pi-models.md).
+
 ## Product logo
 
 The approved product logo is the waving cloud mascot in

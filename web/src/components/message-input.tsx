@@ -36,6 +36,7 @@ interface MessageInputProps {
   model?: string;
   thinkingOptions?: import("@/lib/hooks/use-thinking-options").ThinkingOptions;
   thinkingOptionsLoading?: boolean;
+  thinkingOptionsError?: string;
   onRetryThinkingOptions?: () => void;
   thinking?: ThinkingLevel | null;
   agentThinking?: ThinkingLevel | null;
@@ -58,6 +59,7 @@ export function MessageInput({
   onThinkingChange,
   thinkingOptions,
   thinkingOptionsLoading,
+  thinkingOptionsError,
   onRetryThinkingOptions,
 }: MessageInputProps) {
   const [text, setText] = useState("");
@@ -287,7 +289,7 @@ export function MessageInput({
               setSelectedSkillIndex(0);
               textareaRef.current?.focus();
             }}><Sparkles size={15} /><span>Skills</span></button>}
-            {onThinkingChange ? <SessionThinkingPicker key={model} options={thinkingOptions} loading={thinkingOptionsLoading} onRetry={onRetryThinkingOptions} model={model} value={thinking} inherited={agentThinking} disabled={disabled || sending} onChange={onThinkingChange} /> : <span className="session-composer-model" title={model}>{model?.split("/").at(-1)}</span>}
+            {onThinkingChange ? <SessionThinkingPicker key={model} options={thinkingOptions} loading={thinkingOptionsLoading} capabilityError={thinkingOptionsError} onRetry={onRetryThinkingOptions} model={model} value={thinking} inherited={agentThinking} disabled={disabled || sending} onChange={onThinkingChange} /> : <span className="session-composer-model" title={model}>{model?.split("/").at(-1)}</span>}
             {showStop && text.trim() && <button type="button" className="session-queue-send" disabled={!canSend} onClick={handleSubmit} aria-label="Queue message" title="Send after the current turn"><CornerDownRight size={15} /><span>Queue</span></button>}
           <button
             type="button"

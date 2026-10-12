@@ -10,7 +10,11 @@ export interface ModelProviderRecord {
     name: string;
     contextWindow: number;
     maxTokens: number;
-    reasoning: boolean;
+    reasoning?: boolean;
+    reasoningSource?: "upstream" | "default" | "legacy";
+    capabilityVersion?: 1;
+    capabilityReference?: { provider: string; modelId: string };
+    thinkingMode?: "app" | "provider";
     input: ("text" | "image")[];
     catalogProvider?: string;
   }[];

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ModelThinkingSettings } from "@/components/model-thinking-settings";
 import {
   useModelProviders,
   useProviderProtocols,
@@ -326,9 +327,11 @@ function ProviderEditor({
                       onSuccess: ({ data }) =>
                         setForm((current) => ({
                           ...current,
-                          models: current.models.filter((model) =>
-                            data.some((found) => found.id === model.id),
-                          ),
+                          models: current.models.flatMap((model) => {
+                            const found = data.find(item => item.id === model.id);
+                            return found ? [{ ...model, reasoning: found.reasoning,
+                              reasoningSource: found.reasoningSource, capabilityVersion: found.capabilityVersion }] : [];
+                          }),
                         })),
                     },
                   );
@@ -454,7 +457,8 @@ function ProviderEditor({
                       name: manualId.trim(),
                       contextWindow: 32768,
                       maxTokens: 4096,
-                      reasoning: false,
+                      reasoningSource: "default",
+                      capabilityVersion: 1,
                       input: ["text"],
                     });
                     setManualId("");
@@ -552,16 +556,6 @@ function ProviderEditor({
                       <label className="flex gap-2">
                         <input
                           type="checkbox"
-                          checked={model.reasoning}
-                          onChange={(e) =>
-                            editModel(model.id, { reasoning: e.target.checked })
-                          }
-                        />
-                        Supports reasoning
-                      </label>
-                      <label className="flex gap-2">
-                        <input
-                          type="checkbox"
                           checked={model.input.includes("image")}
                           onChange={(e) =>
                             editModel(model.id, {
@@ -573,6 +567,7 @@ function ProviderEditor({
                         />
                         Supports image input
                       </label>
+                      <ModelThinkingSettings api={form.api} model={model} onChange={patch => editModel(model.id, patch)} />
                     </div>
                   </details>
                 </div>
@@ -598,7 +593,7 @@ function ProviderEditor({
             className="flex items-center gap-2 text-sm text-green-700"
           >
             <CheckCircle2 className="h-4 w-4" />
-            All selected models responded successfully. Ready to save.
+            All selected models responded successfully. Ready to save. This does not verify individual thinking levels.
           </p>
         )}
         {(test.error || save.error) && (

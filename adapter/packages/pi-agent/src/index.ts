@@ -17,5 +17,8 @@ export { CUSTOM_PROVIDER_PROTOCOLS, registerCustomProvider, testCustomProvider }
 export type { CustomProviderDefinition, CustomProviderProtocol, CustomModelDefinition } from "./custom-provider.js";
 
 export { discoverCustomProviderModels, ModelDiscoveryError } from "./provider-discovery.js";
-export { thinkingOptions, managedThinkingOptions, customThinkingOptions } from "./thinking-options.js";
+export { thinkingOptions, managedThinkingOptions, customThinkingOptions, customModelThinkingOptions } from "./thinking-options.js";
 export type { ThinkingOptions } from "./thinking-options.js";
+export { capabilityReferences } from "./custom-capabilities.js";
+export type { CapabilityReference, CapabilityRecommendation } from "./custom-capabilities.js";
+export { customProviderFailureMessage } from "./custom-provider-errors.js";

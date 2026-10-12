@@ -62,6 +62,7 @@ describe("endpoint discovery through Pi refresh and vendor SDKs", () => {
             },
           },
           { id: "unknown-id" },
+          { id: "explicitly-unsupported", reasoning: false },
         ],
       }),
     );
@@ -71,13 +72,18 @@ describe("endpoint discovery through Pi refresh and vendor SDKs", () => {
       contextWindow: 64000,
       maxTokens: 8000,
       reasoning: true,
+      reasoningSource: "upstream",
+      capabilityVersion: 1,
       input: ["text", "image"],
     });
     expect(result[1]).toMatchObject({
       contextWindow: 32768,
       maxTokens: 4096,
-      reasoning: false,
+      reasoning: true,
+      reasoningSource: "default",
+      capabilityVersion: 1,
     });
+    expect(result[2]).toMatchObject({ reasoning: false, reasoningSource: "upstream", capabilityVersion: 1 });
   });
   it("uses Anthropic's models API, headers and SDK pagination", async () => {
     const request = vi.fn<typeof fetch>(async (url, init) => {

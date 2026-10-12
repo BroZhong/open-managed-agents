@@ -105,7 +105,71 @@ describe("Pi custom providers", () => {
       testCustomProvider(definition, async () =>
         Response.json({ error: { message: "!literal-key" } }, { status: 401 }),
       ),
-    ).rejects.toThrow("Check the protocol");
+    ).rejects.toThrow("HTTP 401");
+  });
+  it.each([400, 401, 429])("sanitizes custom provider HTTP %s in runtime events and result without retrying a thinking fallback", async status => {
+    const current = await runtime();
+    const requests: Record<string, unknown>[] = [];
+    await registerCustomProvider(current, definition, async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return Response.json({ error: { message: "Unsupported reasoning_effort; key=!literal-key" } }, { status });
+    });
+    const model = current.getModel(definition.id, "acme/model")!;
+    const stream = current.streamSimple(model, { messages: [{ role: "user", content: "Hi", timestamp: 0 }] }, { reasoning: "high", maxRetries: 0 });
+    const events = [];
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+    expect(result.stopReason).toBe("error");
+    expect(JSON.stringify([result, events])).not.toContain("!literal-key");
+    expect(result.errorMessage).toContain(status === 400 ? "rejected a thinking control parameter" : `HTTP ${status}`);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].reasoning_effort).toBe("high");
+  });
+  it.each(["invalid_api_key", "rate_limit_error"])("does not mislabel HTTP 400 %s as a thinking rejection", async type => {
+    const current = await runtime();
+    await registerCustomProvider(current, definition, async () => Response.json(
+      { error: { type, message: "Unsupported reasoning_effort; key=!literal-key" } }, { status: 400 },
+    ));
+    const result = await current.completeSimple(current.getModel(definition.id, "acme/model")!, { messages: [{ role: "user", content: "Hi", timestamp: 0 }] });
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).not.toContain("rejected a thinking control parameter");
+    expect(result.errorMessage).not.toContain("!literal-key");
+  });
+  it("retains partial text without exposing a later stream error through earlier event objects", async () => {
+    const current = await runtime();
+    await registerCustomProvider(current, definition, async () => new Response(
+      'data: {"choices":[{"index":0,"delta":{"content":"Partial answer"},"finish_reason":null}]}\n\ndata: {"error":{"message":"stream failed key=!literal-key"}}\n\n',
+      { headers: { "Content-Type": "text/event-stream" } },
+    ));
+    const stream = current.streamSimple(current.getModel(definition.id, "acme/model")!, { messages: [{ role: "user", content: "Hi", timestamp: 0 }] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+    expect(result.stopReason).toBe("error");
+    expect(JSON.stringify([result, events])).not.toContain("!literal-key");
+    expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "Partial answer" }));
+  });
+  it.each([
+    ["invalid_request_error", "Unsupported parameter: thinking.budget_tokens", true],
+    ["authentication_error", "Unsupported parameter: thinking.budget_tokens; invalid API key", false],
+    ["rate_limit_error", "Unsupported parameter: thinking.budget_tokens; quota reached", false],
+    ["invalid_request_error", "Invalid API key for thinking request", false],
+    ["invalid_request_error", "Invalid max_output_tokens", false],
+  ] as const)("classifies HTTP 200 Anthropic SSE %s safely: %s", async (type, message, thinkingRejected) => {
+    const current = await runtime();
+    const request = vi.fn<typeof fetch>(async () => new Response(
+      `event: error\ndata: ${JSON.stringify({ type: "error", error: { type, message: `${message}; key=!literal-key` } })}\n\n`,
+      { headers: { "Content-Type": "text/event-stream" } },
+    ));
+    await registerCustomProvider(current, { ...definition, api: "anthropic-messages" }, request);
+    const stream = current.streamSimple(current.getModel(definition.id, "acme/model")!, { messages: [{ role: "user", content: "Hi", timestamp: 0 }] }, { reasoning: "high", maxRetries: 0 });
+    const events = [];
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage?.includes("rejected a thinking control parameter")).toBe(thinkingRejected);
+    expect(JSON.stringify([result, events])).not.toContain("!literal-key");
+    expect(request).toHaveBeenCalledOnce();
   });
   it.each(["openai-responses", "anthropic-messages"] as const)(
     "uses native Pi %s requests and SSE parsing",

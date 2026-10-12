@@ -1,11 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
+import { validateThinkingOptions, type ThinkingOptions } from "./use-thinking-options";
 export interface ProviderModel {
   id: string;
   name: string;
   contextWindow: number;
   maxTokens: number;
-  reasoning: boolean;
+  reasoning?: boolean;
+  reasoningSource?: "upstream" | "default" | "legacy";
+  capabilityVersion?: 1;
+  capabilityReference?: { provider: string; modelId: string };
+  thinkingMode?: "app";
   input: ("text" | "image")[];
   catalogProvider?: string;
 }
@@ -25,6 +30,36 @@ export interface ModelProvider extends ProviderInput {
 export interface ProviderTest {
   verificationToken: string;
   testedAt: string;
+}
+export interface CapabilityReference {
+  provider: string;
+  modelId: string;
+  name: string;
+  reasoning: boolean;
+}
+
+export function useCapabilityReferences(api: string, model: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["provider-capability-references", api, model],
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: ({ signal }) => apiFetch<{ data: CapabilityReference[]; recommendations: (Omit<CapabilityReference, "reasoning"> & { reason: string })[] }>(
+      `/v1/model-providers/capability-references?api=${encodeURIComponent(api)}&model=${encodeURIComponent(model)}`, { signal },
+    ),
+  });
+}
+
+export function useProviderThinkingOptions(api: string, model: ProviderModel, enabled: boolean) {
+  return useQuery({
+    queryKey: ["provider-thinking-preview", api, model],
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async ({ signal }) => validateThinkingOptions(await apiFetch<ThinkingOptions>(
+      "/v1/model-providers/thinking-options", { method: "POST", body: JSON.stringify({ api, model }), signal },
+    )),
+  });
 }
 export function useModelProviders(enabled = true) {
   return useQuery({
@@ -73,7 +108,12 @@ export function useSaveProvider() {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    onSuccess: () => cache.invalidateQueries({ queryKey: ["model-providers"] }),
+    onSuccess: () => Promise.all([
+      cache.invalidateQueries({ queryKey: ["model-providers"] }),
+      cache.invalidateQueries({ queryKey: ["model-thinking-options"] }),
+      cache.invalidateQueries({ queryKey: ["session-thinking-options"] }),
+      cache.invalidateQueries({ queryKey: ["provider-thinking-preview"] }),
+    ]),
   });
 }
 export function useDeleteProvider() {
@@ -83,6 +123,10 @@ export function useDeleteProvider() {
       apiFetch(`/v1/model-providers/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
-    onSuccess: () => cache.invalidateQueries({ queryKey: ["model-providers"] }),
+    onSuccess: () => Promise.all([
+      cache.invalidateQueries({ queryKey: ["model-providers"] }),
+      cache.invalidateQueries({ queryKey: ["model-thinking-options"] }),
+      cache.invalidateQueries({ queryKey: ["session-thinking-options"] }),
+    ]),
   });
 }

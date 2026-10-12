@@ -26,6 +26,10 @@ metadata via `OMA_RUNNER_URL`; only supported/canonical levels are returned.
 API still does not load the managed Pi catalog or receive its credentials.
 Tenant model metadata is resolved lazily and without decrypting its stored key.
 This metadata lookup does not create a Turn or make an inference request.
+Agent creation uses the same resolver through `/v1/model-thinking-options` without
+requiring a Session. BYOK previews and capability-reference lists use the SDK's
+bundled, credential-free catalog on demand; this is separate from the Host's
+managed catalog and never substitutes for the Tenant endpoint's discovery list.
 
 PostgreSQL owns accepted input, FIFO claims, leases and generations, execution
 and delegation state, Loop dispatch, Complete Events and termination cleanup.

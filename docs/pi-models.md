@@ -12,7 +12,9 @@ Pi Agents can select these model ids in the console or the Agent API:
 
 New Agents default to GPT-5.6 Sol, matching the local Pi model selection.
 Editing an existing Agent preserves its model until another model is selected.
-Agent configuration exposes **思考强度** as a horizontal slider. The API field
+Agent configuration exposes **思考强度** as a horizontal slider using the same
+model capability query as Session controls, including before the Agent has
+been saved. The API field
 `thinking` accepts `off | minimal | low | medium | high | xhigh | max`.
 Omission on creation or `null` selects the highest supported level; omission
 on update preserves the preference. Existing Agents keep their default.
@@ -32,6 +34,9 @@ follow the live Agent; Loop Sessions retain their Agent snapshot. Apply
 `deploy/migrations/0019_session_thinking.sql` before deploying API/Runner.
 The console fetches `GET /v1/sessions/{id}/thinking-options` on entry and when
 the selected model changes, caching each Session/model result for one minute.
+Agent forms use `GET /v1/model-thinking-options?model=<provider/model>` without
+creating a Session. Saving provider configuration invalidates both capability
+caches. Neither query decrypts the Tenant key, tests inference or creates a Turn.
 The backend uses Pi's supported levels and clamp rules, and collapses aliases
 that map to the same provider effort. Thus Astra has five distinct stops;
 GLM/Kimi/DeepSeek have three under the managed definitions. Models that support
@@ -136,12 +141,53 @@ Changing the endpoint, protocol or API key clears fetched results and selections
 refreshing the list drops selected IDs no longer returned. Fetch failures and
 empty lists are shown explicitly, without a built-in catalog fallback. For
 services without a model-list API, manual IDs remain an explicit fallback.
-Review context/output limits and reasoning/image capabilities: endpoint metadata
-is used when available, otherwise conservative defaults apply.
+Review context/output limits and image capabilities. **Supports reasoning** is
+no longer a required checkbox. Missing reasoning metadata defaults to Pi's
+five basic levels (`off`, `minimal`, `low`, `medium`, `high`); automatic means
+`high`. An explicit, sourced upstream `false` disables thinking controls unless
+the user chooses an applicable manual capability reference.
+
+The advanced thinking settings can select or clear a **capability reference**
+from the platform's built-in Pi catalog for the chosen protocol. It only controls
+capability metadata and Pi compatibility options; the actual upstream model ID,
+URL and key remain the Tenant's. The endpoint's own model list remains the only
+discovery list. Reference candidates are not additional models to select.
+New capability references do not import catalog pricing into the Tenant's usage
+estimate. Unknown pricing remains zero/unknown, not a claim that inference is free;
+existing legacy `catalogProvider` pricing behavior is retained independently.
+
+Capability precedence is: applicable manual reference; sourced upstream explicit
+non-support; an unambiguous exact catalog match; otherwise the basic unknown-model
+rules. Exact catalog non-support remains disabled. Ambiguous IDs and aliases do
+not select a reference automatically; suggested references need an explicit click.
+Clearing a manual reference restores automatic identification. Reference identity
+is persisted, while capabilities follow the installed Pi version. Missing or
+cross-protocol references fail explicitly rather than choosing a replacement.
+Agent and Session preferences remain saved and are interpreted against the current
+capabilities on future Turns.
+
+Model metadata records `capabilityVersion: 1` and `reasoningSource` (`upstream`,
+`default`, or source-unknown `legacy`). `capabilityReference` contains `provider`
+and `modelId`; legacy `catalogProvider` references retain their identity. A bare
+old `reasoning: false` is not proof of upstream non-support or user intent.
+On upgrade, unknown legacy models can therefore begin sending reasoning controls,
+including records that were previously disabled manually.
+
+**Release gate:** #228's “由接入服务决定” fallback is not enabled in this change.
+Pi 0.83.0 cannot omit all Responses thinking controls while retaining collection
+of newly produced encrypted reasoning history. The API rejects
+`thinkingMode: "provider"`; the UI does not offer a nonfunctional switch. Do not
+release the new BYOK defaults or execute the production data upgrade until this
+fallback is implemented through an accepted integration boundary. See
+[controlled boundary evidence](verification/byok-provider-thinking-boundary.md)
+and [upgrade runbook](verification/model-thinking-upgrade.md).
 
 **Test selected models** makes one small inference request for every selected
 model using Pi. It may incur provider charges. A test proves that these inference
 requests work, not that every tool, image or reasoning feature is supported.
+The probe uses the model's current default (highest supported) thinking level.
+Pi may expand the requested token ceiling to accommodate an Anthropic thinking
+budget; it remains one explicit request per selected model, not a per-level sweep.
 Only a successful test permits saving; changing any configuration or waiting
 more than fifteen minutes requires another test. Saved keys are never returned
 to the browser; a blank key during an edit retains the stored key.
@@ -210,3 +256,10 @@ API operations are documented in `docs/openapi.json` under **Model Providers**:
 list/save at `/v1/model-providers`, protocol choices at `/v1/model-providers/protocols`,
 endpoint discovery at `/v1/model-providers/discover`, probe at
 `/v1/model-providers/test`, and delete at `/v1/model-providers/{id}`.
+Read-only unsaved-model capability previews use
+`POST /v1/model-providers/thinking-options` with `{api, model}` and no key.
+`GET /v1/model-providers/capability-references?api=...&model=...` returns compatible
+reference metadata and optional recommendations; it does not contact the provider
+or load the Host's managed catalog or credentials. Selecting a reference changes
+the tested configuration and therefore requires the existing explicit connection
+test before saving; neither preview nor reference selection starts an inference.

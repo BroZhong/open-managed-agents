@@ -130,12 +130,31 @@ export function providerFetch(baseUrl: string): typeof fetch {
       dispatcher,
     } as RequestInit);
     if (!response.ok) {
-      await response.body?.cancel();
-      // Error bodies are untrusted and may reflect Authorization headers.
+      // Classify before redaction so a rejected thinking parameter remains
+      // distinguishable from authentication and quota errors. Only fixed text
+      // crosses this boundary; raw error bodies never reach SDK consumers.
+      const { customProviderFailureMessage } = await import("@open-managed-agents/adapter-pi-agent");
+      const reader = response.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (reader && size < 16_384) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = value.subarray(0, 16_384 - size);
+          chunks.push(chunk);
+          size += chunk.byteLength;
+        }
+      } catch {
+        chunks.length = 0;
+      } finally {
+        void reader?.cancel().catch(() => {});
+      }
+      const diagnostic = customProviderFailureMessage(response.status, Buffer.concat(chunks).toString("utf8"));
       return new Response(
         JSON.stringify({
           error: {
-            message: `Provider returned HTTP ${response.status}. Check credentials, model access and protocol.`,
+            message: diagnostic,
           },
         }),
         {

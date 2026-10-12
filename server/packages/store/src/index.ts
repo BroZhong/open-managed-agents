@@ -167,3 +167,4 @@ export { contextPresentation, eventSequenceWidth, presentContextData, presentEve
 
 export type { ModelProviderStore, ModelProviderRecord } from "./interfaces/model-provider-store.js";
 export { PgModelProviderStore } from "./postgres/model-provider-store.js";
+export { migrateModelProviderCapabilities } from "./postgres/migrate-model-provider-capabilities.js";

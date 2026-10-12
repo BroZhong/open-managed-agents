@@ -8,6 +8,27 @@ const options = {
   resolvedLevels: { off: "low", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" }, defaultLevel: "max",
 } as import("@open-managed-agents/adapter-pi-agent").ThinkingOptions;
 afterEach(() => vi.unstubAllEnvs());
+it("reads model capabilities before an Agent or Session exists and retries failed reads", async () => {
+  vi.stubEnv("AUTH_DISABLED", "true");
+  const stores = createMemoryStores();
+  const reader = vi.fn(async () => options);
+  const app = createApp({ ...stores, thinkingOptions: reader });
+  const get = (model: string) => app.request(`/v1/model-thinking-options?model=${encodeURIComponent(model)}`);
+  const response = await get(options.model);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(await response.json()).toEqual(options);
+  expect(reader).toHaveBeenLastCalledWith("dev", options.model);
+  reader.mockRejectedValueOnce(new Error("private catalog credentials"));
+  const failure = await get("managed/other");
+  expect(failure.status).toBe(503);
+  expect(await failure.text()).not.toContain("private");
+  expect((await get("managed/other")).status).toBe(200);
+  expect(reader).toHaveBeenLastCalledWith("dev", "managed/other");
+  expect((await get("")).status).toBe(400);
+  expect((await get("a".repeat(301))).status).toBe(400);
+  expect(reader).toHaveBeenCalledTimes(3);
+});
 it("uses the live Agent model, retains Loop snapshots, and checks tenant and deletion", async () => {
   vi.stubEnv("AUTH_DISABLED", "true");
   const stores = createMemoryStores();
@@ -47,7 +68,7 @@ it("reads only the owning Tenant's custom metadata without decrypting its key", 
   const { ModelProviderService } = await import("../src/lib/model-providers.js");
   const stores = createMemoryStores();
   const provider = "custom-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-  await stores.modelProviderStore.save({ tenantId: "owner", id: provider, name: "Private gateway", api: "openai-completions", baseUrl: "https://private.example.com", encryptedApiKey: "not-a-decryptable-key", testedAt: new Date().toISOString(), models: [{ id: "model", name: "Model", reasoning: false, contextWindow: 32768, maxTokens: 1024, input: ["text"] }] });
+  await stores.modelProviderStore.save({ tenantId: "owner", id: provider, name: "Private gateway", api: "openai-completions", baseUrl: "https://private.example.com", encryptedApiKey: "not-a-decryptable-key", testedAt: new Date().toISOString(), models: [{ id: "model", name: "Model", reasoning: false, reasoningSource: "upstream", capabilityVersion: 1, contextWindow: 32768, maxTokens: 1024, input: ["text"] }] });
   const service = new ModelProviderService(stores.modelProviderStore, undefined);
   const managed = vi.fn();
   const result = await service.thinkingOptions("owner", `${provider}/model`, managed);

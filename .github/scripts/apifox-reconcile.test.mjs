@@ -27,7 +27,7 @@ test("accepts the repository's generated OpenAPI inventory", () => {
     ...operation,
   }));
 
-  assert.equal(desired.length, 70);
+  assert.equal(desired.length, 73);
   assert.ok(desired.some((operation) =>
     operation.method === "GET" && operation.path === "/v1/sessions/{id}/thinking-options"
   ));

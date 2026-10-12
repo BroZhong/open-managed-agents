@@ -7,6 +7,8 @@ import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   ProviderInputSchema,
   ProviderDiscoverySchema,
+  ProviderCapabilityQuerySchema,
+  ProviderThinkingPreviewSchema,
 } from "../openapi/model-providers.js";
 import {
   ModelProviderService,
@@ -28,6 +30,22 @@ export function modelProviderRoutes(service: ModelProviderService) {
         publicProvider,
       ),
     }),
+  );
+  registerContractRoute(
+    app,
+    getOpenApiRoute("getModelProviderCapabilityReferences"),
+    async (c) => {
+      const input = ProviderCapabilityQuerySchema.parse(c.req.query());
+      return c.json(await service.capabilityReferences(input.api, input.model));
+    },
+  );
+  registerContractRoute(
+    app,
+    getOpenApiRoute("previewModelProviderThinkingOptions"),
+    async (c) => {
+      const input = ProviderThinkingPreviewSchema.parse(await c.req.json());
+      return c.json(await service.previewThinkingOptions(input.api, input.model));
+    },
   );
   registerContractRoute(
     app,

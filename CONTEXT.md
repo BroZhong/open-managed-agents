@@ -289,3 +289,14 @@ Tenant's selected provider into a fresh Pi ModelRuntime for each Turn; credentia
 never enter Agent configuration, Workspace or Sandbox. The managed Host catalog
 continues to supply built-in models. See `docs/pi-models.md` for the protocol,
 test-proof, storage and deployment contracts.
+
+A **Capability Reference** is a Pi built-in provider/model identity, constrained
+to the Tenant model's selected protocol. It supplies current Pi reasoning metadata
+and compatibility options without replacing the Tenant's upstream model ID, URL
+or credentials. A manual reference takes precedence; otherwise sourced upstream
+non-support disables thinking, an unambiguous exact catalog match supplies its
+capabilities, and unknown models use Pi's five basic levels. Aliases only suggest
+references until confirmed. Agent and Session preferences are retained when
+capabilities change. Capability reads require neither a Session nor decryption
+or inference. New defaults and the legacy provenance migration are release-gated
+on #228's provider-controlled fallback; see `docs/verification/model-thinking-upgrade.md`.

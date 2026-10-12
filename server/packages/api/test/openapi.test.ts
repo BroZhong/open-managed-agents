@@ -1,4 +1,5 @@
 import { modelProviderRoutes } from "../src/routes/model-providers.js";
+import { modelThinkingOptionsRoutes } from "../src/routes/model-thinking-options.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -95,6 +96,7 @@ function runtimeOperations(): string[] {
     apiKeyRoutes(adapter),
     mcpCatalogRoutes(),
     modelProviderRoutes(adapter),
+    modelThinkingOptionsRoutes(),
     loopRoutes({ agentStore: adapter, loopStore: adapter }),
     workspaceEntityRoutes(adapter, adapter),
     sessionRoutes({

@@ -831,10 +831,17 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     },
   }),
   protectedRoute({
+    method: "get", path: "/v1/model-thinking-options", operationId: "getModelThinkingOptions",
+    summary: "Get model thinking capabilities before creating an Agent or Session", tags: ["Model Providers"],
+    description: "Uses the same Pi capability resolver as Sessions and future Turns. Reads only Tenant-owned model metadata or the Runner's managed catalog projection, without decrypting keys or making inference requests.",
+    request: { query: z.object({ model: z.string().trim().min(1).max(300) }) },
+    responses: { 200: jsonResponse(ThinkingOptionsSchema, "Pi model capabilities without credentials"), 400: errorResponse("Invalid model reference"), 404: errorResponse("Model provider not found"), 422: errorResponse("Invalid model capability configuration"), 503: errorResponse("Model capabilities unavailable") },
+  }),
+  protectedRoute({
     method: "get", path: "/v1/sessions/{id}/thinking-options", operationId: "getSessionThinkingOptions",
     summary: "Get distinct thinking levels supported by this Session's current model", tags: ["Sessions"],
     request: { params: idParams },
-    responses: { 200: jsonResponse(ThinkingOptionsSchema, "Pi model capabilities without credentials"), 404: errorResponse("Session not found"), 503: errorResponse("Model capabilities unavailable") },
+    responses: { 200: jsonResponse(ThinkingOptionsSchema, "Pi model capabilities without credentials"), 404: errorResponse("Session or model provider not found"), 422: errorResponse("Invalid model capability configuration"), 503: errorResponse("Model capabilities unavailable") },
   }),
   protectedRoute({
     method: "post",

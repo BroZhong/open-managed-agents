@@ -1,11 +1,16 @@
 import { z } from "@hono/zod-openapi";
 import type { ThinkingOptions } from "@open-managed-agents/adapter-pi-agent";
 export const ThinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const CapabilityReferenceSchema = z.object({ provider: z.string(), modelId: z.string() });
 export const ThinkingOptionsSchema = z.object({
   model: z.string(),
   choices: z.array(z.object({ value: ThinkingLevelSchema, label: ThinkingLevelSchema })).min(1).max(7),
   resolvedLevels: z.record(ThinkingLevelSchema, ThinkingLevelSchema),
   defaultLevel: ThinkingLevelSchema,
+  control: z.enum(["app", "provider"]).optional(),
+  source: z.enum(["manual", "upstream", "catalog", "default"]).optional(),
+  reference: CapabilityReferenceSchema.optional(),
+  recommendations: z.array(CapabilityReferenceSchema.extend({ name: z.string(), reason: z.string() })).optional(),
 });
 export type ThinkingOptionsReader = (tenantId: string, model: string) => Promise<ThinkingOptions>;
 

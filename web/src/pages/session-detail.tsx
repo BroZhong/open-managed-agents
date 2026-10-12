@@ -178,8 +178,9 @@ function SessionConversation({ id, session, stream, openWorkspaceFile }: {
           skills={equippedSkills}
           disabled={session?.status === "terminated"}
           model={composerAgent?.model}
-          thinkingOptions={thinkingOptions.data}
+          thinkingOptions={thinkingOptions.isError ? undefined : thinkingOptions.data}
           thinkingOptionsLoading={thinkingOptions.isFetching}
+          thinkingOptionsError={thinkingOptions.error?.message}
           onRetryThinkingOptions={() => void thinkingOptions.refetch()}
           thinking={session.thinking}
           agentThinking={composerAgent?.thinking}

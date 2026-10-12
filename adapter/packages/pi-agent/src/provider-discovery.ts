@@ -97,6 +97,10 @@ function modelDefinition(raw: unknown): CustomModelDefinition {
         image_input?: { supported?: boolean };
       }
     | undefined;
+  const declaredReasoning = typeof item.reasoning === "boolean"
+    ? item.reasoning
+    : typeof capabilities?.thinking?.supported === "boolean"
+      ? capabilities.thinking.supported : undefined;
   return {
     id: item.id.trim(),
     name:
@@ -105,8 +109,9 @@ function modelDefinition(raw: unknown): CustomModelDefinition {
         : item.id.trim(),
     contextWindow,
     maxTokens,
-    reasoning:
-      item.reasoning === true || capabilities?.thinking?.supported === true,
+    reasoning: declaredReasoning ?? true,
+    reasoningSource: declaredReasoning === undefined ? "default" : "upstream",
+    capabilityVersion: 1,
     input:
       capabilities?.image_input?.supported === true ||
       (Array.isArray(item.input) && item.input.includes("image"))
@@ -127,6 +132,7 @@ export async function discoverCustomProviderModels(
     key: definition.apiKey,
   }));
   const models = createModels({ credentials });
+  const definitions = new Map<string, CustomModelDefinition>();
   models.setProvider(
     createCustomProvider(
       { ...definition, models: [] },
@@ -168,8 +174,10 @@ export async function discoverCustomProviderModels(
                 "The endpoint returned too many models. Use a smaller provider catalog.",
               );
             const model = modelDefinition(raw);
+            definitions.set(model.id, model);
             discovered.set(model.id, {
               ...model,
+              reasoning: model.reasoning ?? true,
               api: definition.api,
               provider: definition.id,
               baseUrl: definition.baseUrl,
@@ -202,12 +210,5 @@ export async function discoverCustomProviderModels(
     // Never expose upstream bodies or SDK request details, which may echo keys.
     throw new ModelDiscoveryError(message, { cause: error });
   }
-  return models.getModels(definition.id).map((model) => ({
-    id: model.id,
-    name: model.name,
-    contextWindow: model.contextWindow,
-    maxTokens: model.maxTokens,
-    reasoning: model.reasoning,
-    input: model.input,
-  }));
+  return models.getModels(definition.id).map((model) => definitions.get(model.id)!);
 }

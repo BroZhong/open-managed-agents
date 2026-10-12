@@ -1,12 +1,20 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { ThinkingOptionsSchema } from "../lib/thinking-options.js";
 const text = z.string().trim().min(1).max(200);
+const protocol = z.enum(["openai-completions", "openai-responses", "anthropic-messages"]);
 export const ProviderModelSchema = z
   .object({
     id: text,
     name: text,
     contextWindow: z.number().int().min(1024).max(10_000_000),
     maxTokens: z.number().int().min(128).max(1_000_000),
-    reasoning: z.boolean(),
+    reasoning: z.boolean().optional(),
+    reasoningSource: z.enum(["upstream", "default", "legacy"]).optional(),
+    capabilityVersion: z.literal(1).optional(),
+    capabilityReference: z.object({ provider: text, modelId: text }).optional(),
+    // Provider-controlled mode is unavailable until Pi can retain Responses
+    // encrypted reasoning history while omitting all thinking controls (#228).
+    thinkingMode: z.literal("app", { error: "Provider-controlled thinking is unavailable with the current Pi SDK." }).optional(),
     input: z
       .array(z.enum(["text", "image"]))
       .min(1)
@@ -22,7 +30,7 @@ export const ProviderInputSchema = z.object({
     .regex(/^custom-[a-f\d-]{36}$/)
     .optional(),
   name: text,
-  api: z.enum(["openai-completions", "openai-responses", "anthropic-messages"]),
+  api: protocol,
   baseUrl: z.string().trim().url().max(2048),
   apiKey: z.string().max(8192).optional(),
   models: z
@@ -41,6 +49,8 @@ export const ProviderDiscoverySchema = ProviderInputSchema.pick({
   baseUrl: true,
   apiKey: true,
 });
+export const ProviderCapabilityQuerySchema = z.object({ api: protocol, model: text.optional() });
+export const ProviderThinkingPreviewSchema = z.object({ api: protocol, model: ProviderModelSchema });
 const PublicProvider = ProviderInputSchema.omit({ apiKey: true }).extend({
   id: z.string(),
   hasApiKey: z.boolean(),
@@ -69,6 +79,27 @@ const errors = {
   ),
 };
 export const modelProviderRoutes = [
+  createRoute({
+    method: "get",
+    path: "/v1/model-providers/capability-references",
+    operationId: "getModelProviderCapabilityReferences",
+    summary: "List protocol-compatible Pi capability references and advisory matches",
+    tags: ["Model Providers"],
+    request: { query: ProviderCapabilityQuerySchema },
+    responses: { ...errors, 200: response(z.object({
+      data: z.array(z.object({ provider: z.string(), modelId: z.string(), name: z.string(), reasoning: z.boolean() })),
+      recommendations: z.array(z.object({ provider: z.string(), modelId: z.string(), name: z.string(), reason: z.string() })),
+    }), "Metadata only; does not discover endpoint models or test inference") },
+  }),
+  createRoute({
+    method: "post",
+    path: "/v1/model-providers/thinking-options",
+    operationId: "previewModelProviderThinkingOptions",
+    summary: "Resolve unsaved model capabilities without credentials or inference",
+    tags: ["Model Providers"],
+    request: { body: body(ProviderThinkingPreviewSchema) },
+    responses: { ...errors, 200: response(ThinkingOptionsSchema, "Resolved thinking capabilities") },
+  }),
   createRoute({
     method: "get",
     path: "/v1/model-providers",
