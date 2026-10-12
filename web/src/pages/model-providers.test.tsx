@@ -53,6 +53,42 @@ function fillConnection() {
     target: { value: "secret" },
   });
 }
+it("lets users configure, test and save exactly five Adaptive effort levels", async () => {
+  const provider = { id: "custom-one", name: "Opus Gateway", api: "anthropic-messages", baseUrl: "https://models.example.com", hasApiKey: true,
+    testedAt: "2026-10-12T00:00:00Z", models: [{ ...model, id: "global.anthropic.claude-opus-5-5", reasoning: true }] };
+  const request = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/capability-references?")) return Response.json({ data: [], recommendations: [] });
+    if (url.endsWith("/thinking-options")) {
+      const chosen = JSON.parse(String(init?.body)).model.thinkingProfile;
+      const levels = chosen ? ["low", "medium", "high", "xhigh", "max"] : ["off", "minimal", "low", "medium", "high"];
+      return Response.json({ model: model.id, source: chosen ? "manual" : "default", profile: chosen,
+        choices: levels.map(value => ({ value, label: value })), defaultLevel: chosen ? "max" : "high",
+        resolvedLevels: chosen ? { off: "low", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" }
+          : { off: "off", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" },
+      });
+    }
+    if (url.endsWith("/test")) return Response.json({ verificationToken: "proof", testedAt: "2026-10-12T00:00:00Z" });
+    if (init?.method === "POST") return Response.json(provider);
+    return Response.json({ data: [provider] });
+  });
+  vi.stubGlobal("fetch", request);
+  setup([provider]);
+  fireEvent.click(screen.getByRole("button", { name: "Edit Opus Gateway" }));
+  fireEvent.click(screen.getByText("Model settings"));
+  fireEvent.click(screen.getByText("高级思考设置"));
+  fireEvent.click(await screen.findByLabelText("思考档位方案"));
+  fireEvent.click(screen.getByRole("button", { name: "Anthropic Adaptive · 五档" }));
+  await screen.findByText("低 · 中 · 高 · 很高 · 最大");
+  expect(screen.queryByText(/请求关闭（未确认）/)).toBeNull();
+  expect(screen.getByText("手动配置 · 自动使用最大")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Save provider" })).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
+  await screen.findByText(/All selected models responded/);
+  fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+  await waitFor(() => expect(request.mock.calls.some(([url, init]) => url.endsWith("/model-providers") && init?.method === "POST")).toBe(true));
+  const saved = request.mock.calls.find(([url, init]) => url.endsWith("/model-providers") && init?.method === "POST")!;
+  expect(JSON.parse(String(saved[1]?.body))).toMatchObject({ id: "custom-one", apiKey: "", verificationToken: "proof", models: [{ id: "global.anthropic.claude-opus-5-5", thinkingProfile: "anthropic-adaptive" }] });
+});
 it("fetches endpoint models before selection, then tests and saves the chosen model", async () => {
   const request = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/discover")) return Response.json({ data: [model] });

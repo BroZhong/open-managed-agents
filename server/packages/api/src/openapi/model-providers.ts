@@ -12,6 +12,7 @@ export const ProviderModelSchema = z
     reasoningSource: z.enum(["upstream", "default", "legacy"]).optional(),
     capabilityVersion: z.literal(1).optional(),
     capabilityReference: z.object({ provider: text, modelId: text }).optional(),
+    thinkingProfile: z.literal("anthropic-adaptive").optional().openapi({ description: "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving." }),
     // Provider-controlled mode is unavailable until Pi can retain Responses
     // encrypted reasoning history while omitting all thinking controls (#228).
     thinkingMode: z.literal("app", { error: "Provider-controlled thinking is unavailable with the current Pi SDK." }).optional(),

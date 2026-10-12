@@ -14,6 +14,7 @@ export interface ThinkingOptions {
   control?: "app" | "provider";
   source?: "manual" | "upstream" | "catalog" | "default";
   reference?: CapabilityReference;
+  profile?: "anthropic-adaptive";
   recommendations?: CapabilityRecommendation[];
 }
 

@@ -7,6 +7,7 @@ export interface CapabilityRecommendation extends CapabilityReference { name: st
 export interface CustomCapabilities {
   source: "manual" | "upstream" | "catalog" | "default";
   reference?: CapabilityReference;
+  profile?: "anthropic-adaptive";
   recommendations: CapabilityRecommendation[];
 }
 
@@ -37,6 +38,10 @@ export function resolveCustomModel(
   if (model.thinkingMode === "provider") {
     throw new Error("Provider-controlled thinking is unavailable: Pi cannot preserve Responses reasoning history while omitting all thinking controls.");
   }
+  const adaptive = model.thinkingProfile === "anthropic-adaptive";
+  if (model.thinkingProfile !== undefined && (!adaptive || definition.api !== "anthropic-messages")) {
+    throw new Error("The Anthropic Adaptive thinking profile requires the Anthropic Messages protocol.");
+  }
   const manualReference = model.capabilityReference ?? (model.catalogProvider ? { provider: model.catalogProvider, modelId: model.id } : undefined);
   let matched: Model<Api> | undefined;
   const entries = catalog(definition.api);
@@ -47,10 +52,10 @@ export function resolveCustomModel(
     const exact = entries.filter(item => item.id === model.id);
     if (exact.length === 1) matched = exact[0];
   }
-  const explicitlyUnsupported = !manualReference && model.reasoningSource === "upstream" && model.reasoning === false;
-  const reasoning = explicitlyUnsupported ? false : matched?.reasoning ?? true;
+  const explicitlyUnsupported = !manualReference && !adaptive && model.reasoningSource === "upstream" && model.reasoning === false;
+  const reasoning = adaptive ? true : explicitlyUnsupported ? false : matched?.reasoning ?? true;
   const reference = matched ? { provider: matched.provider, modelId: matched.id } : undefined;
-  const source = manualReference ? "manual" : explicitlyUnsupported ? "upstream" : matched ? "catalog" : model.reasoningSource === "upstream" ? "upstream" : "default";
+  const source = manualReference || adaptive ? "manual" : explicitlyUnsupported ? "upstream" : matched ? "catalog" : model.reasoningSource === "upstream" ? "upstream" : "default";
   return {
     model: {
       id: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
@@ -61,7 +66,13 @@ export function resolveCustomModel(
         ? matched.cost : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       ...(matched?.compat ? { compat: matched.compat } : {}),
       ...(matched?.thinkingLevelMap ? { thinkingLevelMap: matched.thinkingLevelMap } : {}),
+      // Public Pi model metadata owns support/clamping and native serialization.
+      // This user-selected profile does not infer capabilities from a model name.
+      ...(adaptive ? {
+        compat: { ...matched?.compat, forceAdaptiveThinking: true, supportsTemperature: false },
+        thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+      } : {}),
     },
-    capabilities: { source, ...(reference ? { reference } : {}), recommendations: matched ? [] : capabilityReferences(definition.api, model.id).recommendations },
+    capabilities: { source, ...(reference ? { reference } : {}), ...(adaptive ? { profile: "anthropic-adaptive" } : {}), recommendations: matched || adaptive ? [] : capabilityReferences(definition.api, model.id).recommendations },
   };
 }

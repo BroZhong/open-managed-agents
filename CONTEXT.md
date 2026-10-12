@@ -303,3 +303,11 @@ unsupported by the platform. In particular, #228's provider-controlled mode is
 not offered; no payload-editing workaround is planned. This accepted limitation
 does not gate the new defaults or legacy provenance migration; see
 `docs/verification/model-thinking-upgrade.md`.
+
+An explicit model **Thinking Profile** can define a protocol-compatible set of
+Pi-native controls. `anthropic-adaptive` is available for Anthropic Messages and
+offers low, medium, high, xhigh and max, with max as automatic default. It takes
+precedence for reasoning capability and effort mapping while preserving upstream
+identity, credentials and other reference metadata. Pi's public metadata and
+serialization implement the profile; there is no provider payload rewrite.
+Changing or clearing it requires the existing connection test before saving.

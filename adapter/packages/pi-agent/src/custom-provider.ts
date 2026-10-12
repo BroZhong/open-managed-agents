@@ -30,6 +30,8 @@ export interface CustomModelDefinition {
   reasoningSource?: "upstream" | "default" | "legacy";
   capabilityVersion?: 1;
   capabilityReference?: { provider: string; modelId: string };
+  /** Explicit native Anthropic Adaptive effort mapping, including xhigh/max. */
+  thinkingProfile?: "anthropic-adaptive";
   thinkingMode?: "app" | "provider";
   input: ("text" | "image")[];
   /** Optional reference to Pi's metadata, including provider compatibility flags. */

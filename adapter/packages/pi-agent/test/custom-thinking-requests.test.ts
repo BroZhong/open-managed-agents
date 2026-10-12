@@ -47,6 +47,23 @@ async function controlled(api: CustomProviderProtocol, model = definition) {
 }
 
 describe("custom thinking through unmodified Pi requests", () => {
+  it("applies a configured five-level Adaptive profile to an upstream Opus alias", async () => {
+    const configured = { ...definition, id: "global.anthropic.claude-opus-5-5", thinkingProfile: "anthropic-adaptive" as const };
+    const options = customModelThinkingOptions("anthropic-messages", configured);
+    expect(options.choices.map(choice => choice.value)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(options.defaultLevel).toBe("max");
+    expect(options.resolvedLevels).toMatchObject({ off: "low", minimal: "low", high: "high", xhigh: "xhigh", max: "max" });
+    const { models, model, requests } = await controlled("anthropic-messages", configured);
+    for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+      expect((await models.completeSimple(model, { messages: [{ role: "user", content: "Reply OK", timestamp: 0 }] }, { reasoning: level })).stopReason).toBe("stop");
+    }
+    expect(requests.map(request => request.body.output_config?.effort)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    for (const { body } of requests) {
+      expect(body.model).toBe("global.anthropic.claude-opus-5-5");
+      expect(body.thinking).toMatchObject({ type: "adaptive" });
+      expect(body.thinking).not.toHaveProperty("budget_tokens");
+    }
+  });
   it.each(["openai-completions", "openai-responses", "anthropic-messages"] as const)("serializes all five basic levels for an unknown %s model", async api => {
     const { models, model, requests } = await controlled(api);
     for (const level of ["off", "minimal", "low", "medium", "high"] as const) {

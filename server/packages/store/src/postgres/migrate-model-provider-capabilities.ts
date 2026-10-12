@@ -8,7 +8,7 @@ export function upgradeLegacyModelProvider(record: ModelProviderRecord): ModelPr
     ...record,
     models: record.models.map((model) =>
       model.capabilityVersion !== undefined || model.reasoningSource !== undefined ||
-      model.capabilityReference !== undefined || model.thinkingMode !== undefined
+      model.capabilityReference !== undefined || model.thinkingProfile !== undefined || model.thinkingMode !== undefined
         ? model
         : { ...model, reasoning: true, reasoningSource: "legacy", capabilityVersion: 1 },
     ),

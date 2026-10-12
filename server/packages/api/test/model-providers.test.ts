@@ -45,6 +45,36 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("Tenant provider configuration", () => {
+  it("saves, reloads and clears the five-level Adaptive profile with a configuration-bound proof", async () => {
+    vi.stubEnv("AUTH_DISABLED", "true");
+    const { stores, service } = fixture();
+    const app = createApp({ ...stores, modelProviderService: service });
+    const post = (path: string, body: unknown) => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const configured = { ...input, api: "anthropic-messages", models: [{ ...input.models[0], thinkingProfile: "anthropic-adaptive" }] };
+    const preview = await post("/v1/model-providers/thinking-options", { api: configured.api, model: configured.models[0] });
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toMatchObject({ profile: "anthropic-adaptive", defaultLevel: "max", choices: [
+      { value: "low", label: "low" }, { value: "medium", label: "medium" }, { value: "high", label: "high" }, { value: "xhigh", label: "xhigh" }, { value: "max", label: "max" },
+    ] });
+    const tested = await (await post("/v1/model-providers/test", configured)).json();
+    const changed = { ...configured, models: input.models };
+    expect((await post("/v1/model-providers", { ...changed, verificationToken: tested.verificationToken })).status).toBe(400);
+    const savedResponse = await post("/v1/model-providers", { ...configured, verificationToken: tested.verificationToken });
+    expect(savedResponse.status).toBe(200);
+    const saved = await savedResponse.json();
+    const reloaded = await (await app.request("/v1/model-providers")).json();
+    expect(reloaded.data[0].models[0].thinkingProfile).toBe("anthropic-adaptive");
+    expect(JSON.stringify(reloaded)).not.toContain(input.apiKey);
+    const reader = new ModelProviderService(stores.modelProviderStore, undefined);
+    expect(await reader.thinkingOptions("dev", `${saved.id}/${input.models[0].id}`, vi.fn())).toMatchObject({ defaultLevel: "max", resolvedLevels: { off: "low", minimal: "low", max: "max" } });
+    const clear = { ...changed, id: saved.id, apiKey: "" };
+    const newProof = await (await post("/v1/model-providers/test", clear)).json();
+    expect((await post("/v1/model-providers", { ...clear, verificationToken: newProof.verificationToken })).status).toBe(200);
+    expect((await reader.thinkingOptions("dev", `${saved.id}/${input.models[0].id}`, vi.fn())).defaultLevel).toBe("high");
+    for (const api of ["openai-completions", "openai-responses"]) {
+      expect((await post("/v1/model-providers/thinking-options", { api, model: configured.models[0] })).status).toBe(422);
+    }
+  });
   it("preserves a sanitized HTTP 200 SSE thinking rejection through the test endpoint", async () => {
     vi.stubEnv("AUTH_DISABLED", "true");
     const stores = createMemoryStores();

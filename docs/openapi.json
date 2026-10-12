@@ -2055,6 +2055,13 @@
                           "modelId"
                         ]
                       },
+                      "thinkingProfile": {
+                        "type": "string",
+                        "enum": [
+                          "anthropic-adaptive"
+                        ],
+                        "description": "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving."
+                      },
                       "thinkingMode": {
                         "type": "string",
                         "enum": [
@@ -2275,6 +2282,12 @@
                       "required": [
                         "provider",
                         "modelId"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "enum": [
+                        "anthropic-adaptive"
                       ]
                     },
                     "recommendations": {
@@ -2526,6 +2539,13 @@
                                     "provider",
                                     "modelId"
                                   ]
+                                },
+                                "thinkingProfile": {
+                                  "type": "string",
+                                  "enum": [
+                                    "anthropic-adaptive"
+                                  ],
+                                  "description": "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving."
                                 },
                                 "thinkingMode": {
                                   "type": "string",
@@ -2798,6 +2818,13 @@
                             "modelId"
                           ]
                         },
+                        "thinkingProfile": {
+                          "type": "string",
+                          "enum": [
+                            "anthropic-adaptive"
+                          ],
+                          "description": "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving."
+                        },
                         "thinkingMode": {
                           "type": "string",
                           "enum": [
@@ -2939,6 +2966,13 @@
                               "provider",
                               "modelId"
                             ]
+                          },
+                          "thinkingProfile": {
+                            "type": "string",
+                            "enum": [
+                              "anthropic-adaptive"
+                            ],
+                            "description": "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving."
                           },
                           "thinkingMode": {
                             "type": "string",
@@ -3371,6 +3405,13 @@
                               "modelId"
                             ]
                           },
+                          "thinkingProfile": {
+                            "type": "string",
+                            "enum": [
+                              "anthropic-adaptive"
+                            ],
+                            "description": "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving."
+                          },
                           "thinkingMode": {
                             "type": "string",
                             "enum": [
@@ -3623,6 +3664,13 @@
                             "provider",
                             "modelId"
                           ]
+                        },
+                        "thinkingProfile": {
+                          "type": "string",
+                          "enum": [
+                            "anthropic-adaptive"
+                          ],
+                          "description": "Explicit Anthropic Messages Adaptive profile: low, medium, high, xhigh, max; no off/minimal. Requires a new successful test before saving."
                         },
                         "thinkingMode": {
                           "type": "string",
@@ -7318,6 +7366,12 @@
                         "modelId"
                       ]
                     },
+                    "profile": {
+                      "type": "string",
+                      "enum": [
+                        "anthropic-adaptive"
+                      ]
+                    },
                     "recommendations": {
                       "type": "array",
                       "items": {
@@ -7614,6 +7668,12 @@
                       "required": [
                         "provider",
                         "modelId"
+                      ]
+                    },
+                    "profile": {
+                      "type": "string",
+                      "enum": [
+                        "anthropic-adaptive"
                       ]
                     },
                     "recommendations": {

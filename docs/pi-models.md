@@ -161,6 +161,39 @@ New capability references do not import catalog pricing into the Tenant's usage
 estimate. Unknown pricing remains zero/unknown, not a claim that inference is free;
 existing legacy `catalogProvider` pricing behavior is retained independently.
 
+For an Anthropic-compatible Opus endpoint with Adaptive effort support, select
+**高级思考设置 → 思考档位方案 → Anthropic Adaptive · 五档**. This explicit model
+configuration stores `thinkingProfile: "anthropic-adaptive"`. The Agent and Session
+pickers then offer exactly `low | medium | high | xhigh | max`, with automatic
+default `max`. It is a manual compatibility declaration, never inferred from an
+Opus-like name. The required connection test uses `max` before saving.
+
+The profile supplies Pi's public `compat.forceAdaptiveThinking: true` and
+`thinkingLevelMap` metadata: off/minimal are unsupported; the five offered levels
+map to the same effort strings. Pi alone creates `thinking.type: "adaptive"` and
+`output_config.effort`. There is no SDK modification, payload rewrite or fixed
+token budget. The upstream ID, endpoint and credentials are preserved. An older
+saved off/minimal preference remains stored and Pi resolves it upward to low.
+The profile overrides thinking capabilities from discovery or a selected reference;
+the reference can still supply other protocol compatibility metadata. Clearing the
+profile restores reference/automatic resolution. Other protocols reject it.
+
+API clients include the profile on the selected Provider model when testing and
+saving the complete configuration. After saving, request the maximum on a Session:
+
+```http
+POST /api/v1/sessions/{sessionId}
+Content-Type: application/json
+
+{"thinking":"max"}
+```
+
+Then submit messages to `/api/v1/sessions/{sessionId}/events`. The preference is
+persistent and affects future Turns. `null` inherits the Agent; an Agent with no
+preference uses this profile's highest level, max. A successful connection test
+establishes acceptance of the native request, not independent proof of the upstream
+model's internal reasoning allocation.
+
 Capability precedence is: applicable manual reference; sourced upstream explicit
 non-support; an unambiguous exact catalog match; otherwise the basic unknown-model
 rules. Exact catalog non-support remains disabled. Ambiguous IDs and aliases do

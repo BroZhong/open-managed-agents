@@ -10,6 +10,7 @@ export const ThinkingOptionsSchema = z.object({
   control: z.enum(["app", "provider"]).optional(),
   source: z.enum(["manual", "upstream", "catalog", "default"]).optional(),
   reference: CapabilityReferenceSchema.optional(),
+  profile: z.literal("anthropic-adaptive").optional(),
   recommendations: z.array(CapabilityReferenceSchema.extend({ name: z.string(), reason: z.string() })).optional(),
 });
 export type ThinkingOptionsReader = (tenantId: string, model: string) => Promise<ThinkingOptions>;

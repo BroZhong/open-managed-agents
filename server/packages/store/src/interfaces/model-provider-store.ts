@@ -14,6 +14,7 @@ export interface ModelProviderRecord {
     reasoningSource?: "upstream" | "default" | "legacy";
     capabilityVersion?: 1;
     capabilityReference?: { provider: string; modelId: string };
+    thinkingProfile?: "anthropic-adaptive";
     thinkingMode?: "app" | "provider";
     input: ("text" | "image")[];
     catalogProvider?: string;

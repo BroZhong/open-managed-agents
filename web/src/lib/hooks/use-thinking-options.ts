@@ -11,6 +11,7 @@ export interface ThinkingOptions {
   control?: "app" | "provider";
   source?: "manual" | "upstream" | "catalog" | "default";
   reference?: { provider: string; modelId: string };
+  profile?: "anthropic-adaptive";
   recommendations?: { provider: string; modelId: string; name: string; reason: string }[];
 }
 
