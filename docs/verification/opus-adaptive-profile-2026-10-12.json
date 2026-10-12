@@ -1,0 +1,129 @@
+{
+  "target": "sess_zgC2jVcwIHEss3IzuY7kH",
+  "providerId": "custom-cd839e3d-a68e-41fd-9112-e4896fc67a01",
+  "modelId": "global.anthropic.claude-opus-5-5",
+  "checks": [
+    {
+      "name": "Provider profile saved and target Session set to max",
+      "ok": true,
+      "details": {
+        "choices": [
+          {
+            "value": "low",
+            "label": "low"
+          },
+          {
+            "value": "medium",
+            "label": "medium"
+          },
+          {
+            "value": "high",
+            "label": "high"
+          },
+          {
+            "value": "xhigh",
+            "label": "xhigh"
+          },
+          {
+            "value": "max",
+            "label": "max"
+          }
+        ],
+        "defaultLevel": "max",
+        "profile": "anthropic-adaptive",
+        "thinking": "max"
+      },
+      "at": "2026-10-12T14:57:43.222Z"
+    },
+    {
+      "name": "deployed Runner completed a max Turn",
+      "ok": true,
+      "details": {
+        "sessionId": "sess_Nu1lPKoGU5Be6p4wU1ioV",
+        "recordedLevel": "max",
+        "reply": "OPUS_MAX_OK"
+      },
+      "at": "2026-10-12T14:59:00.278Z"
+    },
+    {
+      "name": "test fixture cleaned; target remains configured at max",
+      "ok": true,
+      "at": "2026-10-12T15:01:19.270Z"
+    }
+  ],
+  "originalThinking": "high",
+  "agentId": "agent_8aMFfIATvaMDp9a6rm1zS",
+  "sessionId": "sess_Nu1lPKoGU5Be6p4wU1ioV",
+  "workspaceId": "ws_oH6UXwVujYt_ATYf4e40K",
+  "cleaned": true,
+  "cleanupAudit": {
+    "status": "terminated",
+    "hidden": true,
+    "pending": 0,
+    "agents": 0,
+    "sandbox_id": null,
+    "cleanup_complete": true
+  },
+  "sourceCommit": "e242b3757770c7028ec16226e2886420fcad692f",
+  "uiChecks": [
+    "five stops: low, medium, high, xhigh, max",
+    "maximum persisted across reload"
+  ],
+  "liveNativeRequests": [
+    {
+      "effort": "low",
+      "thinking": {
+        "type": "adaptive",
+        "display": "summarized"
+      },
+      "output_config": {
+        "effort": "low"
+      },
+      "stopReason": "stop"
+    },
+    {
+      "effort": "medium",
+      "thinking": {
+        "type": "adaptive",
+        "display": "summarized"
+      },
+      "output_config": {
+        "effort": "medium"
+      },
+      "stopReason": "stop"
+    },
+    {
+      "effort": "high",
+      "thinking": {
+        "type": "adaptive",
+        "display": "summarized"
+      },
+      "output_config": {
+        "effort": "high"
+      },
+      "stopReason": "stop"
+    },
+    {
+      "effort": "xhigh",
+      "thinking": {
+        "type": "adaptive",
+        "display": "summarized"
+      },
+      "output_config": {
+        "effort": "xhigh"
+      },
+      "stopReason": "stop"
+    },
+    {
+      "effort": "max",
+      "thinking": {
+        "type": "adaptive",
+        "display": "summarized"
+      },
+      "output_config": {
+        "effort": "max"
+      },
+      "stopReason": "stop"
+    }
+  ]
+}
