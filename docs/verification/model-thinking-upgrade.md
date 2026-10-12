@@ -1,7 +1,8 @@
 # Model thinking capabilities: implementation and upgrade
 
-Scope: #225–#229, verified locally on 2026-10-12. This is a code and controlled
-verification delivery, not a production rollout.
+Scope: #225–#229, verified locally on 2026-10-12. The subsequently authorized
+production rollout and Opus acceptance are recorded in
+[the production report](model-thinking-production-2026-10-12.md).
 
 ## Release state
 

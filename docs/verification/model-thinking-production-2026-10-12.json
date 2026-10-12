@@ -1,0 +1,135 @@
+{
+  "targetId": "sess_zgC2jVcwIHEss3IzuY7kH",
+  "checks": [
+    {
+      "name": "target has adjustable native Pi levels",
+      "ok": true,
+      "details": {
+        "model": "custom-cd839e3d-a68e-41fd-9112-e4896fc67a01/global.anthropic.claude-opus-5-5",
+        "choices": [
+          {
+            "value": "off",
+            "label": "off"
+          },
+          {
+            "value": "minimal",
+            "label": "minimal"
+          },
+          {
+            "value": "low",
+            "label": "low"
+          },
+          {
+            "value": "medium",
+            "label": "medium"
+          },
+          {
+            "value": "high",
+            "label": "high"
+          }
+        ],
+        "defaultLevel": "high",
+        "source": "default"
+      },
+      "at": "2026-10-12T12:53:02.808Z"
+    },
+    {
+      "name": "Agent and Session capabilities agree",
+      "ok": true,
+      "at": "2026-10-12T12:53:02.822Z"
+    },
+    {
+      "name": "isolated verification Session created",
+      "ok": true,
+      "details": {
+        "sessionId": "sess_CULo4s_6gmXbOlFQSrJ0E"
+      },
+      "at": "2026-10-12T12:53:02.857Z"
+    },
+    {
+      "name": "Runner completed low Turn with recorded Pi level",
+      "ok": true,
+      "details": {
+        "level": "low",
+        "model": "global.anthropic.claude-opus-5-5",
+        "stopReason": "stop",
+        "usage": {
+          "cost": {
+            "input": 0,
+            "total": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "input": 4,
+          "output": 8,
+          "cacheRead": 0,
+          "reasoning": 0,
+          "cacheWrite": 7977,
+          "totalTokens": 7989,
+          "cacheWrite1h": 0
+        }
+      },
+      "at": "2026-10-12T12:54:55.916Z"
+    },
+    {
+      "name": "Runner completed high Turn with persisted high preference",
+      "ok": true,
+      "details": {
+        "thinking": "high",
+        "completedTurns": 2
+      },
+      "at": "2026-10-12T13:03:01.208Z"
+    },
+    {
+      "name": "native low request accepted by configured Opus endpoint",
+      "ok": true,
+      "details": {
+        "model": "global.anthropic.claude-opus-5-5",
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 2048,
+          "display": "summarized"
+        },
+        "stopReason": "stop"
+      },
+      "at": "2026-10-12T13:03:07.314Z"
+    },
+    {
+      "name": "native high request accepted by configured Opus endpoint",
+      "ok": true,
+      "details": {
+        "model": "global.anthropic.claude-opus-5-5",
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 16384,
+          "display": "summarized"
+        },
+        "stopReason": "stop"
+      },
+      "at": "2026-10-12T13:03:09.269Z"
+    },
+    {
+      "name": "fixture cleaned and target preferences preserved",
+      "ok": true,
+      "at": "2026-10-12T13:05:04.950Z"
+    }
+  ],
+  "createdAt": "2026-10-12T12:53:00.736Z",
+  "originalThinking": null,
+  "model": "custom-cd839e3d-a68e-41fd-9112-e4896fc67a01/global.anthropic.claude-opus-5-5",
+  "originalAgentThinking": null,
+  "agentId": "agent_ehDpIyeNtev5sd9PDJSOi",
+  "sessionId": "sess_CULo4s_6gmXbOlFQSrJ0E",
+  "workspaceId": "ws_jBHuK1vbO_3oMqqcDckPd",
+  "cleaned": true,
+  "sourceCommit": "22f9beb6a92d918c29a0700b86aceb58e8c54e3a",
+  "mainBase": "8c39497a7c2a31b2a990e8b8f4326325878e9eea",
+  "serverDigest": "sha256:b9ffc5ea625998945a8b54d570eb0a2499b5fb38324f34bb85f130e967815a04",
+  "webDigest": "sha256:4ac0f377ea155f749a8985d4482642566a359c0634e6097d10f6cdf111fb1687",
+  "uiChecks": [
+    "target low persisted across reload",
+    "target high persisted across reload",
+    "reset restored original Agent inheritance"
+  ]
+}
