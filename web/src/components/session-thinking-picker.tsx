@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, RotateCcw } from "lucide-react";
-import { thinkingLabels as labels, type ThinkingLevel, type ThinkingOptions } from "@/lib/hooks/use-thinking-options";
+import { thinkingLabels as labels, thinkingChoiceLabel, hasUnconfirmedThinkingLevels, type ThinkingLevel, type ThinkingOptions } from "@/lib/hooks/use-thinking-options";
 export type { ThinkingLevel } from "@/lib/hooks/use-thinking-options";
 
 export function SessionThinkingPicker({ model, value, inherited, disabled, onChange, options, loading, onRetry, capabilityError }: {
@@ -67,8 +67,9 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
   const index = Math.max(0, choices.findIndex(choice => choice.value === effective));
   const providerControlled = options?.control === "provider";
   const unsupported = choices.length === 1 && choices[0].value === "off";
-  const label = providerControlled ? "由接入服务决定" : unsupported ? "不支持思考" : choices[index] ? labels[choices[index].label] : loading ? "加载中" : "暂不可用";
-  const preferenceHint = requested != null && requested !== effective && !providerControlled ? `偏好 ${labels[requested]} · 实际 ${label}` : draft === null ? "继承 Agent 设置" : "仅此 Session · 下个 Turn 生效";
+  const unconfirmed = hasUnconfirmedThinkingLevels(options);
+  const label = providerControlled ? "由接入服务决定" : unsupported ? "不支持思考" : choices[index] ? thinkingChoiceLabel(options, choices[index].label) : loading ? "加载中" : "暂不可用";
+  const preferenceHint = requested != null && requested !== effective && !providerControlled ? `偏好 ${labels[requested]} · 请求 ${label}` : draft === null ? "继承 Agent 设置" : "仅此 Session · 下个 Turn 生效";
   const modelLabel = (options?.model ?? model)?.split("/").at(-1) ?? "Model";
   const progress = choices.length > 1 ? index / (choices.length - 1) * 100 : 0;
   return <div ref={root} className="session-thinking-control">
@@ -82,6 +83,7 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
         disabled={disabled || saving || providerControlled || draft === null} onClick={() => void save(null)}><RotateCcw size={16} /></button>
       <div className="session-thinking-heading" title={preferenceHint}>{label}</div>
       <p className="session-thinking-model">{modelLabel}</p>
+      {unconfirmed && <p className="mb-2 text-center text-xs text-neutral-500" title="未识别模型的具体能力；请求档位不保证接入服务支持，包含关闭思考。">基础档位 · 能力未确认</p>}
       {providerControlled ? null : choices.length > 0 ? <div className="session-thinking-track">
       <input type="range" min={0} max={Math.max(0, choices.length - 1)} step={1} value={index}
         aria-label="Session 思考强度" aria-valuetext={label} disabled={disabled || saving || loading || choices.length < 2}
@@ -97,7 +99,7 @@ export function SessionThinkingPicker({ model, value, inherited, disabled, onCha
       </div> : <p className="text-center text-xs text-neutral-500" role="status">
         {loading ? "正在读取模型档位…" : <>{capabilityError && <span className="block">{capabilityError}</span>}<button type="button" className="underline" onClick={onRetry}>档位读取失败，重试</button></>}
       </p>}
-      <p className="sr-only" aria-live="polite">{saving ? "保存中" : draft === null ? "继承 Agent 设置" : "仅此 Session，下个 Turn 生效"}。按模型支持的等级适配，部分模型无法关闭思考。</p>
+      <p className="sr-only" aria-live="polite">{saving ? "保存中" : draft === null ? "继承 Agent 设置" : "仅此 Session，下个 Turn 生效"}。{unconfirmed ? "基础请求档位，接入服务支持情况未确认。" : "按模型支持的等级适配，部分模型无法关闭思考。"}</p>
     </div>}
     {error && <p role="alert" className="session-thinking-error">{error}</p>}
   </div>;

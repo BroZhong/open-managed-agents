@@ -14,6 +14,18 @@ export interface ThinkingOptions {
   recommendations?: { provider: string; modelId: string; name: string; reason: string }[];
 }
 
+/** A reasoning boolean alone does not identify the model's supported levels. */
+export function hasUnconfirmedThinkingLevels(options?: ThinkingOptions): boolean {
+  return !!options && !options.reference &&
+    (options.source === "default" || options.source === "upstream") &&
+    options.choices.some(choice => choice.value !== "off");
+}
+
+export function thinkingChoiceLabel(options: ThinkingOptions | undefined, level: ThinkingLevel): string {
+  return level === "off" && hasUnconfirmedThinkingLevels(options)
+    ? "请求关闭（未确认）" : thinkingLabels[level];
+}
+
 export function validateThinkingOptions(options: ThinkingOptions): ThinkingOptions {
   const levels = Object.keys(thinkingLabels) as ThinkingLevel[];
   if (!options || !Array.isArray(options.choices) || !options.choices.length || !options.resolvedLevels ||

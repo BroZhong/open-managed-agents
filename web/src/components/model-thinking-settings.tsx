@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useCapabilityReferences, useProviderThinkingOptions, type ProviderModel } from "@/lib/hooks/use-model-providers";
-import { thinkingLabels } from "@/lib/hooks/use-thinking-options";
+import { thinkingLabels, thinkingChoiceLabel, hasUnconfirmedThinkingLevels } from "@/lib/hooks/use-thinking-options";
 
 export function ModelThinkingSettings({ api, model, onChange }: {
   api: string;
@@ -20,16 +20,18 @@ export function ModelThinkingSettings({ api, model, onChange }: {
   const visible = available.filter(entry => `${entry.name} ${entry.provider} ${entry.modelId}`.toLowerCase().includes(search.toLowerCase())).slice(0, 100);
   const selectedEntry = available.find(entry => `${entry.provider}/${entry.modelId}` === selected);
   if (selectedEntry && !visible.includes(selectedEntry)) visible.unshift(selectedEntry);
-  const sources = { manual: "手动参照", upstream: "接入服务声明", catalog: "自动识别", default: "基础能力" };
+  const sources = { manual: "手动参照", upstream: "接入服务声明", catalog: "自动识别", default: "基础档位" };
   const unsupported = options?.choices.length === 1 && options.choices[0].value === "off";
+  const unconfirmed = hasUnconfirmedThinkingLevels(options);
 
   return <details className="space-y-3 border-t border-neutral-100 pt-3" onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer">高级思考设置</summary>
     {open && <div className="space-y-3">
       <p>能力参照只影响思考能力；请求仍使用当前模型 ID 和接入服务。</p>
       {preview.isFetching ? <p role="status">正在读取思考能力…</p> : options ? <div className="space-y-1" role="status">
-        <p>{sources[options.source ?? "default"]} · {unsupported ? "不支持思考" : `自动使用${thinkingLabels[options.defaultLevel]}`}</p>
-        {!unsupported && <p>{options.choices.map(choice => thinkingLabels[choice.label]).join(" · ")}</p>}
+        <p>{sources[options.source ?? "default"]} · {unsupported ? "不支持思考" : `${unconfirmed ? "默认请求" : "自动使用"}${thinkingLabels[options.defaultLevel]}`}</p>
+        {unconfirmed && <p>具体档位未确认；可选择同协议能力参照。</p>}
+        {!unsupported && <p>{options.choices.map(choice => thinkingChoiceLabel(options, choice.label)).join(" · ")}</p>}
         {options.reference && <p className="break-all">{options.reference.provider}/{options.reference.modelId}</p>}
       </div> : <p role="alert">{preview.error?.message}{" "}<button type="button" className="underline" onClick={() => void preview.refetch()}>重试能力查询</button></p>}
       {!reference && options?.recommendations?.map(candidate => <div key={`${candidate.provider}/${candidate.modelId}`} className="space-y-1 rounded-md bg-neutral-50 p-2">

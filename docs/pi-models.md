@@ -146,6 +146,11 @@ no longer a required checkbox. Missing reasoning metadata defaults to Pi's
 five basic levels (`off`, `minimal`, `low`, `medium`, `high`); automatic means
 `high`. An explicit, sourced upstream `false` disables thinking controls unless
 the user chooses an applicable manual capability reference.
+These fallback values are request preferences, not confirmed model capabilities.
+Without a catalog reference, Agent/Session controls mark the levels unconfirmed,
+describe automatic selection as the default, and label `off` as
+“请求关闭（未确认）”. An upstream `reasoning: true` declaration alone also cannot
+confirm specific levels. No real-service test of low/high establishes off support.
 
 The advanced thinking settings can select or clear a **capability reference**
 from the platform's built-in Pi catalog for the chosen protocol. It only controls

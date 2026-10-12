@@ -65,8 +65,10 @@ production cutover. No lifecycle DDL was applied during the corrected release.
 
 The target uses Tenant-owned `global.anthropic.claude-opus-5-5` over
 `anthropic-messages`. This ID has no exact entry in the pinned Pi catalog.
-No alternative model reference was selected. Its native basic levels are
-`off`, `minimal`, `low`, `medium`, `high`, with automatic default `high`.
+No alternative model reference was selected. Pi supplies fallback request levels
+`off`, `minimal`, `low`, `medium`, `high`, with automatic default `high`. These
+are not confirmed capabilities of Opus 5.5; only low and high were exercised below.
+In particular, this acceptance did not verify that thinking can be disabled.
 
 1. Authenticated browser verification on the supplied Session changed the slider
    to low and high; both survived reload. Reset restored the original null override

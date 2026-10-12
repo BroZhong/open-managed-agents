@@ -227,7 +227,9 @@ it("adds an unknown model without a reasoning checkbox and only adopts a suggest
   fireEvent.click(screen.getByText("Model settings"));
   expect(screen.queryByLabelText("Supports reasoning")).toBeNull();
   fireEvent.click(screen.getByText("高级思考设置"));
-  await screen.findByText("基础能力 · 自动使用高");
+  await screen.findByText("基础档位 · 默认请求高");
+  expect(screen.getByText("具体档位未确认；可选择同协议能力参照。")).toBeTruthy();
+  expect(screen.getByText(/请求关闭（未确认）/)).toBeTruthy();
   const preview = request.mock.calls.find(([url]) => url.endsWith("/thinking-options"))!;
   expect(JSON.parse(String(preview[1]?.body)).model).toMatchObject({ reasoningSource: "default", capabilityVersion: 1 });
   expect(JSON.parse(String(preview[1]?.body)).model.reasoning).not.toBe(false);
@@ -237,13 +239,15 @@ it("adds an unknown model without a reasoning checkbox and only adopts a suggest
   expect(testBody.models[0].capabilityReference).toBeUndefined();
   fireEvent.click(screen.getByRole("button", { name: "使用 Known model" }));
   await screen.findByText("手动参照 · 自动使用高");
+  expect(screen.queryByText(/具体档位未确认/)).toBeNull();
   expect(screen.getByRole("button", { name: "Save provider" })).toHaveProperty("disabled", true);
   fireEvent.click(screen.getByRole("button", { name: "Test selected models" }));
   await screen.findByText(/All selected models responded/);
   testBody = JSON.parse(String(request.mock.calls.filter(([url]) => url.endsWith("/test")).at(-1)![1]?.body));
   expect(testBody.models[0]).toMatchObject({ id: "gateway/alias", capabilityReference: { provider: "openai", modelId: "gpt-known" } });
   fireEvent.click(screen.getByRole("button", { name: "清除参照，恢复自动识别" }));
-  await screen.findByText("基础能力 · 自动使用高");
+  await screen.findByText("基础档位 · 默认请求高");
+  expect(screen.getByText(/具体档位未确认/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Save provider" })).toHaveProperty("disabled", true);
   fireEvent.change(screen.getByLabelText("Search capability references for gateway/alias"), { target: { value: "Known" } });
   fireEvent.click(screen.getByLabelText("Capability reference"));

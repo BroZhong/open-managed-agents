@@ -88,3 +88,20 @@ it("keeps an adapted legacy override until the user actually changes the slider"
   fireEvent.blur(slider);
   await waitFor(() => expect(onChange).toHaveBeenCalledWith("high"));
 });
+
+it.each(["default", "upstream"] as const)("does not present %s fallback controls as confirmed model capabilities", async source => {
+  const onChange = vi.fn().mockResolvedValue(undefined);
+  const fallback = { ...options, source, model: "custom-one/global.anthropic.claude-opus-5-5",
+    choices: [{ value: "off" as const, label: "off" as const }, { value: "low" as const, label: "low" as const }, { value: "high" as const, label: "high" as const }],
+    defaultLevel: "high" as const,
+    resolvedLevels: { off: "off", minimal: "low", low: "low", medium: "high", high: "high", xhigh: "high", max: "high" } as typeof options.resolvedLevels,
+  };
+  render(<SessionThinkingPicker options={fallback} value="off" onChange={onChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "思考强度：请求关闭（未确认）" }));
+  expect(screen.getByText("基础档位 · 能力未确认")).toBeTruthy();
+  expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("请求关闭（未确认）");
+  expect(onChange).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
+  fireEvent.keyUp(screen.getByRole("slider"), { key: "End" });
+  await waitFor(() => expect(onChange).toHaveBeenCalledWith("high"));
+});
