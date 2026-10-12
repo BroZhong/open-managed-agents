@@ -30,8 +30,11 @@ export function AgentThinkingPicker({ value, onChange, options, loading, error, 
         onChange={event => onChange(choices[Number(event.target.value)].value)}
         style={{ background: `linear-gradient(to right, var(--color-accent) ${progress}%, var(--color-bg-active) ${progress}%)` }}
         className="thinking-slider w-full" />
-      <div className="mt-1 flex justify-between px-0.5 text-[10px] text-neutral-400" aria-hidden="true">
-        {choices.map(choice => <span key={choice.value}>{thinkingChoiceLabel(options, choice.label)}</span>)}
+      <div className="relative mx-[9px] mt-1 h-4 text-[10px] text-neutral-400" aria-hidden="true">
+        {choices.map((choice, tick) => <span key={choice.value} className="absolute -translate-x-1/2 whitespace-nowrap"
+          style={{ left: `${choices.length > 1 ? tick / (choices.length - 1) * 100 : 0}%` }}>
+          {unconfirmed && choice.label === "off" ? "关闭?" : thinkingLabels[choice.label]}
+        </span>)}
       </div>
     </div> : !options ? <p className="text-xs text-neutral-500" role="status">
       {loading ? "正在读取模型档位…" : <><span>{error}</span>{" "}<button type="button" className="underline" onClick={onRetry}>档位读取失败，重试</button></>}
