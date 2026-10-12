@@ -7,17 +7,18 @@ verification delivery, not a production rollout.
 
 #225's shared Agent/Session capability resolver, #226's new BYOK defaults and
 #227's built-in Pi references are implemented. #229 supplies an explicit,
-repeatable data migration and controlled upgrade coverage. **Do not enable these
-new defaults in production yet.** The mandatory #228 fallback is blocked by the
-unmodified Pi 0.83.0 Responses integration. Its public omission controls cannot
-retain collection of newly produced encrypted reasoning history. See
-[request evidence and boundary proposal](byok-provider-thinking-boundary.md).
-The API rejects provider-controlled mode rather than pretending it works.
+repeatable data migration and controlled upgrade coverage. On 2026-10-12 the user
+accepted that behavior unsupported natively by Pi may remain unsupported by the
+platform. #228's provider-controlled mode is therefore intentionally unavailable:
+the API rejects it and the UI does not offer it. No production `onPayload`
+workaround is planned. See [request evidence and accepted boundary](byok-provider-thinking-boundary.md).
 
-This means #228 and the release/fallback portions of #229 remain incomplete.
-The code can be reviewed and exercised in isolated environments now. A successful
-gateway response does not establish that a requested effort was honored or that
-#228's history-preservation requirement is satisfied.
+This decision supersedes the original #226/#229 release prerequisite requiring
+the #228 fallback. Those changes no longer wait for payload-hook approval or
+provider-controlled mode; the coordinated upgrade procedure below still applies.
+The original #228 feature is not implemented. A gateway that rejects Pi's native
+thinking controls fails explicitly; the platform does not silently remove them
+or downgrade the level. A successful request is not proof of the executed effort.
 
 ## Data behavior
 
@@ -45,7 +46,7 @@ original intent cannot be recovered; communicate that behavior before rollout.
 
 ## Upgrade and rollback
 
-After #228 is resolved and independently verified:
+For a separately authorized production rollout:
 
 1. Back up provider configuration and the existing encryption key using the
    deployment's normal secure backup procedure. Keep Agent/Session writes and
@@ -70,8 +71,9 @@ After #228 is resolved and independently verified:
    them and resumes the remaining work. A second successful apply changes zero
    rows. Do not treat the operation as an all-record transaction.
 5. Deploy the matching Web build, refresh already-open browser tabs, verify
-   capability queries, explicit test/save, inheritance, reference clearing and
-   the completed provider fallback, then resume intake.
+   capability queries, explicit test/save, inheritance, reference clearing,
+   parameter-rejection diagnostics and rejection of unsupported provider-controlled
+   mode, then resume intake.
 
 New readers can interpret unmigrated legacy JSON, so code-before-data is
 supported while intake is paused; migration persists that interpretation.
@@ -148,5 +150,6 @@ identified two issues: a native HTTP-200 streaming thinking rejection lost its
 specific safe diagnostic, and new capability references imported unrelated catalog
 prices. Both were fixed and independently rechecked. Regression tests cover the
 native stream, the HTTP connection-test endpoint, credential redaction, and usage
-costs. No actionable findings remain from either review; #228's explicit boundary
-blocker and the dependent release acceptance remain outstanding.
+costs. No actionable findings remain from either review. The initially reported
+#228 release blocker became an accepted unsupported capability under the user's
+native-SDK-only decision above; this does not claim the original feature shipped.

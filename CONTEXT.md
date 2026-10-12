@@ -298,5 +298,8 @@ non-support disables thinking, an unambiguous exact catalog match supplies its
 capabilities, and unknown models use Pi's five basic levels. Aliases only suggest
 references until confirmed. Agent and Session preferences are retained when
 capabilities change. Capability reads require neither a Session nor decryption
-or inference. New defaults and the legacy provenance migration are release-gated
-on #228's provider-controlled fallback; see `docs/verification/model-thinking-upgrade.md`.
+or inference. Behavior unsupported by Pi's native public mechanisms remains
+unsupported by the platform. In particular, #228's provider-controlled mode is
+not offered; no payload-editing workaround is planned. This accepted limitation
+does not gate the new defaults or legacy provenance migration; see
+`docs/verification/model-thinking-upgrade.md`.

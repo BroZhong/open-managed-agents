@@ -173,12 +173,14 @@ old `reasoning: false` is not proof of upstream non-support or user intent.
 On upgrade, unknown legacy models can therefore begin sending reasoning controls,
 including records that were previously disabled manually.
 
-**Release gate:** #228's “由接入服务决定” fallback is not enabled in this change.
+**Native SDK boundary:** #228's “由接入服务决定” mode is unsupported.
 Pi 0.83.0 cannot omit all Responses thinking controls while retaining collection
 of newly produced encrypted reasoning history. The API rejects
-`thinkingMode: "provider"`; the UI does not offer a nonfunctional switch. Do not
-release the new BYOK defaults or execute the production data upgrade until this
-fallback is implemented through an accepted integration boundary. See
+`thinkingMode: "provider"`; the UI does not offer the switch. The user accepted
+this limitation: behavior Pi cannot support natively need not be implemented by
+the platform. No `onPayload` workaround is planned, and this mode is no longer a
+release prerequisite for the new BYOK defaults or legacy migration. A gateway
+that rejects native thinking controls reports an explicit failure. See
 [controlled boundary evidence](verification/byok-provider-thinking-boundary.md)
 and [upgrade runbook](verification/model-thinking-upgrade.md).
 

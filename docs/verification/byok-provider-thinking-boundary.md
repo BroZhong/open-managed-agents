@@ -1,9 +1,12 @@
 # Provider-controlled thinking: Pi 0.83.0 boundary investigation
 
-Verified with controlled SDK requests on 2026-10-12 for #228. This is a release
-blocker, not a claim that provider-controlled mode is implemented. Production
-rejects `thinkingMode: "provider"`; no SDK patch or production payload hook was
-added. The #226 default-support release and #229 rollout depend on resolving it.
+Verified with controlled SDK requests on 2026-10-12 for #228. The user accepted
+the native-SDK-only boundary on the same date: if Pi cannot support a behavior
+natively, the platform may leave it unsupported. The platform therefore rejects
+`thinkingMode: "provider"` and does not offer that mode in the UI. No SDK patch
+or production payload hook is needed or authorized by this decision. This
+accepted limitation replaces the original #226/#229 release dependency on the
+#228 fallback; it is not a pending approval or a claim that the mode is implemented.
 
 ## Controlled evidence
 
@@ -46,24 +49,29 @@ verify all five unknown-model levels for all three protocols, Responses extended
 effort, Anthropic budget/adaptive metadata and DeepSeek compatibility. Those
 tests prove serialization, not that a real gateway executes the requested effort.
 
-## Concrete boundary choices
+## Accepted boundary
 
-Preferred: upgrade to an unmodified Pi release with a public provider-control
+Future support requires an unmodified Pi release with a public provider-control
 option that independently omits effort/enable/disable/budget controls while
 retaining the model's capability metadata, message roles, signed history,
 reasoning-content requirements and Responses encrypted-content inclusion.
-The same request/replay tests must pass before enabling the mode.
+The same request/replay tests must pass before enabling the mode. There is no
+requirement to add a platform workaround while that native capability is absent.
 
-Alternative requiring an explicit ADR-0014 boundary change: adopt a narrowly
-scoped public `onPayload` policy after Pi serialization. Keep `reasoning: true`
-and its compatibility metadata; retain `include`, message history and tools;
-remove only documented control fields. A test-only Responses demonstration in
+## Rejected workaround
+
+A restricted public `onPayload` policy was considered only for the optional
+provider-controlled mode: after Pi serialization it could retain `reasoning: true`
+metadata, `include`, message history and tools while removing explicit thinking
+control fields. Ordinary application-controlled level selection does not require
+this hook. The user chose to leave unsupported native behavior unsupported rather
+than adopt this additional protocol responsibility. A test-only demonstration in
 `provider-thinking-boundary.test.ts` removes `reasoning` after Pi has serialized
 the payload. It verifies existing encrypted history, fresh encrypted reasoning,
 subsequent replay, developer role and tool result preservation. No production
 code uses this hook.
 
-This alternative makes the platform responsible for a versioned per-protocol
+This workaround would make the platform responsible for a versioned per-protocol
 control-field allowlist. Chat Completions can use `reasoning_effort`, `reasoning`,
 `thinking`, `enable_thinking` or provider-specific `chat_template_kwargs`;
 Anthropic uses `thinking` and `output_config.effort`; Responses uses `reasoning`.
@@ -74,8 +82,8 @@ Calling the hook public does not remove that protocol ownership or the required
 review. The Responses demonstration establishes feasibility of that specific
 proposal, not complete coverage of every catalog compatibility profile.
 
-After either choice is implemented, verify all offered protocol profiles with
-history and tool round trips, persist/reload mode per model, preserve Agent and
-Session preferences, and complete the #228/#229 controlled upgrade acceptance
-before deployment. The current changes do not migrate a running production
-fleet or silently turn on this incomplete fallback.
+If native support is added later, verify all offered protocol profiles with
+history and tool round trips, persist/reload mode per model, and preserve Agent
+and Session preferences before enabling it. The current migration can proceed
+under its own rollout procedure with provider-controlled mode explicitly
+unsupported; production deployment remains a separate operation.

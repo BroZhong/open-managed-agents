@@ -13,6 +13,14 @@ Use the published, unmodified Pi 0.83.0 SDK in Host and Sandbox. There is no Pi
 `patchedDependencies` entry, runtime replacement of private methods, or private
 SessionManager field access. The E2B transport patch is separate and remains.
 
+For model thinking controls, behavior unsupported by native Pi public mechanisms
+may remain unsupported by the platform (user decision, 2026-10-12). Do not add
+protocol-field deletion through `onPayload` to emulate provider-controlled mode.
+The mode stays unavailable until native support can preserve message/tool and
+encrypted reasoning history while omitting the controls. This accepted limitation
+supersedes #226/#229's original release dependency on the #228 fallback. See
+`docs/verification/byok-provider-thinking-boundary.md` for controlled evidence.
+
 ### Native tools run in the Sandbox
 
 Host registers the seven tools through `customTools` and disables built-ins.
