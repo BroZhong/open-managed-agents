@@ -1,0 +1,33 @@
+# Public console and API on the shared ALB. Each environment sets its own host;
+# the *.welltop.tech certificate covers single-label subdomains only.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oma-console
+  annotations:
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80},{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: 'true'
+spec:
+  ingressClassName: alb
+  tls:
+  - hosts:
+    - agentry.welltop.tech
+    secretName: certwelltoptech2026
+  rules:
+  - host: agentry.welltop.tech
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: oma-api
+            port:
+              number: 3000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: oma-web
+            port:
+              number: 80

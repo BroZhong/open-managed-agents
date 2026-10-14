@@ -1,0 +1,7 @@
+# Shared application base. Apply an overlay under deploy/environments instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- api-runner.yaml
+- web.yaml
+- ingress.yaml

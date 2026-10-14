@@ -1,0 +1,16 @@
+# Production on agent-platform. Releases update images only; see deploy/README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: oma-infra
+resources:
+- ../../app
+patches:
+# The public /api route still targets the legacy oma-server Service, whose
+# selector was switched to app=oma-api during the API/Runner cutover.
+- target:
+    kind: Ingress
+    name: oma-console
+  patch: |-
+    - op: replace
+      path: /spec/rules/0/http/paths/0/backend/service/name
+      value: oma-server

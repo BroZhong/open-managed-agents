@@ -1,5 +1,5 @@
 {
-  "allowedOrigin": ["https://agentry.welltop.tech"],
+  "allowedOrigin": ["https://agentry.welltop.tech", "https://agentry-test.welltop.tech"],
   "allowedMethod": ["GET", "HEAD"],
   "allowedHeader": ["Range", "If-Range", "If-Match", "If-None-Match"],
   "exposeHeader": ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Content-Disposition"],

@@ -1,0 +1,50 @@
+# Test-only Redis. Production Redis is provisioned outside this repository.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        alibabacloud.com/acs: 'true'
+    spec:
+      imagePullSecrets:
+      - name: ali-shanghai
+      containers:
+      - name: redis
+        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/redis-base:7-alpine
+        args: [redis-server, --requirepass, $(REDIS_PASSWORD), --appendonly, 'yes']
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: REDIS_PASSWORD
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379

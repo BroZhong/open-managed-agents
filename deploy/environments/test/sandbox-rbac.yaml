@@ -1,0 +1,15 @@
+# Cross-namespace grant, applied separately from the oma-test overlay because
+# the overlay rewrites every namespace. Mirrors deploy/sandbox-base-secret-rbac.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oma-test-read-base-secret
+  namespace: sandbox-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oma-read-base-secret
+subjects:
+- kind: ServiceAccount
+  name: oma-server
+  namespace: oma-test
