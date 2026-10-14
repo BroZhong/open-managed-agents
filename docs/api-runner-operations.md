@@ -28,11 +28,12 @@ claiming without waiting for a scan. PostgreSQL is the only pending queue and
 history authority. Redis contains disposable Deltas, active-Turn projections and
 notifications. Outages lose temporary token animation, never committed answers.
 
-The first split release uses one API and one Runner. `deploy/k8s.split.yaml`
-provides separate ConfigMaps, Deployments, readiness probes and internal Services.
-API Pods have no Pi config mount or Sandbox service account. Web and public Ingress
-remain separately managed by the existing deployment. The legacy `oma-server`
-Service selector is intentionally not changed by the staged manifest.
+The first split release uses one API and one Runner. `deploy/app/api-runner.yaml`
+provides separate ConfigMaps, Deployments, readiness probes and internal Services;
+`deploy/environments/` adds each environment's namespace and configuration.
+API Pods have no Pi config mount or Sandbox service account. The legacy
+`oma-server` Service is not declared; the production overlay routes `/api` to it
+as the live Ingress does.
 
 Tenant model-provider configuration requires migration `0016_model_providers.sql`
 and the same `OMA_PROVIDER_ENCRYPTION_KEY` Secret reference in API and Runner.
@@ -103,14 +104,14 @@ explicitly. The following commands are for the separately authorized release:
 4. Render reviewed immutable image tags independently, then stage both roles:
 
    ```sh
-   node deploy/scripts/render-split.mjs API_VERSION RUNNER_VERSION > /tmp/oma-split.yaml
+   node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-split.yaml
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra diff -f /tmp/oma-split.yaml
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra apply -f /tmp/oma-split.yaml
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra rollout status deployment/oma-api
    kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-infra rollout status deployment/oma-runner
    ```
 
-5. On staging first, scale to two APIs and two Runners. Submit to one API while
+5. On staging (the `oma-test` environment in `deploy/README.md`) first, scale to two APIs and two Runners. Submit to one API while
    streaming from both; reconnect through the other API. Verify one promoted input,
    increasing unique durable sequences, complete final output and idle status.
    Delete one API Pod during a long Turn; its Runner must continue. Stop Redis and

@@ -103,7 +103,8 @@ signing can apply MIME inference without modifying object metadata; regional
 signing preserves stored MIME.
 
 Browser text reads and media elements using anonymous CORS need a Bucket CORS
-rule for the actual console origin (currently `https://agentry.welltop.tech`),
+rule for the actual console origin (currently `https://agentry.welltop.tech` and the test console
+`https://agentry-test.welltop.tech`),
 permitting `GET`/`HEAD` and exposing
 the response headers needed by clients (`Content-Type`, `Content-Length`,
 `Content-Range`, `Accept-Ranges`, `ETag`, `Content-Disposition`). Allow `Range`

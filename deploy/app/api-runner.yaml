@@ -1,11 +1,10 @@
-# Staged API/Runner deployments. This does not change the public Service selector.
-# Render both immutable versions with scripts/render-split.mjs; do not apply placeholders.
-# Web, Ingress and the legacy oma-server Deployment remain separately managed.
+# API and Runner for every environment. Namespace, environment-specific
+# configuration and images come from deploy/environments/<env>; do not apply
+# this base directly. Image placeholders are rendered by deploy/scripts.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: oma-api-config
-  namespace: oma-infra
 data:
   PORT: '3000'
   OMA_RUNNER_URL: http://oma-runner:3001
@@ -34,7 +33,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: oma-api
-  namespace: oma-infra
   labels:
     app: oma-api
 spec:
@@ -59,12 +57,6 @@ spec:
         - configMapRef:
             name: oma-api-config
         env:
-        - name: OMA_PROVIDER_ENCRYPTION_KEY
-          valueFrom:
-            secretKeyRef:
-              name: oma-secrets
-              key: OMA_PROVIDER_ENCRYPTION_KEY
-              optional: true
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -100,6 +92,11 @@ spec:
             secretKeyRef:
               name: oma-secrets
               key: INVITE_CODE
+        - name: OMA_PROVIDER_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: OMA_PROVIDER_ENCRYPTION_KEY
         readinessProbe:
           httpGet:
             path: /api/ready
@@ -133,7 +130,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: oma-api
-  namespace: oma-infra
 spec:
   selector:
     app: oma-api
@@ -145,7 +141,6 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: oma-runner-config
-  namespace: oma-infra
 data:
   PORT: '3001'
   ALIYUN_REGION: cn-shanghai
@@ -186,7 +181,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: oma-runner
-  namespace: oma-infra
   labels:
     app: oma-runner
 spec:
@@ -225,12 +219,6 @@ spec:
             name: oma-auto-story-env
             optional: true
         env:
-        - name: OMA_PROVIDER_ENCRYPTION_KEY
-          valueFrom:
-            secretKeyRef:
-              name: oma-secrets
-              key: OMA_PROVIDER_ENCRYPTION_KEY
-              optional: true
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -307,6 +295,11 @@ spec:
           value: localhost,127.0.0.1,::1,.svc,.cluster.local,172.17.255.52
         - name: no_proxy
           value: $(NO_PROXY)
+        - name: OMA_PROVIDER_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oma-secrets
+              key: OMA_PROVIDER_ENCRYPTION_KEY
         volumeMounts:
         - name: pi-gateway-config
           mountPath: /opt/pi-agent-seed/auth.json
@@ -339,17 +332,14 @@ spec:
             port: 3001
           initialDelaySeconds: 20
           periodSeconds: 10
+  # Runners never overlap: a new Runner starts after the old one has stopped.
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: oma-runner
-  namespace: oma-infra
 spec:
   selector:
     app: oma-runner

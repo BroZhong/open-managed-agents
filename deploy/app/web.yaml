@@ -1,0 +1,49 @@
+# Console for every environment; it calls the same-origin /api endpoint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oma-web
+  labels:
+    app: oma-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oma-web
+  template:
+    metadata:
+      labels:
+        app: oma-web
+        alibabacloud.com/acs: 'true'
+    spec:
+      imagePullSecrets:
+      - name: ali-shanghai
+      containers:
+      - name: web
+        image: OMA_WEB_IMAGE
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oma-web
+spec:
+  selector:
+    app: oma-web
+  ports:
+  - port: 80
+    targetPort: 80

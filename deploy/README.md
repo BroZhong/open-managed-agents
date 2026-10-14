@@ -20,6 +20,7 @@ See [the 2026-10-11 native lifecycle release](../docs/verification/native-sandbo
 | OMA application | `oma-infra` | `oma-api`, `oma-runner`, `oma-web`, their Services, and the `oma-console` ALB Ingress |
 | Application dependencies | `oma-infra` | Redis and sing-box; provisioned separately from `deploy/k8s.yaml` |
 | Agent sandboxes | `sandbox-system` | ACK sandbox manager/gateway; sole maintained `auto-story-v2` SandboxSet |
+| Test environment | `oma-test` | Its own `oma-api`, `oma-runner`, `oma-web`, Redis and `oma-console` Ingress; see [Environments](#environments) |
 
 The public console and API share `https://agentry.welltop.tech`. The ALB sends
 `/api/*` to the API Service and all other paths to `oma-web`. The Server therefore
@@ -44,6 +45,100 @@ sandbox default is `auto-story-v2`, whose immutable image digest is declared in
 [`sandbox/auto-story-v2/sandboxset.yaml`](../sandbox/auto-story-v2/sandboxset.yaml). It includes VFS CLI, FFmpeg, Gemini's
 Python SDK, MediaKit and native `rg`/`fd` search, without OpenMontage or Whisper.
 This is the only pool maintained or shipped by this repository.
+
+## Environments
+
+Production and test share the cluster, the RDS instance, the Supabase instance,
+the Sandbox pool and the Workspace OSS bucket. They are separated at the
+application layer:
+
+| Resource | Production | Test |
+| --- | --- | --- |
+| Namespace | `oma-infra` | `oma-test` |
+| Public URL | `https://agentry.welltop.tech` | `https://agentry-test.welltop.tech` |
+| PostgreSQL schema / role | `oma` / `oma_app` | `oma_test` / `oma_test_app` |
+| Redis | existing `oma-infra/redis` | `oma-test/redis` from the overlay |
+| Skill Storage bucket | `workspace` | `workspace-test` |
+| Workspace OSS | `agentry` bucket | same bucket; Tenant IDs are random UUIDs, so prefixes never overlap |
+| Runner PG pool | 30 | 10 |
+| Secrets | `oma-infra/*` | copies of the production Secrets, except `PG_PASSWORD` |
+
+Neither role can use the other schema. The test schema is owned by the admin
+role, and `oma_test_app` has only `USAGE` plus the table, sequence and function
+privileges that `oma_app` has in production. Anything that works in test
+therefore cannot depend on extra production privileges. Because `AUTH_JWT_SECRET`
+is shared, a console token from one environment is also accepted by the other
+API. It resolves to a Tenant with no data there.
+
+Manifests are Kustomize overlays on one base:
+
+| Path | Contents |
+| --- | --- |
+| `app/` | API, Runner, Web and Ingress without a namespace; production configuration values |
+| `environments/production/` | `oma-infra`; keeps the live `/api` route to the legacy `oma-server` Service |
+| `environments/test/` | `oma-test`, test configuration patches, ServiceAccount and Redis |
+| `environments/test/sandbox-rbac.yaml` | Read grant on `sandbox-system/base-secret`; applied separately because the overlay rewrites namespaces |
+
+`scripts/render.mjs` renders an overlay and substitutes the three image
+placeholders. Each version is an immutable tag or a `sha256:` digest:
+
+```bash
+node deploy/scripts/render.mjs production API_VERSION RUNNER_VERSION WEB_VERSION
+```
+
+The production overlay matches the live Deployments, ConfigMaps, Services and
+Ingress (verified with `kubectl diff` on 2026-10-14). Production releases still
+patch only image fields. Use the rendered production manifest for `kubectl diff`
+before a configuration change.
+
+### Test releases
+
+Release the same image to test before production:
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-test.yaml
+kubectl diff -f /tmp/oma-test.yaml
+kubectl apply -f /tmp/oma-test.yaml
+for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
+curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status == "ok")'
+```
+
+Unlike production, test applies the complete rendered manifest. Do not put
+manual changes on test resources; add them to the overlay.
+
+### Test migrations
+
+Apply every new migration to test first. `scripts/migration-for-env.mjs`
+rewrites `oma.` and `oma_app` to the test schema and role; review its output and
+apply it with the privileged migration operator, as for production:
+
+```bash
+node deploy/scripts/migration-for-env.mjs test deploy/migrations/0021_example.sql
+```
+
+The test schema was created on 2026-10-14 from `schemaDdl("oma_test")` and
+migrations 0001–0020 rewritten this way. Its columns, indexes, constraints,
+triggers, functions and application privileges were compared with `oma` and
+have no differences.
+
+### Test secrets
+
+The test Secrets are copies. After rotating a production Secret, copy it again
+and restart the test Deployments. Keep the test `PG_PASSWORD`:
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+for s in ali-shanghai certwelltoptech2026 oma-pi-gateway oma-auto-story-env; do
+  kubectl -n oma-infra get secret "$s" -o json \
+    | jq '.metadata = {name: .metadata.name, namespace: "oma-test"}' \
+    | kubectl apply -f -
+done
+kubectl -n oma-infra get secret oma-secrets -o json \
+  | jq --arg pg "$(kubectl -n oma-test get secret oma-secrets -o jsonpath='{.data.PG_PASSWORD}')" \
+      '.metadata = {name: "oma-secrets", namespace: "oma-test"} | .data.PG_PASSWORD = $pg' \
+  | kubectl apply -f -
+```
 
 ## Image pipeline
 
@@ -149,8 +244,10 @@ rebuild or a new Session to pick up a changed image or template.
 
 ## What the repository owns
 
-`k8s.yaml` declares the application ConfigMap, Server/Web Deployments and
-Services, and the public Ingress. It intentionally does not create Redis,
+`app/` and `environments/` declare the running split API/Runner, Web and
+Ingress for both environments (see [Environments](#environments)); only the test
+overlay also creates Redis. `k8s.yaml` is the legacy combined-Server manifest.
+Neither creates production Redis,
 sing-box, RDS, Workspace OSS, Skill Supabase Storage, the ALB controller, or the
 ACK sandbox-manager installation.
 

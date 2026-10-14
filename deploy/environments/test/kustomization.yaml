@@ -1,0 +1,36 @@
+# Test environment: same cluster, RDS instance, Sandbox pool and Workspace OSS
+# bucket as production; separate namespace, schema/role, Redis, Skill bucket
+# and host. Secrets are copies of production with the test PG password.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: oma-test
+resources:
+- ../../app
+- namespace.yaml
+- service-account.yaml
+- redis.yaml
+patches:
+- target:
+    kind: ConfigMap
+    name: oma-api-config
+  patch: |-
+    - {op: replace, path: /data/PUBLIC_API_URL, value: https://agentry-test.welltop.tech/api}
+    - {op: replace, path: /data/PG_USER, value: oma_test_app}
+    - {op: replace, path: /data/PG_SCHEMA, value: oma_test}
+    - {op: replace, path: /data/REDIS_HOST, value: redis}
+    - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
+- target:
+    kind: ConfigMap
+    name: oma-runner-config
+  patch: |-
+    - {op: replace, path: /data/PG_USER, value: oma_test_app}
+    - {op: replace, path: /data/PG_SCHEMA, value: oma_test}
+    - {op: replace, path: /data/PG_POOL_MAX, value: '10'}
+    - {op: replace, path: /data/REDIS_HOST, value: redis}
+    - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
+- target:
+    kind: Ingress
+    name: oma-console
+  patch: |-
+    - {op: replace, path: /spec/tls/0/hosts/0, value: agentry-test.welltop.tech}
+    - {op: replace, path: /spec/rules/0/host, value: agentry-test.welltop.tech}
