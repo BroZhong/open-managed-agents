@@ -155,6 +155,7 @@ data:
   PG_DATABASE: supabase_db
   PG_USER: oma_app
   PG_SCHEMA: oma
+  PG_POOL_MAX: '30'
   PG_SSL: 'false'
   PG_ENSURE_SCHEMA: 'false'
   REDIS_HOST: 10.0.64.18
