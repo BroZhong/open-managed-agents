@@ -219,6 +219,9 @@ spec:
             name: oma-auto-story-env
             optional: true
         env:
+        # Node defaults to a ~2 GB heap regardless of the container limit.
+        - name: NODE_OPTIONS
+          value: --max-old-space-size=6144
         - name: PG_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -315,6 +318,7 @@ spec:
             port: 3001
           initialDelaySeconds: 15
           periodSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 6
         resources:
           limits:
@@ -326,12 +330,15 @@ spec:
         - tsx
         - src/runner-server.ts
         workingDir: /app/server/packages/api
+        # GC pauses and short stalls must not kill every in-flight Turn.
         livenessProbe:
           httpGet:
             path: /health
             port: 3001
           initialDelaySeconds: 20
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
   # Runners never overlap: a new Runner starts after the old one has stopped.
   strategy:
     type: Recreate
