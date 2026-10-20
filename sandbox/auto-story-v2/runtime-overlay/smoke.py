@@ -1,4 +1,5 @@
 """Additional checks; keep the inherited production smoke suite intact."""
+import ast
 import configparser
 import importlib.metadata
 import json
@@ -45,7 +46,7 @@ def media_python(directory):
     finally:
         writer.release()
     scenes = detect(str(video_path), ContentDetector(threshold=10, min_scene_len=5))
-    require(len(scenes) == 2 and scenes[0][1].get_frames() == 20, "SceneDetect did not detect the known cut at frame 20")
+    require(len(scenes) == 2 and scenes[0][1].frame_num == 20, "SceneDetect did not detect the known cut at frame 20")
     return {"versions": versions, "libGL": "loaded", "pillow": "PNG round-trip", "fonttools": "font cmap read", "scenedetect": "cut at frame 20"}
 
 
@@ -55,7 +56,9 @@ if __name__ == '__main__':
     config = configparser.ConfigParser()
     config.read('/etc/pip.conf')
     require(config['global']['index-url'] == 'https://mirrors.aliyun.com/pypi/simple/', 'pip mirror mismatch')
-    actual = subprocess.check_output(['python3', '-m', 'pip', 'config', 'get', 'global.index-url'], text=True).strip()
+    effective = subprocess.check_output(['python3', '-m', 'pip', 'config', 'list'], text=True)
+    entries = dict(line.split('=', 1) for line in effective.splitlines() if '=' in line)
+    actual = ast.literal_eval(entries['global.index-url'])
     require(actual == config['global']['index-url'], 'effective pip mirror mismatch')
     for executable in ['python', 'python3']:
         subprocess.run([executable, '-I', '-c', 'import cv2, scenedetect; assert scenedetect.__version__ == "0.7.1"'], check=True)
