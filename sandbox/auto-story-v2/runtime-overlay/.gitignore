@@ -1,0 +1,5 @@
+*.tar.gz
+*.log
+verification.json
+build-metadata.json
+__pycache__/
