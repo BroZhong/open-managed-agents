@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!release.json
+!requirements.txt
+!inventory.py
+!update-records.py
+!smoke.py
+!pip.conf
+!proxy.env
+!vfs-cli_v0.3.19_linux_amd64.tar.gz

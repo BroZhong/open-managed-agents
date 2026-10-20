@@ -12,7 +12,8 @@ if [[ ! -f "$archive" ]]; then
   mv "${archive}.partial" "$archive"
 fi
 printf '%s  %s\n' 8c3251bab72e3eec6753ed5c4055ae298cdbddcee6b9b8c8d8b594bcc26104e8 "$archive" | sha256sum -c -
-docker buildx build --platform linux/amd64 --load --progress plain -t "$image" .
+docker buildx build --platform linux/amd64 --load --progress plain \
+  --build-arg "BUILD_REVISION=$(git rev-parse HEAD)" -t "$image" .
 # RootFS prefix and startup config must match the pinned production parent.
 python3 - "$parent" "$image" <<'PY'
 import json, subprocess, sys

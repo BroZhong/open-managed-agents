@@ -28,7 +28,9 @@ ENV HTTP_PROXY=http://sing-box.oma-infra.svc.cluster.local:7890 \
     https_proxy=http://sing-box.oma-infra.svc.cluster.local:7890 \
     NO_PROXY=localhost,127.0.0.1,::1,.svc,.cluster.local \
     no_proxy=localhost,127.0.0.1,::1,.svc,.cluster.local
-LABEL org.opencontainers.image.version="0.3.1" \
+ARG BUILD_REVISION
+LABEL org.opencontainers.image.revision="${BUILD_REVISION}" \
+      org.opencontainers.image.version="0.3.1" \
       org.opencontainers.image.title="auto-story-v2-runtime-overlay" \
       org.opencontainers.image.base.name="registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:6f5eedfc6c0b68056c79d316b9676487a481eb28dcc2f035ffed28d8db591eb8" \
       tech.welltop.vfs-cli.version="v0.3.19"
