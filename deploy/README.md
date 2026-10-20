@@ -344,10 +344,21 @@ so old preset copies cannot override a rotated shared credential. Without a
 base Secret, the legacy preset retains its original behavior. Values explicitly
 configured on an Agent still override shared defaults.
 
-After Secret rotation, roll the Host. Its next Turn creates a new sandbox for an
-existing Session using the fresh values; Workspace files stay in OSS. Updating
-the Secret does not mutate environments of already running processes. Verify
-with E2B `commands.run()` and only emit presence/equality booleans, never values.
+After Secret rotation, roll the execution Runner so it reloads the defaults.
+This can interrupt active Turns; schedule a quiet window or obtain explicit
+acceptance of that impact. New Sandboxes receive the fresh values at creation.
+Existing Sessions normally reconnect their retained Sandbox under ADR-0019;
+a Runner rollout does not automatically rebuild it or refresh its environment.
+Updating the Secret does not mutate environments of already running processes.
+Verify through a newly created Session using E2B commands, and only emit
+presence/equality booleans for credentials, never values.
+
+For HTTP proxy defaults, the six non-secret values in
+`../sandbox/auto-story-v2/runtime-overlay/proxy.env` are merged into this same
+Secret; do not replace its other keys. Image Docker ENV and Pod env alone do not
+prove E2B command injection. A validation Agent without `sandbox.env` overrides
+must receive the proxy variables through the shared creation-time defaults.
+Business-domain direct/proxy decisions remain in the shared sing-box service.
 
 Use the dedicated kubeconfig instead of whichever context happens to be the
 local default:
