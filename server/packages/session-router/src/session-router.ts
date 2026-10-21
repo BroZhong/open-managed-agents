@@ -928,10 +928,8 @@ export class SessionRouter {
       ));
     }
     if (error) {
-      journal.record({ type: "session.error", data: {
-        ...(error.turnId === undefined ? {} : { turnId: error.turnId }),
-        error: { code: error.code, message: error.message },
-      } }, this.turnKey(pendingEventId, error.phase));
+      journal.record({ type: "session.error", data: { turnId, error: { code: error.code, message: error.message } } },
+        this.turnKey(pendingEventId, error.phase));
     }
   }
 
@@ -1437,7 +1435,7 @@ export class SessionRouter {
           // The resumed wait's Turn continues after what it already committed:
           // its model steps and its output blocks.
           adapterInput.history = this.adapterHistory(priorEvents);
-          adapterInput.resume = { completedModelSteps: resume.completedModelSteps, blockBase: resume.blockBase };
+          adapterInput.resume = plan.progress;
           if (resume.config.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: resume.config.thinking };
         }
         if (this.delegations) adapterInput.execution = { ...adapterInput.execution,

@@ -118,7 +118,13 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     const [interrupted, answered] = await h.completions();
     expect(interrupted.pendingEventId).toBe(a.id);
     expect(answered.pendingEventId).toBe(b.id);
-    expect((await h.ofType("session.turn_aborted")).map((stored) => stored.data)).toEqual([{ turnId: interrupted.turnId }]);
+    // The Interrupted Turn is the one the lost Runner started: its repair and
+    // its closing events join the call they answer.
+    const [call] = await h.ofType("agent.tool_use");
+    const started = (call.data as { turnId: string }).turnId;
+    expect(interrupted.turnId).toBe(started);
+    expect(repairs.map((stored) => (stored.data as { turnId: string }).turnId)).toEqual([started]);
+    expect((await h.ofType("session.turn_aborted")).map((stored) => stored.data)).toEqual([{ turnId: started }]);
     // The repair, then the Interrupt, then the completion close A's Turn, before B runs.
     const types = log.map((stored) => stored.type);
     expect(types.slice(types.indexOf("agent.tool_use"))).toEqual(["agent.tool_use", "agent.tool_result", "session.turn_aborted",

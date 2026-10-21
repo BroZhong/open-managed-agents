@@ -9,9 +9,9 @@ import { isTerminalExecution } from "./delegation-coordinator.js";
  */
 export interface ResumeFacts {
   pendingEventId: string;
-  /** The seq its promotion gave the input; a new Turn is named after it. */
+  /** The seq its promotion gave the input; a Turn no earlier attempt named is named after it. */
   promotedSeq: number;
-  /** The claim this attempt holds. */
+  /** The claim this attempt holds; its generation names a Turn no earlier attempt named. */
   claim: {
     generation: number;
     /** An earlier generation accepted an Interrupt for the input, and the Runner holding it stopped first. */
@@ -69,26 +69,26 @@ export interface DanglingToolCall {
   serverName?: string;
 }
 
-/** A session.error that ends a Turn. */
+/** A session.error that ends a Turn; it names the Turn it ends. */
 export interface RecoveryError {
   /** Names the error's idempotency key under its input. */
   phase: string;
   code: string;
   message?: string;
-  /** The Turn the error names, when it names one. */
-  turnId?: string;
 }
 
 /** Run the Adapter for the Turn. */
 export interface RunPlan {
   kind: "run";
   turnId: string;
+  /** Where this attempt starts in the Turn, counted from what earlier attempts committed. */
+  progress: AdapterResume;
   /** Continue the Turn an earlier attempt left waiting; absent for a new Turn, prompted with its input. */
   resume?: TurnResume;
 }
 
 /** How a run continues a Turn after what its earlier attempts committed. */
-export interface TurnResume extends AdapterResume {
+export interface TurnResume {
   /** The Turn's delegation waits; each still waiting is resumed for its result before the Turn goes on. */
   waits: DelegationWait[];
   /** The configuration the Turn started with. */
@@ -111,11 +111,17 @@ export interface TurnResume extends AdapterResume {
  *   5. the Turn waits on delegations: resume the waits;
  *   6. an earlier attempt committed output: repair, complete with an error;
  *   7. otherwise: run a new Turn.
+ * Every attempt of the input executes one Turn, the one its first attempt
+ * started: the plan names it after the first event of the input that names a
+ * Turn (Pi's agent.context_start, recorded when Pi is prompted). An input no
+ * attempt named yet is this attempt's Turn.
  */
 export function planResume(facts: ResumeFacts): ResumePlan {
   const waits = facts.waits.filter((wait) => wait.status !== "cancelled");
-  // A wait belongs to the Turn that started it; any other attempt starts a Turn of its own.
-  const turnId = waits[0]?.callerTurnId ?? `turn_${facts.promotedSeq}_a${facts.claim.generation}`;
+  // A Delegation Result notification lands in the log by itself; it is not output of this Turn.
+  const output = facts.events.filter((event) => event.type !== "subagent.result");
+  const turnId = output.map((event) => (event.data as { turnId?: unknown } | null)?.turnId)
+    .find((named): named is string => typeof named === "string") ?? `turn_${facts.promotedSeq}_a${facts.claim.generation}`;
   if (facts.events.some((event) => event.type === "session.turn_completed" &&
     (event.data as { pendingEventId?: unknown } | null)?.pendingEventId === facts.pendingEventId)) {
     return { kind: "acknowledge", turnId };
@@ -125,11 +131,9 @@ export function planResume(facts: ResumeFacts): ResumePlan {
     const executionTurnId = execution.turnId ?? turnId;
     return execution.status === "recovery_required"
       ? { kind: "complete", cause: "execution_ended", turnId: executionTurnId, repairs: danglingToolCalls(facts.events), interruptChildren: false,
-        error: { phase: "recovery_required", code: "recovery_required", message: execution.result?.reason, turnId: executionTurnId } }
+        error: { phase: "recovery_required", code: "recovery_required", message: execution.result?.reason } }
       : { kind: "complete", cause: "execution_ended", turnId: executionTurnId, repairs: [], interruptChildren: false };
   }
-  // A Delegation Result notification lands in the log by itself; it is not output of this Turn.
-  const output = facts.events.filter((event) => event.type !== "subagent.result");
   if (output.some((event) => event.type === "session.status_idle" || event.type === "session.error" || event.type === "session.turn_aborted")) {
     return { kind: "complete", cause: "turn_ended", turnId, repairs: danglingToolCalls(output), interruptChildren: true };
   }
@@ -138,32 +142,43 @@ export function planResume(facts: ResumeFacts): ResumePlan {
   if (facts.claim.priorInterrupt) {
     return { kind: "complete", cause: "interrupted", turnId, repairs: danglingToolCalls(output), interruptChildren: true };
   }
-  if (waits.length) return { kind: "run", turnId, resume: resumeWaits(facts.events, turnId, waits) };
+  const progress = turnProgress(output, turnId);
+  if (waits.length) return { kind: "run", turnId, progress, resume: resumeWaits(facts.events, waits) };
   if (output.some((event) => event.type !== "session.status_running")) {
     return { kind: "complete", cause: "partial_output", turnId, repairs: danglingToolCalls(output), interruptChildren: false,
       error: { phase: "recovery_partial_turn_aborted", code: "recovery_partial_turn_aborted",
         message: "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts." } };
   }
-  return { kind: "run", turnId };
+  return { kind: "run", turnId, progress };
 }
 
 /**
  * Resuming the waits gives each waiting call its result, and nothing else:
  * whatever else dangles now still dangles after them.
  */
-function resumeWaits(events: readonly StoredEvent[], turnId: string, waits: DelegationWait[]): TurnResume {
+function resumeWaits(events: readonly StoredEvent[], waits: DelegationWait[]): TurnResume {
   const waitCalls = new Set(waits.map((wait) => wait.callerToolUseId));
   const uncertain = danglingToolCalls(events).filter((call) => !waitCalls.has(call.toolUseId));
-  // The Turn continues after the model steps and output blocks it committed.
-  const committed = events.filter((event) => (event.data as { turnId?: unknown } | null)?.turnId === turnId);
   return {
     // A wait saved before waits recorded configuration has none.
     waits, config: waits[0].config ?? {},
+    ...(uncertain.length ? { end: { repairs: uncertain, error: { phase: "unsafe_continuation", code: "recovery_required",
+      message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } } } : {}),
+  };
+}
+
+/**
+ * Where an attempt of `turnId` starts, from the Turn's committed events: after
+ * the model steps it made, which count against its step budget, and after its
+ * highest output block. One count for every Turn, whether it answers an input,
+ * runs a Child execution or resumes a wait.
+ */
+export function turnProgress(events: readonly StoredEvent[], turnId: string): AdapterResume {
+  const committed = events.filter((event) => (event.data as { turnId?: unknown } | null)?.turnId === turnId);
+  return {
     completedModelSteps: committed.filter((event) => event.type === "span.model_request_start").length,
     blockBase: 1 + Math.max(-1, ...committed.flatMap((event) => presentEvent(event))
       .map((event) => (event.data as { blockIndex?: number } | null)?.blockIndex ?? -1)),
-    ...(uncertain.length ? { end: { repairs: uncertain, error: { phase: "unsafe_continuation", code: "recovery_required", turnId,
-      message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } } } : {}),
   };
 }
 
