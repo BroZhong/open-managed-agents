@@ -9,6 +9,9 @@ uses Host-resident Pi with Sandbox-as-Tool (ADR-0002/0005), OSS-mounted Workspac
 (ADR-0008) and the Workspace file API (ADR-0009). There is no maintained
 Agent-in-the-Sandbox deployment or rootfs pause/resume persistence contract.
 See [CONTEXT.md](../../CONTEXT.md) and [the active template](../../sandbox/README.md).
+The Claude Code and Codex adapters and the `adapter-runner` package described
+below were removed in #235; Agents that still carry those runtimes end each
+Turn with an `unsupported_runtime` error.
 
 Original status: Accepted.
 

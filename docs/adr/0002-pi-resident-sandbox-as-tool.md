@@ -10,8 +10,8 @@ unknown execution is retained without a maximum Sandbox age.
 
 Accepted for Host-resident Pi and Sandbox-as-Tool. This originally extended
 ADR-0001's proposed second mode; ADR-0001 is now historical, and its
-Agent-in-the-Sandbox deployment recipes are no longer maintained. The presence
-of Claude Code/Codex adapters does not imply a deployed sandbox template for them.
+Agent-in-the-Sandbox deployment recipes are no longer maintained. The Claude
+Code and Codex adapters were removed in #235, so Pi is the only production runtime.
 
 ## Context
 

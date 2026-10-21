@@ -4,20 +4,21 @@ import type { Adapter } from "@open-managed-agents/adapter-core";
 import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillArtifactStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
-import { resolveAdapter } from "./lib/runtime-adapters.js";
+import { runtimeAdapters } from "./lib/runtime-adapters.js";
 import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { sandboxBaseEnvFromKubernetes } from "./lib/sandbox-base-secret.js";
 import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
+import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { ModelProviderService } from "./lib/model-providers.js";
 
 export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
   skillArtifactStore: SkillArtifactStore; eventStreamHub: EventStreamHub; turnStreamStore: TurnStreamStore;
-}, execution?: { resolveAdapter(runtime: string): Adapter; sandboxManager: SandboxManager; workspaceMount: Omit<WorkspaceMountSpec, "prefix"> }) {
+}, execution?: { resolveAdapter(runtime: string): Adapter | undefined; sandboxManager: SandboxManager; workspaceMount: Omit<WorkspaceMountSpec, "prefix"> }) {
   const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
   if (proxyUrl && !deps.local) {
     const { ProxyAgent, setGlobalDispatcher } = await import("undici");
@@ -27,6 +28,9 @@ export async function startExecution(deps: PgStores & {
   const sandboxEnvPolicy = deps.local ? {} : sandboxEnvPolicyFromHost(process.env, await sandboxBaseEnvFromKubernetes(process.env));
   const modelProviders = new ModelProviderService(deps.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);
   const piAgentAdapter = new PiAgentAdapter({ configureModelRuntime: modelProviders.configureRuntime(deps.sessionStore) });
+  // The packaged mock emits model spans and text chunks; lifecycle events stay
+  // owned by the SessionRouter. The local infrastructure profile runs only mock.
+  const mockAdapter = new MockAdapter({ delayMs: Number(process.env.MOCK_DELAY_MS ?? 75) });
   const sandboxManager = execution?.sandboxManager ?? (workspaceConfig ? new DefaultSandboxManager({
     sandboxClient: new E2BSandboxClient({
       ...workspaceConfig.sandbox,
@@ -40,10 +44,8 @@ export async function startExecution(deps: PgStores & {
   }) : undefined);
   const router = new SessionRouter({
     ...deps, sandboxManager, workspaceMount: execution?.workspaceMount ?? workspaceConfig?.mount, ...sandboxEnvPolicy,
-    resolveAdapter: execution?.resolveAdapter ?? (runtime => {
-      if (deps.local && runtime !== "mock") throw new Error("Local infrastructure profile executes only mock Agents");
-      return runtime === "pi-agent" ? piAgentAdapter : resolveAdapter(runtime);
-    }),
+    resolveAdapter: execution?.resolveAdapter ??
+      runtimeAdapters(deps.local ? { mock: mockAdapter } : { "pi-agent": piAgentAdapter, mock: mockAdapter }),
     wakeSession: sessionId => deps.signals.publish({ sessionId, kind: "wake" }),
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
     maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 500),

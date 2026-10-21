@@ -21,21 +21,6 @@ function commaSeparated(env: HostEnv, name: string): string[] {
 }
 
 /**
- * Build the environment inherited by Host-side adapter CLIs. Deployment-owned
- * sandbox values and Host-only OSS credentials are excluded so they cannot
- * spread to Claude/Codex subprocesses.
- */
-export function adapterProcessEnvFromHost(
-  env: HostEnv,
-): Record<string, string | undefined> {
-  return Object.fromEntries(
-    Object.entries(env).filter(([name]) =>
-      !name.startsWith("DEFAULT_SANDBOX_") && !name.startsWith("WORKSPACE_OSS_") && !name.startsWith("AUTO_STORY_") && name !== "OMA_PROVIDER_ENCRYPTION_KEY",
-    ),
-  );
-}
-
-/**
  * Translate Host deployment variables into the names exposed inside a sandbox.
  * Secret values remain process-local and are never persisted on an Agent.
  */
