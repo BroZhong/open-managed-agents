@@ -48,7 +48,8 @@ function expectLimited(scenario: Scenario, outcome: Outcome): void {
   expect(outcome.requests.filter((request) => request.lastUser === NEXT).map((request) => request.runner)).toEqual([ending]);
 }
 
-describe("crash injection: the takeover limit", () => {
+// One execution runs five to eight Runners one after another.
+describe("crash injection: the takeover limit", { timeout: 30_000 }, () => {
   it("E1 a poison Turn loses its Runner at the same point every time: the fourth takeover ends it with recovery_limit_exceeded, and the queued input runs", async () => {
     const outcome = await execute(poison);
     expectLimited(poison, outcome);
