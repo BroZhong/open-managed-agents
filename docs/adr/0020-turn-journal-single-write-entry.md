@@ -95,6 +95,13 @@ remains the commit evidence of ADR-0013.
 A failed flush stays sticky, with a fixed message that Pi neither retries nor
 treats as context overflow; `prompt` and `continue` report the original error.
 Every Adapter flushes before executing a tool and before each model request.
+An Adapter does not record the error an Interrupt causes; the Router's
+`turn_aborted` ends the Interrupted Turn.
+
+Pi records `agent.context_start`, which claims the input for the native chain,
+right before it prompts or continues the Turn. A session that fails to start has
+written no native entry of the Turn, so its input remains a display message that
+later Turns replay.
 
 ### Persistence components are injected by the Host
 
@@ -113,6 +120,8 @@ Redis, claim or delegation code, and the Adapter sees none of them.
   journal port instead of `persistContext`, which standalone Adapter users no
   longer provide. Events are no longer delivered a second time through the
   Adapter's event queue or a Delegation checkpoint (#239, #244).
+- ADR-0013 "Decision": `agent.context_start` is recorded right before
+  prompting, no longer before SDK initialization (#242).
 - ADR-0014 "Context persistence through public hooks": durability no longer
   comes from snapshots at model-request, `tool_call` and settlement boundaries.
   Extensions and AgentSession listeners still see `message_end` before Pi's
@@ -130,7 +139,10 @@ milliseconds against model latency in seconds. A lost Runner loses at most the
 Deltas of the output being streamed; every native message before it is durable.
 Until #244, Adapters that still return an event stream are written by the
 Router through the same journal, and an event recorded through both paths is
-written and published once. The Adapter-side event queue, checkpoint buffer and
-`persistContext`, and the Router's event-stream iteration, post-Interrupt type
-filter and alignment logic, are then removed. A brief window where in-flight
-Turns are logged behind execution during rollout is accepted.
+written and published once. Until then, after a user Interrupt the Router also
+accepts only accounting through an Adapter's port and renews the claim before
+each of its flushes; a lost lease or a termination revokes the port at once.
+The Adapter-side event queue, checkpoint buffer and `persistContext`, and the
+Router's event-stream iteration, post-Interrupt type filter and alignment
+logic, are then removed. A brief window where in-flight Turns are logged behind
+execution during rollout is accepted.
