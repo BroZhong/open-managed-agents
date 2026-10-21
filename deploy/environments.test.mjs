@@ -82,10 +82,12 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("test runs two Runners that can be killed abruptly; production keeps one", () => {
+test("test runs two rolling Runners that can be killed abruptly; production keeps one", () => {
   const test = runner(render("test"));
   assert.match(test, /^  replicas: 2$/m);
   assert.match(test, /^      shareProcessNamespace: true$/m);
+  assert.match(test, /^    type: RollingUpdate$/m);
+  assert.match(test, /^      maxUnavailable: 0$/m);
   const production = runner(render("production"));
   assert.match(production, /^  replicas: 1$/m);
   assert.doesNotMatch(production, /shareProcessNamespace/);
