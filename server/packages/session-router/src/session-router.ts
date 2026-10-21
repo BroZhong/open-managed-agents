@@ -2007,8 +2007,9 @@ export class SessionRouter {
     const all: StoredEvent[] = [];
     let afterSeq = 0;
     for (;;) {
+      // Each claim reads the whole log: large pages keep that a few statements.
       const { data, hasMore } = await this.eventLogStore.getEvents(sessionId, {
-        afterSeq,
+        afterSeq, limit: 1000,
       });
       all.push(...data);
       if (!hasMore || data.length === 0) break;

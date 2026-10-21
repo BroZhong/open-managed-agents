@@ -211,10 +211,12 @@ describe("database load of N Runners", () => {
     table("Synchronous delegation: per waiting parent", summary);
   }, 120_000);
 
-  it("each claim re-reads the Session's whole log, 50 rows per statement", async () => {
+  it("each claim re-reads the Session's whole log, 1,000 rows per statement", async () => {
     const shape: TurnShape = { steps: 1, modelMs: 1_000, toolMs: 1_000, sandboxOpsPerTool: 1 };
     const rows: Array<Record<string, string | number>> = [];
-    for (const history of [0, 500, 2_000, 5_000]) {
+    // The log holds the history plus the promoted input when the claim reads it.
+    const expectedReads = new Map([[0, 1], [500, 1], [2_000, 3], [5_000, 6]]);
+    for (const [history, pages] of expectedReads) {
       const fleet = await fleetOf(1, shape);
       const session = await fleet.createSession();
       for (let index = 0; index < history; index++) {
@@ -228,8 +230,7 @@ describe("database load of N Runners", () => {
       const reads = runnerCalls(fleet, from).filter((call) => call.method === "eventLogStore.getEvents" && call.sessionId === session.id);
       rows.push({ "events before the Turn": history, "getEvents statements per Turn": reads.length,
         "rows returned per Turn": reads.reduce((sum, call) => sum + (call.rows ?? 0), 0) });
-      // readAllEvents pages 50 rows at a time.
-      expect(reads.length).toBeGreaterThanOrEqual(Math.floor(history / 50));
+      expect(reads.length).toBe(pages);
       await fleet.stop();
     }
     results.history = rows;
