@@ -18,11 +18,13 @@ database the bottleneck before the polling does.
 Three fixes remove ≈93 % of the projected load: the delegation wait (F1), non-owner claims
 (F2) and the heartbeat cadence (F3). Indexes (F4) remove the unbounded scans.
 
-**Implemented on this branch:** F4 (**migration `deploy/migrations/0021_delegation_lookup_indexes.sql`**,
-to be applied before or after the Runner image), the F5 page size, and F7. F1–F3 wait for
-#244 and are coordinated with #249/#251/#252/#254. Rates in §1–§3 are for the code at
-85f2a69, before these changes. F4 and F7 change no statement counts. F5 changes only the
-log-read row.
+**Implemented:** F4 (**migration `deploy/migrations/0021_delegation_lookup_indexes.sql`**,
+to be applied before or after the Runner image), the F5 page size and F7 first; then F1,
+F2, F3 and F6 on wt/db-load-fixes (on feat/stateless-runner-resume). F8 is not done (§7).
+Rates in §1–§3 are for the code at 85f2a69, before these changes. F4 and F7 change no
+statement counts. F5 changes only the log-read row. **§7 re-measures after F1–F3 and F6:
+4,522 → ≈310 statements/s at N=4, A=100, W=20 (−93 %), of which ≈9 /s is multi-instance
+overhead.**
 
 Measured with `server/packages/api/test/db-load.test.ts` (harness in `test/db-load/`), at
 feat/stateless-runner 85f2a69. All rates below are **SQL statements per second**: every
@@ -224,14 +226,14 @@ Savings are at N=4, A=100, W=20 (4,522 /s).
 
 | # | Fix | Saves | Risk | Interacts with |
 |---|---|---|---|---|
-| F1 | Delegation wait without the 200 ms poll and per-poll wake broadcast | **−2,668 /s (59 %)** | low–medium | #248 (recoverWaits), #251, #252, #254 |
-| F2 | No claim attempts on heads another Runner owns | **−966 /s (21 %)** | low | #254, #248/#255 (takeover latency), #250 |
-| F3 | Heartbeat at the renew interval; Interrupt via the renew row + Redis hint; no delegation lookup for non-children | **−560 /s (12 %)** | medium | #249, #240, #252, #254 |
+| F1 | Delegation wait without the 200 ms poll and per-poll wake broadcast — **done (§7)** | **−2,668 /s (59 %)** | low–medium | #248 (recoverWaits), #251, #252, #254 |
+| F2 | No claim attempts on heads another Runner owns — **done (§7)** | **−966 /s (21 %)** | low | #254, #248/#255 (takeover latency), #250 |
+| F3 | Heartbeat at the renew interval; Interrupt via the renew row + Redis hint; no delegation lookup for non-children — **done (§7)** | **−560 /s (12 %)** | medium | #249, #240, #252, #254 |
 | F4 | Indexes on delegation tables + filter `id` by column (migration 0021) — **done** | statements unchanged; removes ≈14 seq scans per Turn, 32 /min per Runner, 1 /s per child | low | #251, #252 |
 | F5 | Stop re-reading the whole log, 50 rows per page, on every claim — **page size done** | ⌈H/50⌉ → ⌈H/1000⌉ statements per claim (done); H rows → current Turn + context (later) | low (page size) / medium (boundary) | #245, #247, #248, #253 |
-| F6 | One reconcile, not one per scan per Runner; Loop scan without its own recovery scan | −0.5 /s per Runner; −0.39 /s per active Turn per other Runner (part of F2) | low | #254 |
+| F6 | One reconcile, not one per scan per Runner; Loop scan without its own recovery scan — **Loop part done (§7)** | −0.5 /s per Runner; −0.39 /s per active Turn per other Runner (part of F2) | low | #254 |
 | F7 | Exponential backoff for cleanup retries — **done** | −7.2 /s per stuck row (oma-test has none today: insurance) | low | none (termination path) |
-| F8 | Tool fence from the local lease instead of an `ownsClaim` round trip | −0.28 /s per active Turn | medium | #240, #254 |
+| F8 | Tool fence from the local lease instead of an `ownsClaim` round trip — **not done (§7)** | −0.28 /s per active Turn | medium | #240, #254 |
 
 **F1. Delegation wait.** `DelegationCoordinator.waitForResult` calls `assertOwner`
 (`ownsClaim`, 4 statements) and `get` (2 statements) every 200 ms, then
@@ -350,7 +352,7 @@ Other findings:
 
 ## 6. Harness
 
-`cd server/packages/api && npx vitest run test/db-load.test.ts`: 5 cases, ≈15 s. Set
+`cd server/packages/api && npx vitest run test/db-load.test.ts`: 5 cases, ≈5 s. Set
 `DB_LOAD_JSON=<file>` to write the raw numbers.
 
 - **Production wiring.** It builds N Runners exactly as `src/execution.ts` does (SessionRouter,
@@ -365,14 +367,17 @@ Other findings:
 - **Attribution.** An AsyncLocalStorage context follows awaits. Timers are labelled where
   they are created (`startClaimHeartbeat`/`tick`, `scheduleClaimRetry`,
   `RunnerDispatch.start`, `LoopScheduler.start`). Each `handleNewEvent` is labelled by its
-  trigger and counts as an attempt until its claim succeeds.
+  trigger and counts as an attempt until its claim succeeds. A Session signal's handling is
+  labelled by its kind and origin (`wake <- api`, `check <- turn`).
 - **Time.** Fake timers run at the real defaults (1:1 virtual time) and advance in 20 ms
-  steps, settling promises between steps. Timers fire ≤20 ms late: the 1 s heartbeat is
+  steps, settling promises between steps. Timers fire ≤20 ms late: the 1 s heartbeat was
   within 2 % and the 200 ms poll within 10 %; the poll measured 30.8 /s against 30 /s in
-  theory.
+  theory. After the fixes the tick is 10 s and the fallback poll 2 s.
 - **Assertions** are behavioural: every Turn completes with no drain errors, idle Sessions are
-  never touched, and cleanup retries without backoff. The tripwires are set at about twice
-  today's cost. The harness itself changes no production source.
+  never touched, and cleanup retries without backoff. Since §7 the tripwires fail on a return
+  to per-second polling: heartbeat < 1 /s per active Turn, non-owner attempts < 0.1·N /s per
+  active Turn, scan lookups < 0.05 /s, delegation wait < 5 /s per waiting parent, idle
+  Runner < 2 /s. The harness itself changes no production source.
 - **Limits.**
   - The cost map is static. It is not EXPLAIN on a live database, and the planner will pick
     seq scans on tiny tables anyway.
@@ -381,3 +386,104 @@ Other findings:
     changes.
   - Attribution depends on the function names above. If one is renamed, its share moves to
     the activity that created the timer.
+
+## 7. After F1, F2, F3 and F6 (measured)
+
+Same harness, Turn shapes and defaults as §1–§3, on wt/db-load-fixes rebased on
+feat/stateless-runner-resume bda2797. What the fixes change: the heartbeat ticks every 10 s,
+the delegation wait polls every 2 s as a fallback, and a new `check` Session signal tells the
+owner of a running Turn to re-read its durable state at once. Raw numbers are under
+`harnessAfterFixes` in the JSON.
+
+| Source | Before (§1) | After | Fix |
+|---|---|---|---|
+| Background loops | 1.22 /s per Runner | **1.02 /s per Runner** (pending scan 0.60, cleanup discovery 0.20, Loop dispatch query 0.20) | F6: a Loop tick scans retained input only after it dispatched or failed |
+| Heartbeat | 6.0 /s per active Turn | **0.39 /s** (one renew transaction every 10 s; it returns the Interrupt marker) | F3 |
+| Child Interrupt commands (`listCommands`) | 1.0 /s per active child | **0.09 /s** (with the child's heartbeat, and on a hint) | F3 |
+| Turn lifecycle | 660 per Turn (1.95 /s) | 659 per Turn (1.94 /s) | the dead peek after a failed claim is gone |
+| Tool fence | 4 per Sandbox op (0.28 /s per active Turn) | unchanged | F8 not done (below) |
+| Scan lookups | 0.263 /s per active Turn per Runner | **0** | F2: the scan lists only heads no live claim holds |
+| Non-owner claim attempts | 2.87 /s per active Turn per other Runner (161 failed claims per Turn) | **0.015 /s** (the input's wake: one failed claim + `headClaimable`, 5 statements per input) | F2 |
+| Wake handling | 0.003 /s per active Turn per Runner | unchanged | |
+| Sync delegation wait | 30.8 /s per waiting parent + 35.2 per other Runner | **1.74 /s + 0.07 per other Runner** | F1 |
+
+Of the 1.74 /s per waiting parent, the execution reads of the 2 s fallback poll are 1.03 /s.
+The rest are the delegation's one-off transactions (accept, saveWait, status changes, result
+consumption) amortized over the 87 s wait, plus one renewal of the parent's claim on the
+child's completion hint (4 statements per delegation). Per other Runner a delegation costs
+one `getById` and one failed claim for the child's single wake.
+
+Scaling model after the fixes (compare §2):
+
+```
+S ≈ 1.02·N + A·(2.61 + 0.003·N + 0.015·(N−1)) + W·(1.74 + 0.07·(N−1)) + 7.2·K   statements/s
+          2.61 = heartbeat 0.39 + Turn lifecycle 1.94 + tool fences 0.28
+```
+
+Check: harness N=4, average A=7.53, W=0 → predicted 24.2 /s, measured 24.6 /s (the
+difference is Sandbox creation, 21 statements once per Session, which neither model counts
+per second).
+
+| Scale point | Before (§3) | After (model above) | of which multi-instance | Change | Est. RDS CPU after |
+|---|---|---|---|---|---|
+| oma-test idle (2 Runners) | 2.44 /s | 2.0 /s | 0 | −16 % | negligible |
+| oma-test average: N=2, A≈0.3–0.6, W≈0.05–0.09 | ≈9–15 /s | ≈3–4 /s | < 0.1 /s | −70 % | negligible |
+| N=2, A=20, W=0 | 235 /s | 55 /s | 0.3 /s | −77 % | ≈0.005 vCPU |
+| N=2, A=20, W=4 | 499 /s | 62 /s | 0.6 /s | −88 % | ≈0.005 vCPU |
+| N=4, A=20, W=4 | 908 /s | 65 /s | 1.7 /s | −93 % | ≈0.005 vCPU |
+| N=2, A=100, W=20 | 2,485 /s | 301 /s | 2.9 /s | −88 % | 0.015–0.03 vCPU |
+| N=4, A=100, W=0 | 1,794 /s | 271 /s | 4.5 /s | −85 % | 0.014–0.027 vCPU |
+| **N=4, A=100, W=20** | **4,522 /s** | **310 /s** | **8.7 /s (3 %)** | **−93 %** | 0.016–0.031 vCPU |
+
+"Multi-instance" counts the (N−1) terms, as in §3. They now come only from wakes: one per
+input and one per delegation, instead of every 200 ms, every scan and every retry. The
+§3 estimate for "after F1–F3" (55 / 67 / 70 / 325 / 268 / 328 /s) is confirmed within 10 %.
+
+What remains:
+
+- **Turn lifecycle is 74 % of a running Turn's cost**, and 550 of its 659 statements are
+  event appends (10 per durable event). Group commit per flush is the next lever; it is not
+  a #234 goal ("本期不做: 批量 append").
+- At N=4, A=100, W=20 a Runner issues ≈78 statements/s on its 10-connection pool, down from
+  ≈1,100, so a latency spike no longer saturates the pool.
+- `SELECT … FOR UPDATE` on the head `pending_events` row: failed claims drop from 161 per
+  Turn per other Runner to one per wake. The tool fence (`ownsClaim`) and the append fences
+  still take it.
+- Idle cost is linear in N only: 1.02 /s per Runner, two thirds of it the 5 s pending scan
+  (`reconcileTerminatedExecutions` 2 statements, `listClaimableSessionIds` 1).
+
+### Latency kept
+
+Each is asserted by a test (fake time unless noted):
+
+| Behaviour | Bound | Test |
+|---|---|---|
+| Interrupt with Redis | the owner renews when the `check` hint arrives (< 50 ms) | `session-router/test/multi-runner.test.ts` "sees an Interrupt accepted on another Host at once…"; `api/test/events.test.ts` (the API publishes the hint); `api/test/runner-dispatch.test.ts` (the hint bypasses the wake dedup) |
+| Interrupt without Redis | ≤ one renew interval (10 s) | `multi-runner.test.ts` "…within one renew interval when its hint is lost" |
+| Synchronous child after its parent's Interrupt or termination | at once (< 500 ms real time; the child renews every 10 s) | `session-router/test/delegation.test.ts` "stops a synchronous child at once…" (2 cases) |
+| Heartbeat | 6 renewals in 60 s at the 10 s default | `multi-runner.test.ts` "renews a running Turn's claim once per renew interval" |
+| No contention | 0 claims by another Runner while the owner's lease is live (one per wake) | `multi-runner.test.ts` "makes no claim attempt from another Runner…" |
+| Takeover after an owner crash | ≤ lease + scan (35 s); the race has one winner, the loser makes one attempt | `multi-runner.test.ts` "takes a crashed owner's Turn over…", "E8 two Runners race…" |
+| Delegation result | < 100 ms after the child completes on another Runner (real time); ≤ 2 s when the hint is lost; no reads or wakes in between | `delegation.test.ts` "a synchronous wait …" (2 cases) |
+
+The PostgreSQL statements changed by the fixes (`renewClaim` returning the marker,
+`listClaimableSessionIds`, `headClaimable`) also pass `store/test/pending-event-store.test.ts`
+against PostgreSQL 18 (PGlite, `PG_TEST_URL`), except three tests that need a second backend
+waiting on a row lock, which PGlite's single backend cannot run.
+
+### F8 is not done
+
+The tool fence (`assertExecutionOwner`, #240) checks the attempt's `stopped` flag and then the
+durable claim with `ownsClaim`. A fence from local lease state would only know when this
+Runner last renewed. It could not see a claim that is gone while the lease still looks live
+locally: the API's termination deletes the Session's `pending_events` in another process, and
+the Runner would learn of it only at its next renewal, now up to 10 s later. Clock drift
+between the Runner and PostgreSQL would also move the local expiry. #240's guarantee, "a
+Runner that no longer owns the Turn sends its Sandbox execution nothing", would weaken to
+"…within a renew interval", for 0.28 /s per active Turn (≈28 /s at A=100). Not worth it.
+
+### F6, the part not done
+
+The Loop tick no longer reconciles or scans on an idle tick. Each Runner still reconciles on
+every 5 s pending scan (2 statements, 0.4 /s per Runner); one reconcile across the fleet would
+need a leader or a shared lock. Not worth it at 0.4 /s per Runner.

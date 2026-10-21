@@ -1,7 +1,8 @@
 /**
  * The SQL statements each store method issues in its PostgreSQL implementation
  * (server/packages/store/src/postgres/*.ts at 85f2a69 plus migration 0021's
- * indexes and id-column lookups), so a call counted on
+ * indexes and id-column lookups, and #234's renewal marker and claimable-head
+ * reads), so a call counted on
  * the in-memory stores converts into the statements, round trips and scans the
  * shared RDS would see. Every round trip counts, BEGIN and COMMIT included:
  * each one occupies a pooled connection and an RDS backend.
