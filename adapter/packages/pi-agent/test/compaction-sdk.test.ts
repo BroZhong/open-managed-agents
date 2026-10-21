@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
-import { MemoryTurnJournal } from "./memory-turn-journal.js";
+import { MemoryTurnJournal } from "@open-managed-agents/adapter-core/testing";
 
 const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, overflowError: "prompt is too long: context window exceeded", summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined, onAppendCompaction: undefined as (() => void) | undefined }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {

@@ -6,7 +6,7 @@ import type { AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-age
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
-import { MemoryTurnJournal, type DurableEvent } from "./memory-turn-journal.js";
+import { MemoryTurnJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
 
 type Content = AssistantMessage["content"];
 /**
