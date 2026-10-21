@@ -534,7 +534,9 @@ export class PiAgentAdapter implements Adapter {
       const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
       // Ownership must survive auth failure, compaction, or process loss before
       // Pi appends the prompted user message. Display input is not native input.
-      args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
+      // A session that never started wrote no native entry of this Turn, so its
+      // input stays a display message that later Turns replay.
+      const claimInput = () => args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
         sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
       const journal = new PiContextJournal({ manager: sessionManager, input: args.input,
         emit: args.emitContext, checkpoint: args.checkpoint, takeUncommitted: args.takeUncommitted, compactionInfo: args.compactionInfo });
@@ -664,11 +666,13 @@ export class PiAgentAdapter implements Adapter {
           });
         },
         async prompt(text, options) {
+          claimInput();
           try { await active.prompt(text, options); await journal.ready(); }
           catch (error) { throw journal.failure ?? error; }
           finally { journal.capture(); captureContextUsage(); }
         },
         async continue() {
+          claimInput();
           try { await continueSession(); await journal.ready(); }
           catch (error) { throw journal.failure ?? error; }
           finally { journal.capture(); captureContextUsage(); }

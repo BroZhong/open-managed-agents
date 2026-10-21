@@ -5,6 +5,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
+import { restorePiSession } from "../src/pi-context.js";
 import { MemoryTurnJournal, type DurableEvent } from "./memory-turn-journal.js";
 
 type Content = AssistantMessage["content"];
@@ -14,7 +15,7 @@ type Content = AssistantMessage["content"];
  */
 interface Response { content: Content; stopReason: "stop" | "toolUse"; events?: (message: AssistantMessage) => AssistantMessageEvent[]; hold?: boolean }
 
-const control = vi.hoisted(() => ({ log: [] as string[], responses: [] as Response[], onRequest: undefined as (() => void) | undefined }));
+const control = vi.hoisted(() => ({ log: [] as string[], responses: [] as Response[], onRequest: undefined as (() => void) | undefined, failStartup: false }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -24,6 +25,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   }
   return { ...sdk, DefaultResourceLoader: IsolatedLoader,
     async createAgentSession(options: Parameters<typeof sdk.createAgentSession>[0]) {
+      if (control.failStartup) throw new Error("Pi session startup failed");
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
       const result = await sdk.createAgentSession({ ...options, settingsManager });
       result.session.agent.streamFunction = (model, _context, options) => {
@@ -63,7 +65,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 let dispose: (() => Promise<void>) | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); await dispose?.(); dispose = undefined; });
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; control.failStartup = false; });
 
 async function run(journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}) {
   const local = await createLocalToolExecutor();
@@ -124,6 +126,17 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
     expect(control.log.filter(item => item === "request")).toHaveLength(1);
     expect(journal.committed.some(event => role(event) === "assistant")).toBe(false);
     expect(journal.recorded.filter(event => event.type === "session.error")).toMatchObject([{ error: { message: "pending claim lease lost", code: "pi_agent_error" } }]);
+  });
+
+  it("leaves the input to later Turns when the session fails to start", async () => {
+    control.failStartup = true;
+    const journal = new MemoryTurnJournal();
+    expect(await run(journal)).toEqual([]);
+    expect(journal.recorded).toMatchObject([{ type: "session.error", error: { message: "Pi session startup failed" } }]);
+    // The Host writes what was recorded; the input must stay replayable.
+    const promoted = { id: "input", type: "user.message", content: [{ type: "text", text: "list" }] } as unknown as SessionEvent;
+    expect(restorePiSession([promoted, ...journal.recorded]).buildSessionContext().messages)
+      .toMatchObject([{ role: "user", content: [{ type: "text", text: "list" }] }]);
   });
 
   it("commits the output an Interrupt cut short and records no error for the Interrupt", async () => {
