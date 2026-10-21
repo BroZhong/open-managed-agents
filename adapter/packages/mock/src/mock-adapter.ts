@@ -3,7 +3,6 @@ import type {
   AdapterInput,
   SessionEvent,
   StreamEvent,
-  TurnJournalPort,
 } from "@open-managed-agents/adapter-core";
 import {
   generateEventId,
@@ -84,7 +83,7 @@ const COMPLETE_TYPES_BY_STREAM_START: Readonly<Record<string, readonly string[]>
 };
 
 /**
- * Numbers the script's output blocks from the Host's base (ADR-0020), by the
+ * Numbers a run's output blocks from the Host's base (ADR-0020), by the
  * rules the Router applied before Adapters owned alignment: each stream start
  * opens the next block, a Delta belongs to the latest started block, and a
  * Complete Event takes the latest unclaimed start of its kind (of its own
@@ -122,6 +121,25 @@ class StreamBlocks {
   }
 }
 
+/**
+ * Writes one Adapter run's events through its Turn journal, in order: each
+ * Delta on its numbered block, each Complete Event aligned with its stream
+ * block and durable before the next event is written. The mock writes its
+ * script with it; a hand-written test Adapter can write its events the same
+ * way.
+ */
+export function journalWriter(
+  { journal, blockBase = 0 }: Pick<AdapterInput, "journal" | "blockBase">,
+): (event: SessionEvent) => Promise<void> {
+  if (!journal) throw new Error("This Adapter writes through the Turn journal (ADR-0020)");
+  const blocks = new StreamBlocks(blockBase);
+  return async (event) => {
+    if (isStreamEvent(event)) return journal.delta(event, blocks.delta(event));
+    journal.record(blocks.complete(event));
+    await journal.flush();
+  };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -140,45 +158,17 @@ export class MockAdapter implements Adapter {
       this.customEvents !== undefined
         ? this.customEvents
         : buildDefaultEvents();
-
-    const journal = input.journal;
-    if (journal) {
-      try {
-        await this.write(events, journal, input.blockBase ?? 0, input.signal);
-      } catch {
-        // A failed write fails the journal for good; the Host stops the
-        // attempt on it (ADR-0020), so the script just ends here.
+    const write = journalWriter(input);
+    try {
+      for (let i = 0; i < events.length; i++) {
+        if (i > 0 && this.delayMs > 0) await delay(this.delayMs);
+        // An Interrupt ends the script; the Host ends the Turn.
+        if (input.signal?.aborted) return;
+        await write(events[i]!);
       }
-      return;
+    } catch {
+      // A failed write fails the journal for good; the Host stops the
+      // attempt on it (ADR-0020), so the script just ends here.
     }
-
-    // Without a journal the Host still reads the script from the stream.
-    for (let i = 0; i < events.length; i++) {
-      if (i > 0 && this.delayMs > 0) {
-        await delay(this.delayMs);
-      }
-      yield events[i]!;
-    }
-  }
-
-  private async write(events: SessionEvent[], journal: TurnJournalPort, blockBase: number, signal?: AbortSignal): Promise<void> {
-    const blocks = new StreamBlocks(blockBase);
-    for (let i = 0; i < events.length; i++) {
-      if (i > 0 && this.delayMs > 0) await delay(this.delayMs);
-      // An Interrupt ends the script; the Host ends the Turn.
-      if (signal?.aborted) break;
-      const event = events[i]!;
-      if (isStreamEvent(event)) {
-        journal.delta(event, blocks.delta(event));
-        continue;
-      }
-      // Like any Adapter (ADR-0020), a model request starts only after
-      // everything before it is durable, and a tool runs only after the call
-      // requesting it is.
-      if (event.type === "span.model_request_start") await journal.flush();
-      journal.record(blocks.complete(event));
-      if (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") await journal.flush();
-    }
-    await journal.flush();
   }
 }

@@ -246,22 +246,6 @@ describe("MockAdapter", () => {
       }
     });
   });
-
-  // Until the Router injects a journal, the dev server still reads the stream.
-  it("yields the script from run() when no journal is injected", async () => {
-    const events: SessionEvent[] = [];
-    for await (const event of new MockAdapter().run(INPUT)) events.push(event);
-    expect(events.map((e) => e.type)).toEqual([
-      "span.model_request_start",
-      "agent.message_stream_start",
-      "agent.message_chunk",
-      "agent.message_chunk",
-      "agent.message_chunk",
-      "agent.message_stream_end",
-      "agent.message",
-      "span.model_request_end",
-    ]);
-  });
 });
 
 describe("MockAdapter with an injected Turn journal", () => {
@@ -333,7 +317,7 @@ describe("MockAdapter with an injected Turn journal", () => {
     ]);
   });
 
-  it("makes a tool call durable before the tool runs and everything before a model request durable before it starts", async () => {
+  it("makes each Complete Event durable before it writes the next event", async () => {
     let n = 0;
     const event = (type: string, extra: Record<string, unknown> = {}) =>
       ({ id: `sevt_f${n++}`, timestamp: "2024-01-01T00:00:00.000Z", type, ...extra }) as SessionEvent;
@@ -345,18 +329,26 @@ describe("MockAdapter with an injected Turn journal", () => {
       event("agent.tool_use", { toolUseId: "a", name: "bash", input: {} }),
       event("span.model_request_end", { usage }),
       event("agent.tool_result", { toolUseId: "a", content: [] }),
-      event("span.model_request_start", { model: "mock-model" }),
-      event("agent.message", { content: [{ type: "text", text: "done" }] }),
-      event("span.model_request_end", { usage }),
     ];
-    const batches: string[][] = [];
-    const journal = new MemoryTurnJournal(async (batch) => { batches.push(batch.map((e) => e.type)); });
+    const log: string[] = [];
+    const journal = new (class extends MemoryTurnJournal {
+      override delta(event: StreamEvent, blockIndex: number): void {
+        log.push(event.type);
+        super.delta(event, blockIndex);
+      }
+    })(async (batch) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      log.push(`durable:${batch.map((e) => e.type).join(",")}`);
+    });
     await runWithJournal(new MockAdapter({ events }), INPUT, journal);
 
-    expect(batches).toEqual([
-      ["span.model_request_start", "agent.tool_use"],
-      ["span.model_request_end", "agent.tool_result"],
-      ["span.model_request_start", "agent.message", "span.model_request_end"],
+    expect(log).toEqual([
+      "durable:span.model_request_start",
+      "agent.tool_use_input_stream_start",
+      "agent.tool_use_input_stream_end",
+      "durable:agent.tool_use",
+      "durable:span.model_request_end",
+      "durable:agent.tool_result",
     ]);
   });
 
