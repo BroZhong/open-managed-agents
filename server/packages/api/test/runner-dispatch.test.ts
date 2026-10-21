@@ -40,4 +40,36 @@ describe("RunnerDispatch", () => {
     expect(sessions.getById).toHaveBeenCalledTimes(1);
     await dispatch.stop();
   });
+
+  it("F5 once stopped it claims nothing: no pending scan runs and a wake is ignored, while a check hint still reaches the Turns it runs", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals = new Signals();
+      const router = {
+        handleNewEvent: vi.fn(async () => {}),
+        checkNow: vi.fn(),
+        recoverPendingEvents: vi.fn(async () => ({ recovered: [], discarded: [], failed: [] })),
+      };
+      const sessions = { getById: vi.fn(async (id: string) => ({ id, status: "running", agent: {} })) };
+      const dispatch = new RunnerDispatch({
+        router: router as unknown as SessionRouter, sessions: sessions as unknown as SessionStore, signals, scanIntervalMs: 1000,
+      });
+      await dispatch.start();
+      expect(router.recoverPendingEvents).toHaveBeenCalledTimes(1);
+
+      await dispatch.stop();
+      await vi.advanceTimersByTimeAsync(5000);
+      signals.publish({ sessionId: "sess_1", kind: "wake" });
+      signals.publish({ sessionId: "sess_1", kind: "check" });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(router.recoverPendingEvents).toHaveBeenCalledTimes(1);
+      expect(sessions.getById).not.toHaveBeenCalled();
+      expect(router.handleNewEvent).not.toHaveBeenCalled();
+      // A Turn still running until the handoff deadline acts on its hints.
+      expect(router.checkNow).toHaveBeenCalledExactlyOnceWith("sess_1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

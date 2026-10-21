@@ -109,7 +109,7 @@ async function main() {
   const shutdown = createGracefulShutdown({
     server: httpServer,
     stopBackgroundWork: () => loopScheduler.stop(),
-    waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
+    handOff: (timeoutMs) => sessionRouter.handOff(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {},
   });

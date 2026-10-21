@@ -21,13 +21,13 @@ function fakeServer(calls: string[]): ServerType {
 }
 
 describe("createGracefulShutdown", () => {
-  it("stops HTTP first, drains Turns, then closes resources exactly once", async () => {
+  it("stops HTTP first, hands Turns over before stopping background work, then closes resources exactly once", async () => {
     const calls: string[] = [];
-    let finishDrain!: (value: boolean) => void;
-    const waitForIdle = vi.fn((timeoutMs: number) => {
-      calls.push(`router.waitForIdle:${timeoutMs}`);
+    let finishHandoff!: (value: boolean) => void;
+    const handOff = vi.fn((timeoutMs: number) => {
+      calls.push(`router.handOff:${timeoutMs}`);
       return new Promise<boolean>((resolve) => {
-        finishDrain = resolve;
+        finishHandoff = resolve;
       });
     });
     const closeResources = vi.fn(async () => {
@@ -43,7 +43,7 @@ describe("createGracefulShutdown", () => {
       stopBackgroundWork: async () => {
         calls.push("loops.stop");
       },
-      waitForIdle,
+      handOff,
       closeResources,
       logger,
     });
@@ -55,25 +55,58 @@ describe("createGracefulShutdown", () => {
       expect(calls).toEqual(expect.arrayContaining([
         "http.close",
         "loops.stop",
-        expect.stringMatching(/^router\.waitForIdle:\d+$/),
+        expect.stringMatching(/^router\.handOff:\d+$/),
       ]));
     });
 
-    finishDrain(true);
+    finishHandoff(true);
     await sigterm;
 
+    // The handoff starts first: claiming stops at once, and running Turns are
+    // asked to stop before a slow background sweep settles.
     expect(calls).toEqual([
       "http.close",
+      expect.stringMatching(/^router\.handOff:\d+$/),
       "loops.stop",
-      expect.stringMatching(/^router\.waitForIdle:\d+$/),
       "http.closeAllConnections",
       "resources.close",
     ]);
-    expect(waitForIdle).toHaveBeenCalledOnce();
+    // The whole grace period goes to the handoff.
+    expect(Number(calls[1].split(":")[1])).toBeGreaterThan(19_000);
+    expect(handOff).toHaveBeenCalledOnce();
     expect(closeResources).toHaveBeenCalledOnce();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("bounds a stuck drain and still closes HTTP connections and resources", async () => {
+  it("waits for the claims of Turns detached at the deadline to be released before closing resources", async () => {
+    vi.useFakeTimers();
+    const calls: string[] = [];
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const shutdown = createGracefulShutdown({
+      server: fakeServer(calls),
+      // Turns still ran at the deadline; releasing their claims takes a moment more.
+      handOff: (timeoutMs) => new Promise<boolean>((resolve) => setTimeout(() => {
+        calls.push("router.released");
+        resolve(false);
+      }, timeoutMs + 100)),
+      closeResources: async () => { calls.push("resources.close"); },
+      timeoutMs: 25,
+      logger,
+    });
+
+    try {
+      const result = shutdown("SIGTERM");
+      await vi.advanceTimersByTimeAsync(125);
+      await result;
+
+      expect(logger.warn).toHaveBeenCalledWith("Graceful shutdown detached the Turns still running after 25ms");
+      expect(calls).toEqual(["http.close", "router.released", "http.closeAllConnections", "resources.close"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds a stuck handoff and still closes HTTP connections and resources", async () => {
     vi.useFakeTimers();
     const calls: string[] = [];
     const logger = {
@@ -83,7 +116,7 @@ describe("createGracefulShutdown", () => {
     };
     const shutdown = createGracefulShutdown({
       server: fakeServer(calls),
-      waitForIdle: async () => new Promise<boolean>(() => {}),
+      handOff: async () => new Promise<boolean>(() => {}),
       closeResources: async () => {
         calls.push("resources.close");
       },
@@ -93,11 +126,11 @@ describe("createGracefulShutdown", () => {
 
     try {
       const result = shutdown("SIGTERM");
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(5025);
       await result;
 
       expect(logger.warn).toHaveBeenCalledWith(
-        "Graceful shutdown timed out waiting for active Turns after 25ms",
+        "Graceful shutdown timed out handing active Turns over after 25ms",
       );
       expect(calls).toEqual([
         "http.close",
@@ -127,8 +160,8 @@ describe("createGracefulShutdown", () => {
     const shutdown = createGracefulShutdown({
       server: fakeServer(calls),
       stopBackgroundWork: () => scheduler.stop(),
-      waitForIdle: async (timeoutMs) => {
-        calls.push(`router.waitForIdle:${timeoutMs}`);
+      handOff: async (timeoutMs) => {
+        calls.push(`router.handOff:${timeoutMs}`);
         return true;
       },
       closeResources: async () => {
@@ -148,7 +181,7 @@ describe("createGracefulShutdown", () => {
       );
       expect(calls).toEqual([
         "http.close",
-        "router.waitForIdle:0",
+        "router.handOff:25",
         "http.closeAllConnections",
         "resources.close",
       ]);

@@ -92,7 +92,7 @@ export async function startHost(role: HostRole): Promise<void> {
   });
   const shutdown = createGracefulShutdown({
     server, stopBackgroundWork: () => execution?.stop() ?? Promise.resolve(),
-    waitForIdle: ms => execution?.router.waitForIdle(ms) ?? Promise.resolve(true),
+    handOff: ms => execution?.router.handOff(ms) ?? Promise.resolve(true),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => { eventStreamHub.close(); signals.close(); redis.disconnect(); await pool.end(); },
   });
