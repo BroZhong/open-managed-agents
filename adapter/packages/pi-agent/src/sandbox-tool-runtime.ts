@@ -1,6 +1,7 @@
 /** Loaded by Node inside ToolExecutor. Only public, unmodified Pi exports. */
 export const SANDBOX_TOOL_RUNTIME = String.raw`
 import { readFile, unlink } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 const controller = new AbortController();
 // Keep the listener installed: signal-exit must not reinterpret this as unhandled.
@@ -23,12 +24,9 @@ try {
   const modulePath = process.env.OMA_PI_TOOL_MODULE || "/opt/oma-pi-tools/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
   const pi = await import(pathToFileURL(modulePath).href);
   if (pi.VERSION !== request.sdkVersion) throw new Error("Sandbox Pi version mismatch: expected " + request.sdkVersion + ", got " + pi.VERSION);
-  // Pi 0.83's read cannot take resize options (1.x accepts resizeOptions).
-  // Skip its pass so each image is encoded once with the Host's options.
-  const resize = request.name === "read" ? request.imageResize : undefined;
   const factories = {
     bash: () => pi.createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
-    read: () => pi.createReadToolDefinition(process.cwd(), { autoResizeImages: !resize }),
+    read: () => pi.createReadToolDefinition(process.cwd()),
     write: () => pi.createWriteToolDefinition(process.cwd()),
     edit: () => pi.createEditToolDefinition(process.cwd()),
     ls: () => pi.createLsToolDefinition(process.cwd()),
@@ -39,17 +37,26 @@ try {
   if (!factory) throw new Error("Unsupported sandbox tool: " + request.name);
   const result = await factory().execute(request.id, request.args, controller.signal,
     result => emit({ type: "update", result }), { cwd: process.cwd(), model: request.model });
-  if (resize) {
-    const content = [];
-    for (const block of result.content) {
-      if (block.type !== "image") { content.push(block); continue; }
-      const resized = await pi.resizeImage(Buffer.from(block.data, "base64"), block.mimeType, resize);
-      if (!resized) { content.push({ type: "text", text: "[Image omitted: could not be resized below the inline image size limit.]" }); continue; }
-      content.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
-      const note = pi.formatDimensionNote(resized);
-      if (note) content.push({ type: "text", text: note });
-    }
-    result.content = content;
+  // Pi bounds read images to 2000x2000 but keeps PNG whenever it fits, and
+  // every later request resends them. Encode opaque non-JPEG images once as
+  // JPEG and keep whichever is smaller; transparency would turn black.
+  if (request.name === "read") {
+    try {
+      const photon = createRequire(modulePath)("@silvia-odwyer/photon-node");
+      for (const [index, block] of result.content.entries()) {
+        if (block.type !== "image" || block.mimeType === "image/jpeg") continue;
+        let image;
+        try {
+          image = photon.PhotonImage.new_from_byteslice(Buffer.from(block.data, "base64"));
+          const pixels = image.get_raw_pixels();
+          let opaque = true;
+          for (let i = 3; opaque && i < pixels.length; i += 4) opaque = pixels[i] === 255;
+          if (!opaque) continue;
+          const data = Buffer.from(image.get_bytes_jpeg(95)).toString("base64");
+          if (data.length < block.data.length) result.content[index] = { type: "image", data, mimeType: "image/jpeg" };
+        } catch { /* keep Pi's image */ } finally { image?.free(); }
+      }
+    } catch { /* photon unavailable: keep Pi's images */ }
   }
   emit(controller.signal.aborted ? { type: "cancelled", message: "Command aborted" } : { type: "result", result });
 } catch (error) {

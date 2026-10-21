@@ -31,7 +31,7 @@ import {
   generateTimestamp,
   SANDBOX_WORKSPACE_ROOT,
 } from "@open-managed-agents/adapter-core";
-import { buildCustomTools, readImageResizeConfig } from "./custom-tools.js";
+import { buildCustomTools } from "./custom-tools.js";
 import { eventLogToAgentMessages } from "./event-log-to-messages.js";
 import { mcpGatewayToolName } from "./mcp-gateway.js";
 import { highestThinkingLevel, resolveModel } from "./model-resolver.js";
@@ -450,11 +450,11 @@ export class PiAgentAdapter implements Adapter {
     // Real SDK path. When a ToolExecutor is injected, disable Pi's own
     // built-in fs/bash tools ("builtin") and register custom tools that proxy
     // into the executor (ADR-0002 §2). When absent, keep Pi's default tools.
-    const agentDir = getAgentDir();
     const customTools = args.input.toolExecutor
-      ? [...buildCustomTools(args.input.toolExecutor, readImageResizeConfig(join(agentDir, "models.json"))), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents, args.checkpoint) : [])]
+      ? [...buildCustomTools(args.input.toolExecutor), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents, args.checkpoint) : [])]
       : undefined;
 
+    const agentDir = getAgentDir();
     // A sandboxed Pi session must expose the same cwd as its seven custom
     // tools and the SandboxManager. Unsandboxed Pi keeps the Host cwd.
     const cwd = customTools ? SANDBOX_WORKSPACE_ROOT : process.cwd();

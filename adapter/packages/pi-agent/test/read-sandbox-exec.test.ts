@@ -5,17 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { LocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
-import { buildCustomTools, readImageResizeConfig } from "../src/custom-tools.js";
+import { buildCustomTools } from "../src/custom-tools.js";
 
 // Real 2x2 RGB fixtures, encoded by Pillow as PNG and JPEG.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGN8YCDAwMDAxMDAwMDAAAAOegEkxs/ipgAAAABJRU5ErkJggg==", "base64");
 const JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDAooor5Y/UT//Z", "base64");
 
-// Seeded RGB noise does not compress, so the PNG exceeds any small byte limit.
-function noisePng(width: number, height: number): Buffer {
-  let seed = 1;
-  const raw = Buffer.alloc((width * 3 + 1) * height);
-  for (let i = 0; i < raw.length; i++) if (i % (width * 3 + 1)) raw[i] = (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24;
+// Minimal PNG encoder for fixtures: `pixel` returns each channel's byte.
+function png(width: number, height: number, channels: 3 | 4, pixel: (x: number, y: number, c: number) => number): Buffer {
+  const stride = width * channels + 1;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) for (let c = 0; c < channels; c++) raw[y * stride + 1 + x * channels + c] = pixel(x, y, c);
   const chunk = (type: string, data: Buffer) => {
     const body = Buffer.concat([Buffer.from(type), data]);
     const out = Buffer.alloc(body.length + 8);
@@ -27,7 +27,7 @@ function noisePng(width: number, height: number): Buffer {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
-  header.set([8, 2, 0, 0, 0], 8);
+  header.set([8, channels === 4 ? 6 : 2, 0, 0, 0], 8);
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
@@ -66,35 +66,26 @@ describe("raw filesystem seam through Pi's native read tool", () => {
     expect(JSON.stringify(result)).not.toContain("\\u0000");
   });
 
-  it("encodes read images once under a default budget that a model's models.json inputLimits replaces", async () => {
-    const config = await mkdtemp(join(tmpdir(), "oma-models-"));
-    try {
-      const modelsPath = join(config, "models.json");
-      const resize = (maxBytes: number, size?: number) => ({ inputLimits: { images: { resize: { maxBytes, ...(size ? { maxWidth: size, maxHeight: size } : {}) } } } });
-      await writeFile(modelsPath, JSON.stringify({ providers: { deepseek: { models: [{ id: "small", ...resize(200_000, 300) }, { id: "pi-default", ...resize(4.5 * 1024 * 1024) }] } } }));
-      const png = noisePng(900, 700);
-      expect(png.toString("base64").length).toBeGreaterThan(1024 * 1024);
-      await writeFile(join(root, "frame.png"), png);
-      const tool = buildCustomTools(executor, readImageResizeConfig(modelsPath)).find(({ name }) => name === "read")!;
-      const read = (provider: string, id: string) => tool.execute(`read-${id}`, { path: "frame.png" } as never, undefined, undefined,
-        { model: { provider, id, input: ["text", "image"] } } as never);
-      const imageOf = (result: Awaited<ReturnType<typeof read>>) => result.content.find((block) => block.type === "image");
-      const textsOf = (result: Awaited<ReturnType<typeof read>>) => result.content.flatMap((block) => block.type === "text" ? [block.text] : []);
+  it("re-encodes opaque PNG reads as JPEG once, keeping transparent images and smaller originals", async () => {
+    let seed = 1;
+    const noise = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 28;
+    // A photo-like gradient with grain: PNG stores it poorly, JPEG well.
+    const textured = png(600, 400, 3, x => Math.round(x / 3) + noise());
+    const flat = png(600, 400, 3, () => 128);
+    const transparent = png(600, 400, 4, (x, y, c) => c === 3 ? (x < 300 ? 0 : 255) : Math.round(x / 3) + noise());
+    const read = async (bytes: Buffer) => {
+      await writeFile(join(root, "frame.png"), bytes);
+      return readTool().execute("read-frame", { path: "frame.png" } as never, undefined, undefined, {} as never);
+    };
 
-      // Models absent from models.json, such as tenant providers, get the default.
-      const defaulted = imageOf(await read("tenant-provider", "custom-model"));
-      expect(defaulted).toMatchObject({ type: "image", mimeType: "image/jpeg" });
-      expect(defaulted?.type === "image" && defaulted.data.length).toBeLessThan(1024 * 1024);
+    const converted = await read(textured);
+    const image = converted.content.find((block) => block.type === "image");
+    expect(image).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+    expect(image?.type === "image" && image.data.length).toBeLessThan(textured.toString("base64").length / 2);
+    expect(converted.content.filter((block) => block.type === "text")).toEqual([{ type: "text", text: "Read image file [image/png]" }]);
 
-      const small = await read("deepseek", "small");
-      expect(imageOf(small)).toMatchObject({ type: "image", mimeType: "image/jpeg" });
-      expect(textsOf(small)).toEqual(["Read image file [image/png]",
-        "[Image: original 900x700, displayed at 300x233. Multiply coordinates by 3.00 to map to original image.]"]);
-
-      // Pi's own limits restore its pass-through behavior for one model.
-      expect(imageOf(await read("deepseek", "pi-default"))).toEqual({ type: "image", mimeType: "image/png", data: png.toString("base64") });
-    } finally {
-      await rm(config, { recursive: true, force: true });
+    for (const kept of [flat, transparent]) {
+      expect((await read(kept)).content).toContainEqual({ type: "image", mimeType: "image/png", data: kept.toString("base64") });
     }
   });
 

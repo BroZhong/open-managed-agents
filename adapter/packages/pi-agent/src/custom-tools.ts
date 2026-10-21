@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -17,28 +16,8 @@ const MAX_TIMER_SECONDS = (2 ** 31 - 1) / 1000;
 const MAX_TOOL_WAIT_SECONDS = 3 * 60 * 60;
 const mutationQueues = new WeakMap<ToolFileSystem, Map<string, Promise<void>>>();
 
-/**
- * Pi 0.83's read only resizes above 2000x2000 or 4.5 MB and keeps PNG
- * whenever it fits. Sandbox reads encode images under this budget instead.
- */
-const DEFAULT_READ_IMAGE_RESIZE = { maxWidth: 2000, maxHeight: 2000, maxBytes: 1024 * 1024 };
-
-export type ReadImageResize = (model: { provider?: string; id?: string } | undefined) => unknown;
-
-/**
- * A model's models.json `inputLimits.images.resize` replaces the default, as
- * in Pi 1.x; Pi 0.83 validates that field but drops it from the model. Read
- * by the Host once per Turn, never during tool execution.
- */
-export function readImageResizeConfig(modelsPath: string): ReadImageResize {
-  let config: { providers?: Record<string, { models?: { id?: string; inputLimits?: { images?: { resize?: unknown } } }[] }> } = {};
-  try { config = JSON.parse(readFileSync(modelsPath, "utf8")); } catch { /* no models.json: defaults only */ }
-  return model => config.providers?.[model?.provider ?? ""]?.models?.find(entry => entry.id === model?.id)?.inputLimits?.images?.resize
-    ?? DEFAULT_READ_IMAGE_RESIZE;
-}
-
 /** Public customTools registrations. Native execute/render callbacks never run on Host. */
-export function buildCustomTools(executor: ToolExecutor, imageResize: ReadImageResize = () => DEFAULT_READ_IMAGE_RESIZE): ToolDefinition[] {
+export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
   const fs = executorFileSystem(executor);
   const factories = [createBashToolDefinition, createReadToolDefinition, createWriteToolDefinition,
     createEditToolDefinition, createLsToolDefinition, createGrepToolDefinition, createFindToolDefinition];
@@ -57,8 +36,7 @@ export function buildCustomTools(executor: ToolExecutor, imageResize: ReadImageR
         signal?.throwIfAborted();
         const input = { ...(args as Record<string, unknown>) };
         const run = () => executeSandboxTool(executor, { sdkVersion: VERSION, id, name: native.name,
-          args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT, model: context?.model,
-          ...(native.name === "read" ? { imageResize: imageResize(context?.model) } : {}) }, signal, onUpdate,
+          args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT, model: context?.model }, signal, onUpdate,
           // A paused Sandbox freezes Pi's internal timer. Mirror an explicitly
           // requested bash deadline on the Host transport, allowing five seconds
           // for Pi to terminate its process group and return the settled frame.
