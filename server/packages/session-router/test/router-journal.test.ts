@@ -4,7 +4,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { presentEvent, type StoredEvent } from "@oma-server/store";
-import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
+import type { Adapter, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
@@ -13,6 +13,7 @@ const usage = () => event("span.model_request_end", { usage: { inputTokens: 1, o
 const contextEntry = (id: string) => event("agent.context_entry", { sdk: "pi@0.83.0",
   entry: { id, type: "message", parentId: null, message: { role: "assistant", content: [{ type: "text", text: id }] } },
   presentation: { version: 1, blocks: [{ type: "agent.message", index: 0 }] } });
+type DurableEvent = Exclude<SessionEvent, StreamEvent>;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function until(check: () => Promise<boolean>, timeout = 4000) {
   const start = Date.now();
@@ -275,5 +276,123 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       expect.stringMatching(/^pending:.+:status_waiting:sync-call$/),
       expect.stringMatching(/^pending:.+:status_running:sync-call$/),
     ]));
+  });
+});
+
+describe("an Adapter that writes through its journal entry", () => {
+  /** An Adapter that waits for its Interrupt, then writes what an interrupted Pi would. */
+  function interrupted(write: (journal: TurnJournalPort) => Promise<void>) {
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const failures: string[] = [];
+    const adapter: Adapter = { async *run(input) {
+      started();
+      await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
+      await write(input.journal!).catch((error: Error) => { failures.push(error.message); });
+    } };
+    return { adapter, running, failures };
+  }
+
+  it("keeps the Adapter's blockIndex and writes what it recorded last when run() ends", async () => {
+    const entry = contextEntry("answer");
+    if (entry.type === "agent.context_entry") entry.presentation = { version: 1, blocks: [{ type: "agent.message", index: 0, blockIndex: 0 }] };
+    const last = usage();
+    const deltas: Array<{ blockIndex?: number; turnId?: string }> = [];
+    const h = await harness({ async *run(input) {
+      expect(input.blockBase).toBe(0);
+      input.journal!.delta(event("agent.message_stream_start") as StreamEvent, input.blockBase!);
+      input.journal!.record(entry as DurableEvent);
+      await input.journal!.flush();
+      // Recorded after the Adapter's last flush.
+      input.journal!.record(last as DurableEvent);
+    } });
+    const publishChunk = h.hub.publishChunk.bind(h.hub);
+    h.hub.publishChunk = (sessionId, chunk) => { deltas.push({ blockIndex: chunk.blockIndex, turnId: chunk.turnId }); publishChunk(sessionId, chunk); };
+    await h.enqueue();
+    await h.router.handleNewEvent(h.session.id, h.agent);
+    const log = await h.log();
+    const turnId = (log.find(stored => stored.type === "session.turn_completed")!.data as { turnId: string }).turnId;
+    expect(deltas).toEqual([{ blockIndex: 0, turnId }]);
+    const display = log.flatMap(stored => presentEvent(stored)).find(stored => stored.type === "agent.message");
+    expect(display?.data).toMatchObject({ turnId, blockIndex: 0 });
+    const types = log.map(stored => stored.type);
+    expect(types.indexOf("span.model_request_end")).toBeGreaterThan(types.indexOf("agent.context_entry"));
+    expect(types.indexOf("span.model_request_end")).toBeLessThan(types.indexOf("session.turn_completed"));
+    expect(log.find(stored => stored.type === "span.model_request_end")?.data).toMatchObject({ id: last.id, turnId });
+    expectPublishedInOrder(h.frames, log);
+  });
+
+  it("renews the claim before an interrupted Adapter's flush and writes only its accounting", async () => {
+    const aborted = contextEntry("aborted");
+    const { adapter, running } = interrupted(async journal => {
+      journal.record(aborted as DurableEvent);
+      journal.record(usage() as DurableEvent);
+      journal.record(event("agent.context_usage", { turnId: "t", model: "test", contextWindow: null, tokens: null, source: "unknown" }) as DurableEvent);
+      await journal.flush();
+    });
+    const h = await harness(adapter);
+    let interruptRequested = false;
+    const writes: string[] = [];
+    const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.renewClaim = async (...args) => { if (interruptRequested) writes.push("renew"); return renew(...args); };
+    h.appends.mockImplementation(async (sessionId, input) => { writes.push(input.type); return h.append(sessionId, input); });
+    await h.enqueue();
+    const processing = h.router.handleNewEvent(h.session.id, h.agent);
+    await running;
+    interruptRequested = true;
+    h.router.interrupt(h.session.id);
+    await processing;
+    const types = (await h.log()).map(stored => stored.type);
+    // The regular heartbeat stopped at the Interrupt; the accounting write renews first.
+    expect(writes.indexOf("renew")).toBeGreaterThanOrEqual(0);
+    expect(writes.indexOf("renew")).toBeLessThan(writes.indexOf("span.model_request_end"));
+    expect(types).toEqual(expect.arrayContaining(["agent.context_entry", "span.model_request_end", "session.turn_aborted"]));
+    expect(types).not.toContain("agent.context_usage");
+    expect(types.indexOf("span.model_request_end")).toBeLessThan(types.indexOf("session.turn_aborted"));
+  });
+
+  it("writes nothing more from an interrupted Adapter once its renewed lease is lost", async () => {
+    const { adapter, running, failures } = interrupted(async journal => {
+      journal.record(usage() as DurableEvent);
+      await journal.flush();
+    });
+    const h = await harness(adapter);
+    let lost = false;
+    const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.renewClaim = async (...args) => lost ? false : renew(...args);
+    await h.enqueue();
+    const processing = h.router.handleNewEvent(h.session.id, h.agent);
+    await running;
+    lost = true;
+    h.router.interrupt(h.session.id);
+    await processing;
+    const types = (await h.log()).map(stored => stored.type);
+    expect(failures).toEqual(["Turn journal write entry revoked"]);
+    expect(types).not.toContain("span.model_request_end");
+    expect(types).not.toContain("session.turn_aborted");
+  });
+
+  it("revokes the entry at once when the Session is terminated, even after an Interrupt", async () => {
+    let terminated!: () => void;
+    const termination = new Promise<void>((resolve) => { terminated = resolve; });
+    const recorded: string[] = [];
+    const { adapter, running, failures } = interrupted(async journal => {
+      await termination;
+      journal.record(usage() as DurableEvent);
+      recorded.push("usage");
+      await journal.flush();
+    });
+    const h = await harness(adapter);
+    await h.enqueue();
+    const processing = h.router.handleNewEvent(h.session.id, h.agent);
+    await running;
+    h.router.interrupt(h.session.id);
+    await h.stores.sessionStore.terminate(h.session.id);
+    await h.router.terminateSession(h.session.id);
+    terminated();
+    await processing;
+    expect(recorded).toEqual(["usage"]);
+    expect(failures).toEqual(["Turn journal write entry revoked"]);
+    expect((await h.log()).map(stored => stored.type)).not.toContain("span.model_request_end");
   });
 });

@@ -67,6 +67,16 @@ const SESSION_TERMINATED_MESSAGE = "Session terminated";
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS = 128;
 
+/**
+ * What an interrupted attempt may still write: provider accounting and the
+ * native messages it already produced, never a compaction boundary.
+ */
+function isInterruptAccounting(event: SessionEvent): boolean {
+  return event.type === "span.model_request_end" ||
+    (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type !== "compaction") ||
+    (event.type === "agent.message" && event.stopReason === "aborted");
+}
+
 interface PendingStreamBlock {
   blockIndex: number;
   completeTypes: ReadonlySet<string>;
@@ -1492,21 +1502,17 @@ export class SessionRouter {
         continue;
       }
 
-      // The Adapter is a pure translator: it runs directly and routes any tool
-      // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
-      // There is no separate sandbox orchestrator — the sandbox lives behind the
-      // session and is invisible to the router and the adapter alike.
-      executionSettled = false;
-      const events = adapter.run(adapterInput);
-      const eventIterator = events[Symbol.asyncIterator]();
-
-      // blockIndex increments on each stream_start, aligning a turn's deltas to
-      // the full Event they roll up into (shared turnId + blockIndex).
-      let blockIndex = resumableWaits.length
-        ? Math.max(-1, ...priorEvents.flatMap(event => presentEvent(event)).filter((event) => (event.data as { turnId?: string })?.turnId === turnId)
-          .map((event) => (event.data as { blockIndex?: number })?.blockIndex ?? -1)) : -1;
+      // A Turn continued by a later attempt (a resumed delegation wait) keeps
+      // numbering its output blocks after those it already committed.
+      const blockBase = 1 + Math.max(-1, ...priorEvents
+        .filter((event) => (event.data as { turnId?: string } | null)?.turnId === turnId)
+        .flatMap(event => presentEvent(event))
+        .map((event) => (event.data as { blockIndex?: number } | null)?.blockIndex ?? -1));
+      // An Adapter that still streams its events (until #244) has them
+      // numbered here: blockIndex increments on each stream_start, aligning a
+      // turn's deltas to the full Event they roll up into.
+      let blockIndex = blockBase - 1;
       let durableEventIndex = 0;
-      const streamBlockBase = blockIndex + 1;
       const pendingStreamBlocks: PendingStreamBlock[] = [];
 
       const alignCompleteEvent = (event: { type: string; toolUseId?: unknown }): { type: string; toolUseId?: unknown; turnId: string; blockIndex?: number } => {
@@ -1537,10 +1543,10 @@ export class SessionRouter {
       };
 
       // The commit barrier and the event stream deliver the same event. It is
-      // aligned and keyed once, so the journal writes and publishes it once.
-      const durableForms = new Map<string, { event: JournalEvent; key: string }>();
-      attemptWrites.fromAdapter = (event) => {
-        const known = durableForms.get(event.id);
+      // aligned once, so a second delivery cannot claim another stream block.
+      const streamedForms = new Map<string, SessionEvent>();
+      const alignStreamed = (event: SessionEvent): SessionEvent => {
+        const known = streamedForms.get(event.id);
         if (known) return known;
         let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
         if (event.type === "agent.context_entry" && event.presentation) {
@@ -1550,7 +1556,7 @@ export class SessionRouter {
           // preserving the same latest-start rule used for individual events.
           for (let i = blocks.length - 1; i >= 0; i--) {
             if (blocks[i].streamIndex !== undefined) {
-              blocks[i].blockIndex = streamBlockBase + blocks[i].streamIndex!;
+              blocks[i].blockIndex = blockBase + blocks[i].streamIndex!;
               const pending = pendingStreamBlocks.findIndex(block => block.blockIndex === blocks[i].blockIndex);
               if (pending >= 0) pendingStreamBlocks.splice(pending, 1);
               continue;
@@ -1560,12 +1566,22 @@ export class SessionRouter {
           }
           alignedEvent = { ...event, turnId: turnId!, presentation: { version: 1, blocks } };
         }
-        const completeEvent = delegationExecution ? { ...alignedEvent,
+        streamedForms.set(event.id, alignedEvent);
+        return alignedEvent;
+      };
+      // Every Adapter event is stamped with its Turn and Child Session caller
+      // and keyed once, so the journal writes and publishes it once. Events
+      // recorded through the port already carry their final blockIndex.
+      const durableForms = new Map<string, { event: JournalEvent; key: string }>();
+      attemptWrites.fromAdapter = (event) => {
+        const known = durableForms.get(event.id);
+        if (known) return known;
+        const completeEvent = delegationExecution ? { ...event, turnId,
           callerSessionId: delegationExecution.callerSessionId,
           callerTurnId: delegationExecution.callerTurnId,
           callerToolUseId: delegationExecution.callerToolUseId,
           executionId: delegationExecution.id,
-        } : alignedEvent;
+        } : { ...event, turnId };
         const durable = {
           event: { type: completeEvent.type, data: completeEvent, apiKeyId: pendingEvent.apiKeyId },
           key: this.turnKey(
@@ -1577,11 +1593,11 @@ export class SessionRouter {
         durableForms.set(event.id, durable);
         return durable;
       };
-      // The Adapter's events reach the journal through its revocable port.
+      // Streamed events reach the journal through the Adapter's revocable port.
       const recordAdapterEvent = (event: SessionEvent): void => {
         // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
         if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
-        journal.adapter.record(event as Exclude<SessionEvent, StreamEvent>);
+        journal.adapter.record(alignStreamed(event) as Exclude<SessionEvent, StreamEvent>);
       };
 
       // The Adapter awaits this at every native message boundary and before
@@ -1598,6 +1614,57 @@ export class SessionRouter {
         await journal.adapter.flush();
       };
 
+      const activeRunOwnsSignal = () => {
+        const activeRun = this.activeSessions.get(sessionId);
+        return activeRun?.controller.signal === signal && !activeRun.terminating;
+      };
+      const isUserInterruptDrain = () =>
+        !leaseLost &&
+        signal.aborted &&
+        activeRunOwnsSignal() &&
+        signal.reason instanceof DOMException &&
+        signal.reason.name === "AbortError" &&
+        signal.reason.message === SESSION_INTERRUPTED_MESSAGE;
+      // A lost lease or a termination ends the attempt's ownership of the
+      // Turn: the Adapter's entry is revoked at once. After a user Interrupt
+      // it may still write the accounting of what it already produced.
+      const revokeUnlessInterruptDrain = () => {
+        if (turnController.signal.aborted && !isUserInterruptDrain()) journal.revokeAdapter();
+      };
+      turnController.signal.addEventListener("abort", revokeUnlessInterruptDrain, { once: true });
+      // Handed to an Adapter that writes through its port (ADR-0020).
+      adapterInput.journal = {
+        record: (event) => {
+          // terminateSession can follow an Interrupt whose abort already fired.
+          revokeUnlessInterruptDrain();
+          if (!turnController.signal.aborted || isInterruptAccounting(event)) journal.adapter.record(event);
+        },
+        delta: (event, deltaBlockIndex) => {
+          revokeUnlessInterruptDrain();
+          if (!turnController.signal.aborted) journal.adapter.delta(event, deltaBlockIndex);
+        },
+        flush: async () => {
+          revokeUnlessInterruptDrain();
+          if (turnController.signal.aborted && isUserInterruptDrain()) {
+            // interrupt() stops the regular heartbeat. Revalidate and extend
+            // this exact generation before the accounting write; pendingFence
+            // then enforces the same ownership atomically in the store.
+            if (!await this.renewPendingClaim(sessionId, claim)) leaseLost = true;
+            revokeUnlessInterruptDrain();
+          }
+          return journal.adapter.flush();
+        },
+      };
+      adapterInput.blockBase = blockBase;
+
+      // The Adapter is a pure translator: it runs directly and routes any tool
+      // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
+      // There is no separate sandbox orchestrator — the sandbox lives behind the
+      // session and is invisible to the router and the adapter alike.
+      executionSettled = false;
+      const events = adapter.run(adapterInput);
+      const eventIterator = events[Symbol.asyncIterator]();
+
       try {
         type IteratorOutcome =
           | { kind: "next"; result: IteratorResult<SessionEvent> }
@@ -1606,17 +1673,6 @@ export class SessionRouter {
           | IteratorOutcome
           | { kind: "aborted" }
           | { kind: "timeout" };
-        const activeRunOwnsSignal = () => {
-          const activeRun = this.activeSessions.get(sessionId);
-          return activeRun?.controller.signal === signal && !activeRun.terminating;
-        };
-        const isUserInterruptDrain = () =>
-          !leaseLost &&
-          signal.aborted &&
-          activeRunOwnsSignal() &&
-          signal.reason instanceof DOMException &&
-          signal.reason.name === "AbortError" &&
-          signal.reason.message === SESSION_INTERRUPTED_MESSAGE;
 
         let abortObservedAt = turnController.signal.aborted ? Date.now() : undefined;
         const nextOutcome = (): Promise<IteratorOutcome> => {
@@ -1722,9 +1778,7 @@ export class SessionRouter {
                 break;
               }
               postAbortEventsSeen++;
-              if (event.type === "span.model_request_end" ||
-                  (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type !== "compaction") ||
-                  (event.type === "agent.message" && event.stopReason === "aborted")) {
+              if (isInterruptAccounting(event)) {
                 // interrupt() stops the regular heartbeat. Revalidate and extend
                 // this exact generation immediately before the accounting write;
                 // pendingFence then enforces the same ownership atomically in PG.
@@ -1825,6 +1879,9 @@ export class SessionRouter {
             }
           }
         }
+        // An Adapter writing through its port flushes only at its own
+        // boundaries: what it recorded last becomes durable as run() ends.
+        if (executionSettled && !leaseLost) await journal.flush();
       } catch (err) {
         if (leaseLost || err instanceof PendingEventClaimLostError) {
           if (this.turnStreamStore) {
