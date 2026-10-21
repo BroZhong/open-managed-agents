@@ -48,6 +48,12 @@ failure fail visibly, with no Host-native fallback. Cancellation sends SIGTERM t
 The wrapper invokes Pi’s AbortController and emits a cancelled frame only after
 native execution settles. A cancelled frame and process exit are both required;
 killing the wrapper alone cannot prove a detached Bash child stopped. Requests cancelled before process start get best-effort Sandbox cleanup.
+Host's per-Turn executor fence never kills a running command; it only refuses
+to start one. An Interrupt leaves the attempt owning its Turn, so the
+cancellation command is allowed. An attempt on ADR-0020's stop path (lost lease,
+failed journal write, Session termination) owns nothing: it is marked stopped
+before its Turn signal aborts, and from then on sends that Turn's Sandbox
+execution nothing, not even SIGTERM.
 
 Adapter also serializes write/edit requests by executor filesystem identity and
 canonical remote path, because native per-process queues cannot coordinate
