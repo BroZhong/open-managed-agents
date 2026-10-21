@@ -30,7 +30,7 @@ const AGENT: Agent = {
 function capturingAdapter(): { adapter: Adapter; last: () => AdapterInput | undefined } {
   let captured: AdapterInput | undefined;
   const adapter: Adapter = {
-    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+    async run(input: AdapterInput) {
       const write = journalWriter(input);
       captured = input;
       await write({
@@ -39,6 +39,7 @@ function capturingAdapter(): { adapter: Adapter; last: () => AdapterInput | unde
         type: "agent.message",
         content: [{ type: "text", text: "ok" }],
       } as SessionEvent);
+      return "finished";
     },
   };
   return { adapter, last: () => captured };

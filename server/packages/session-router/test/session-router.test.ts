@@ -47,10 +47,7 @@ const testAgent: Agent = {
 
 function createTestDeps(
   adapter: Adapter,
-  routerOptions: Pick<
-    SessionRouterDeps,
-    "interruptedAdapterDrainTimeoutMs" | "interruptedAdapterDrainMaxEvents"
-  > = {},
+  routerOptions: Pick<SessionRouterDeps, "interruptedAdapterDrainTimeoutMs"> = {},
 ) {
   const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
@@ -144,7 +141,7 @@ describe("SessionRouter", () => {
       const appends = vi.spyOn(eventLogStore, "append");
       let fenceLiveDuringRun: boolean | undefined;
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           const fence = appends.mock.calls[0]?.[1].pendingFence;
           fenceLiveDuringRun = fence !== undefined &&
@@ -155,6 +152,7 @@ describe("SessionRouter", () => {
             type: "agent.message",
             content: [{ type: "text", text: "fenced" }],
           });
+          return "finished";
         },
       };
       const router = new SessionRouter({
@@ -201,8 +199,9 @@ describe("SessionRouter", () => {
       process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
       let adapterRuns = 0;
       const adapter: Adapter = {
-        async *run(): AsyncIterable<SessionEvent> {
+        async run() {
           adapterRuns += 1;
+          return "finished";
         },
       };
       const { eventLogStore, pendingEventStore, sessionStore, router } =
@@ -337,7 +336,7 @@ describe("SessionRouter", () => {
     it("drains multiple pending messages in sequence", async () => {
       let callCount = 0;
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           callCount++;
           await write({
@@ -346,6 +345,7 @@ describe("SessionRouter", () => {
             type: "agent.message",
             content: [{ type: "text", text: `Reply ${callCount}` }],
           });
+          return "finished";
         },
       };
 
@@ -475,7 +475,7 @@ describe("SessionRouter", () => {
       // so far, tagged `aborted` (issue #110). The router must forward that —
       // dropping it is what used to make interrupted output vanish silently.
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           await write({
             id: "evt_1",
@@ -499,6 +499,7 @@ describe("SessionRouter", () => {
             content: [{ type: "text", text: "Half a th" }],
             stopReason: "aborted",
           } as SessionEvent);
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -538,11 +539,11 @@ describe("SessionRouter", () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
     });
 
-    it("persists and publishes only model usage emitted while an interrupted adapter settles", async () => {
+    it("persists and publishes the model usage an interrupted adapter records while it settles", async () => {
       let adapterStarted!: () => void;
       const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           adapterStarted();
           await new Promise<void>((resolve) => {
@@ -550,40 +551,8 @@ describe("SessionRouter", () => {
             else input.signal?.addEventListener("abort", () => resolve(), { once: true });
           });
 
-          // Runtimes may flush buffered output while their native abort settles.
-          // None of it is durable after a user interrupt; only the provider's
-          // final accounting event survives.
-          await write({
-            id: "post_abort_stream",
-            timestamp: "2024-01-01T00:00:01.000Z",
-            type: "agent.message_stream_start",
-          });
-          await write({
-            id: "post_abort_chunk",
-            timestamp: "2024-01-01T00:00:02.000Z",
-            type: "agent.message_chunk",
-            text: "discard me",
-          });
-          await write({
-            id: "post_abort_tool",
-            timestamp: "2024-01-01T00:00:03.000Z",
-            type: "agent.tool_use",
-            toolUseId: "tool_after_abort",
-            name: "bash",
-            input: { command: "discard me" },
-          });
-          await write({
-            id: "post_abort_error",
-            timestamp: "2024-01-01T00:00:04.000Z",
-            type: "session.error",
-            error: { message: "discard me", code: "post_abort" },
-          });
-          await write({
-            id: "post_abort_message",
-            timestamp: "2024-01-01T00:00:05.000Z",
-            type: "agent.message",
-            content: [{ type: "text", text: "discard me" }],
-          });
+          // A runtime reports the provider's final accounting as its native
+          // abort settles; it lands until the Router revokes the entry.
           await write({
             id: "post_abort_usage",
             timestamp: "2024-01-01T00:00:06.000Z",
@@ -595,6 +564,7 @@ describe("SessionRouter", () => {
               cacheWriteTokens: 5,
             },
           });
+          return "finished";
         },
       };
       const {
@@ -668,35 +638,26 @@ describe("SessionRouter", () => {
           cacheHitRate: 0.6,
         });
       expect(frames.filter((frame) => frame.includes("span.model_request_end"))).toHaveLength(1);
-      expect(frames.some((frame) => frame.includes("post_abort_chunk"))).toBe(false);
-      expect(frames.some((frame) => frame.includes("post_abort_tool"))).toBe(false);
-      expect(frames.some((frame) => frame.includes("post_abort_error"))).toBe(false);
-      expect(frames.some((frame) => frame.includes("post_abort_message"))).toBe(false);
     });
 
-    it("stops an interrupted drain on timeout without awaiting a hung iterator return", async () => {
+    it("closes the Turn of an adapter whose run() never settles once the drain timeout passes after an Interrupt", async () => {
       let adapterStarted!: () => void;
       const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
-      let iteratorReturnCalled = false;
+      let runs = 0;
+      const late: string[] = [];
+      let journal: AdapterInput["journal"] | undefined;
       const adapter: Adapter = {
-        run(): AsyncIterable<SessionEvent> {
-          return {
-            [Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
-              return {
-                next(): Promise<IteratorResult<SessionEvent>> {
-                  adapterStarted();
-                  return new Promise<IteratorResult<SessionEvent>>(() => {});
-                },
-                return(): Promise<IteratorResult<SessionEvent>> {
-                  iteratorReturnCalled = true;
-                  return new Promise<IteratorResult<SessionEvent>>(() => {});
-                },
-              };
-            },
-          };
+        async run(input: AdapterInput) {
+          if (++runs > 1) {
+            await journalWriter(input)({ id: "next_reply", timestamp: "2024-01-01T00:00:00.000Z", type: "agent.message", content: [{ type: "text", text: "next" }] });
+            return "finished";
+          }
+          journal = input.journal;
+          adapterStarted();
+          return new Promise<"finished">(() => {});
         },
       };
-      const { pendingEventStore, sessionStore, router } = createTestDeps(adapter, {
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter, {
         interruptedAdapterDrainTimeoutMs: 20,
       });
       const session = await sessionStore.create({
@@ -705,11 +666,13 @@ describe("SessionRouter", () => {
         agent: testAgent,
         workspaceId: "ws_interrupt_timeout",
       });
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "stop promptly" }] },
-        sessionThreadId: "sthr_primary",
-      });
+      for (const text of ["stop promptly", "then this"]) {
+        await pendingEventStore.enqueue(session.id, {
+          type: "user.message",
+          data: { content: [{ type: "text", text }] },
+          sessionThreadId: "sthr_primary",
+        });
+      }
 
       const processing = router.handleNewEvent(session.id, testAgent);
       await didStart;
@@ -724,62 +687,17 @@ describe("SessionRouter", () => {
       ]);
       if (settleTimeout) clearTimeout(settleTimeout);
       expect(outcome).toBe("settled");
-      expect(iteratorReturnCalled).toBe(true);
-    });
-
-    it("caps a synchronously noisy interrupted drain by event count", async () => {
-      let adapterStarted!: () => void;
-      const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
-      let postAbortEvents = 0;
-      // Counts streamed events, which only the event-stream path has (until #244).
-      const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-          adapterStarted();
-          await new Promise<void>((resolve) => {
-            if (input.signal?.aborted) resolve();
-            else input.signal?.addEventListener("abort", () => resolve(), { once: true });
-          });
-          while (true) {
-            postAbortEvents++;
-            yield {
-              id: `noisy_${postAbortEvents}`,
-              timestamp: "2024-01-01T00:00:00.000Z",
-              type: "session.error",
-              error: { message: "discard me", code: "noisy_post_abort" },
-            };
-          }
-        },
-      };
-      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter, {
-        interruptedAdapterDrainTimeoutMs: 1_000,
-        interruptedAdapterDrainMaxEvents: 3,
-      });
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgent,
-        workspaceId: "ws_interrupt_event_cap",
-      });
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "stop noisy adapter" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      const processing = router.handleNewEvent(session.id, testAgent);
-      await didStart;
-      router.interrupt(session.id);
-      await processing;
-
-      expect(postAbortEvents).toBe(3);
-      const events = await eventLogStore.getEvents(session.id, { limit: 100 });
-      expect(events.data.map((event) => event.type)).toEqual([
-        "user.message",
-        "session.status_running",
-        "session.turn_aborted",
-        "session.turn_completed",
-        "session.status_idle",
+      // The hung attempt lost its entry; the Session went on with the next input.
+      journal!.record({ id: "too_late", timestamp: "2024-01-01T00:00:00.000Z", type: "agent.message", content: [{ type: "text", text: "late" }] });
+      await journal!.flush().catch((error: Error) => { late.push(error.message); });
+      expect(late).toEqual(["Turn journal write entry revoked"]);
+      expect(await router.waitForIdle(1000)).toBe(true);
+      const types = (await eventLogStore.getEvents(session.id, { limit: 100 })).data.map((event) => event.type);
+      expect(types).toEqual([
+        "user.message", "session.status_running", "session.turn_aborted", "session.turn_completed",
+        "user.message", "session.status_running", "agent.message", "session.turn_completed", "session.status_idle",
       ]);
+      expect(await pendingEventStore.count(session.id)).toBe(0);
     });
 
     it("does not persist settlement usage when the Session is terminated", async () => {
@@ -790,7 +708,7 @@ describe("SessionRouter", () => {
       let releaseSettlement!: () => void;
       const settlementGate = new Promise<void>((resolve) => { releaseSettlement = resolve; });
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           adapterStarted();
           await new Promise<void>((resolve) => {
@@ -810,6 +728,7 @@ describe("SessionRouter", () => {
               cacheWriteTokens: 0,
             },
           });
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -827,9 +746,8 @@ describe("SessionRouter", () => {
 
       const processing = router.handleNewEvent(session.id, testAgent);
       await didStart;
-      // AbortSignal.reason remains the original user-interrupt reason forever.
-      // A subsequent termination must still revoke the accounting drain before
-      // the delayed Adapter settlement is released.
+      // The Interrupt's abort has already fired. A subsequent termination must
+      // still revoke the entry before the delayed Adapter settlement is released.
       router.interrupt(session.id);
       await didObserveAbort;
       await sessionStore.terminate(session.id);
@@ -918,7 +836,7 @@ describe("SessionRouter", () => {
       // The other shape of Interrupt (issue #112): the assistant message is a
       // normal one and the only trace is a tool_use whose result never came.
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           await write({
             id: "evt_1",
@@ -932,6 +850,7 @@ describe("SessionRouter", () => {
             if (input.signal?.aborted) return resolve();
             input.signal?.addEventListener("abort", () => resolve(), { once: true });
           });
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -1014,7 +933,7 @@ describe("SessionRouter", () => {
     it("runs the next queued Turn after an Interrupt — the queue is not cleared", async () => {
       let run = 0;
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           run++;
           if (run === 1) {
@@ -1022,7 +941,7 @@ describe("SessionRouter", () => {
               if (input.signal?.aborted) return resolve();
               input.signal?.addEventListener("abort", () => resolve(), { once: true });
             });
-            return;
+            return "finished";
           }
           await write({
             id: `evt_${run}`,
@@ -1030,6 +949,7 @@ describe("SessionRouter", () => {
             type: "agent.message",
             content: [{ type: "text", text: "Second turn reply" }],
           });
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -1137,7 +1057,7 @@ describe("SessionRouter", () => {
 
     it("isolates concurrent first Turns and does not reclaim another Session's active stream", async () => {
       const gates = new Map<string, { ready(): void; promise: Promise<void> }>();
-      const adapter: Adapter = { async *run(input) {
+      const adapter: Adapter = { async run(input) {
         const write = journalWriter(input);
         await write({ id: "start", timestamp: "t", type: "agent.message_stream_start" });
         await write({ id: "chunk", timestamp: "t", type: "agent.message_chunk", text: input.sessionId });
@@ -1145,6 +1065,7 @@ describe("SessionRouter", () => {
         gate.ready(); await gate.promise;
         await write({ id: "end", timestamp: "t", type: "agent.message_stream_end" });
         await write({ id: "message", timestamp: "t", type: "agent.message", content: [{ type: "text", text: input.sessionId }] });
+        return "finished";
       } };
       const deps = createTestDepsWithTurnStream(adapter);
       const sessions = await Promise.all(["tenant-a", "tenant-b"].map(tenantId => deps.sessionStore.create({ tenantId, agentId: testAgent.id, agent: testAgent, workspaceId: "workspace" })));
@@ -1341,7 +1262,7 @@ describe("SessionRouter", () => {
     it("marks the active turn running mid-flight so a reconnect can find it", async () => {
       // A slow adapter lets us observe the active-turn map while the turn runs.
       const slow: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           await write({ id: "s0", timestamp: "t", type: "agent.message_stream_start" });
           await write({ id: "s1", timestamp: "t", type: "agent.message_chunk", text: "Hel" });
@@ -1354,6 +1275,7 @@ describe("SessionRouter", () => {
             type: "agent.message",
             content: [{ type: "text", text: "Hello" }],
           });
+          return "finished";
         },
       };
       const deps = createTestDepsWithTurnStream(slow);
@@ -1387,7 +1309,7 @@ describe("SessionRouter", () => {
     // Captures the model the adapter was invoked with for each run.
     function createModelCapturingAdapter(models: string[]): Adapter {
       return {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
           const write = journalWriter(input);
           models.push(input.agent.model);
           await write({
@@ -1396,6 +1318,7 @@ describe("SessionRouter", () => {
             type: "agent.message",
             content: [{ type: "text", text: "ok" }],
           });
+          return "finished";
         },
       };
     }

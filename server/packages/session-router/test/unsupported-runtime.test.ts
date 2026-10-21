@@ -15,11 +15,12 @@ describe("Agents with an unsupported runtime", () => {
     const stores = createMemoryStores();
     let mockRuns = 0;
     const mock: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
         const write = journalWriter(input);
         mockRuns += 1;
         await write({ id: "evt_reply", timestamp: new Date().toISOString(), type: "agent.message",
           content: [{ type: "text", text: "still running" }] });
+        return "finished";
       },
     };
     const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(),

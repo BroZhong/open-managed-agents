@@ -54,12 +54,13 @@ describe("Host-owned delegation through the Session Router", () => {
     // The Adapter numbers each bundled completion like the Deltas it replaces.
     const native = event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id: "assistant1", type: "message", parentId: null, message: { role: "assistant", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] } },
       presentation: { version: 1, blocks: [{ type: "agent.message", index: 0, blockIndex: 0 }, { type: "agent.message", index: 1, blockIndex: 1 }] } });
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
-      if (++runs > 1) { history = input.history; return; }
+      if (++runs > 1) { history = input.history; return "finished"; }
       await write(event("agent.message_stream_start")); await write(event("agent.message_chunk", { text: "first" })); await write(event("agent.message_stream_end"));
       await write(event("agent.message_stream_start")); await write(event("agent.message_chunk", { text: "second" })); await write(event("agent.message_stream_end"));
       await write(native);
+      return "finished";
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     const log = await h.log();
@@ -75,16 +76,17 @@ describe("Host-owned delegation through the Session Router", () => {
 
   it("consumes synchronous native tool results atomically and derives child output without display rows", async () => {
     const native = (id: string, message: object, blocks: object[]) => event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id, parentId: null, type: "message", message }, presentation: { version: 1, blocks } });
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
-        await write(native("child-answer", { role: "assistant", content: [{ type: "text", text: "native child answer" }], stopReason: "stop" }, [{ type: "agent.message", index: 0 }])); return;
+        await write(native("child-answer", { role: "assistant", content: [{ type: "text", text: "native child answer" }], stopReason: "stop" }, [{ type: "agent.message", index: 0 }])); return "finished";
       }
       const call = native("parent-call", { role: "assistant", content: [{ type: "toolCall", id: "native-wait", name: "Agent", arguments: { prompt: "child" } }] }, [{ type: "agent.tool_use", index: 0 }]);
       await write(call);
       const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "native-wait" });
       const result = native("parent-result", { role: "toolResult", toolCallId: "native-wait", toolName: "Agent", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }, [{ type: "agent.tool_result" }]);
       await write(result);
+      return "finished";
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     const log = await h.log();
@@ -101,12 +103,13 @@ describe("Host-owned delegation through the Session Router", () => {
   it("keeps the Adapter's blockIndex when a native commit overtakes its deltas", async () => {
     const native = event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id: "ahead", type: "message", parentId: null, message: { role: "assistant", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] } },
       presentation: { version: 1, blocks: [{ type: "agent.message", index: 0, blockIndex: 0 }, { type: "agent.message", index: 1, blockIndex: 1 }] } });
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       // Pi's awaited compaction hook can commit before the Deltas of its blocks go out.
       await write(native);
       await write(event("agent.message_stream_start")); await write(event("agent.message_chunk", { text: "first" })); await write(event("agent.message_stream_end"));
       await write(event("agent.message_stream_start")); await write(event("agent.message_chunk", { text: "second" })); await write(event("agent.message_stream_end"));
+      return "finished";
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     const log = await h.log();
@@ -122,7 +125,7 @@ describe("Host-owned delegation through the Session Router", () => {
     let journal: TurnJournalPort | undefined;
     let runs = 0;
     let nextHistory: SessionEvent[] = [];
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (++runs === 1) {
         journal = input.journal;
@@ -133,6 +136,7 @@ describe("Host-owned delegation through the Session Router", () => {
         await write(context);
       } else nextHistory = input.history;
       await write(text("completed after context commit"));
+      return "finished";
     } });
     const published = vi.spyOn(h.hub, "publish");
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
@@ -151,15 +155,16 @@ describe("Host-owned delegation through the Session Router", () => {
   it.each([false, true])("publishes result arrival before the parent finishes (background=%s)", async (runInBackground) => {
     const parentGate = gate();
     let parentTurns = 0;
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
-      if (input.execution?.isChild) { await write(text("child result")); return; }
-      if (++parentTurns > 1) { await write(text("notification handled")); return; }
+      if (input.execution?.isChild) { await write(text("child result")); return "finished"; }
+      if (++parentTurns > 1) { await write(text("notification handled")); return "finished"; }
       const call = tool("live-result"); await write(call);
       const output = await input.subagents!.delegate({ prompt: "child", runInBackground }, { toolUseId: "live-result" });
       await write(result("live-result", output));
       await parentGate.promise;
       await write(text("parent done"));
+      return "finished";
     } });
     const published = vi.spyOn(h.hub, "publish");
     await h.enqueue();
@@ -184,12 +189,12 @@ describe("Host-owned delegation through the Session Router", () => {
     let childId: string | undefined;
     const childModels: string[] = [];
     const actualModels = ["openai-codex/gpt-5.6-sol", "anthropic/claude-sonnet-4-5"];
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
         childModels.push(input.agent.model!);
         await input.execution.onResolved?.({ model: input.agent.model!, thinking: "high", thinkingSource: "model_default" });
-        await write(text("child done")); return;
+        await write(text("child done")); return "finished";
       }
       const actualModel = actualModels[parentTurns++];
       await input.execution?.onResolved?.({ model: actualModel, thinking: "high", thinkingSource: "model_default" });
@@ -200,6 +205,7 @@ describe("Host-owned delegation through the Session Router", () => {
       const output = await input.subagents!.delegate({ prompt: "child", resume: childId, runInBackground: false }, { toolUseId: toolId }) as { childId: string };
       childId = output.childId;
       await write(result(toolId, output));
+      return "finished";
     } });
     for (let turn = 0; turn < 2; turn++) {
       await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
@@ -216,13 +222,14 @@ describe("Host-owned delegation through the Session Router", () => {
   it("keeps child capabilities restricted for direct user input after its delegated Turn", async () => {
     const inputs: AdapterInput[] = [];
     let childId = "";
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       inputs.push(input);
-      if (input.sessionId === childId || input.execution?.isChild) { await write(text("child done")); return; }
+      if (input.sessionId === childId || input.execution?.isChild) { await write(text("child done")); return "finished"; }
       const call = tool("create-child"); await write(call);
       const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "create-child" }) as { childId: string };
       childId = output.childId; await write(result("create-child", output));
+      return "finished";
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     const child = (await h.stores.sessionStore.getById(childId))!;
@@ -248,17 +255,18 @@ describe("Host-owned delegation through the Session Router", () => {
   it("accepts an Interrupt on another Host and stops synchronous children while preserving queued parent input", async () => {
     let childStarted = false;
     let parentTurns = 0;
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
         childStarted = true;
         await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
-        return;
+        return "finished";
       }
-      if (++parentTurns > 1) { await write(text("queued input processed")); return; }
+      if (++parentTurns > 1) { await write(text("queued input processed")); return "finished"; }
       const call = tool("interrupt-sync"); await write(call);
       const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "interrupt-sync" });
       await write(result("interrupt-sync", done));
+      return "finished";
     } }, { leaseMs: 150 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => childStarted && (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
@@ -275,16 +283,17 @@ describe("Host-owned delegation through the Session Router", () => {
 
   it("cancels a wait on an independent asynchronous child without stopping the child", async () => {
     const childGate = gate(); let parentTurns = 0;
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
-      if (input.execution?.isChild) { await childGate.promise; await write(text("background done")); return; }
-      if (++parentTurns > 1) { await write(text("callback processed")); return; }
+      if (input.execution?.isChild) { await childGate.promise; await write(text("background done")); return "finished"; }
+      if (++parentTurns > 1) { await write(text("callback processed")); return "finished"; }
       const call = tool("background"); await write(call);
       const accepted = await input.subagents!.delegate({ prompt: "child", runInBackground: true }, { toolUseId: "background" }) as { childId: string; executionId: string };
       const acceptedResult = result("background", accepted); await write(acceptedResult);
       const query = event("agent.tool_use", { toolUseId: "wait-bg", name: "get_subagent_result", input: { childId: accepted.childId, wait: true } }); await write(query);
       const done = await input.subagents!.getResult({ ...accepted, wait: true }, { toolUseId: "wait-bg" });
       await write(result("wait-bg", done));
+      return "finished";
     } }, { leaseMs: 300 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
@@ -298,20 +307,21 @@ describe("Host-owned delegation through the Session Router", () => {
 
   it("bounds child concurrency while a queued child waited on by the parent can obtain a slot", async () => {
     const firstGate = gate(); let active = 0; let maximum = 0; let parentTurns = 0;
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
         maximum = Math.max(maximum, ++active);
         if (input.message.content[0].type === "text" && input.message.content[0].text === "first") await firstGate.promise;
-        await write(text("child done")); active--; return;
+        await write(text("child done")); active--; return "finished";
       }
-      if (++parentTurns > 1) { await write(text("callback")); return; }
+      if (++parentTurns > 1) { await write(text("callback")); return "finished"; }
       const first = tool("first"); await write(first);
       const accepted = await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first" });
       const firstResult = result("first", accepted); await write(firstResult);
       const second = tool("second"); await write(second);
       const done = await input.subagents!.delegate({ prompt: "second", runInBackground: false }, { toolUseId: "second" });
       await write(result("second", done)); await write(text("parent done"));
+      return "finished";
     } }, { quota: 1 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => (await h.stores.delegationStore.list("tenant", h.parent.id)).length === 2);
@@ -325,7 +335,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const childGate = gate();
     const parentInputs: AdapterInput[] = [];
     let childId = "";
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
         childId = input.sessionId;
@@ -335,15 +345,16 @@ describe("Host-owned delegation through the Session Router", () => {
         expect(await input.toolExecutor!.readFile("/tmp/shared-parent-file")).toBe("same sandbox");
         await input.toolExecutor!.writeFile("answer.txt", "saved after parent");
         await write(text("child final"));
-        return;
+        return "finished";
       }
       parentInputs.push(input);
-      if (input.message.source === "subagent_result") { await write(text("processed child result")); return; }
+      if (input.message.source === "subagent_result") { await write(text("processed child result")); return "finished"; }
       await input.toolExecutor!.writeFile("/tmp/shared-parent-file", "same sandbox");
       const call = tool("delegate"); await write(call);
       const accepted = await input.subagents!.delegate({ prompt: "child", runInBackground: true }, { toolUseId: "delegate" });
       await write(result("delegate", accepted));
       await write(text("parent done"));
+      return "finished";
     } });
     await h.enqueue();
     await h.router.handleNewEvent(h.parent.id, h.agent);
@@ -365,15 +376,16 @@ describe("Host-owned delegation through the Session Router", () => {
   it("holds one parent Turn for a synchronous result and serializes the user's queued input after it", async () => {
     const childGate = gate();
     const parentTurns: string[] = [];
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
-      if (input.execution?.isChild) { await childGate.promise; await write(text("child final")); return; }
+      if (input.execution?.isChild) { await childGate.promise; await write(text("child final")); return "finished"; }
       parentTurns.push(input.turnId);
-      if (parentTurns.length > 1) { await write(text("user followup")); return; }
+      if (parentTurns.length > 1) { await write(text("user followup")); return "finished"; }
       const call = tool("sync"); await write(call);
       const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "sync" });
       expect(done).toMatchObject({ status: "completed", runInBackground: false });
       await write(result("sync", done)); await write(text("parent continued"));
+      return "finished";
     } });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
@@ -393,26 +405,27 @@ describe("Host-owned delegation through the Session Router", () => {
     let childId = "";
     let childTurns = 0;
     let parentTurns = 0;
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
         childTurns++;
         expect(input.execution).toMatchObject({ maxModelSteps: 500 });
-        expect(input.execution.completedModelSteps ?? 0).toBe(0);
+        expect(input.resume).toBeUndefined();
         if (childTurns === 1) {
           const call = event("agent.tool_use", { toolUseId: "write", name: "write", input: { path: "one.txt", content: "one" } });
           await write(call); await input.toolExecutor!.writeFile("one.txt", "one"); await write(result("write", "saved"));
-          if (exhausted) { await write(event("session.error", { error: { code: "model_step_budget_exhausted", message: "Model step budget exhausted (500)" } })); return; }
+          if (exhausted) { await write(event("session.error", { error: { code: "model_step_budget_exhausted", message: "Model step budget exhausted (500)" } })); return "finished"; }
         } else {
           expect(input.history.some((event) => event.type === "agent.tool_result" && event.toolUseId === "write")).toBe(true);
           expect(await input.toolExecutor!.readFile("one.txt")).toBe("one");
         }
-        await write(text(`child ${childTurns}`)); return;
+        await write(text(`child ${childTurns}`)); return "finished";
       }
       parentTurns++;
       const id = `call${parentTurns}`; const call = tool(id); await write(call);
       const output = await input.subagents!.delegate({ prompt: "child", resume: childId || undefined, runInBackground: false }, { toolUseId: id }) as { childId: string };
       childId = output.childId; await write(result(id, output)); await write(text("done"));
+      return "finished";
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     const initial = await h.stores.delegationStore.list("tenant", h.parent.id);
@@ -432,18 +445,19 @@ describe("Host-owned delegation through the Session Router", () => {
   });
 
   it("reports final model errors instead of old commentary as success", async () => {
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       if (input.execution?.isChild) {
         await input.toolExecutor!.writeFile("partial.txt", "saved");
         await write(text("older commentary"));
-        await write(event("session.error", { error: { code: "stream_read_error", message: "stream failed" } })); return;
+        await write(event("session.error", { error: { code: "stream_read_error", message: "stream failed" } })); return "finished";
       }
       const call = tool("call"); await write(call);
       const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "call" });
       expect(output).toMatchObject({ status: "failed", result: { output: "", reason: "stream failed" } });
       expect(await input.toolExecutor!.readFile("partial.txt")).toBe("saved");
       await write(result("call", output)); await write(text("failure acknowledged"));
+      return "finished";
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
     expect(h.errors).toEqual([]);
@@ -455,11 +469,11 @@ describe("Host-owned delegation through the Session Router", () => {
       message: { role: "assistant", content: [{ type: "toolCall", id: "lost-wait", name: "Agent", arguments: { prompt: "child" } }], stopReason: "toolUse" } },
       presentation: { version: 1, blocks: [{ type: "agent.tool_use", index: 0 }] } });
     const turns: AdapterInput[] = [];
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
-      if (input.execution?.isChild) { await write(text("child answer after takeover")); return; }
+      if (input.execution?.isChild) { await write(text("child answer after takeover")); return "finished"; }
       turns.push(input);
-      if (turns.length > 1) { await write(text("continued original Turn")); return; }
+      if (turns.length > 1) { await write(text("continued original Turn")); return "finished"; }
       await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
       // The tool request is durable before Pi runs the tool.
       await write(contextStart); await write(call);
@@ -493,7 +507,8 @@ describe("Host-owned delegation through the Session Router", () => {
 
     expect(turns).toHaveLength(2);
     const resumed = turns[1];
-    expect(resumed).toMatchObject({ turnId: originalTurn, agent: { model: "test" }, execution: { thinking: "low", completedModelSteps: 0 } });
+    expect(resumed).toMatchObject({ turnId: originalTurn, agent: { model: "test" }, execution: { thinking: "low" },
+      resume: { completedModelSteps: 0, blockBase: 0 } });
     expect(resumed.history.filter(e => e.type === "agent.context_start")).toHaveLength(1);
     expect(resumed.history.filter(e => e.type === "agent.context_entry")).toEqual([expect.objectContaining({ id: call.id, turnId: originalTurn })]);
     const results = resumed.history.filter(e => e.type === "agent.tool_result");
@@ -505,11 +520,12 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(log.filter(e => e.type === "session.error")).toEqual([]);
     expect(log.filter(e => e.type === "session.turn_completed")).toEqual([expect.objectContaining({ data: expect.objectContaining({ turnId: originalTurn }) })]);
     expect((await h.stores.delegationStore.getExecution("tenant", execution.id))?.status).toBe("completed");
-    expect(h.errors).toEqual([]);
+    // The lost Runner reports its lost claim as it stops; nothing else failed.
+    expect(h.errors).toEqual([expect.any(PendingEventClaimLostError)]);
   });
   it.each(["idle", "recovery_required", "adapter_error", "turn_aborted"])("does not restart a consumed-wait parent after durable %s but before its completion marker", async (boundary) => {
     let parentRuns = 0;
-    const h = await harness({ async *run(input: AdapterInput) { const write = journalWriter(input); parentRuns++; await write(text("unexpected extra model execution")); } });
+    const h = await harness({ async run(input: AdapterInput) { const write = journalWriter(input); parentRuns++; await write(text("unexpected extra model execution")); return "finished"; } });
     const pending = await h.enqueue();
     const claim = (await h.stores.pendingEventStore.claim(h.parent.id, "dead-host", 30000))!;
     const fence = { eventId: pending.id, ownerId: claim.ownerId, generation: claim.generation };

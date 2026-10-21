@@ -14,7 +14,7 @@ import type {
   DelegationExecution,
   SandboxActivity,
 } from "@oma-server/store";
-import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent, presentContextData } from "@oma-server/store";
+import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
@@ -31,14 +31,15 @@ import { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.j
 import type {
   Adapter,
   AdapterInput,
+  AdapterRunResult,
   SessionEvent,
   StreamEvent,
   ContentBlock,
   ToolExecutor,
+  TurnJournalPort,
   UserMessage,
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
-import { isStreamEvent } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
 
@@ -48,40 +49,12 @@ import { TurnJournal, type JournalEvent } from "./turn-journal.js";
  */
 const AGENT_FILE_ORDER = ["IDENTITY", "SOUL", "USER", "MEMORY"] as const;
 
-/** Stream event types that open a new content block within a turn. */
-const STREAM_START_TYPES: ReadonlySet<string> = new Set([
-  "agent.message_stream_start",
-  "agent.thinking_stream_start",
-  "agent.tool_use_input_stream_start",
-]);
-
-/** Complete event types that replace each kind of transient stream block. */
-const COMPLETE_TYPES_BY_STREAM_START: Readonly<Record<string, ReadonlySet<string>>> = {
-  "agent.message_stream_start": new Set(["agent.message"]),
-  "agent.thinking_stream_start": new Set(["agent.thinking"]),
-  "agent.tool_use_input_stream_start": new Set(["agent.tool_use", "agent.mcp_tool_use"]),
-};
-
 const SESSION_INTERRUPTED_MESSAGE = "Session interrupted";
 const SESSION_TERMINATED_MESSAGE = "Session terminated";
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
-const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS = 128;
 
-/**
- * What an interrupted attempt may still write: provider accounting and the
- * native messages it already produced, never a compaction boundary.
- */
-function isInterruptAccounting(event: SessionEvent): boolean {
-  return event.type === "span.model_request_end" ||
-    (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type !== "compaction") ||
-    (event.type === "agent.message" && event.stopReason === "aborted");
-}
-
-interface PendingStreamBlock {
-  blockIndex: number;
-  completeTypes: ReadonlySet<string>;
-  toolUseId?: string;
-}
+/** How an Adapter's run() settled. */
+type AdapterOutcome = { result: AdapterRunResult } | { error: unknown };
 
 interface EquippedSkill {
   id: string;
@@ -98,7 +71,8 @@ interface AttemptWrites {
 
 interface ActiveSessionRun {
   controller: AbortController;
-  terminating: boolean;
+  /** Stops the running Turn attempt, if any, without terminal events. */
+  stopAttempt?: (reason: unknown) => void;
 }
 
 class PendingLeaseLostError extends Error {
@@ -201,15 +175,11 @@ export interface SessionRouterDeps {
   pendingClaimRetryMinMs?: number;
   pendingClaimRetryMaxMs?: number;
   /**
-   * Grace window for an Adapter to report final model usage after a user
-   * interrupt. Content and all other post-interrupt events are discarded.
+   * How long an interrupted Adapter's run() may take to settle. The Router
+   * then revokes the Adapter's journal entry and closes the Turn: what the
+   * Adapter recorded until then is written, anything later is dropped.
    */
   interruptedAdapterDrainTimeoutMs?: number;
-  /**
-   * Second bound on post-interrupt draining, preventing a synchronously noisy
-   * Adapter from starving the timeout timer with an endless event sequence.
-   */
-  interruptedAdapterDrainMaxEvents?: number;
   /** Observe background retry failures without creating unhandled rejections. */
   onDrainError?: (failure: PendingRecoveryFailure) => void;
 }
@@ -251,7 +221,6 @@ export class SessionRouter {
   private readonly pendingClaimRetryMinMs: number;
   private readonly pendingClaimRetryMaxMs: number;
   private readonly interruptedAdapterDrainTimeoutMs: number;
-  private readonly interruptedAdapterDrainMaxEvents: number;
   private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
   private readonly activeSessions = new Map<string, ActiveSessionRun>();
   private readonly settledActivities = new Map<string, SandboxActivity>();
@@ -320,8 +289,6 @@ export class SessionRouter {
     this.pendingClaimRetryMaxMs = deps.pendingClaimRetryMaxMs ?? 5_000;
     this.interruptedAdapterDrainTimeoutMs =
       deps.interruptedAdapterDrainTimeoutMs ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS;
-    this.interruptedAdapterDrainMaxEvents =
-      deps.interruptedAdapterDrainMaxEvents ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS;
     this.onDrainError = deps.onDrainError;
     if (
       this.pendingClaimRenewIntervalMs <= 0 ||
@@ -334,12 +301,6 @@ export class SessionRouter {
       this.interruptedAdapterDrainTimeoutMs <= 0
     ) {
       throw new RangeError("interrupted Adapter drain timeout must be a positive finite number");
-    }
-    if (
-      !Number.isInteger(this.interruptedAdapterDrainMaxEvents) ||
-      this.interruptedAdapterDrainMaxEvents <= 0
-    ) {
-      throw new RangeError("interrupted Adapter drain max events must be a positive integer");
     }
   }
 
@@ -556,14 +517,11 @@ export class SessionRouter {
     // A direct request/recovery trigger supersedes a slower scheduled retry.
     this.clearClaimRetry(sessionId);
 
-    const activeRun: ActiveSessionRun = {
-      controller: new AbortController(),
-      terminating: false,
-    };
+    const activeRun: ActiveSessionRun = { controller: new AbortController() };
     this.activeSessions.set(sessionId, activeRun);
 
     try {
-      await this.drainLoop(sessionId, agentConfig, activeRun.controller.signal);
+      await this.drainLoop(sessionId, agentConfig, activeRun);
     } finally {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
@@ -663,10 +621,9 @@ export class SessionRouter {
   async terminateSession(sessionId: string): Promise<void> {
     const activeRun = this.activeSessions.get(sessionId);
     if (activeRun) {
-      // This mutable flag also covers interrupt→terminate races: AbortSignal's
-      // reason is immutable once aborted, so the later termination must still
-      // revoke the earlier interrupt's accounting-only drain permission.
-      activeRun.terminating = true;
+      // Stopped explicitly: after an Interrupt the signal has already fired,
+      // and the drain it granted must still end at once.
+      activeRun.stopAttempt?.(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       this.clearClaimRetry(sessionId);
       this.claimHeartbeatStops.get(sessionId)?.();
       activeRun.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
@@ -696,7 +653,7 @@ export class SessionRouter {
     if (!session || session.status !== "terminated") return false;
     const active = this.activeSessions.get(sessionId);
     if (active) {
-      active.terminating = true;
+      active.stopAttempt?.(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       active.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       return false; // Wait for actual settlement; abort acceptance is not exit proof.
     }
@@ -867,6 +824,7 @@ export class SessionRouter {
     sessionId: string,
     pendingFence: PendingEventFence,
     attempt: AttemptWrites,
+    onFail: (error: unknown) => void,
   ): TurnJournal {
     return new TurnJournal({
       sessionId,
@@ -898,6 +856,7 @@ export class SessionRouter {
       },
       // The Adapter is handed its port only once the mapping is set.
       fromAdapter: (event) => attempt.fromAdapter!(event),
+      onFail,
     });
   }
 
@@ -1062,11 +1021,39 @@ export class SessionRouter {
     return result.acknowledged;
   }
 
+  /**
+   * Wait for an Adapter's run() to settle. Once the Turn is aborted it gets at
+   * most the drain timeout, and a stopped attempt is not waited for at all;
+   * undefined means the runtime has not settled (yet).
+   */
+  private awaitAdapter(
+    run: Promise<AdapterOutcome>,
+    signal: AbortSignal,
+    stopped: Promise<void>,
+  ): Promise<AdapterOutcome | undefined> {
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (outcome: AdapterOutcome | undefined) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", drain);
+        resolve(outcome);
+      };
+      const drain = () => {
+        timer = setTimeout(() => finish(undefined), this.interruptedAdapterDrainTimeoutMs);
+      };
+      if (signal.aborted) drain();
+      else signal.addEventListener("abort", drain, { once: true });
+      void stopped.then(() => finish(undefined));
+      void run.then(finish);
+    });
+  }
+
   private async drainLoop(
     sessionId: string,
     agentConfig: Agent,
-    signal: AbortSignal,
+    activeRun: ActiveSessionRun,
   ): Promise<void> {
+    const signal = activeRun.controller.signal;
     let lastOwnedTurnId: string | undefined;
     while (!signal.aborted) {
       const claim = await this.claimPendingHead(sessionId);
@@ -1088,11 +1075,13 @@ export class SessionRouter {
         break;
       }
 
-      let leaseLost = false;
+      // Set once the attempt no longer owns the Turn: its lease was lost, a
+      // journal write failed or the Session was terminated. It then writes no
+      // terminal event and leaves its input to the next claim (ADR-0020).
+      let stopped = false;
       let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
       let activitySandbox: SandboxSession | undefined;
       let executionSettled = false;
-      let iterationFailed = false;
       let turnId: string | undefined;
       const turnController = new AbortController();
       const forwardOuterAbort = () => {
@@ -1100,18 +1089,29 @@ export class SessionRouter {
       };
       if (signal.aborted) forwardOuterAbort();
       else signal.addEventListener("abort", forwardOuterAbort, { once: true });
-      const stopHeartbeat = this.startClaimHeartbeat(
-        sessionId,
-        claim,
-        turnController,
-        (error) => {
-          leaseLost = true;
-          this.reportDrainError(sessionId, error);
-        },
-      );
+      let markStopped!: () => void;
+      const attemptStopped = new Promise<void>((resolve) => { markStopped = resolve; });
+      const stopOnFailure = (error: unknown) => {
+        // A write failing after the stop is its consequence, not news.
+        if (stopped) return;
+        this.reportDrainError(sessionId, error);
+        stopAttempt(error);
+      };
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
-      const journal = this.createJournal(sessionId, pendingFence, attemptWrites);
+      const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
+      const stopHeartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
+      // The one stop path of a lost lease, a failed write and termination: the
+      // Adapter loses its write entry and its Turn signal at once.
+      const stopAttempt = (reason: unknown): void => {
+        if (stopped) return;
+        stopped = true;
+        journal.revokeAdapter();
+        stopHeartbeat();
+        turnController.abort(reason);
+        markStopped();
+      };
+      activeRun.stopAttempt = stopAttempt;
 
       try {
 
@@ -1269,7 +1269,7 @@ export class SessionRouter {
       // captured in the same dispatch transaction part of that occurrence.
       // Recovery must therefore use the durable Session snapshot even if the
       // Agent changes after commit but before the pending input is claimed.
-      if (leaseLost) return;
+      if (stopped) return;
 
       // Existing Agents keep a retired runtime (claude-code, codex); they are
       // not migrated. Like the managed MCP refusal below, an unsupported
@@ -1341,7 +1341,7 @@ export class SessionRouter {
       // turn never touches it, so nothing is created. Needs the Session record
       // for its tenant/workspace binding.
       const session = await this.sessionStore.getById(sessionId);
-      if (leaseLost) return;
+      if (stopped) return;
       if (!session) {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
@@ -1360,11 +1360,11 @@ export class SessionRouter {
       let sandbox: SandboxSession | undefined;
       try {
           equippedSkills = await this.equippedSkills(currentAgent);
-          if (leaseLost) return;
+          if (stopped) return;
           sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
           activitySandbox = sandbox;
           await sandbox?.prepare(this.skillProjections(session, equippedSkills));
-          if (leaseLost) return;
+          if (stopped) return;
         } catch (error) {
           const refreshError = {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
@@ -1395,7 +1395,7 @@ export class SessionRouter {
       // adapter is pointed at their in-sandbox `/skills/<skill-name>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
       if (sandbox) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
-      if (leaseLost) return;
+      if (stopped) return;
       const skillPaths = equippedSkills.map(({ descriptor }) => `/skills/${descriptor.name}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
 
@@ -1423,6 +1423,7 @@ export class SessionRouter {
         adapterInput = this.buildAdapterInput(
           sessionId,
           turnId,
+          journal.adapter,
           promotedEvent,
           currentAgent,
           priorEvents,
@@ -1450,12 +1451,16 @@ export class SessionRouter {
           };
         }
         if (resumableWaits.length) {
+          // The resumed wait's Turn continues after what it already committed:
+          // its model steps and its output blocks.
+          const turnEvents = priorEvents.filter((event) => (event.data as { turnId?: string } | null)?.turnId === turnId);
           adapterInput.history = this.adapterHistory(priorEvents);
-          adapterInput.continuation = { toolResults: [] };
-          adapterInput.execution = { ...adapterInput.execution,
-            completedModelSteps: priorEvents.filter((event) => event.type === "span.model_request_start" &&
-              (event.data as { turnId?: string }).turnId === turnId).length };
-          if (waitingConfig?.thinking) adapterInput.execution.thinking = waitingConfig.thinking;
+          adapterInput.resume = {
+            completedModelSteps: turnEvents.filter((event) => event.type === "span.model_request_start").length,
+            blockBase: 1 + Math.max(-1, ...turnEvents.flatMap(event => presentEvent(event))
+              .map((event) => (event.data as { blockIndex?: number } | null)?.blockIndex ?? -1)),
+          };
+          if (waitingConfig?.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: waitingConfig.thinking };
         }
         if (this.delegations) adapterInput.execution = { ...adapterInput.execution,
           onResolved: async (config) => {
@@ -1465,7 +1470,7 @@ export class SessionRouter {
           },
         };
       } catch (error) {
-        if (turnController.signal.aborted && !leaseLost && this.delegations) {
+        if (turnController.signal.aborted && !stopped && this.delegations) {
           await this.delegations.interruptChildren(session, turnId, pendingFence);
           await journal.flush();
           const interruptedEvents = await this.readAllEvents(sessionId);
@@ -1503,70 +1508,10 @@ export class SessionRouter {
         continue;
       }
 
-      // A Turn continued by a later attempt (a resumed delegation wait) keeps
-      // numbering its output blocks after those it already committed.
-      const blockBase = 1 + Math.max(-1, ...priorEvents
-        .filter((event) => (event.data as { turnId?: string } | null)?.turnId === turnId)
-        .flatMap(event => presentEvent(event))
-        .map((event) => (event.data as { blockIndex?: number } | null)?.blockIndex ?? -1));
-      // An Adapter that still streams its events (until #244) has them
-      // numbered here: blockIndex increments on each stream_start, aligning a
-      // turn's deltas to the full Event they roll up into.
-      let blockIndex = blockBase - 1;
       let durableEventIndex = 0;
-      const pendingStreamBlocks: PendingStreamBlock[] = [];
-
-      const alignCompleteEvent = (event: { type: string; toolUseId?: unknown }): { type: string; toolUseId?: unknown; turnId: string; blockIndex?: number } => {
-        const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
-          if (!block.completeTypes.has(event.type)) return false;
-          if (block.toolUseId === undefined) return true;
-          if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") {
-            return false;
-          }
-          return event.toolUseId === block.toolUseId;
-        };
-        // Prefer the latest matching start. A runtime may emit an empty stream
-        // lifecycle with no Complete Event; an older unmatched start must never
-        // steal the next real block's completion.
-        let pendingBlockIndex = -1;
-        for (let i = pendingStreamBlocks.length - 1; i >= 0; i--) {
-          if (matchesCompleteEvent(pendingStreamBlocks[i])) {
-            pendingBlockIndex = i;
-            break;
-          }
-        }
-        const pendingBlock = pendingBlockIndex === -1
-          ? undefined
-          : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
-        return pendingBlock
-          ? { ...event, turnId: turnId!, blockIndex: pendingBlock.blockIndex }
-          : { ...event, turnId: turnId! };
-      };
-
-      const alignStreamed = (event: SessionEvent): SessionEvent => {
-        let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
-        if (event.type === "agent.context_entry" && event.presentation) {
-          const displays = presentContextData(event.type, event);
-          const blocks = event.presentation.blocks.map(block => ({ ...block }));
-          // A native assistant bundles several completions. Match backwards,
-          // preserving the same latest-start rule used for individual events.
-          for (let i = blocks.length - 1; i >= 0; i--) {
-            if (blocks[i].streamIndex !== undefined) {
-              blocks[i].blockIndex = blockBase + blocks[i].streamIndex!;
-              const pending = pendingStreamBlocks.findIndex(block => block.blockIndex === blocks[i].blockIndex);
-              if (pending >= 0) pendingStreamBlocks.splice(pending, 1);
-              continue;
-            }
-            const aligned = alignCompleteEvent({ ...displays[i].data, type: displays[i].type });
-            if (aligned.blockIndex !== undefined) blocks[i].blockIndex = aligned.blockIndex;
-          }
-          alignedEvent = { ...event, turnId: turnId!, presentation: { version: 1, blocks } };
-        }
-        return alignedEvent;
-      };
       // Every Adapter event is stamped with its Turn and Child Session caller
-      // and keyed once, so the journal writes and publishes it once. Events
-      // recorded through the port already carry their final blockIndex.
+      // and keyed once, so the journal writes and publishes it once. The
+      // Adapter has given each its final blockIndex (ADR-0020).
       const durableForms = new Map<string, { event: JournalEvent; key: string }>();
       attemptWrites.fromAdapter = (event) => {
         const known = durableForms.get(event.id);
@@ -1588,307 +1533,56 @@ export class SessionRouter {
         durableForms.set(event.id, durable);
         return durable;
       };
-      // Streamed events reach the journal through the Adapter's revocable port.
-      const recordAdapterEvent = (event: SessionEvent): void => {
-        // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
-        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
-        journal.adapter.record(alignStreamed(event) as Exclude<SessionEvent, StreamEvent>);
-      };
-
-      const activeRunOwnsSignal = () => {
-        const activeRun = this.activeSessions.get(sessionId);
-        return activeRun?.controller.signal === signal && !activeRun.terminating;
-      };
-      const isUserInterruptDrain = () =>
-        !leaseLost &&
-        signal.aborted &&
-        activeRunOwnsSignal() &&
-        signal.reason instanceof DOMException &&
-        signal.reason.name === "AbortError" &&
-        signal.reason.message === SESSION_INTERRUPTED_MESSAGE;
-      // A lost lease or a termination ends the attempt's ownership of the
-      // Turn: the Adapter's entry is revoked at once. After a user Interrupt
-      // it may still write the accounting of what it already produced.
-      const revokeUnlessInterruptDrain = () => {
-        if (turnController.signal.aborted && !isUserInterruptDrain()) journal.revokeAdapter();
-      };
-      turnController.signal.addEventListener("abort", revokeUnlessInterruptDrain, { once: true });
-      // Handed to an Adapter that writes through its port (ADR-0020).
-      adapterInput.journal = {
-        record: (event) => {
-          // terminateSession can follow an Interrupt whose abort already fired.
-          revokeUnlessInterruptDrain();
-          if (!turnController.signal.aborted || isInterruptAccounting(event)) journal.adapter.record(event);
-        },
-        delta: (event, deltaBlockIndex) => {
-          revokeUnlessInterruptDrain();
-          if (!turnController.signal.aborted) journal.adapter.delta(event, deltaBlockIndex);
-        },
-        flush: async () => {
-          revokeUnlessInterruptDrain();
-          if (turnController.signal.aborted && isUserInterruptDrain()) {
-            // interrupt() stops the regular heartbeat. Revalidate and extend
-            // this exact generation before the accounting write; pendingFence
-            // then enforces the same ownership atomically in the store.
-            if (!await this.renewPendingClaim(sessionId, claim)) leaseLost = true;
-            revokeUnlessInterruptDrain();
-          }
-          return journal.adapter.flush();
-        },
-      };
-      adapterInput.blockBase = blockBase;
-
       // The Adapter is a pure translator: it runs directly and routes any tool
       // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
       // There is no separate sandbox orchestrator — the sandbox lives behind the
       // session and is invisible to the router and the adapter alike.
+      if (stopped) return;
       executionSettled = false;
-      const events = adapter.run(adapterInput);
-      const eventIterator = events[Symbol.asyncIterator]();
-
-      try {
-        type IteratorOutcome =
-          | { kind: "next"; result: IteratorResult<SessionEvent> }
-          | { kind: "error"; error: unknown };
-        type IteratorWaitOutcome =
-          | IteratorOutcome
-          | { kind: "aborted" }
-          | { kind: "timeout" };
-
-        let abortObservedAt = turnController.signal.aborted ? Date.now() : undefined;
-        const nextOutcome = (): Promise<IteratorOutcome> => {
-          try {
-            return Promise.resolve(eventIterator.next()).then(
-              (result): IteratorOutcome => ({ kind: "next", result }),
-              (error): IteratorOutcome => ({ kind: "error", error }),
-            );
-          } catch (error) {
-            return Promise.resolve({ kind: "error", error });
-          }
-        };
-        const waitForNextOrAbort = (next: Promise<IteratorOutcome>): Promise<IteratorWaitOutcome> => {
-          if (turnController.signal.aborted) {
-            abortObservedAt ??= Date.now();
-            return Promise.resolve({ kind: "aborted" });
-          }
-          return new Promise<IteratorWaitOutcome>((resolve) => {
-            let settled = false;
-            const finish = (outcome: IteratorWaitOutcome) => {
-              if (settled) return;
-              settled = true;
-              turnController.signal.removeEventListener("abort", onAbort);
-              resolve(outcome);
-            };
-            const onAbort = () => {
-              abortObservedAt ??= Date.now();
-              finish({ kind: "aborted" });
-            };
-            turnController.signal.addEventListener("abort", onAbort, { once: true });
-            void next.then(finish);
-          });
-        };
-        const waitForNextDuringDrain = (
-          next: Promise<IteratorOutcome>,
-        ): Promise<IteratorWaitOutcome> => {
-          const remainingMs = this.interruptedAdapterDrainTimeoutMs -
-            (Date.now() - (abortObservedAt ?? Date.now()));
-          if (remainingMs <= 0) return Promise.resolve({ kind: "timeout" });
-          return new Promise<IteratorWaitOutcome>((resolve) => {
-            let settled = false;
-            const finish = (outcome: IteratorWaitOutcome) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeout);
-              resolve(outcome);
-            };
-            const timeout = setTimeout(() => finish({ kind: "timeout" }), remainingMs);
-            void next.then(finish);
-          });
-        };
-
-        let pendingNext: Promise<IteratorOutcome> | undefined;
-        let postAbortEventsSeen = 0;
-        let abandonIterator = false;
-        try {
-          while (true) {
-            pendingNext ??= nextOutcome();
-
-            let outcome: IteratorWaitOutcome;
-            if (!turnController.signal.aborted) {
-              outcome = await waitForNextOrAbort(pendingNext);
-              if (outcome.kind === "aborted") {
-                // Keep the already-issued next() in flight. A user interrupt may
-                // let it resolve with final provider accounting; termination and
-                // lease loss are not allowed to persist anything from this run.
-                if (!isUserInterruptDrain()) {
-                  abandonIterator = true;
-                  break;
-                }
-                continue;
-              }
-            } else {
-              if (!isUserInterruptDrain()) {
-                abandonIterator = true;
-                break;
-              }
-              if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
-                abandonIterator = true;
-                break;
-              }
-              outcome = await waitForNextDuringDrain(pendingNext);
-              if (outcome.kind === "timeout") {
-                abandonIterator = true;
-                break;
-              }
-            }
-
-            pendingNext = undefined;
-            if (outcome.kind === "error") {
-              executionSettled = true; // Runtime rejected; remote exit evidence is checked separately.
-              throw outcome.error;
-            }
-            if (outcome.kind !== "next" || outcome.result.done) {
-              executionSettled = outcome.kind === 'next' && Boolean(outcome.result.done);
-              break;
-            }
-            const event = outcome.result.value;
-
-            if (turnController.signal.aborted) {
-              if (!isUserInterruptDrain()) {
-                abandonIterator = true;
-                break;
-              }
-              postAbortEventsSeen++;
-              if (isInterruptAccounting(event)) {
-                // interrupt() stops the regular heartbeat. Revalidate and extend
-                // this exact generation immediately before the accounting write;
-                // pendingFence then enforces the same ownership atomically in PG.
-                const accountingLease = await this.renewPendingClaim(sessionId, claim);
-                if (!accountingLease) {
-                  leaseLost = true;
-                  turnController.abort(new PendingLeaseLostError());
-                  abandonIterator = true;
-                  break;
-                }
-                // terminateSession may race the renewal after a prior interrupt.
-                // Its mutable active-run flag revokes drain permission even though
-                // an already-aborted signal's original reason cannot be replaced.
-                if (!isUserInterruptDrain()) {
-                  abandonIterator = true;
-                  break;
-                }
-                recordAdapterEvent(event);
-                await journal.adapter.flush();
-              }
-              if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
-                abandonIterator = true;
-                break;
-              }
-              continue;
-            }
-
-            if (isStreamEvent(event)) {
-              if (STREAM_START_TYPES.has(event.type)) {
-                blockIndex++;
-                pendingStreamBlocks.push({
-                  blockIndex,
-                  completeTypes: COMPLETE_TYPES_BY_STREAM_START[event.type],
-                  toolUseId:
-                    event.type === "agent.tool_use_input_stream_start"
-                      ? event.toolUseId
-                      : undefined,
-                });
-              }
-              const currentBlock = blockIndex < 0 ? 0 : blockIndex;
-              journal.adapter.delta(event as StreamEvent, currentBlock);
-            } else {
-              // Each Complete Event is durable before the next one is read.
-              recordAdapterEvent(event);
-              await journal.adapter.flush();
-            }
-          }
-        } catch (error) {
-          if (!executionSettled) {
-            // A fenced write can fail before the heartbeat observes revocation.
-            // Stop the runtime and observe its exit just as for an explicit abort.
-            iterationFailed = !turnController.signal.aborted;
-            abandonIterator = true;
-            turnController.abort(error);
-          }
-          throw error;
-        } finally {
-          // However the attempt ends, the Adapter loses its write entry before
-          // any closing event: what it recorded so far is written at the next
-          // flush, anything later is dropped (ADR-0020).
-          journal.revokeAdapter();
-          if (abandonIterator) {
-            // AsyncIterator.return() is advisory: a non-compliant Adapter may
-            // leave it queued behind the same hung next(). Never await it, and
-            // absorb either a synchronous throw or eventual rejection.
-            const closeAbandonedIterator = () => {
-              try {
-                const closeIterator = eventIterator.return;
-                if (closeIterator) {
-                  void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
-                }
-              } catch {
-                // Best-effort closure only; Router completion remains bounded.
-              }
-            };
-            if (sandboxActivity) {
-              const activity = sandboxActivity;
-              // Pi can emit final accounting before its natural end. Observe
-              // that end without publishing revoked output or blocking cleanup.
-              // Calling return() first would conceal the settlement evidence.
-              void (async () => {
-                let next = pendingNext;
-                for (let seen = 0; seen < this.interruptedAdapterDrainMaxEvents; seen++) {
-                  const outcome = await (next ?? nextOutcome());
-                  next = undefined;
-                  if (outcome.kind === 'error' || outcome.result.done) {
-                    if (activitySandbox?.executionSettled?.() !== false) {
-                      await this.finishSettledActivity(activity);
-                    }
-                    return;
-                  }
-                }
-                // Unknown execution does not trigger idle; the platform retains its finite deadline.
-              })().catch(error => this.reportDrainError(sessionId, error))
-                .finally(closeAbandonedIterator);
-            } else {
-              closeAbandonedIterator();
-            }
-          }
-        }
-        // An Adapter writing through its port flushes only at its own
-        // boundaries: what it recorded last becomes durable as run() ends.
-        if (executionSettled && !leaseLost) await journal.flush();
-      } catch (err) {
-        if (leaseLost || err instanceof PendingEventClaimLostError) {
-          if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-          }
-          return;
-        }
-        if (turnController.signal.aborted && !iterationFailed) {
-          if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-          }
-        } else {
-          // If the journal has failed, this flush rejects with the original
-          // failure and the attempt stops without a terminal event, as on a
-          // lost lease.
-          journal.record({ type: "session.error", data: { error: { message: String(err), code: "adapter_error" } } },
-            this.turnKey(pendingEvent.id, "adapter_error"));
-          await journal.flush();
-        }
+      const run = (async () => adapter.run(adapterInput))().then(
+        (result): AdapterOutcome => ({ result }),
+        (error: unknown): AdapterOutcome => ({ error }),
+      );
+      const outcome = await this.awaitAdapter(run, turnController.signal, attemptStopped);
+      // However the attempt ends, the Adapter loses its write entry before any
+      // closing event: what it recorded so far is written by the next flush,
+      // anything later is dropped (ADR-0020).
+      journal.revokeAdapter();
+      if (outcome) {
+        executionSettled = true;
+      } else if (sandboxActivity) {
+        // An expired lease or a bounded Interrupt wait is not proof that the
+        // runtime ended. Observe its natural end without blocking the Session.
+        const activity = sandboxActivity;
+        void run.then(async () => {
+          if (activitySandbox?.executionSettled?.() !== false) await this.finishSettledActivity(activity);
+        }).catch((error) => this.reportDrainError(sessionId, error));
       }
-
-      if (leaseLost) return;
+      if (stopped) {
+        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
+        return;
+      }
+      await journal.flush();
+      // An Adapter stops before the Turn finishes only at the Host's request
+      // (#254). The Turn is left to a later attempt, as on a lost lease.
+      if (outcome && "result" in outcome && outcome.result === "stopped") {
+        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
+        return;
+      }
+      const interrupted = turnController.signal.aborted;
+      // A rejection after an abort is how the abort ended the run, not a failure.
+      const failure = outcome && "error" in outcome && !interrupted ? outcome : undefined;
+      if (failure) {
+        // Signal anything the failed runtime left behind, as an abort would.
+        turnController.abort(failure.error);
+        journal.record({ type: "session.error", data: { error: { message: String(failure.error), code: "adapter_error" } } },
+          this.turnKey(pendingEvent.id, "adapter_error"));
+        await journal.flush();
+      }
 
       // A temporary Adapter return cannot finish a Turn that still owns a
       // durable wait. Reclaim the same input and continue from the event log.
-      if (!turnController.signal.aborted && this.delegationStore &&
+      if (!interrupted && !failure && this.delegationStore &&
         (await this.delegationStore.listWaits(sessionId, pendingEvent.id)).some((wait) => wait.status === "waiting")) {
         await journal.flush();
         await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
@@ -1901,10 +1595,9 @@ export class SessionRouter {
       // those orphans with the same repair the restart path uses, and record the
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
-      if (turnController.signal.aborted && !iterationFailed) {
+      if (interrupted) {
         // The repair reads this attempt's output from the log, including what
         // the Adapter recorded before it lost its write entry.
-        await journal.flush();
         await this.delegations?.interruptChildren(session, turnId, pendingFence);
         this.repairDanglingToolUses(journal, pendingEvent.id, turnId,
           (await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq));
@@ -1916,8 +1609,7 @@ export class SessionRouter {
       // Fence the availability check and its optional durable diagnostic.
       const storageCheckLease = await this.renewPendingClaim(sessionId, claim);
       if (!storageCheckLease) {
-        leaseLost = true;
-        turnController.abort(new PendingLeaseLostError());
+        stopAttempt(new PendingLeaseLostError());
         if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
         return;
       }
@@ -1930,15 +1622,13 @@ export class SessionRouter {
       // Fence again before changing global Turn state after the storage check.
       const completionLease = await this.renewPendingClaim(sessionId, claim);
       if (!completionLease) {
-        leaseLost = true;
-        turnController.abort(new PendingLeaseLostError());
+        stopAttempt(new PendingLeaseLostError());
         return;
       }
 
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
-      // the turn idle. This runs on normal completion and on an in-turn
-      // interrupt (the for-loop `break` falls through to here).
+      // the turn idle. This runs on normal completion and after an Interrupt.
       if (this.turnStreamStore) {
         await this.turnStreamStore.reclaim(sessionId, turnId);
         await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
@@ -1952,7 +1642,7 @@ export class SessionRouter {
         pendingFence,
       )) return;
       } catch (error) {
-        if (leaseLost || error instanceof PendingEventClaimLostError) {
+        if (stopped || error instanceof PendingEventClaimLostError) {
           if (turnId && this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
           }
@@ -1960,8 +1650,8 @@ export class SessionRouter {
         }
         throw error;
       } finally {
-        // A completed history marker, expired lease, bounded Interrupt drain or
-        // advisory iterator.return() is not proof of actual runtime settlement.
+        // A completed history marker, expired lease or bounded Interrupt wait
+        // is not proof of actual runtime settlement.
         try {
           if (sandboxActivity && executionSettled &&
             activitySandbox?.executionSettled?.() !== false) {
@@ -1972,6 +1662,7 @@ export class SessionRouter {
         } finally {
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);
+          if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
         }
       }
     }
@@ -2021,6 +1712,7 @@ export class SessionRouter {
   private buildAdapterInput(
     sessionId: string,
     turnId: string,
+    journal: TurnJournalPort,
     promotedEvent: StoredEvent,
     agentConfig: Agent,
     priorEvents: StoredEvent[],
@@ -2054,6 +1746,7 @@ export class SessionRouter {
     return {
       sessionId,
       turnId,
+      journal,
       inputEventId: `${sessionId}:${promotedEvent.seq}`,
       message,
       agent: {

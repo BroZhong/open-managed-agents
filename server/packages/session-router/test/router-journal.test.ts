@@ -4,7 +4,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
-import { presentEvent, type StoredEvent } from "@oma-server/store";
+import { PendingEventClaimLostError, presentEvent, type StoredEvent } from "@oma-server/store";
 import type { Adapter, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
@@ -17,6 +17,10 @@ const contextEntry = (id: string) => event("agent.context_entry", { sdk: "pi@0.8
   presentation: { version: 1, blocks: [{ type: "agent.message", index: 0 }] } });
 type DurableEvent = Exclude<SessionEvent, StreamEvent>;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const aborted = (signal: AbortSignal) => new Promise<void>((resolve) => {
+  if (signal.aborted) resolve();
+  else signal.addEventListener("abort", () => resolve(), { once: true });
+});
 async function until(check: () => Promise<boolean>, timeout = 4000) {
   const start = Date.now();
   while (!await check()) { if (Date.now() - start > timeout) throw new Error("Timed out"); await sleep(10); }
@@ -95,10 +99,11 @@ function expectPublishedInOrder(frames: Frame[], log: StoredEvent[], afterSeq = 
 describe("SessionRouter writes each Turn attempt through one TurnJournal", () => {
   it("writes and publishes an event that the Adapter records twice once", async () => {
     const entry = contextEntry("assistant1");
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       await write(entry);
       await write(entry);
+      return "finished";
     } });
     await h.enqueue();
     await h.router.handleNewEvent(h.session.id, h.agent);
@@ -111,7 +116,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
 
   it("publishes every durable event of an attempt once and in seq order, whichever flush wrote it", async () => {
     const entry = contextEntry("assistant1");
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       input.journal!.record(entry as DurableEvent);
       const barrier = input.journal!.flush();
@@ -120,6 +125,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       await barrier;
       await write(entry);
       await write(text("done"));
+      return "finished";
     } });
     // A slow commit returns after its seq is allocated, as PG would.
     h.appends.mockImplementation(async (sessionId, input) => {
@@ -137,36 +143,54 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     expectPublishedInOrder(h.frames, log);
   });
 
-  it("stops without terminal events when a write fails, leaving the input to the next claim", async () => {
-    const h = await harness({ async *run(input) {
+  it.each(["a journal write fails", "the lease is lost"] as const)("stops without terminal events when %s, leaving the input to the next claim", async (cause) => {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
       await write(text("committed"));
-      // Pi reports a failed barrier with its own sticky error.
-      await write(contextEntry("lost")).catch(() => { throw new Error("OMA commit barrier failed"); });
-      await write(text("never written"));
+      // The Adapter ignores its failed write: the Router stops the attempt itself.
+      if (cause === "a journal write fails") await write(contextEntry("lost")).catch(() => {});
+      await aborted(input.signal!);
+      await write(text("never written")).catch(() => {});
+      return "finished";
     } });
-    let failures = 1;
-    h.appends.mockImplementation(async (sessionId, input) => {
-      if (input.type === "agent.context_entry" && failures-- > 0) throw new Error("connection reset");
-      return h.append(sessionId, input);
-    });
+    if (cause === "a journal write fails") {
+      let failures = 1;
+      h.appends.mockImplementation(async (sessionId, input) => {
+        if (input.type === "agent.context_entry" && failures-- > 0) throw new Error("connection reset");
+        return h.append(sessionId, input);
+      });
+    }
+    // Only the first claim's heartbeat finds its lease gone.
+    const firstRenewals: number[] = [];
+    const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) => {
+      if (claim.generation !== 1) return renew(sessionId, eventId, claim, leaseMs);
+      firstRenewals.push(Date.now());
+      return cause === "the lease is lost" ? false : renew(sessionId, eventId, claim, leaseMs);
+    };
     const router = h.makeRouter({ pendingClaimLeaseMs: 60, pendingClaimRenewIntervalMs: 20 });
     await h.enqueue();
-    await expect(router.handleNewEvent(h.session.id, h.agent)).rejects.toThrow("connection reset");
+    await router.handleNewEvent(h.session.id, h.agent);
 
     expect((await h.log()).map(stored => stored.type)).toEqual(["user.message", "session.status_running", "agent.message"]);
     expect(await h.stores.pendingEventStore.count(h.session.id)).toBe(1);
+    expect(h.errors).toEqual([expect.objectContaining({ message: cause === "the lease is lost" ? "Pending event lease lost" : "connection reset" })]);
+    // The heartbeat stopped with the attempt.
+    const renewals = firstRenewals.length;
+    await sleep(60);
+    expect(firstRenewals).toHaveLength(renewals);
     // The next claim ends the Turn by the recovery rules, never rerunning it.
     await until(async () => await h.stores.pendingEventStore.count(h.session.id) === 0);
     const recovered = await h.log();
     expect(recovered.filter(stored => stored.type === "agent.message")).toHaveLength(1);
     expect(recovered.find(stored => stored.type === "session.error")?.data).toMatchObject({ error: { code: "recovery_partial_turn_aborted" } });
     expect(recovered.filter(stored => stored.type === "session.turn_completed")).toHaveLength(1);
+    expect(recovered.some(stored => JSON.stringify(stored.data).includes("never written"))).toBe(false);
   });
 
   describe("writes that used to be appended without being published", () => {
     it("publishes the recovery_required error of a Child execution its lost owner left running", async () => {
-      const h = await harness({ async *run() { throw new Error("must not run"); } });
+      const h = await harness({ async run() { throw new Error("must not run"); } });
       const parent = await h.deadClaim();
       const execution = await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.session.id,
         callerTurnId: parent.turnId, callerToolUseId: "call", prompt: "child", mode: "sync", parentModel: "test",
@@ -188,7 +212,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     });
 
     it("publishes the error that ends a resumed wait whose sibling tool has an uncertain outcome", async () => {
-      const h = await harness({ async *run() { throw new Error("must not run"); } }, { sandboxed: true });
+      const h = await harness({ async run() { throw new Error("must not run"); } }, { sandboxed: true });
       const parent = await h.deadClaim();
       await h.append(h.session.id, { type: "agent.tool_use", data: { ...event("agent.tool_use", { toolUseId: "ordinary", name: "bash", input: {} }), turnId: parent.turnId },
         sessionThreadId: "sthr_primary", pendingFence: parent.fence });
@@ -214,7 +238,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     });
 
     it("publishes turn_aborted when an Interrupt stops a resumed wait before the Adapter starts", async () => {
-      const h = await harness({ async *run() { throw new Error("must not run"); } }, { sandboxed: true });
+      const h = await harness({ async run() { throw new Error("must not run"); } }, { sandboxed: true });
       const parent = await h.deadClaim();
       await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.session.id,
         callerTurnId: parent.turnId, callerToolUseId: "wait", prompt: "child", mode: "sync", parentModel: "test",
@@ -242,13 +266,14 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
 
   it("records a wait's waiting transition once when a replacement Runner resumes the wait", async () => {
     let parentRuns = 0;
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       const write = journalWriter(input);
-      if (input.execution?.isChild) { await write(text("child done")); return; }
-      if (++parentRuns > 1) { await write(text("continued")); return; }
+      if (input.execution?.isChild) { await write(text("child done")); return "finished"; }
+      if (++parentRuns > 1) { await write(text("continued")); return "finished"; }
       await write(event("agent.tool_use", { toolUseId: "sync-call", name: "Agent", input: { prompt: "child" } }));
       await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
       await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "sync-call" });
+      return "finished";
     } }, { sandboxed: true });
     // The first Runner loses its lease while the parent waits on a child it never starts.
     let lostOwner: string | undefined;
@@ -291,13 +316,17 @@ describe("an Adapter that writes through its journal entry", () => {
   function interrupted(write: (journal: TurnJournalPort) => Promise<void>) {
     let started!: () => void;
     const running = new Promise<void>((resolve) => { started = resolve; });
+    let settled!: () => void;
+    const settlement = new Promise<void>((resolve) => { settled = resolve; });
     const failures: string[] = [];
-    const adapter: Adapter = { async *run(input) {
+    const adapter: Adapter = { async run(input) {
       started();
-      await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
-      await write(input.journal!).catch((error: Error) => { failures.push(error.message); });
+      await aborted(input.signal!);
+      await write(input.journal).catch((error: Error) => { failures.push(error.message); });
+      settled();
+      return "finished";
     } };
-    return { adapter, running, failures };
+    return { adapter, running, settlement, failures };
   }
 
   it("keeps the Adapter's blockIndex and writes what it recorded last when run() ends", async () => {
@@ -305,13 +334,15 @@ describe("an Adapter that writes through its journal entry", () => {
     if (entry.type === "agent.context_entry") entry.presentation = { version: 1, blocks: [{ type: "agent.message", index: 0, blockIndex: 0 }] };
     const last = usage();
     const deltas: Array<{ blockIndex?: number; turnId?: string }> = [];
-    const h = await harness({ async *run(input) {
-      expect(input.blockBase).toBe(0);
-      input.journal!.delta(event("agent.message_stream_start") as StreamEvent, input.blockBase!);
+    const h = await harness({ async run(input) {
+      // A new Turn numbers its blocks from 0.
+      expect(input.resume).toBeUndefined();
+      input.journal.delta(event("agent.message_stream_start") as StreamEvent, 0);
       input.journal!.record(entry as DurableEvent);
       await input.journal!.flush();
       // Recorded after the Adapter's last flush.
       input.journal!.record(last as DurableEvent);
+      return "finished";
     } });
     const publishChunk = h.hub.publishChunk.bind(h.hub);
     h.hub.publishChunk = (sessionId, chunk) => { deltas.push({ blockIndex: chunk.blockIndex, turnId: chunk.turnId }); publishChunk(sessionId, chunk); };
@@ -329,61 +360,107 @@ describe("an Adapter that writes through its journal entry", () => {
     expectPublishedInOrder(h.frames, log);
   });
 
-  it("renews the claim before an interrupted Adapter's flush and writes only its accounting", async () => {
-    const aborted = contextEntry("aborted");
+  it("writes what an interrupted Adapter records until run() settles, before turn_aborted", async () => {
     const { adapter, running } = interrupted(async journal => {
-      journal.record(aborted as DurableEvent);
+      // What Pi records as an Interrupt settles: the cut-short message and its accounting.
+      journal.record(contextEntry("aborted") as DurableEvent);
       journal.record(usage() as DurableEvent);
       journal.record(event("agent.context_usage", { turnId: "t", model: "test", contextWindow: null, tokens: null, source: "unknown" }) as DurableEvent);
-      await journal.flush();
     });
     const h = await harness(adapter);
-    let interruptRequested = false;
-    const writes: string[] = [];
-    const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
-    h.stores.pendingEventStore.renewClaim = async (...args) => { if (interruptRequested) writes.push("renew"); return renew(...args); };
-    h.appends.mockImplementation(async (sessionId, input) => { writes.push(input.type); return h.append(sessionId, input); });
     await h.enqueue();
     const processing = h.router.handleNewEvent(h.session.id, h.agent);
     await running;
-    interruptRequested = true;
     h.router.interrupt(h.session.id);
     await processing;
-    const types = (await h.log()).map(stored => stored.type);
-    // The regular heartbeat stopped at the Interrupt; the accounting write renews first.
-    expect(writes.indexOf("renew")).toBeGreaterThanOrEqual(0);
-    expect(writes.indexOf("renew")).toBeLessThan(writes.indexOf("span.model_request_end"));
-    expect(types).toEqual(expect.arrayContaining(["agent.context_entry", "span.model_request_end", "session.turn_aborted"]));
-    expect(types).not.toContain("agent.context_usage");
-    expect(types.indexOf("span.model_request_end")).toBeLessThan(types.indexOf("session.turn_aborted"));
+    const log = await h.log();
+    expect(log.map(stored => stored.type)).toEqual(["user.message", "session.status_running", "agent.context_entry",
+      "span.model_request_end", "agent.context_usage", "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
+    expectPublishedInOrder(h.frames, log);
   });
 
-  it("writes nothing more from an interrupted Adapter once its renewed lease is lost", async () => {
-    const { adapter, running, failures } = interrupted(async journal => {
-      journal.record(usage() as DurableEvent);
-      await journal.flush();
-    });
-    const h = await harness(adapter);
-    let lost = false;
-    const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
-    h.stores.pendingEventStore.renewClaim = async (...args) => lost ? false : renew(...args);
+  it("writes nothing from an interrupted Adapter after turn_aborted when cancelling its tool outlasts the drain timeout", async () => {
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    let settled!: () => void;
+    const settlement = new Promise<void>((resolve) => { settled = resolve; });
+    const late: string[] = [];
+    const h = await harness({ async run(input) {
+      input.journal.record(event("agent.tool_use", { toolUseId: "slow", name: "bash", input: { command: "sleep 600" } }) as DurableEvent);
+      await input.journal.flush();
+      started();
+      await aborted(input.signal!);
+      // At once: the message the Interrupt cut short and its usage.
+      input.journal.record(text("half an answer") as DurableEvent);
+      input.journal.record(usage() as DurableEvent);
+      // Cancelling the running tool takes longer than the Router waits.
+      await sleep(80);
+      input.journal.delta(event("agent.message_stream_start") as StreamEvent, 2);
+      input.journal.record(event("agent.tool_result", { toolUseId: "slow", content: [{ type: "text", text: "cancelled late" }], isError: true }) as DurableEvent);
+      await input.journal.flush().catch((error: Error) => { late.push(error.message); });
+      settled();
+      return "finished";
+    } });
+    const deltas: unknown[] = [];
+    const publishChunk = h.hub.publishChunk.bind(h.hub);
+    h.hub.publishChunk = (sessionId, chunk) => { deltas.push(chunk); publishChunk(sessionId, chunk); };
+    const router = h.makeRouter({ interruptedAdapterDrainTimeoutMs: 20 });
     await h.enqueue();
-    const processing = h.router.handleNewEvent(h.session.id, h.agent);
+    const processing = router.handleNewEvent(h.session.id, h.agent);
     await running;
-    lost = true;
-    h.router.interrupt(h.session.id);
+    router.interrupt(h.session.id);
     await processing;
+    const closed = await h.log();
+    expect(closed.map(stored => stored.type)).toEqual(["user.message", "session.status_running", "agent.tool_use",
+      "agent.message", "span.model_request_end", "agent.tool_result", "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
+    // The dangling call got the Router's repair, not the Adapter's late result.
+    expect(closed.find(stored => stored.type === "agent.tool_result")?.data).toMatchObject({ toolUseId: "slow", id: expect.stringMatching(/^recovery_/) });
+
+    await settlement;
+    await sleep(10);
+    expect(late).toEqual(["Turn journal write entry revoked"]);
+    expect(await h.log()).toEqual(closed);
+    expectPublishedInOrder(h.frames, closed);
+    expect(deltas).toEqual([]);
+  });
+
+  it("stops without terminal events when an interrupted Adapter's write finds the lease lost", async () => {
+    let runs = 0;
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    const late: string[] = [];
+    const h = await harness({ async run(input) {
+      if (++runs > 1) { await journalWriter(input)(text("rerun")); return "finished"; }
+      started();
+      await aborted(input.signal!);
+      // The heartbeat stopped at the Interrupt, so the claim expires meanwhile.
+      await sleep(100);
+      input.journal.record(usage() as DurableEvent);
+      await input.journal.flush().catch((error: Error) => { late.push(error.name); });
+      return "finished";
+    } });
+    const router = h.makeRouter({ pendingClaimLeaseMs: 60, pendingClaimRenewIntervalMs: 20, interruptedAdapterDrainTimeoutMs: 1000 });
+    await h.enqueue();
+    const processing = router.handleNewEvent(h.session.id, h.agent);
+    await running;
+    router.interrupt(h.session.id);
+    await processing;
+    expect(late).toEqual(["PendingEventClaimLostError"]);
+    expect(h.errors).toEqual([expect.any(PendingEventClaimLostError)]);
+    expect((await h.log()).map(stored => stored.type)).toEqual(["user.message", "session.status_running"]);
+    // The Interrupt was local, so the next claim reruns the Turn that committed nothing.
+    await until(async () => await h.stores.pendingEventStore.count(h.session.id) === 0);
     const types = (await h.log()).map(stored => stored.type);
-    expect(failures).toEqual(["Turn journal write entry revoked"]);
     expect(types).not.toContain("span.model_request_end");
     expect(types).not.toContain("session.turn_aborted");
+    expect(types.filter(type => type === "session.turn_completed")).toHaveLength(1);
   });
 
   it("revokes the entry at once when the Session is terminated, even after an Interrupt", async () => {
     let terminated!: () => void;
     const termination = new Promise<void>((resolve) => { terminated = resolve; });
     const recorded: string[] = [];
-    const { adapter, running, failures } = interrupted(async journal => {
+    const { adapter, running, settlement, failures } = interrupted(async journal => {
       await termination;
       journal.record(usage() as DurableEvent);
       recorded.push("usage");
@@ -397,7 +474,9 @@ describe("an Adapter that writes through its journal entry", () => {
     await h.stores.sessionStore.terminate(h.session.id);
     await h.router.terminateSession(h.session.id);
     terminated();
+    // A stopped attempt does not wait for its Adapter.
     await processing;
+    await settlement;
     expect(recorded).toEqual(["usage"]);
     expect(failures).toEqual(["Turn journal write entry revoked"]);
     expect((await h.log()).map(stored => stored.type)).not.toContain("span.model_request_end");
@@ -428,18 +507,19 @@ describe("Deltas of a Turn attempt", () => {
     let streamed!: () => void;
     let finish!: () => void;
     const finished = new Promise<void>((resolve) => { finish = resolve; });
-    const h = await harness({ async *run(input) {
+    const h = await harness({ async run(input) {
       turnIds.push(input.turnId);
-      input.journal!.delta(event("agent.message_stream_start") as StreamEvent, input.blockBase!);
-      input.journal!.delta(event("agent.message_chunk", { text: `attempt ${turnIds.length}` }) as StreamEvent, input.blockBase!);
+      input.journal.delta(event("agent.message_stream_start") as StreamEvent, 0);
+      input.journal.delta(event("agent.message_chunk", { text: `attempt ${turnIds.length}` }) as StreamEvent, 0);
       streamed();
       // The first attempt is lost before it commits anything, so the input is safely rerun.
       if (turnIds.length === 1) {
         await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
-        return;
+        return "finished";
       }
       await finished;
       input.journal!.record(text("done") as DurableEvent);
+      return "finished";
     } });
     const live = watchDeltas(h.hub, h.session.id);
     // Attempts may share the Turn's stream, so each check reads only what is new since the last.
