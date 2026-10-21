@@ -3,8 +3,8 @@
  * issues how many SQL statements, as a function of active Turns, idle
  * Sessions and Runners. Runs the production Runner wiring on store-memory in
  * fake time at the real defaults (1:1 virtual time: 30 s lease, 10 s heartbeat
- * tick, 100 ms–5 s claim retry, 5 s pending scan, 15 s Loop scan, 200 ms
- * delegation poll) and converts every store call into the statements its
+ * tick, 100 ms–5 s claim retry, 5 s pending scan, 15 s Loop scan, 2 s
+ * delegation fallback poll) and converts every store call into the statements its
  * PostgreSQL implementation issues (db-load/pg-statements.ts).
  *
  * The printed tables feed docs/verification/db-load-multi-runner-2026-10-22.md.
@@ -165,7 +165,7 @@ describe("database load of N Runners", () => {
     table("Concurrent Turns: per-unit costs", summary);
   }, 120_000);
 
-  it("a synchronous delegation wait polls and wakes every Runner five times a second", async () => {
+  it("a synchronous delegation wait reads its execution on the child's completion hint and a 2 s fallback poll", async () => {
     const parents = 4;
     const child: TurnShape = { steps: 3, modelMs: 3_000, toolMs: 25_000, sandboxOpsPerTool: 2 };
     const shape: TurnShape = { steps: 2, modelMs: 3_000, toolMs: 25_000, sandboxOpsPerTool: 2, delegateAtStep: 0, child };
@@ -207,8 +207,9 @@ describe("database load of N Runners", () => {
       const delegationScans = seqScans(calls.filter((call) => !["dispatch-scan", "loop-scan", "cleanup-sweep"].includes(call.source)));
       table(`Whole-table scans per delegation (parent + child Turn), ${runners} Runner(s)`,
         [...delegationScans].map(([name, count]) => ({ table: name, "per delegation": round(count / parents, 1) })));
-      // Tripwire: today ≈31/s poll plus ≈35/s fan-out per other Runner, per waiting parent.
-      expect(row["poll /s per waiting parent"] + row["wake fan-out /s per waiting parent"]).toBeLessThan(2 * (35 + 35 * (runners - 1)));
+      // Tripwire: ≈1.7/s per waiting parent, independent of the Runner count. A
+      // 200 ms poll with a wake per poll cost 31/s plus 35/s per other Runner.
+      expect(row["poll /s per waiting parent"] + row["wake fan-out /s per waiting parent"]).toBeLessThan(5);
       await fleet.stop();
     }
     table("Synchronous delegation: per waiting parent", summary);

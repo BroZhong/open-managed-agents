@@ -7,7 +7,8 @@ cutover is a separate operation. Extends ADR-0007, ADR-0010 and ADR-0016.
 ADR-0019 supersedes the original ADR-0017-based Sandbox lifetime portion.
 #234 amends how a running Turn's owner learns of an Interrupt: from its claim
 renewal every renew interval, and at once on a `check` hint (below). It also
-stops Runners from contending for input another Runner owns.
+stops Runners from contending for input another Runner owns, and a synchronous
+delegation wait from polling.
 
 ## Decision
 
@@ -56,8 +57,12 @@ another Runner's live claim holds. A wake still makes every Runner try once. A
 lost owner's input is listed again when its lease expires, so another Runner
 takes it over within the lease plus one scan (35 s).
 
-Delegation wakes use the same signals; synchronous waits also poll the durable
-execution record. Both modes retain ADR-0010's ownership, model, budget and
+Delegation wakes use the same signals. A synchronous wait wakes its child once,
+when the wait starts or a takeover resumes it. The child's Runner sends the
+parent a `check` when the execution ends, and the parent's owner reads the
+execution at once; a 2 s poll of the durable execution record covers a lost
+hint. The wait does not poll ownership: a lost lease aborts the Turn, which ends
+the wait. Both modes retain ADR-0010's ownership, model, budget and
 result-consumption rules.
 
 An API subscribes before replay, then follows the durable sequence cursor.

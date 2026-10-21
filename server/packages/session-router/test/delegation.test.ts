@@ -5,7 +5,7 @@ import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
-import { SessionRouter } from "../src/session-router.js";
+import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
 import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
 
@@ -30,7 +30,7 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
   const errors: unknown[] = [];
   const hubs: InProcessEventStreamHub[] = [];
   const createHub = () => { const hub = new InProcessEventStreamHub(); hubs.push(hub); return hub; };
-  const makeRouter = () => new SessionRouter({
+  const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: createHub(), resolveAdapter: () => adapter,
     sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox, provisionSources: {} }),
     workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
@@ -39,6 +39,7 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
     pendingClaimRenewIntervalMs: options.leaseMs ? Math.floor(options.leaseMs / 3) : 1000,
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
     onDrainError: ({ error }) => errors.push(error),
+    ...deps,
   });
   const router = makeRouter();
   const enqueue = async (message = "start") => stores.pendingEventStore.enqueue(parent.id, {
@@ -328,6 +329,69 @@ describe("Host-owned delegation through the Session Router", () => {
     await until(async () => childAbortedAt > 0);
     expect(childAbortedAt - terminatedAt).toBeLessThan(500);
     expect(await h.router.waitForIdle(4000)).toBe(true);
+  });
+
+  describe("a synchronous wait", () => {
+    function waitingParent() {
+      const childGate = gate(); let resultAt = 0;
+      const adapter: Adapter = { async run(input) {
+        const write = journalWriter(input);
+        if (input.execution?.isChild) { await childGate.promise; await write(text("child answer")); return "finished"; }
+        const call = tool("waited"); await write(call);
+        const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "waited" });
+        resultAt = Date.now();
+        await write(result("waited", done));
+        return "finished";
+      } };
+      return { adapter, childGate, resultAt: () => resultAt };
+    }
+
+    it("receives the result as soon as the child completes on another Runner, without polling or waking it meanwhile", async () => {
+      const turn = waitingParent();
+      const h = await harness(turn.adapter);
+      // Redis delivers a check hint to every Runner; the child's wake reaches the other Runner.
+      const runners: SessionRouter[] = [];
+      const checkSession = (sessionId: string) => { for (const runner of runners) runner.checkNow(sessionId); };
+      const childRunner = h.makeRouter({ checkSession, wakeSession: () => {} });
+      let childWakes = 0;
+      const parentRunner = h.makeRouter({ checkSession, wakeSession: (sessionId) => {
+        childWakes++;
+        void h.stores.sessionStore.getById(sessionId).then((child) => childRunner.handleNewEvent(sessionId, child!.agent));
+      } });
+      runners.push(childRunner, parentRunner);
+      const reads = vi.spyOn(h.stores.delegationStore, "get");
+
+      await h.enqueue(); const running = parentRunner.handleNewEvent(h.parent.id, h.agent);
+      await until(async () => (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
+      const readsBefore = reads.mock.calls.length;
+      await sleep(1_000);
+      // The child was woken once, at acceptance; the wait reads the execution
+      // only on its fallback poll (none yet), not five times a second.
+      expect(childWakes).toBe(1);
+      expect(reads.mock.calls.length - readsBefore).toBe(0);
+
+      const releasedAt = Date.now();
+      turn.childGate.release();
+      await running;
+      expect(turn.resultAt() - releasedAt).toBeLessThan(100);
+      expect((await h.log()).filter((e) => e.type === "session.turn_completed")).toHaveLength(1);
+      expect(h.errors).toEqual([]);
+    });
+
+    it("still receives the result through its fallback poll when the hint is lost", async () => {
+      const turn = waitingParent();
+      const h = await harness(turn.adapter);
+      const router = h.makeRouter({ checkSession: () => {} });
+      await h.enqueue(); const running = router.handleNewEvent(h.parent.id, h.agent);
+      await until(async () => (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
+
+      const releasedAt = Date.now();
+      turn.childGate.release();
+      await running;
+      expect(turn.resultAt() - releasedAt).toBeLessThanOrEqual(2_000 + 200);
+      expect((await h.log()).filter((e) => e.type === "session.turn_completed")).toHaveLength(1);
+      expect(h.errors).toEqual([]);
+    });
   });
 
   it("cancels a wait on an independent asynchronous child without stopping the child", async () => {

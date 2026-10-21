@@ -30,15 +30,30 @@ interface CoordinatorDeps {
   /** The owner of the Session's running Turn should re-read its durable state now. */
   check(sessionId: string): void;
   maxSteps: number;
+  /** Fallback poll of a synchronous wait, for a lost child-completion hint. */
   pollMs?: number;
 }
+
+/**
+ * A wait learns of its child's completion from the check hint the child's
+ * Runner sends the parent (completeTurn); polling only covers a lost hint.
+ */
+const DEFAULT_WAIT_POLL_MS = 2_000;
 
 export const isTerminalExecution = (execution: Pick<DelegationExecution, "status">): boolean =>
   execution.status !== "queued" && execution.status !== "running";
 
 /** Coordination only; every child is executed by the ordinary Session Router. */
 export class DelegationCoordinator {
+  /** The synchronous waits of each calling Session's running Turn on this Runner. */
+  private readonly waits = new Map<string, Set<WaitWakeup>>();
+
   constructor(private readonly deps: CoordinatorDeps) {}
+
+  /** Re-read the executions a Session's running Turn waits on now. */
+  recheckWaits(sessionId: string): void {
+    for (const wakeup of this.waits.get(sessionId) ?? []) wakeup.notify();
+  }
 
   private caller(run: DelegationRun, toolUseId: string): DelegationCaller {
     return {
@@ -86,13 +101,14 @@ export class DelegationCoordinator {
           sandboxSessionId: run.session.id,
           parentThinking: waitConfig(run).thinking,
         }, run.fence);
-        // Persist the wait before waking the child, so a replacement owner
-        // resumes this Turn even if the child finishes after this one is lost.
-        if (execution.mode === "sync") await this.saveWait(run, execution, context);
+        // Persist the wait before waitForResult wakes the child, so a replacement
+        // owner resumes this Turn even if the child finishes after this one is lost.
+        if (execution.mode === "sync") {
+          await this.saveWait(run, execution, context);
+          return this.waitForResult(run, execution, context.toolUseId);
+        }
         this.deps.wake(execution.childId);
-        return execution.mode === "sync"
-          ? this.waitForResult(run, execution, context.toolUseId)
-          : this.readResult(execution);
+        return this.readResult(execution);
       },
       getResult: async (input, context) => {
         await this.assertOwner(run);
@@ -125,21 +141,34 @@ export class DelegationCoordinator {
     }, run.fence);
   }
 
+  /**
+   * Wait for the child execution to end. The child is woken once, when the
+   * wait starts (also after a takeover resumes it); the pending scan covers a
+   * lost wake. A lost lease aborts the Turn signal, which ends the wait, so
+   * ownership is not polled here.
+   */
   async waitForResult(run: DelegationRun, execution: DelegationExecution, toolUseId: string): Promise<Record<string, unknown>> {
     await this.recordStatus(run, "waiting", toolUseId);
     await run.journal.flush();
+    // Registered before the first read, so a hint that arrives during a read
+    // makes the next wait return at once.
+    const wakeup = new WaitWakeup();
+    const sessionWaits = this.waits.get(run.session.id) ?? new Set<WaitWakeup>();
+    sessionWaits.add(wakeup);
+    this.waits.set(run.session.id, sessionWaits);
     try {
-      for (;;) {
-        await this.assertOwner(run);
+      for (let woken = false; ; woken = true) {
         const current = await this.deps.store.get(
           run.session.tenantId, run.session.id, execution.childId, execution.id,
         );
         if (!current) throw new Error("Delegation execution disappeared");
         if (isTerminalExecution(current)) return this.readResult(current);
-        this.deps.wake(current.childId);
-        await delay(this.deps.pollMs ?? 200, run.signal);
+        if (!woken) this.deps.wake(current.childId);
+        await wakeup.next(this.deps.pollMs ?? DEFAULT_WAIT_POLL_MS, run.signal);
       }
     } finally {
+      sessionWaits.delete(wakeup);
+      if (!sessionWaits.size && this.waits.get(run.session.id) === sessionWaits) this.waits.delete(run.session.id);
       if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
         .some((wait) => wait.status === "waiting")) {
         await this.recordStatus(run, "running", toolUseId);
@@ -332,11 +361,29 @@ export function fencedExecutor(executor: ToolExecutor, assertOwner: () => Promis
   };
 }
 
-async function delay(ms: number, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, ms);
-    const abort = () => { clearTimeout(timer); reject(signal.reason); };
-    signal.addEventListener("abort", abort, { once: true });
-  });
+/** Ends one pause of a wait on a check hint, its fallback poll, or the Turn's abort. */
+class WaitWakeup {
+  private notified = false;
+  private wake?: () => void;
+
+  notify(): void {
+    this.notified = true;
+    this.wake?.();
+  }
+
+  async next(ms: number, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (!this.notified) await new Promise<void>((resolve, reject) => {
+      const settle = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+        this.wake = undefined;
+      };
+      const timer = setTimeout(() => { settle(); resolve(); }, ms);
+      const abort = () => { settle(); reject(signal.reason); };
+      signal.addEventListener("abort", abort, { once: true });
+      this.wake = () => { settle(); resolve(); };
+    });
+    this.notified = false;
+  }
 }

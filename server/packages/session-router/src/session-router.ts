@@ -532,12 +532,14 @@ export class SessionRouter {
 
   /**
    * Re-read the durable state of this Session's running Turn now, if this
-   * Router owns it: the claim renewal reports an accepted Interrupt, and a
-   * Child execution's Interrupt commands are read with it. Receiving the
-   * hint costs a Runner that does not own the Turn nothing.
+   * Router owns it: the claim renewal reports an accepted Interrupt, a Child
+   * execution's Interrupt commands are read with it, and a synchronous wait
+   * re-reads the execution it waits on. Receiving the hint costs a Runner
+   * that does not own the Turn nothing.
    */
   checkNow(sessionId: string): void {
     this.claimHeartbeats.get(sessionId)?.check();
+    this.delegations?.recheckWaits(sessionId);
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
@@ -996,6 +998,9 @@ export class SessionRouter {
           });
         }
       }
+      // A synchronous wait on another Runner reads the result on the hint;
+      // the local drain delivers an asynchronous result.
+      this.checkSession(finished.callerSessionId);
       const parent = await this.sessionStore.getById(finished.callerSessionId);
       if (parent && parent.status !== "terminated") {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
