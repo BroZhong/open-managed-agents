@@ -49,7 +49,6 @@ async function fixture() {
   // publication and live Delta output.
   const options = (overrides: Partial<TurnJournalOptions> = {}): TurnJournalOptions => ({
     sessionId: session.id,
-    turnId: "turn_1",
     append: (event, key) => stores.eventLogStore.append(session.id, { ...event, sessionThreadId: "sthr_primary", idempotencyKey: key, pendingFence: fence }),
     publish: stored => hub.publish(session.id, { type: stored.type, seq: stored.seq, data: stored.data }),
     outputDelta: delta => hub.publishChunk(session.id, delta),
@@ -59,7 +58,12 @@ async function fixture() {
   });
   const log = async () => (await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data
     .map(stored => ({ seq: stored.seq, type: stored.type, id: (stored.data as { id?: string }).id }));
-  return { stores, session, fence, hub, frames, lines, log, options, journal: (overrides?: Partial<TurnJournalOptions>) => new TurnJournal(options(overrides)) };
+  const journal = (overrides?: Partial<TurnJournalOptions>) => {
+    const created = new TurnJournal(options(overrides));
+    created.bindTurn("turn_1");
+    return created;
+  };
+  return { stores, session, fence, hub, frames, lines, log, options, journal };
 }
 
 describe("TurnJournal", () => {
@@ -179,6 +183,35 @@ describe("TurnJournal", () => {
       journal.adapter.delta(chunk("d1", "stale"), 0);
       await settle();
       expect(f.frames.map(frame => frame.event)).toEqual(["agent.message"]);
+    });
+
+    it("returns the row an owner's event was written as, also when an earlier attempt wrote it", async () => {
+      const f = await fixture();
+      const earlier = await f.stores.eventLogStore.append(f.session.id, { type: "user.message", data: { text: "go" },
+        sessionThreadId: "sthr_primary", idempotencyKey: "pending:input", pendingFence: f.fence });
+      const journal = new TurnJournal(f.options());
+      journal.record({ type: "user.message", data: { text: "go" } }, "pending:input");
+      journal.adapter.record(message("a"));
+      expect(journal.written("pending:input")).toBeUndefined();
+      await journal.flush();
+
+      expect(journal.written("pending:input")).toEqual(earlier);
+      expect(journal.written(`pending:${f.fence.eventId}:event:a`)).toBeUndefined();
+    });
+
+    it("names the Turn of its Deltas and flush logs once the owner binds it", async () => {
+      const f = await fixture();
+      const journal = new TurnJournal(f.options());
+      journal.record({ type: "user.message", data: {} }, "pending:input");
+      await journal.flush();
+      journal.bindTurn("turn_7_a1");
+      journal.adapter.delta(chunk("d1", "Hi"), 0);
+      journal.record({ type: "session.status_running", data: {} }, "status_running");
+      await journal.flush();
+      await settle();
+
+      expect(f.lines.map(line => JSON.parse(line).turnId)).toEqual([undefined, "turn_7_a1"]);
+      expect(f.frames.find(frame => frame.seq === undefined)?.data).toMatchObject({ id: "d1", turnId: "turn_7_a1", blockIndex: 0 });
     });
 
     it("turns an event it cannot queue into a failed journal instead of throwing", async () => {

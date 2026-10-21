@@ -5,6 +5,9 @@ import type { SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-a
 export interface JournalEvent {
   type: string;
   data: unknown;
+  /** Envelope fields; the append port supplies the defaults when absent. */
+  sessionThreadId?: string;
+  apiKeyId?: string;
 }
 
 /** A Delta aligned to the Turn output block its Complete Event will replace. */
@@ -18,7 +21,6 @@ export interface JournalDelta {
 /** Persistence is injected by the Host; the journal knows no PG, Redis or delegation. */
 export interface TurnJournalOptions {
   sessionId: string;
-  turnId: string;
   /**
    * Fenced, idempotent append returning the stored row. Repeating a key
    * returns the original row. A rejection fails the journal permanently.
@@ -41,9 +43,12 @@ export interface TurnJournalOptions {
  */
 export class TurnJournal {
   readonly adapter: TurnJournalPort;
-  private pending: Array<{ event: JournalEvent; key: string }> = [];
+  private pending: Array<{ event: JournalEvent; key: string; owned: boolean }> = [];
   /** Keys recorded by this journal, queued or written. */
   private readonly keys = new Set<string>();
+  /** Rows of the owner's own events by key. The Adapter's bulk output is not kept. */
+  private readonly ownerRows = new Map<string, StoredEvent>();
+  private turnId?: string;
   private tail: Promise<void> = Promise.resolve();
   private deltas: Promise<void> = Promise.resolve();
   private failure: unknown;
@@ -59,7 +64,7 @@ export class TurnJournal {
         if (!this.adapterOpen) return;
         try {
           const { event: durable, key } = options.fromAdapter(event);
-          this.record(durable, key);
+          this.queue(durable, key, false);
         } catch (error) {
           this.fail(error);
         }
@@ -71,14 +76,25 @@ export class TurnJournal {
 
   /** Queue the owner's own event under an explicit idempotency key. Never throws. */
   record(event: JournalEvent, key: string): void {
-    if (this.failed || this.keys.has(key)) return;
-    try {
-      // The caller may keep mutating its objects; the write uses this snapshot.
-      this.pending.push({ event: structuredClone(event), key });
-      this.keys.add(key);
-    } catch (error) {
-      this.fail(error);
-    }
+    this.queue(event, key, true);
+  }
+
+  /**
+   * Name the Turn this attempt executes; Deltas and flush logs carry it. A
+   * Turn is named after its input's seq, which only the attempt's first write
+   * (promoting the input) assigns, so the owner binds the name after that
+   * flush and before it hands {@link adapter} out.
+   */
+  bindTurn(turnId: string): void {
+    this.turnId = turnId;
+  }
+
+  /**
+   * The stored row of the owner's event recorded under `key`, once a flush has
+   * appended it; for a key an earlier attempt already wrote, the original row.
+   */
+  written(key: string): StoredEvent | undefined {
+    return this.ownerRows.get(key);
   }
 
   /**
@@ -101,9 +117,21 @@ export class TurnJournal {
     return !this.revoked && !this.failed;
   }
 
+  private queue(event: JournalEvent, key: string, owned: boolean): void {
+    if (this.failed || this.keys.has(key)) return;
+    try {
+      // The caller may keep mutating its objects; the write uses this snapshot.
+      this.pending.push({ event: structuredClone(event), key, owned });
+      this.keys.add(key);
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
   /** Deltas leave one at a time so the live projection keeps call order. */
   private delta(event: StreamEvent, blockIndex: number): void {
-    const delta: JournalDelta = { turnId: this.options.turnId, blockIndex, type: event.type, data: event };
+    // The Adapter receives its port only once the Turn is bound.
+    const delta: JournalDelta = { turnId: this.turnId!, blockIndex, type: event.type, data: event };
     // Checked again at output time, after earlier Deltas have left.
     this.deltas = this.deltas.then(() => this.adapterOpen ? this.options.outputDelta(delta) : undefined).then(() => {}, () => {});
   }
@@ -124,8 +152,9 @@ export class TurnJournal {
     let bytes = 0;
     let error: string | undefined;
     try {
-      for (const { event, key } of batch) {
+      for (const { event, key, owned } of batch) {
         const stored = await this.options.append(event, key);
+        if (owned) this.ownerRows.set(key, stored);
         events++;
         bytes += Buffer.byteLength(JSON.stringify(event.data) ?? "");
         // Appends are serial, so each new row has a higher seq than any before.
@@ -141,9 +170,10 @@ export class TurnJournal {
       throw failure;
     } finally {
       // One line per write round, for flush latency p50/p99 from Runner logs.
-      // The duration is what the flush caller waited, queueing included.
+      // The duration is what the flush caller waited, queueing included. The
+      // flush that promotes the input runs before the Turn has a name.
       const durationMs = Math.round((performance.now() - started) * 10) / 10;
-      this.logger.info(JSON.stringify({ msg: "turn_journal_flush", sessionId: this.options.sessionId, turnId: this.options.turnId,
+      this.logger.info(JSON.stringify({ msg: "turn_journal_flush", sessionId: this.options.sessionId, turnId: this.turnId,
         events, bytes, durationMs, ...(error === undefined ? {} : { error }) }));
     }
   }
