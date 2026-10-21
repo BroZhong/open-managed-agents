@@ -7,8 +7,11 @@ import { MemoryTurnJournal } from "@open-managed-agents/adapter-core/testing";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
 
-/** The contexts of the model requests the resumed attempt makes; each is answered with "resumed". */
-const control = vi.hoisted(() => ({ contexts: [] as Array<Pick<Context, "messages">> }));
+/**
+ * The contexts of the model requests the resumed attempt makes. Each is
+ * answered with "resumed", after `failures` requests fail with `error`.
+ */
+const control = vi.hoisted(() => ({ contexts: [] as Array<Pick<Context, "messages">>, failures: 0, error: "503 overloaded", compaction: false }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -18,13 +21,25 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   }
   return { ...sdk, DefaultResourceLoader: IsolatedLoader,
     async createAgentSession(options: Parameters<typeof sdk.createAgentSession>[0]) {
-      const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+      const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: control.compaction, reserveTokens: 100, keepRecentTokens: 30 },
+        retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
       const result = await sdk.createAgentSession({ ...options, settingsManager });
       result.session.agent.streamFunction = (model, context) => {
-        control.contexts.push({ messages: JSON.parse(JSON.stringify(context.messages)) });
+        const summary = context.systemPrompt?.startsWith("You are a context summarization assistant") ?? false;
+        if (!summary) control.contexts.push({ messages: JSON.parse(JSON.stringify(context.messages)) });
+        if (!summary && control.failures > 0) {
+          control.failures--;
+          const failed: AssistantMessage = { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            content: [], stopReason: "error", errorMessage: control.error };
+          const stream = createAssistantMessageEventStream();
+          stream.push({ type: "start", partial: failed });
+          stream.push({ type: "error", reason: "error", error: failed });
+          return stream;
+        }
         const message: AssistantMessage = { role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
           usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-          content: [{ type: "text", text: "resumed" }], stopReason: "stop" };
+          content: [{ type: "text", text: summary ? "CONTROLLED SUMMARY" : "resumed" }], stopReason: "stop" };
         const stream = createAssistantMessageEventStream();
         stream.push({ type: "start", partial: message });
         stream.push({ type: "text_start", contentIndex: 0, partial: message });
@@ -57,7 +72,7 @@ function committed(build: (manager: SessionManager) => void): SessionEvent[] {
 const unknownResult = (toolUseId: string): SessionEvent => ({ id: `recovery_${toolUseId}`, timestamp: new Date(10).toISOString(),
   type: "agent.tool_result", toolUseId, isError: true, content: [{ type: "text", text: "outcome unknown" }] } as SessionEvent);
 
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.contexts = []; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.contexts = []; control.failures = 0; control.compaction = false; control.error = "503 overloaded"; });
 afterEach(() => vi.unstubAllEnvs());
 
 /** Continue the Turn from `history` and return what the attempt committed. */
@@ -113,5 +128,39 @@ describe("Pi continues a resumed Turn from each shape its committed history can 
     // The Turn's history, with what this attempt committed, replays as one chain ending in the answer.
     const replayed = restorePiSession([...history, ...output]).buildSessionContext().messages;
     expect(replayed.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "resumed" }] });
+  });
+});
+
+describe("Pi recovers this attempt's own failed request after the lost attempt's", () => {
+  // The lost attempt's request failed and was committed; this attempt's first
+  // request fails as well. Pi's retry and its overflow recovery each drop one
+  // failed request before they continue, and refuse to continue from an assistant.
+  const lostFailedRequest = (errorMessage: string) => committed((m) => {
+    m.appendMessage({ role: "user", content: [{ type: "text", text: "history ".repeat(80) }], timestamp: 0 });
+    m.appendMessage(assistant([{ type: "text", text: "earlier answer ".repeat(40) }], "stop", 0));
+    m.appendMessage({ role: "user", content: [{ type: "text", text: "again" }], timestamp: 1 });
+    m.appendMessage({ ...assistant([], "error", 2), errorMessage });
+  });
+
+  it("A11 a retryable failure again: Pi retries and the Turn is answered", async () => {
+    control.failures = 1;
+    const history = lostFailedRequest("503 overloaded");
+    const output = await resume(history);
+    expect(output.filter((event) => event.type === "session.error")).toEqual([]);
+    expect(control.contexts).toHaveLength(2);
+    expect(restorePiSession([...history, ...output]).buildSessionContext().messages.at(-1))
+      .toMatchObject({ role: "assistant", content: [{ type: "text", text: "resumed" }] });
+  });
+
+  it("B3 an overflow again: Pi compacts once, retries and the Turn is answered", async () => {
+    control.compaction = true;
+    control.failures = 1;
+    control.error = "prompt is too long: 210000 tokens > 200000 maximum";
+    const history = lostFailedRequest(control.error);
+    const output = await resume(history);
+    expect(output.filter((event) => event.type === "session.error")).toEqual([]);
+    expect(output.filter((event) => event.type === "agent.compaction" && event.status === "completed")).toHaveLength(1);
+    expect(restorePiSession([...history, ...output]).buildSessionContext().messages.at(-1))
+      .toMatchObject({ role: "assistant", content: [{ type: "text", text: "resumed" }] });
   });
 });

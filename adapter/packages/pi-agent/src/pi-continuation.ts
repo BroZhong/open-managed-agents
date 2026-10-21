@@ -20,5 +20,23 @@ export function installContinuation(session: AgentSession): () => Promise<void> 
   });
   const convert = session.agent.convertToLlm;
   session.agent.convertToLlm = messages => convert(messages.filter(keep));
+  // A resumed Turn can end in the failed request of the attempt that was lost,
+  // and this attempt's own request can fail after it. Pi's retry and overflow
+  // recovery drop one failed request from the context before they continue,
+  // and Pi refuses to continue from an assistant message. A failed or aborted
+  // request never reaches the provider, so every trailing one leaves the
+  // context first; the session tree, and so the durable history, keeps them.
+  const agentContinue = session.agent.continue.bind(session.agent);
+  session.agent.continue = () => {
+    const messages = session.agent.state.messages;
+    let end = messages.length;
+    while (end > 0 && isFailedRequest(messages[end - 1])) end--;
+    if (end < messages.length) session.agent.state.messages = messages.slice(0, end);
+    return agentContinue();
+  };
   return () => session.sendCustomMessage({ customType: CONTINUATION, content: [], display: false }, { triggerTurn: true });
+}
+
+function isFailedRequest(message: { role: string; stopReason?: string }): boolean {
+  return message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted");
 }
