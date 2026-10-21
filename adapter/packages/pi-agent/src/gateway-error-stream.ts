@@ -12,6 +12,10 @@ function normalizeGatewayError(message: AssistantMessage): AssistantMessage {
   const error = message.errorMessage;
   // Account limits must win over HTTP 429 and any transient text in the body.
   const category = /\bAccountQuotaExceeded\b/i.test(error) ? "Quota exceeded"
+    // Request-body limits overflow in bytes, far below the token window (e.g.
+    // DeepSeek "413 Failed to buffer the request body: length limit exceeded").
+    // Pi only knows Anthropic's spelling; name it so compact-and-retry runs.
+    : /^413\b/.test(error) && /length limit exceeded|too large/i.test(error) ? "Request too large (request_too_large)"
     : /\bstream_read_error\b/i.test(error) ? "Network error"
     : /\bservice temporarily unavailable\b/i.test(error) ? "Service unavailable"
     : undefined;

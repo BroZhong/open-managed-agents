@@ -13,6 +13,8 @@ export function customProviderFailureMessage(status?: number, bodyText = ""): st
     return thinkingRejection;
   }
   if (status === 401 || status === 403) return `The provider rejected this request (HTTP ${status}). Check the API key and model access.`;
+  // Keep Pi's overflow marker: compaction drops image bytes and retries.
+  if (status === 413) return "The provider rejected this request as too large (HTTP 413, request_too_large). Reduce the conversation or attached images.";
   if (status === 429) return "The provider rate-limited this request (HTTP 429). Check quota or retry later.";
   if (status) return `The provider rejected this request (HTTP ${status}). Check the protocol, URL and model configuration.`;
   return "The provider did not complete this request. Check the connection, protocol and model configuration.";

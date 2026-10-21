@@ -3,6 +3,7 @@ import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
 } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai/compat";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   registerCustomProvider,
@@ -124,6 +125,17 @@ describe("Pi custom providers", () => {
     expect(result.errorMessage).toContain(status === 400 ? "rejected a thinking control parameter" : `HTTP ${status}`);
     expect(requests).toHaveLength(1);
     expect(requests[0].reasoning_effort).toBe("high");
+  });
+  it("keeps a sanitized HTTP 413 recognizable as Pi context overflow", async () => {
+    const current = await runtime();
+    await registerCustomProvider(current, definition, async () => new Response(
+      "Failed to buffer the request body: length limit exceeded; key=!literal-key", { status: 413 },
+    ));
+    const model = current.getModel(definition.id, "acme/model")!;
+    const result = await current.completeSimple(model, { messages: [{ role: "user", content: "Hi", timestamp: 0 }] }, { maxRetries: 0 });
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).not.toContain("!literal-key");
+    expect(isContextOverflow(result, model.contextWindow)).toBe(true);
   });
   it.each(["invalid_api_key", "rate_limit_error"])("does not mislabel HTTP 400 %s as a thinking rejection", async type => {
     const current = await runtime();

@@ -39,6 +39,7 @@ import { PiEventTranslator } from "./translator.js";
 import { buildSubagentTools } from "./managed-subagents.js";
 import { createManagedSkillCommandExtension } from "./skill-command-bridge.js";
 import { withGatewayErrors } from "./gateway-error-stream.js";
+import { imageBudgetExtension } from "./image-budget.js";
 import { restorePiSession } from "./pi-context.js";
 import { PiContextJournal } from "./pi-context-journal.js";
 import { PI_DISPLAY_TYPES, PiStreamAlignment } from "./pi-presentation.js";
@@ -518,7 +519,7 @@ export class PiAgentAdapter implements Adapter {
         // never compete with the Host-owned tools, including in local dev.
         extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter(extension =>
           !["Agent", "get_subagent_result", "steer_subagent"].some(name => extension.tools.has(name))) }),
-        extensionFactories: [journal.extension, ...(customTools ? [createManagedSkillCommandExtension(skillDescriptors)] : [])],
+        extensionFactories: [journal.extension, imageBudgetExtension(), ...(customTools ? [createManagedSkillCommandExtension(skillDescriptors)] : [])],
         // When we inject the skills section ourselves (custom-tool path), skip
         // Pi's own skill loading so the section is not duplicated / re-gated.
         ...(injectSkillsIntoPrompt || args.input.execution?.isChild

@@ -176,7 +176,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     const options = sdkSeam.resourceLoaderOptions[0];
     expect(options.noSkills).toBe(true);
     expect(options.additionalSkillPaths).toBeUndefined();
-    expect(options.extensionFactories).toHaveLength(2);
+    expect(options.extensionFactories).toHaveLength(3);
     expect(options.appendSystemPrompt).toEqual([
       "BASE",
       expect.stringContaining("<available_skills>"),
@@ -204,7 +204,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       additionalSkillPaths: ["/skills/skill_abc"],
       noContextFiles: true,
     });
-    expect(sdkSeam.resourceLoaderOptions[0].extensionFactories).toHaveLength(1);
+    expect(sdkSeam.resourceLoaderOptions[0].extensionFactories).toHaveLength(2);
     expect(sdkSeam.sessionOptions[0].cwd).toBe(process.cwd());
     expect(sdkSeam.sessionOptions[0].sessionManager?.getCwd()).toBe(process.cwd());
   });
