@@ -909,6 +909,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await turns.getActiveTurn(session.id)).toEqual({
       turnId: "turn_1_a2",
       status: "running",
+      inputSeq: 1,
       generation: 2,
     });
     expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
@@ -918,6 +919,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await turns.getActiveTurn(session.id)).toEqual({
       turnId: "turn_1_a2",
       status: "running",
+      inputSeq: 1,
       generation: 2,
     });
     expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
@@ -1065,7 +1067,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
       pendingFence: firstFence,
     });
     const oldTurnId = `turn_${promoted.seq}_a1`;
-    await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running", generation: 1 });
+    await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running", inputSeq: promoted.seq, generation: 1 });
     await turns.appendDelta(session.id, {
       turnId: oldTurnId,
       blockIndex: 0,

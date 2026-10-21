@@ -216,7 +216,12 @@ and the session tree, so the durable history, keeps them.
 
 The lost attempt's Deltas carry its attempt; consoles keep the highest attempt
 of a Turn (#246), and the Turn's Delta stream is deleted only when the Turn
-completes (#247).
+completes (#247). The active-Turn projection, which tells a reconnecting
+console whose Deltas to replay, records the input and the claim generation of
+the attempt that wrote it, and Redis refuses, in one script, any write of an
+earlier input's attempt or of an earlier generation of the same input. A
+Runner that stalls past its lease thus cannot point consoles away from the
+Turn that replaced its own.
 
 ### The Turn's model and thinking
 

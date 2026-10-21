@@ -48,7 +48,7 @@ describe("Delegation trace API", () => {
     const { app, parent, child, unrelated, turnStreamStore } = await fixture();
     const turnId = "child-turn-1";
     await Promise.all([parent, child, unrelated].map(async session => {
-      await turnStreamStore.setActiveTurn(session.id, { turnId, status: "running", generation: 1 });
+      await turnStreamStore.setActiveTurn(session.id, { turnId, status: "running", inputSeq: 1, generation: 1 });
       await turnStreamStore.appendDelta(session.id, { turnId, blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: `${session.id}-private` } });
     }));
     for (const session of [parent, child]) {
@@ -63,7 +63,7 @@ describe("Delegation trace API", () => {
   it("returns each child delta's attempt, so the trace keeps only the latest attempt's output", async () => {
     const { app, parent, child, turnStreamStore } = await fixture();
     const turnId = "child-turn-1";
-    await turnStreamStore.setActiveTurn(child.id, { turnId, status: "running", generation: 1 });
+    await turnStreamStore.setActiveTurn(child.id, { turnId, status: "running", inputSeq: 1, generation: 1 });
     await turnStreamStore.appendDelta(child.id, { turnId, blockIndex: 0, attempt: 1, type: "agent.message_chunk", data: { text: "lost" } });
     await turnStreamStore.appendDelta(child.id, { turnId, blockIndex: 0, attempt: 2, type: "agent.message_chunk", data: { text: "resumed" } });
 

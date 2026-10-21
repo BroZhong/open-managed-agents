@@ -12,7 +12,7 @@ describe.each([
     const turnId = "turn_1_a1";
     const sessions = ["parent", "child", "other-tenant-session"];
     const firstIds = await Promise.all(sessions.map(async sessionId => {
-      await store.setActiveTurn(sessionId, { turnId, status: "running", generation: 1 });
+      await store.setActiveTurn(sessionId, { turnId, status: "running", inputSeq: 1, generation: 1 });
       return store.appendDelta(sessionId, { turnId, blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: `${sessionId}-private` } });
     }));
     await Promise.all(sessions.map(sessionId => store.appendDelta(sessionId, { turnId, blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: `${sessionId}-more` } })));
@@ -25,7 +25,7 @@ describe.each([
     expect(await store.readDeltas("parent", turnId)).toEqual([]);
     expect(await store.deltaCount("child", turnId)).toBe(2);
     expect(await store.deltaCount("other-tenant-session", turnId)).toBe(2);
-    expect(await store.getActiveTurn("child")).toEqual({ turnId, status: "running", generation: 1 });
+    expect(await store.getActiveTurn("child")).toEqual({ turnId, status: "running", inputSeq: 1, generation: 1 });
   });
   it("does not allow delimiters in IDs to alias a different Session stream", async () => {
     const store = createStore();

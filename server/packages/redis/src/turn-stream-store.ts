@@ -40,6 +40,11 @@ export interface ActiveTurn {
   turnId: string;
   status: ActiveTurnStatus;
   /**
+   * The seq the Turn's input was promoted to. A Session runs its inputs one
+   * after another, so a later input's Turn has a higher one.
+   */
+  inputSeq: number;
+  /**
    * The claim generation of the attempt that recorded it. Every attempt of one
    * input executes the same Turn, so this, not the Turn, tells a later attempt
    * from the one it took the Turn over from.
@@ -47,8 +52,11 @@ export interface ActiveTurn {
   generation: number;
 }
 
-/** The attempt whose projection a compare-and-set expects to replace. */
-export type ActiveTurnWriter = Pick<ActiveTurn, "turnId" | "generation">;
+/**
+ * The attempt that writes a projection: its input and its claim generation.
+ * Attempts are ordered by input, then by generation.
+ */
+export type ActiveTurnWriter = Pick<ActiveTurn, "inputSeq" | "generation">;
 
 /**
  * Transient per-turn delta streams + the active-turn map, backed by Redis so
@@ -57,7 +65,9 @@ export type ActiveTurnWriter = Pick<ActiveTurn, "turnId" | "generation">;
  *
  * - Deltas: `stream:session:{sessionId}:turn:{turnId}` (XADD append, XRANGE replay, DEL reclaim);
  *   each append slides a 30-minute expiry, so streams nobody reclaims still disappear.
- * - Active turn: hash `session:active-turn:{sessionId}` → { turnId, status, generation }.
+ * - Active turn: hash `session:active-turn:{sessionId}` → { turnId, status, inputSeq, generation }.
+ *   An attempt writes it only while no later attempt has: a Runner that stalls
+ *   past its lease must not hide the Turn that replaced its own.
  */
 export interface TurnStreamStore {
   /** Session ownership is mandatory: Turn IDs are only unique within a Session.
@@ -70,22 +80,21 @@ export interface TurnStreamStore {
   /** Reclaim (DEL) a turn's delta stream — called when the turn ends. */
   reclaim(sessionId: string, turnId: string): Promise<void>;
 
-  /** Record the active turn for a session and its status. */
+  /** Set the active turn for a session unconditionally (seeding, tests). */
   setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void>;
   /** Read the active turn for a session, or null if none. */
   getActiveTurn(sessionId: string): Promise<ActiveTurn | null>;
-  /** Clear the active-turn record for a session. */
-  clearActiveTurn(sessionId: string): Promise<void>;
   /**
-   * Atomically replace/delete the active turn only while it is still the one
-   * the caller observed: the same Turn recorded by the same generation, or
-   * none.
+   * Atomically record the Turn its attempt runs, unless a later attempt has
+   * recorded the active turn: one of a later input, or a later generation of
+   * the same input. Returns whether it was recorded.
    */
-  compareAndSetActiveTurn(
-    sessionId: string,
-    expected: ActiveTurnWriter | null,
-    next: ActiveTurn | null,
-  ): Promise<boolean>;
+  recordActiveTurn(sessionId: string, turn: ActiveTurn): Promise<boolean>;
+  /**
+   * Atomically delete the active turn for `writer`'s attempt, under the same
+   * rule: one a later attempt recorded stays. Returns whether it was deleted.
+   */
+  clearActiveTurn(sessionId: string, writer: ActiveTurnWriter): Promise<boolean>;
 }
 
 function turnStreamKey(sessionId: string, turnId: string): string {
@@ -96,16 +105,21 @@ function activeTurnKey(sessionId: string): string {
   return `session:active-turn:${sessionId}`;
 }
 
-// A projection recorded before projections carried a generation counts as
-// generation 0, the generation before the first claim.
-const ACTIVE_TURN_CAS_SCRIPT = `-- oma:active-turn-cas
-local current = redis.call('HGET', KEYS[1], 'turnId') or ''
-if current ~= ARGV[1] then return 0 end
-if current ~= '' and (redis.call('HGET', KEYS[1], 'generation') or '0') ~= ARGV[2] then return 0 end
-if ARGV[3] == '' then
-  redis.call('DEL', KEYS[1])
-else
-  redis.call('HSET', KEYS[1], 'turnId', ARGV[3], 'status', ARGV[4], 'generation', ARGV[5])
+// Refuses the write when the recorded attempt is later than the writer;
+// otherwise replaces the hash whole (no field of an older writer survives),
+// or deletes it when no Turn is given. A projection recorded before
+// projections carried an input seq or a generation counts as input 0 and
+// generation 0, the ones before the first input and the first claim, so any
+// attempt replaces it.
+const ACTIVE_TURN_WRITE_SCRIPT = `-- oma:active-turn-write
+local inputSeq = tonumber(redis.call('HGET', KEYS[1], 'inputSeq') or '0')
+local generation = tonumber(redis.call('HGET', KEYS[1], 'generation') or '0')
+local writerInputSeq = tonumber(ARGV[1])
+local writerGeneration = tonumber(ARGV[2])
+if inputSeq > writerInputSeq or (inputSeq == writerInputSeq and generation > writerGeneration) then return 0 end
+redis.call('DEL', KEYS[1])
+if ARGV[3] ~= '' then
+  redis.call('HSET', KEYS[1], 'turnId', ARGV[3], 'status', ARGV[4], 'inputSeq', ARGV[1], 'generation', ARGV[2])
 end
 return 1`;
 
@@ -183,6 +197,8 @@ export class RedisTurnStreamStore implements TurnStreamStore {
       turn.turnId,
       "status",
       turn.status,
+      "inputSeq",
+      String(turn.inputSeq),
       "generation",
       String(turn.generation),
     );
@@ -194,29 +210,30 @@ export class RedisTurnStreamStore implements TurnStreamStore {
     return {
       turnId: map.turnId,
       status: (map.status as ActiveTurnStatus) ?? "idle",
-      // Claim generations start at 1, so a projection without one is the earliest.
+      // Event seqs and claim generations start at 1, so a projection without
+      // them is the earliest.
+      inputSeq: Number(map.inputSeq ?? "0"),
       generation: Number(map.generation ?? "0"),
     };
   }
 
-  async clearActiveTurn(sessionId: string): Promise<void> {
-    await this.redis.del(activeTurnKey(sessionId));
+  async recordActiveTurn(sessionId: string, turn: ActiveTurn): Promise<boolean> {
+    return this.writeActiveTurn(sessionId, turn, turn);
   }
 
-  async compareAndSetActiveTurn(
-    sessionId: string,
-    expected: ActiveTurnWriter | null,
-    next: ActiveTurn | null,
-  ): Promise<boolean> {
+  async clearActiveTurn(sessionId: string, writer: ActiveTurnWriter): Promise<boolean> {
+    return this.writeActiveTurn(sessionId, writer, null);
+  }
+
+  private async writeActiveTurn(sessionId: string, writer: ActiveTurnWriter, turn: ActiveTurn | null): Promise<boolean> {
     const result = await this.redis.eval(
-      ACTIVE_TURN_CAS_SCRIPT,
+      ACTIVE_TURN_WRITE_SCRIPT,
       1,
       activeTurnKey(sessionId),
-      expected?.turnId ?? "",
-      expected ? String(expected.generation) : "",
-      next?.turnId ?? "",
-      next?.status ?? "",
-      next ? String(next.generation) : "",
+      String(writer.inputSeq),
+      String(writer.generation),
+      turn?.turnId ?? "",
+      turn?.status ?? "",
     );
     return Number(result) === 1;
   }

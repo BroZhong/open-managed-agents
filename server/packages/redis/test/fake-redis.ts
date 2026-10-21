@@ -16,13 +16,14 @@ export class FakeRedis implements RedisLike {
 
   async eval(script: string, numberOfKeys: number, ...keysAndArgs: string[]): Promise<unknown> {
     this.evictExpired();
-    if (numberOfKeys === 1 && script.includes("oma:active-turn-cas")) {
-      const [key, expectedTurnId, expectedGeneration, nextTurnId, nextStatus, nextGeneration] = keysAndArgs;
+    if (numberOfKeys === 1 && script.includes("oma:active-turn-write")) {
+      const [key, writerInputSeq, writerGeneration, turnId, status] = keysAndArgs;
       const current = this.hashes.get(key);
-      if ((current?.turnId ?? "") !== expectedTurnId) return 0;
-      if (current && (current.generation ?? "0") !== expectedGeneration) return 0;
-      if (!nextTurnId) this.hashes.delete(key);
-      else this.hashes.set(key, { turnId: nextTurnId, status: nextStatus, generation: nextGeneration });
+      const inputSeq = Number(current?.inputSeq ?? "0");
+      const generation = Number(current?.generation ?? "0");
+      if (inputSeq > Number(writerInputSeq) || (inputSeq === Number(writerInputSeq) && generation > Number(writerGeneration))) return 0;
+      if (!turnId) this.hashes.delete(key);
+      else this.hashes.set(key, { turnId, status, inputSeq: writerInputSeq, generation: writerGeneration });
       return 1;
     }
     if (numberOfKeys === 1 && script.includes("oma:turn-delta-append")) {

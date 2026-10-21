@@ -11,7 +11,8 @@ import type {
  * streams and the active-turn map in process memory instead of Redis, so route
  * tests can drive turn status (`running` / `idle` / no record) without a live
  * Redis. Behaviour mirrors {@link RedisTurnStreamStore}: append/read deltas,
- * reclaim, and read/write the active-turn record.
+ * reclaim, and read/write the active-turn record, which no attempt earlier
+ * than the one that recorded it can replace.
  */
 export class InMemoryTurnStreamStore implements TurnStreamStore {
   streams = new Map<string, StoredTurnDelta[]>();
@@ -49,19 +50,21 @@ export class InMemoryTurnStreamStore implements TurnStreamStore {
     return this.activeTurns.get(sessionId) ?? null;
   }
 
-  async clearActiveTurn(sessionId: string): Promise<void> {
-    this.activeTurns.delete(sessionId);
+  async recordActiveTurn(sessionId: string, turn: ActiveTurn): Promise<boolean> {
+    if (this.recordedLater(sessionId, turn)) return false;
+    this.activeTurns.set(sessionId, { ...turn });
+    return true;
   }
 
-  async compareAndSetActiveTurn(
-    sessionId: string,
-    expected: ActiveTurnWriter | null,
-    next: ActiveTurn | null,
-  ): Promise<boolean> {
-    const current = this.activeTurns.get(sessionId);
-    if (current?.turnId !== expected?.turnId || current?.generation !== expected?.generation) return false;
-    if (next) this.activeTurns.set(sessionId, next);
-    else this.activeTurns.delete(sessionId);
+  async clearActiveTurn(sessionId: string, writer: ActiveTurnWriter): Promise<boolean> {
+    if (this.recordedLater(sessionId, writer)) return false;
+    this.activeTurns.delete(sessionId);
     return true;
+  }
+
+  private recordedLater(sessionId: string, writer: ActiveTurnWriter): boolean {
+    const current = this.activeTurns.get(sessionId);
+    return current !== undefined && (current.inputSeq > writer.inputSeq ||
+      (current.inputSeq === writer.inputSeq && current.generation > writer.generation));
   }
 }

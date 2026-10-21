@@ -28,10 +28,10 @@ function reply(id: string): SessionEvent {
 }
 
 describe("Session idle at queue boundaries", () => {
-  it("completes PG-owned work when Redis reads fail and its projection CAS conflicts", async () => {
+  it("completes PG-owned work when its projection writes fail or are refused", async () => {
     const redis = new InMemoryTurnStreamStore();
-    vi.spyOn(redis, "getActiveTurn").mockRejectedValue(new Error("Redis read unavailable"));
-    vi.spyOn(redis, "compareAndSetActiveTurn").mockResolvedValue(false);
+    vi.spyOn(redis, "recordActiveTurn").mockRejectedValue(new Error("Redis write unavailable"));
+    vi.spyOn(redis, "clearActiveTurn").mockResolvedValue(false);
     const f = await fixture(async (input: AdapterInput) => { const write = journalWriter(input); await write(reply("durable answer")); return "finished"; },
       new BestEffortTurnStreamStore(redis, () => true));
     const router = f.makeRouter();

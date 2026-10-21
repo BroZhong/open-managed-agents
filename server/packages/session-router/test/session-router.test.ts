@@ -1078,7 +1078,7 @@ describe("SessionRouter", () => {
       try {
         await Promise.all(ready);
         for (const session of sessions) {
-          expect(await deps.turnStreamStore.getActiveTurn(session.id)).toEqual({ turnId: "turn_1_a1", status: "running", generation: 1 });
+          expect(await deps.turnStreamStore.getActiveTurn(session.id)).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
           // A Delta is not awaited by the Adapter that emits it.
           await vi.waitFor(async () => {
             const chunks = (await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1")).filter(delta => delta.type === "agent.message_chunk");
@@ -1088,7 +1088,7 @@ describe("SessionRouter", () => {
         releases[0](); await runs[0];
         expect(await deps.turnStreamStore.deltaCount(sessions[0].id, "turn_1_a1")).toBe(0);
         expect(await deps.turnStreamStore.deltaCount(sessions[1].id, "turn_1_a1")).toBeGreaterThan(0);
-        expect(await deps.turnStreamStore.getActiveTurn(sessions[1].id)).toEqual({ turnId: "turn_1_a1", status: "running", generation: 1 });
+        expect(await deps.turnStreamStore.getActiveTurn(sessions[1].id)).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
       } finally { releases.forEach(release => release()); await Promise.all(runs); }
     });
 
@@ -1296,7 +1296,7 @@ describe("SessionRouter", () => {
       // Mid-turn: active turn is running and half-emitted deltas are buffered.
       await new Promise((r) => setTimeout(r, 20));
       const active = await deps.turnStreamStore.getActiveTurn(session.id);
-      expect(active).toEqual({ turnId: "turn_1_a1", status: "running", generation: 1 });
+      expect(active).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
       const midDeltas = await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1");
       expect(midDeltas.some((d) => d.type === "agent.message_chunk")).toBe(true);
 

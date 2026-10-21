@@ -20,7 +20,7 @@ import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
-import type { ActiveTurn, ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
+import type { ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
 import type {
   EnvSpec,
   SandboxManager,
@@ -394,38 +394,18 @@ export class SessionRouter {
     );
   }
 
-  private async updateActiveTurnProjection(
-    sessionId: string,
-    next: ActiveTurn,
-  ): Promise<void> {
-    if (!this.turnStreamStore) return;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const current = await this.turnStreamStore.getActiveTurn(sessionId);
-      // Every attempt of an input runs the same Turn: a later generation
-      // recording it has taken the Turn over from this one.
-      if (current?.turnId === next.turnId && current.generation > next.generation) return;
-      if (await this.turnStreamStore.compareAndSetActiveTurn(sessionId, current, next)) return;
-    }
-    // Redis is a projection: only the PostgreSQL claim can revoke execution.
-  }
-
-  private async clearActiveTurnFenced(
-    sessionId: string,
-    owned: ActiveTurnWriter,
-  ): Promise<boolean> {
-    if (!this.turnStreamStore) return true;
-    return this.turnStreamStore.compareAndSetActiveTurn(sessionId, owned, null);
-  }
-
   /**
    * The Turn's output is durable and it is completing: its Delta stream, which
    * every attempt of the Turn shares, goes, and the projection shows it idle.
    * Nothing else deletes the stream; one a lost Runner leaves expires.
    */
-  private async endTurnStream(sessionId: string, turnId: string, generation: number): Promise<void> {
+  private async endTurnStream(sessionId: string, turnId: string, writer: ActiveTurnWriter): Promise<void> {
     if (!this.turnStreamStore) return;
     await this.turnStreamStore.reclaim(sessionId, turnId);
-    await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle", generation });
+    // A later attempt's projection (one that took the Turn over, or a later
+    // input's) stays. Redis is a projection: only the PostgreSQL claim can
+    // revoke execution, so a refused write changes nothing else.
+    await this.turnStreamStore.recordActiveTurn(sessionId, { turnId, status: "idle", ...writer });
   }
 
   private reportDrainError(sessionId: string, error: unknown): void {
@@ -1280,6 +1260,10 @@ export class SessionRouter {
       let plan = planResume(facts);
       turnId = plan.turnId;
       journal.bindTurn(turnId);
+      // This attempt as a writer of the active-Turn projection: no attempt of
+      // an earlier input, or of an earlier generation of this one, replaces
+      // what it records.
+      const projectionWriter: ActiveTurnWriter = { inputSeq: promotedEvent.seq, generation: claim.generation };
       // A completed Turn is never run again. Its acknowledgement must still
       // settle Session idle if the queue empties.
       if (plan.kind === "acknowledge") {
@@ -1335,8 +1319,8 @@ export class SessionRouter {
           this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
           await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
             executionPlan.repairOutcome, executionPlan.error);
-          await this.endTurnStream(sessionId, executionPlan.turnId, claim.generation);
-          lastOwnedTurn = { turnId: executionPlan.turnId, generation: claim.generation };
+          await this.endTurnStream(sessionId, executionPlan.turnId, projectionWriter);
+          lastOwnedTurn = projectionWriter;
           if (!await this.completeTurn(journal, sessionId, pendingEvent.id, executionPlan.turnId, pendingFence)) return;
           continue;
         }
@@ -1357,8 +1341,8 @@ export class SessionRouter {
         if (plan.cause === "interrupted") {
           journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEvent.id, "turn_aborted"));
         }
-        await this.endTurnStream(sessionId, turnId, claim.generation);
-        lastOwnedTurn = { turnId, generation: claim.generation };
+        await this.endTurnStream(sessionId, turnId, projectionWriter);
+        lastOwnedTurn = projectionWriter;
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1375,8 +1359,8 @@ export class SessionRouter {
       // same stream; each Delta carries its attempt, and consoles keep only the
       // highest one's.
       if (this.turnStreamStore) {
-        await this.updateActiveTurnProjection(sessionId, { turnId, status: "running", generation: claim.generation });
-        lastOwnedTurn = { turnId, generation: claim.generation };
+        await this.turnStreamStore.recordActiveTurn(sessionId, { turnId, status: "running", ...projectionWriter });
+        lastOwnedTurn = projectionWriter;
       }
 
       // Set session status to running
@@ -1416,7 +1400,7 @@ export class SessionRouter {
           code: "unsupported_runtime",
           message: `Agent runtime "${currentAgent.runtime}" is not supported`,
         } } }, this.turnKey(pendingEvent.id, "unsupported_runtime"));
-        await this.endTurnStream(sessionId, turnId, claim.generation);
+        await this.endTurnStream(sessionId, turnId, projectionWriter);
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1442,7 +1426,7 @@ export class SessionRouter {
         // Mirror the normal turn-end housekeeping so the transient stream/active
         // turn record don't leak, then move on to the next pending event (the
         // drain loop falls through to the idle transition when the queue empties).
-        await this.endTurnStream(sessionId, turnId, claim.generation);
+        await this.endTurnStream(sessionId, turnId, projectionWriter);
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1511,7 +1495,7 @@ export class SessionRouter {
           };
           journal.record({ type: "session.error", data: { error: refreshError } },
             this.turnKey(pendingEvent.id, "sandbox_prepare_failed"));
-          await this.endTurnStream(sessionId, turnId, claim.generation);
+          await this.endTurnStream(sessionId, turnId, projectionWriter);
           if (!await this.completeTurn(
             journal,
             sessionId,
@@ -1610,7 +1594,7 @@ export class SessionRouter {
         };
         journal.record({ type: "session.error", data: { error: managedMcpError } },
           this.turnKey(pendingEvent.id, "managed_mcp_unavailable"));
-        await this.endTurnStream(sessionId, turnId, claim.generation);
+        await this.endTurnStream(sessionId, turnId, projectionWriter);
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1738,7 +1722,7 @@ export class SessionRouter {
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
       // the turn idle. This runs on normal completion and after an Interrupt.
-      await this.endTurnStream(sessionId, turnId, claim.generation);
+      await this.endTurnStream(sessionId, turnId, projectionWriter);
 
       if (!await this.completeTurn(
         journal,
@@ -1776,7 +1760,7 @@ export class SessionRouter {
     // last acknowledgement committed Session idle atomically with queue removal.
     // A failed claim alone is never evidence of idle: another Host may own it.
     if (this.turnStreamStore && lastOwnedTurn) {
-      await this.clearActiveTurnFenced(sessionId, lastOwnedTurn);
+      await this.turnStreamStore.clearActiveTurn(sessionId, lastOwnedTurn);
     }
 
     // The session's sandbox (if any was created) is intentionally kept across

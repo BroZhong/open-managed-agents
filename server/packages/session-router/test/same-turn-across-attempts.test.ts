@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { InMemoryTurnStreamStore, type TurnStreamStore } from "@oma-server/redis";
+import { InMemoryTurnStreamStore, type ActiveTurn, type TurnStreamStore } from "@oma-server/redis";
 import type { StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, AdapterRunResult, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -325,7 +325,7 @@ describe("the Turn's Delta stream and active-Turn projection across attempts", (
     const draining = first.handleNewEvent(h.session.id, h.agent);
     await until(async () => (await h.ofType("agent.tool_use")).length === 1);
     await h.lose("runner-a", draining);
-    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "running", generation: 1 });
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
 
     // Generation 2 reads the projection, then stalls before writing it, and
     // its lease runs out meanwhile, as in a long GC pause.
@@ -342,12 +342,12 @@ describe("the Turn's Delta stream and active-Turn projection across attempts", (
     const current = h.runner("runner-c", held(h.turns, (next) => next === null, clear.opened, clearing.open));
     const currentDrain = current.handleNewEvent(h.session.id, h.agent);
     await clearing.opened;
-    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "idle", generation: 3 });
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "idle", inputSeq: 1, generation: 3 });
 
     // The stale generation's write lands now and is refused.
     staleWrite.open();
     await staleDrain;
-    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "idle", generation: 3 });
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "idle", inputSeq: 1, generation: 3 });
 
     clear.open();
     await currentDrain;
@@ -355,14 +355,60 @@ describe("the Turn's Delta stream and active-Turn projection across attempts", (
     expect(await h.turns.getActiveTurn(h.session.id)).toBeNull();
     expect(await h.ofType("session.turn_completed")).toHaveLength(1);
   });
+
+  it("a stalled attempt of an earlier input cannot replace the projection of the input after it", async () => {
+    const holdB = gate();
+    const h = await harness(async (_input, write, attempt) => {
+      // Attempt 1 completes input A's Turn; attempt 2 runs input B's until released.
+      if (attempt === 2) await holdB.opened;
+      await write(event("agent.message", { content: [{ type: "text", text: `answer ${attempt}` }] }));
+    });
+    await h.enqueue("A");
+    await h.enqueue("B");
+    // Input A's first attempt stalls as it records its Turn, and its lease
+    // runs out meanwhile, as in a long GC pause.
+    const staleWrite = gate();
+    const staleWriting = gate();
+    const stale = h.runner("runner-a", held(h.turns, (next) => next !== null, staleWrite.opened, staleWriting.open));
+    const staleDrain = stale.handleNewEvent(h.session.id, h.agent);
+    await staleWriting.opened;
+    await h.lose("runner-a", sleep(0));
+
+    // Another Runner takes input A over, completes it and runs input B.
+    const current = h.runner("runner-b");
+    const currentDrain = current.handleNewEvent(h.session.id, h.agent);
+    await until(async () => (await h.ofType("user.message")).length === 2 && (await h.turns.getActiveTurn(h.session.id))?.status === "running");
+    const inputB = (await h.ofType("user.message"))[1];
+    const projectionB = await h.turns.getActiveTurn(h.session.id);
+    expect(projectionB).toEqual({ turnId: `turn_${inputB.seq}_a1`, status: "running", inputSeq: inputB.seq, generation: 1 });
+
+    // Input A's stalled write lands now and is refused: a reconnecting
+    // console keeps backfilling input B's Turn.
+    staleWrite.open();
+    await staleDrain;
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual(projectionB);
+
+    holdB.open();
+    await currentDrain;
+    expect(await current.waitForIdle(4000)).toBe(true);
+    expect(await h.turns.getActiveTurn(h.session.id)).toBeNull();
+    expect(await h.ofType("session.turn_completed")).toHaveLength(2);
+  });
 });
 
 /**
- * The shared projection as one Runner sees it: its first compare-and-set that
- * `holds` waits for `release`, after telling `reached` it got there.
+ * The shared projection as one Runner sees it: its first write that `holds`
+ * (a recorded Turn, or null for a clear) waits for `release`, after telling
+ * `reached` it got there.
  */
-function held(turns: TurnStreamStore, holds: (next: unknown) => boolean, release: Promise<void>, reached: () => void): TurnStreamStore {
+function held(turns: TurnStreamStore, holds: (next: ActiveTurn | null) => boolean, release: Promise<void>, reached: () => void): TurnStreamStore {
   let waited = false;
+  const hold = async (next: ActiveTurn | null) => {
+    if (waited || !holds(next)) return;
+    waited = true;
+    reached();
+    await release;
+  };
   return {
     appendDelta: (sessionId, delta) => turns.appendDelta(sessionId, delta),
     readDeltas: (sessionId, turnId, afterId) => turns.readDeltas(sessionId, turnId, afterId),
@@ -370,14 +416,13 @@ function held(turns: TurnStreamStore, holds: (next: unknown) => boolean, release
     reclaim: (sessionId, turnId) => turns.reclaim(sessionId, turnId),
     setActiveTurn: (sessionId, turn) => turns.setActiveTurn(sessionId, turn),
     getActiveTurn: (sessionId) => turns.getActiveTurn(sessionId),
-    clearActiveTurn: (sessionId) => turns.clearActiveTurn(sessionId),
-    async compareAndSetActiveTurn(sessionId, expected, next) {
-      if (!waited && holds(next)) {
-        waited = true;
-        reached();
-        await release;
-      }
-      return turns.compareAndSetActiveTurn(sessionId, expected, next);
+    async recordActiveTurn(sessionId, turn) {
+      await hold(turn);
+      return turns.recordActiveTurn(sessionId, turn);
+    },
+    async clearActiveTurn(sessionId, writer) {
+      await hold(null);
+      return turns.clearActiveTurn(sessionId, writer);
     },
   };
 }
