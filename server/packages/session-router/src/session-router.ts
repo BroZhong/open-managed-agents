@@ -1207,6 +1207,10 @@ export class SessionRouter {
       // Child restrictions belong to the Session, including later direct user
       // input that has no DelegationExecution record for this pending event.
       if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };
+      // A Turn keeps the model and thinking its first attempt ran with, so
+      // an edit mid-Turn applies from the next Turn; its prompt, Skills and
+      // MCP servers are the current ones (#253). A Child execution's own
+      // snapshot outranks both.
       if (plan.kind === "run" && plan.config?.model) currentAgent = { ...currentAgent, model: plan.config.model };
       let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
       if (delegationExecution && this.delegationStore) {
@@ -1463,7 +1467,8 @@ export class SessionRouter {
         // A continued Turn picks up after what it already committed: its
         // model steps and its output blocks.
         if (plan.start === "continue") adapterInput.resume = plan.progress;
-        if (plan.config?.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: plan.config.thinking };
+        if (plan.config?.thinking) adapterInput.execution = { ...adapterInput.execution,
+          thinking: adapterInput.execution?.thinking ?? plan.config.thinking };
         if (this.delegations) adapterInput.execution = { ...adapterInput.execution,
           onResolved: async (config) => {
             await this.delegations!.assertOwner(delegationRun);

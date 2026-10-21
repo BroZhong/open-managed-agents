@@ -115,7 +115,12 @@ export interface RunPlan {
   repairs: DanglingToolCall[];
   /** The Turn's delegation waits; each still waiting is resumed for its result before the Turn goes on. */
   waits: DelegationWait[];
-  /** The configuration the Turn started with, as its waits recorded it. */
+  /**
+   * The model and thinking the Turn runs with on every attempt: those its
+   * first attempt resolved, as it recorded them when it claimed the input, or
+   * as a delegation wait recorded them. Absent while no attempt claimed the
+   * input: the Turn then starts with the configuration current at this claim.
+   */
   config?: DelegationWaitConfig;
   takeover?: Takeover;
 }
@@ -140,6 +145,8 @@ export interface RunPlan {
  * started: the plan names it after the first event of the input that names a
  * Turn (Pi's agent.context_start, recorded when Pi is prompted, or an earlier
  * takeover's marker). An input no attempt named yet is this attempt's Turn.
+ * The Turn keeps the model and thinking that first claim recorded, so a
+ * configuration edited mid-Turn applies from the next Turn.
  */
 export function planResume(facts: ResumeFacts): ResumePlan {
   const waits = facts.waits.filter((wait) => wait.status !== "cancelled");
@@ -172,18 +179,36 @@ export function planResume(facts: ResumeFacts): ResumePlan {
   // The user stopped this Turn and the log shows the stop never took effect.
   // Continuing it would ignore the stop, so it ends as the Interrupt would have ended it.
   if (facts.claim.priorInterrupt) return complete("interrupted", { repairOutcome: "interrupted", interruptChildren: true });
+  const config = turnConfig(output, turnId);
   const run = (start: RunPlan["start"], plan: Partial<RunPlan> = {}): RunPlan => ({
-    kind: "run", start, turnId, progress: turnProgress(output, turnId), repairs: dangling, waits: [], ...plan, ...takeover,
+    kind: "run", start, turnId, progress: turnProgress(output, turnId), repairs: dangling, waits: [],
+    ...(config ? { config } : {}), ...plan, ...takeover,
   });
   if (waits.length) {
     const waitCalls = new Set(waits.map((wait) => wait.callerToolUseId));
-    // A wait saved before waits recorded configuration has none.
-    return run("continue", { repairs: dangling.filter((call) => !waitCalls.has(call.toolUseId)), waits, config: waits[0].config ?? {} });
+    return run("continue", { repairs: dangling.filter((call) => !waitCalls.has(call.toolUseId)), waits,
+      config: { ...config, ...waits[0].config } });
   }
   const last = lastMessage(output);
   if (!inputCommitted(output, last)) return run("prompt");
   if (last && isFinalAnswer(last)) return complete("answered");
   return run("continue");
+}
+
+/**
+ * The model and thinking the Turn's first attempt ran with: the runtime
+ * records what it resolved when it claims the input (agent.context_start),
+ * before its first model request.
+ */
+function turnConfig(output: readonly StoredEvent[], turnId: string): DelegationWaitConfig | undefined {
+  for (const event of output) {
+    if (event.type !== "agent.context_start") continue;
+    const data = event.data as { turnId?: unknown; model?: unknown; thinking?: unknown } | null;
+    if (data?.turnId === turnId && typeof data.model === "string" && typeof data.thinking === "string") {
+      return { model: data.model, thinking: data.thinking };
+    }
+  }
+  return undefined;
 }
 
 /** A message of the Turn's conversation, native or display, as the runtime would rebuild it. */

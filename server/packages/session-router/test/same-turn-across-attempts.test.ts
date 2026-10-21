@@ -234,6 +234,48 @@ describe("every attempt of an input continues the Turn its first attempt started
       .toEqual([expect.objectContaining({ turnId: "turn_1_a2" })]);
     expect(await h.ofType("session.error")).toEqual([]);
   });
+
+  it("E5/E6 configuration edited mid-Turn: the takeover keeps the first attempt's model and thinking and assembles the current prompt, Skills and MCP servers; the next Turn uses the edit", async () => {
+    // What Pi records when it claims the input: the model and thinking it resolved.
+    const claimed = event("agent.context_start", { sdk: "pi@0.83.0", model: "provider/original", thinking: "high" });
+    const userEntry = event("agent.context_entry", { sdk: "pi@0.83.0", presentation: { version: 1, blocks: [] },
+      entry: { id: "entry_user", type: "message", parentId: null, message: { role: "user", content: [{ type: "text", text: "A" }] } } });
+    const h = await harness(async (input, write, attempt) => {
+      if (attempt === 1) {
+        for (const committed of [claimed, userEntry, event("agent.tool_use", { toolUseId: "call_1", name: "bash", input: {} })]) await write(committed);
+        await aborted(input.signal!);
+        return;
+      }
+      await write(event("agent.message", { content: [{ type: "text", text: "done" }] }));
+    });
+    await h.enqueue("A");
+    const draining = h.runner("runner-a").handleNewEvent(h.session.id, h.agent);
+    await until(async () => (await h.ofType("agent.tool_use")).length === 1);
+    // The user edits the Agent and the Session while the Turn runs.
+    const skill = await h.stores.skillStore.create({ tenantId: "tenant", name: "runbook", description: "Equipped mid-Turn",
+      ownerType: "agent", ownerId: h.agent.id });
+    await h.stores.skillArtifactStore.put("tenant", skill.id, "SKILL.md", "# Runbook");
+    await h.stores.agentStore.update(h.agent.id, { model: "provider/edited", system: "edited system", skills: [skill.id],
+      mcpServers: [{ catalogId: "rds-mcp", name: "rds-mcp" }] });
+    await h.stores.sessionStore.setThinking(h.session.id, "off");
+    await h.lose("runner-a", draining);
+    await h.enqueue("B");
+
+    await h.takeOver("runner-b");
+
+    expect(h.attempts.slice(0, 2)).toEqual(["turn_1_a1", "turn_1_a1"]);
+    const [, resumed, next] = h.inputs;
+    expect(resumed.resume).toBeDefined();
+    expect(resumed.agent).toMatchObject({ model: "provider/original", system: "edited system",
+      mcpServers: [expect.objectContaining({ name: "rds-mcp" })], skillDescriptors: [expect.objectContaining({ name: "runbook" })] });
+    expect(resumed.execution?.thinking).toBe("high");
+    // The next Turn starts with the edited configuration.
+    expect(next.turnId).not.toBe("turn_1_a1");
+    expect(next.agent).toMatchObject({ model: "provider/edited", thinking: "off" });
+    expect(next.execution?.thinking).toBeUndefined();
+    expect(await h.ofType("session.error")).toEqual([]);
+    expect(await h.ofType("session.turn_completed")).toHaveLength(2);
+  });
 });
 
 describe("the Turn's Delta stream and active-Turn projection across attempts", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DelegationWait, StoredEvent } from "@oma-server/store";
-import { planResume, turnProgress, type DanglingToolCall, type ResumeFacts, type ResumePlan } from "../src/plan-resume.js";
+import { planResume, turnProgress, type DanglingToolCall, type ResumeFacts, type ResumePlan, type RunPlan } from "../src/plan-resume.js";
 
 /** The claimed input, promoted at seq 10 and claimed by generation 2. */
 const INPUT = "pevt_input";
@@ -32,7 +32,9 @@ const afterInterrupt = (overrides: Partial<ResumeFacts> = {}): ResumeFacts =>
 
 const running: Logged = ["session.status_running", {}];
 const completed: Logged = ["session.turn_completed", { pendingEventId: INPUT, turnId: "turn_10_a1" }];
-const contextStart: Logged = ["agent.context_start", { sdk: "pi@0.83.0", inputEventId: "sess:10", turnId: "turn_10_a1" }];
+/** The model and thinking Pi resolved when the Turn's first attempt claimed the input. */
+const PINNED = { model: "provider/first-model", thinking: "high" };
+const contextStart: Logged = ["agent.context_start", { sdk: "pi@0.83.0", inputEventId: "sess:10", turnId: "turn_10_a1", ...PINNED }];
 /** Pi's native user message: the input, committed into the Turn's native chain. */
 const userEntry: Logged = ["agent.context_entry", { id: "evt_user", sdk: "pi@0.83.0", turnId: "turn_10_a1", inputEventId: "sess:10",
   entry: { id: "entry_user", type: "message", parentId: null, message: { role: "user", content: [{ type: "text", text: "go" }] } },
@@ -102,11 +104,14 @@ const interrupted = (repairs: DanglingToolCall[] = [], turnId = TURN): ResumePla
 const answered = (repairs: DanglingToolCall[] = []): ResumePlan => ({ kind: "complete", cause: "answered", turnId: TURN, repairs,
   repairOutcome: "unknown", interruptChildren: false, takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
 /** Prompt the input in the Turn its first attempt named, or in this attempt's own when none did. */
-const prompt = (turnId = TURN): ResumePlan => ({ kind: "run", start: "prompt", turnId, progress: FIRST_STEP, repairs: [], waits: [],
+const prompt = (turnId = TURN): RunPlan => ({ kind: "run", start: "prompt", turnId, progress: FIRST_STEP, repairs: [], waits: [],
   takeover: expired() });
 /** Continue the committed native history, after an "outcome unknown" result for each call that has none. */
-const resumed = (repairs: DanglingToolCall[] = [], progress = FIRST_STEP): ResumePlan => ({ kind: "run", start: "continue", turnId: TURN, progress,
+const resumed = (repairs: DanglingToolCall[] = [], progress = FIRST_STEP): RunPlan => ({ kind: "run", start: "continue", turnId: TURN, progress,
   repairs, waits: [], takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
+
+/** A plan that runs the Turn with the model and thinking its first attempt ran with (#253). */
+const pinned = (plan: RunPlan): RunPlan => ({ ...plan, config: PINNED });
 
 /** The Turn an earlier attempt started and left waiting on a synchronous delegation. */
 const WAITING_TURN = "turn_10_a1";
@@ -156,25 +161,25 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
 
   ["A4 context_start committed, native user message not: prompt the input again in the same Turn",
     facts({ events: log(running, contextStart) }),
-    prompt()],
+    pinned(prompt())],
   ["B1 compaction summary in flight before the input was committed: prompt again in the same Turn",
     facts({ events: log(running, contextStart, ["agent.context_usage", { turnId: TURN, tokens: 900 }], ["agent.compaction", { turnId: TURN, status: "started" }]) }),
-    prompt()],
+    pinned(prompt())],
   ["B2 compaction boundary committed before the input: prompt again on top of it",
     facts({ events: log(running, contextStart, compaction) }),
-    prompt()],
+    pinned(prompt())],
   ["A5 native user message committed, model request in flight: continue",
     facts({ events: log(...started) }),
-    resumed()],
+    pinned(resumed())],
   ["A6/A7 native tool call committed, its result not: unknown result, continue",
     facts({ events: log(...started, modelRequest, assistant([text("running it"), call("call_1")], { blockIndex: 0 })) }),
-    resumed([bash("call_1")], { completedModelSteps: 1, blockBase: 2 })],
+    pinned(resumed([bash("call_1")], { completedModelSteps: 1, blockBase: 2 }))],
   ["A8 parallel native tool calls, one result committed: unknown result only for the other",
     facts({ events: log(...started, assistant([call("call_1"), call("call_2"), call("call_3")]), nativeResult("call_2")) }),
-    resumed([bash("call_1"), bash("call_3")])],
+    pinned(resumed([bash("call_1"), bash("call_3")]))],
   ["A9 every native tool result committed: continue, nothing to repair",
     facts({ events: log(...started, assistant([call("call_1"), call("call_2")]), nativeResult("call_1"), nativeResult("call_2")) }),
-    resumed()],
+    pinned(resumed())],
   ["A10 final answer committed without a completion marker: complete without a model request",
     facts({ events: log(...started, assistant([call("call_1")]), nativeResult("call_1"), assistant([text("done")])) }),
     answered()],
@@ -189,31 +194,31 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
     answered()],
   ["A11 aborted assistant whose call never got its arguments: answered by its own entry, continue",
     facts({ events: log(...started, assistant([text("half"), call("call_1")], { stopReason: "aborted" })) }),
-    resumed()],
+    pinned(resumed())],
   ["A11 failed model request is last: continue",
     facts({ events: log(...started, assistant([text("")], { stopReason: "error" })) }),
-    resumed()],
+    pinned(resumed())],
   ["B3 overflow compaction committed after the failed request: continue from the compacted context",
     facts({ events: log(...started, assistant([text("")], { stopReason: "error" }), compaction) }),
-    resumed()],
+    pinned(resumed())],
   ["C9 steering committed at the request gate: continue",
     facts({ events: log(...started, assistant([call("call_1")]), nativeResult("call_1"), steering) }),
-    resumed()],
+    pinned(resumed())],
   ["A15 MCP tool calls dangling: unknown results with the server they name",
     facts({ events: log(...started,
       assistant([call("call_native", "mcp")], { mcp: { call_native: { name: "search", serverName: "docs" } } }),
       mcpToolUse("call_display", "lookup")) }),
-    resumed([
+    pinned(resumed([
       { type: "agent.mcp_tool_use", toolUseId: "call_native", name: "search", serverName: "docs" },
       { type: "agent.mcp_tool_use", toolUseId: "call_display", name: "lookup" },
-    ])],
+    ]))],
   ["A17 a lost takeover wrote some repairs: repair only the rest, continue",
     facts({ events: log(...started, assistant([call("call_1"), call("call_2")]),
       ["session.turn_resumed", { turnId: TURN, generation: 1, reason: "expired", danglingToolUseIds: ["call_1", "call_2"] }], toolResult("call_1")) }),
-    resumed([bash("call_2")])],
+    pinned(resumed([bash("call_2")]))],
   ["A17 a lost takeover wrote every repair: continue from the repaired results",
     facts({ events: log(...started, assistant([call("call_1")]), toolResult("call_1")) }),
-    resumed()],
+    pinned(resumed())],
   ["a call recorded twice is repaired once",
     facts({ events: log(running, toolUse("call_1"), toolUse("call_1")) }),
     resumed([bash("call_1")])],
@@ -253,7 +258,7 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
       waits: [wait("call_agent")], config: CONFIG, takeover: expired() }],
   ["only cancelled waits: the Turn has nothing to resume, its call gets an unknown result",
     facts({ waits: [wait("call_agent", "cancelled")], events: log(...started, assistant([call("call_agent", "Agent")])) }),
-    resumed([agentCall("call_agent")])],
+    pinned(resumed([agentCall("call_agent")]))],
   ...["session.status_idle", "session.error", "session.turn_aborted"].map((type): [string, ResumeFacts, ResumePlan] => [
     `A12 ${type} committed after a consumed wait: complete the waiting Turn, do not resume it`,
     facts({ waits: [wait("call_agent", "consumed")], events: log(...started, assistant([call("call_agent", "Agent")]),
@@ -261,7 +266,7 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
     ended([bash("call_bash")], { turnId: WAITING_TURN, repairOutcome: type === "session.turn_aborted" ? "interrupted" : "unknown" })]),
   ["C3 Agent tool call committed, delegation not accepted: no wait, unknown result, continue",
     facts({ events: log(...started, assistant([call("call_agent", "Agent")])) }),
-    resumed([agentCall("call_agent")])],
+    pinned(resumed([agentCall("call_agent")]))],
 
   // An Interrupt an earlier generation accepted ends the Turn as an Interrupted
   // Turn once the log neither completes nor ends it, before any other row. It
@@ -364,6 +369,34 @@ describe("the Turn an attempt continues", () => {
     const notification: Logged = ["subagent.result", { executionId: "exec_1", turnId: "turn_4_a1", callerTurnId: "turn_4_a1" }];
     expect(planResume(facts({ events: log(...started.slice(0, 1), notification, ...started.slice(1), assistant([text("half")])) })))
       .toMatchObject({ kind: "complete", cause: "answered", turnId: TURN });
+  });
+});
+
+describe("the configuration a resumed Turn runs with", () => {
+  // Editing the Agent's model or the Session's thinking changes only later Turns (#253).
+  it("E5 a continued Turn runs with the model and thinking its first attempt recorded when it claimed the input", () => {
+    expect(planResume(facts({ events: log(...started, modelRequest, assistant([call("call_1")])) })))
+      .toMatchObject({ kind: "run", start: "continue", config: PINNED });
+  });
+
+  it("E5 a Turn prompted again runs with them too", () => {
+    expect(planResume(facts({ events: log(running, contextStart) }))).toMatchObject({ kind: "run", start: "prompt", config: PINNED });
+  });
+
+  it("E5 the first attempt's configuration, not a later attempt's", () => {
+    const later: Logged = ["agent.context_start", { sdk: "pi@0.83.0", inputEventId: "sess:10", turnId: TURN, model: "provider/edited", thinking: "off" }];
+    expect(planResume(facts({ events: log(...started, assistant([call("call_1")]), nativeResult("call_1"), later) })))
+      .toMatchObject({ kind: "run", start: "continue", config: PINNED });
+  });
+
+  it("E5 no attempt claimed the input yet: the Turn takes the configuration current when it starts", () => {
+    expect(planResume(facts({ events: log(running) }))).not.toHaveProperty("config");
+  });
+
+  it("E5 a delegation wait's snapshot outranks the Turn's claim; what the wait lacks comes from the claim", () => {
+    expect(planResume(facts({ waits: [wait("call_agent")], events: log(...started) }))).toMatchObject({ config: CONFIG });
+    expect(planResume(facts({ waits: [{ ...wait("call_agent"), config: { model: "provider/model" } }], events: log(...started) })))
+      .toMatchObject({ config: { model: "provider/model", thinking: PINNED.thinking } });
   });
 });
 
