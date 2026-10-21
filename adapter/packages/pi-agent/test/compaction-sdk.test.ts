@@ -197,6 +197,26 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     expect(events.filter(e => e.type === "session.error").map(e => e.type === "session.error" && e.error.message)).toEqual(recovered ? [] : [error]);
   });
 
+  it("omits the oldest images under the request byte budget instead of compacting", async () => {
+    vi.stubEnv("OMA_PI_IMAGE_BUDGET_BYTES", "1000");
+    const manager = seed(false);
+    const usage = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+    for (let i = 0; i < 4; i++) {
+      manager.appendMessage({ role: "assistant", api: model.api, provider: model.provider, model: model.id, content: [{ type: "toolCall", id: `read_${i}`, name: "read", arguments: { path: `/tmp/n${i}.png` } }], usage, stopReason: "toolUse", timestamp: 100 + i });
+      manager.appendMessage({ role: "toolResult", toolCallId: `read_${i}`, toolName: "read", content: [{ type: "text", text: "Read image file [image/png]" }, { type: "image", mimeType: "image/png", data: "A".repeat(300) }], isError: false, timestamp: 100 + i });
+    }
+    manager.appendMessage({ role: "assistant", api: model.api, provider: model.provider, model: model.id, content: [{ type: "text", text: "read them" }], usage, stopReason: "stop", timestamp: 200 });
+    const events = await run(input(records(manager), async () => {}));
+    expect(events.filter(e => e.type === "session.error")).toEqual([]);
+    expect(events.some(e => e.type === "agent.compaction")).toBe(false);
+    expect(control.requests.map(r => r.summary)).toEqual([false]);
+    const blocks = (control.requests[0].context as Context).messages.flatMap(message => message.role === "toolResult" ? message.content : []);
+    expect(blocks.filter(block => block.type === "image").reduce((sum, block) => sum + (block.type === "image" ? block.data.length : 0), 0)).toBe(300);
+    expect(blocks).toContainEqual({ type: "text", text: "[image omitted to fit request size: /tmp/n0.png; read it again if needed]" });
+    // Only the request is trimmed; durable context keeps every image.
+    expect(JSON.stringify(restorePiSession([...records(manager), ...events]).buildSessionContext().messages).match(/A{300}/g)).toHaveLength(4);
+  });
+
   it.each([false, true])("stops before any request using an uncommitted summary (overflow=%s)", async overflow => {
     if (overflow) control.overflow = 1;
     const events = await run(input(records(seed(!overflow)), async () => { throw new Error("context storage unavailable"); }));
