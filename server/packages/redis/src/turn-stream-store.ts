@@ -39,7 +39,8 @@ export interface ActiveTurn {
  * reconnect stays correct across multiple Host instances (nothing lives in
  * process memory).
  *
- * - Deltas: `stream:session:{sessionId}:turn:{turnId}` (XADD append, XRANGE replay, DEL reclaim).
+ * - Deltas: `stream:session:{sessionId}:turn:{turnId}` (XADD append, XRANGE replay, DEL reclaim);
+ *   each append slides a 30-minute expiry, so streams nobody reclaims still disappear.
  * - Active turn: hash `session:active-turn:{sessionId}` → { turnId, status }.
  */
 export interface TurnStreamStore {
@@ -85,13 +86,30 @@ else
 end
 return 1`;
 
+/**
+ * Sliding expiry of a Turn's delta stream, pushed out again by every append.
+ * A streaming Turn never loses its backfill mid-way, while a stream orphaned by
+ * a lost Runner (the Turn never ends normally, so nothing reclaims it) frees
+ * its memory on its own.
+ */
+const TURN_DELTA_STREAM_TTL_MS = 30 * 60 * 1000;
+
+// One script, so no client crash, command timeout or dropped connection can
+// land the XADD without the PEXPIRE and leave a stream that never expires.
+const APPEND_DELTA_SCRIPT = `-- oma:turn-delta-append
+local id = redis.call('XADD', KEYS[1], '*', unpack(ARGV, 2))
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+return id`;
+
 export class RedisTurnStreamStore implements TurnStreamStore {
   constructor(private readonly redis: RedisLike) {}
 
   async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
-    const id = await this.redis.xadd(
+    const id = await this.redis.eval(
+      APPEND_DELTA_SCRIPT,
+      1,
       turnStreamKey(sessionId, delta.turnId),
-      "*",
+      String(TURN_DELTA_STREAM_TTL_MS),
       "turnId",
       delta.turnId,
       "blockIndex",
@@ -101,8 +119,9 @@ export class RedisTurnStreamStore implements TurnStreamStore {
       "data",
       JSON.stringify(delta.data ?? null),
     );
-    // XADD with an explicit "*" id always returns the generated id.
-    return id ?? "";
+    // The script returns XADD's reply; with an explicit "*" id that is always
+    // the generated id.
+    return String(id);
   }
 
   async readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {

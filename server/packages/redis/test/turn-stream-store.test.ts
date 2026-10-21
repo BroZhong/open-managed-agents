@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { RedisTurnStreamStore } from "../src/turn-stream-store.js";
+import { BestEffortTurnStreamStore } from "../src/best-effort-turn-stream-store.js";
 import { FakeRedis } from "./fake-redis.js";
 
 describe("RedisTurnStreamStore", () => {
@@ -93,6 +94,77 @@ describe("RedisTurnStreamStore", () => {
       expect(redis.hasStream("stream:session:session:turn:t")).toBe(false);
       expect(await store.deltaCount("session", "t")).toBe(0);
       expect(await store.readDeltas("session", "t")).toEqual([]);
+    });
+  });
+
+  describe("delta stream expiry", () => {
+    const MINUTE = 60_000;
+    let now: number;
+
+    beforeEach(() => {
+      now = 1_700_000_000_000;
+      redis = new FakeRedis(() => now);
+      store = new RedisTurnStreamStore(redis);
+    });
+
+    const append = (n: number) =>
+      store.appendDelta("session", { turnId: "t", blockIndex: 0, type: "agent.message_chunk", data: { n } });
+
+    it("expires a Turn's stream 30 minutes after its last append", async () => {
+      await append(1);
+
+      now += 30 * MINUTE - 1;
+      expect(await store.deltaCount("session", "t")).toBe(1);
+
+      now += 2;
+      expect(await store.deltaCount("session", "t")).toBe(0);
+      expect(await store.readDeltas("session", "t")).toEqual([]);
+    });
+
+    it("refreshes the expiry on every append, so a Turn that keeps streaming never expires mid-way", async () => {
+      await append(1);
+      for (const n of [2, 3, 4]) {
+        // Any two gaps together exceed 30 minutes, so each append must refresh.
+        now += 29 * MINUTE;
+        await append(n);
+      }
+
+      // 87 minutes after the first delta, the whole Turn is still buffered.
+      expect((await store.readDeltas("session", "t")).map((d) => d.data)).toEqual([
+        { n: 1 },
+        { n: 2 },
+        { n: 3 },
+        { n: 4 },
+      ]);
+
+      now += 30 * MINUTE + 1;
+      expect(await store.deltaCount("session", "t")).toBe(0);
+    });
+
+    it("replays a reconnect within the TTL unchanged, and reads do not extend it", async () => {
+      const firstId = await append(1);
+      await append(2);
+
+      now += 29 * MINUTE;
+      const all = await store.readDeltas("session", "t");
+      expect(all.map((d) => d.data)).toEqual([{ n: 1 }, { n: 2 }]);
+      expect(all[0]).toMatchObject({ id: firstId, turnId: "t", blockIndex: 0, type: "agent.message_chunk" });
+      expect((await store.readDeltas("session", "t", firstId)).map((d) => d.data)).toEqual([{ n: 2 }]);
+      expect(await store.deltaCount("session", "t")).toBe(2);
+
+      // Only appends keep a stream alive; a reconnecting reader must not pin an orphan.
+      now += MINUTE + 1;
+      expect(await store.readDeltas("session", "t")).toEqual([]);
+    });
+  });
+
+  describe("when Redis is unavailable", () => {
+    it("appends stay best-effort: they resolve without a delta id instead of failing the Turn", async () => {
+      const delta = { turnId: "t", blockIndex: 0, type: "agent.message_chunk", data: {} };
+      vi.spyOn(redis, "eval").mockRejectedValue(new Error("Command timed out"));
+      expect(await new BestEffortTurnStreamStore(store, () => true).appendDelta("session", delta)).toBe("");
+      expect(await new BestEffortTurnStreamStore(store, () => false).appendDelta("session", delta)).toBe("");
+      expect(redis.eval).toHaveBeenCalledTimes(1);
     });
   });
 

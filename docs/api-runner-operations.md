@@ -27,6 +27,8 @@ and loads the shared Sandbox Secret. API alone requires user-login credentials.
 claiming without waiting for a scan. PostgreSQL is the only pending queue and
 history authority. Redis contains disposable Deltas, active-Turn projections and
 notifications. Outages lose temporary token animation, never committed answers.
+A Turn's Delta stream expires 30 minutes after its last append, so streams left
+behind by a lost Runner need no manual cleanup.
 
 The first split release uses one API and one Runner. `deploy/app/api-runner.yaml`
 provides separate ConfigMaps, Deployments, readiness probes and internal Services;

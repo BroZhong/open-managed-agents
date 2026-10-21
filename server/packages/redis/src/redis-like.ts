@@ -20,8 +20,7 @@ export interface RedisLike {
     count: string | number,
   ): Promise<[string, string[]]>;
 
-  // ─── Streams (per-turn deltas) ─────────────────────────────────────────────
-  xadd(key: string, id: string, ...fieldsAndValues: string[]): Promise<string | null>;
+  // ─── Streams (per-turn deltas; appends go through a script) ────────────────
   xrange(key: string, start: string, end: string): Promise<Array<[string, string[]]>>;
   xlen(key: string): Promise<number>;
 
