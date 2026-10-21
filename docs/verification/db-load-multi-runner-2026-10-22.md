@@ -3,16 +3,17 @@
 Question (#234): with several Runners on one PostgreSQL, does the database load become too
 high, and if so where and how do we fix it?
 
-Short answer: no, not at today's scale. oma-test averages ≈23 statements/s, and a third
-of that is probably one stuck cleanup row (to verify, §4). At the next scale points the polling stays within a
+Short answer: no, not at today's scale. oma-test averages ≈9–15 statements/s; the range is
+because the stats window is unknown (§4). In a measured idle window its two Runners issued
+exactly the modelled 2.44 statements/s. At the next scale points the polling stays within a
 ≥4-vCPU budget: ≈4,500 statements/s at N=4 Runners, A=100 active Turns and W=20 delegation
 waits. But two thirds of that is multi-instance overhead that does no work, and it grows
 with Turns × Runners and with waits × Runners.
 
 Separately, three costs grow without bound with history: unindexed scans of the
 never-pruned delegation tables, the full event-log read on every claim, and cleanup rows
-retried every 5 s forever. These would make the database the bottleneck before the polling
-does.
+retried every 5 s with no backoff (none is stuck in oma-test today). These would make the
+database the bottleneck before the polling does.
 
 Three fixes remove ≈93 % of the projected load: the delegation wait (F1), non-owner claims
 (F2) and the heartbeat cadence (F3). Indexes (F4) remove the unbounded scans.
@@ -21,7 +22,8 @@ Measured with `server/packages/api/test/db-load.test.ts` (harness in `test/db-lo
 feat/stateless-runner 85f2a69. All rates below are **SQL statements per second**: every
 round trip, BEGIN and COMMIT included, as issued by the PostgreSQL stores in
 `server/packages/store/src/postgres/*.ts`. Raw numbers are in
-`db-load-multi-runner-2026-10-22.json`.
+`db-load-multi-runner-2026-10-22.json`: `harness` is the test's `DB_LOAD_JSON` output, and
+`live` holds the read-only oma_test counters behind §4.
 
 ## 1. Cost per source
 
@@ -40,7 +42,7 @@ oma-test: 12 tool steps, 55 durable events and ≈339 s per Turn.
 | Non-owner claim attempts | **2.87 /s per active Turn per other Runner** (161 failed claims per Turn per other Runner, 6 statements each) | **A × (N−1)** | claim tx (4) + 2 × `peek`; from: retry timer 1.27, 5 s scan 1.19, 15 s Loop scan 0.39 |
 | Sync delegation wait | **30.8 /s per waiting parent** + **35.2 /s per waiting parent per other Runner** | W, **W × (N−1)** | every 200 ms: `ownsClaim` (4) + `get` (2), then a wake broadcast; each other Runner then does `getById` + a failed claim (7) |
 | Global `delegation_lock` | 3 transactions per Turn, 12 per synchronous delegation | Turn rate | `acquire`/`releaseResourceUse`, `accept`, `saveWait`, `consumeResult`, `start`/`finishExecution` |
-| Cleanup row that cannot complete | **7.2 /s per row, forever** (2 Runners: 12 attempts + 12 SKIP LOCKED misses per min) | stuck rows K | `withEnvironmentLock` ×2 (18), `claimReclamation` (5), sweep tx |
+| Cleanup row that cannot complete (none in oma-test, §4) | **7.2 /s per row, forever** (2 Runners: 12 attempts + 12 SKIP LOCKED misses per min) | stuck rows K | `withEnvironmentLock` ×2 (18), `claimReclamation` (5), sweep tx |
 | Idle Session | **0** (asserted: no Runner statement names an idle Session) | none | none |
 | API SSE catch-up (not measured, from `event-catchup.ts`) | 0.5 /s per watched Session per API replica | watchers | `getEvents` every 2 s |
 
@@ -96,7 +98,8 @@ We call ≤ 25 % of the instance comfortable.
 
 | Scale point | Today's code | of which multi-instance | After F1–F3 | Est. RDS CPU, today's code |
 |---|---|---|---|---|
-| oma-test now: N=2, A≈0.6, W≈0.09, K≈1 (§4) | ≈23 /s | 5 /s | ≈11 /s (with F7: ≈4) | negligible |
+| oma-test idle, measured (§4) | 2.44 /s Runners + ≈0.8 /s API for one open console page | 0 | 2.44 /s | negligible |
+| oma-test average: N=2, A≈0.3–0.6, W≈0.05–0.09, K=0 (§4) | ≈9–15 /s | 3–5 /s | ≈4 /s | negligible |
 | N=2, A=20, W=0 | 235 /s | 57 /s | 55 /s | 0.01–0.02 vCPU |
 | N=2, A=20, W=4 | 499 /s | 198 /s | 67 /s | 0.02–0.05 vCPU |
 | N=4, A=20, W=4 | 908 /s | 595 /s | 70 /s | 0.05–0.09 vCPU |
@@ -120,28 +123,103 @@ outside the database:
 
 ## 4. Live evidence (oma-test, 2 Runners)
 
-The cumulative `pg_stat_user_tables` counters fit the model. The stats window comes from
-`session_cleanup.idx_scan` = 137,972 ÷ (2 Runners × 0.2 /s) = 344,930 s ≈ 4.0 days.
+### Idle window (measured)
 
-| Counter | Live | Model |
+2026-10-22 02:28:25 → 03:10:30 +08:00 (2,525 s). Both Runners were idle: 0 pending inputs and
+0 running or waiting Sessions. The deltas also show one console tab open on a Session page.
+
+| Counter | Δ | Rate | Model | Source |
+|---|---|---|---|---|
+| pending_events seq_scan | +1,338 | 0.53 /s | 0.533 | `listPendingSessionIds`, 5 s pending scan + 15 s Loop scan per Runner |
+| delegation_executions seq_scan | +1,339 | 0.53 /s | 0.533 | status scan in `reconcileTerminatedExecutions`, same cadence |
+| delegation_waits seq_scan | +1,339 | 0.53 /s | 0.533 | the waits status scan in the same call |
+| session_cleanup idx_scan | +1,005 | 0.40 /s | 0.400 | cleanup discovery every 5 s per Runner |
+| loops idx_scan | +503 | 0.20 /s | 0.133 + 0.067 | `dispatchDue` every 15 s per Runner, plus the console's `GET /v1/agents/:id/loops` every 15 s |
+| pending_events idx_scan | +167 | 0.066 /s | 0.067 | the console's queued-input poll (`listUnclaimed`) every 15 s |
+| events idx_scan | +1,259 | 0.50 /s | 0.5 | the API's `EventCatchup` for one open SSE stream, every 2 s |
+| sessions idx_scan | +6,873 | 2.72 /s | 2.67 + 0.067 | reconcile joins (below), plus the queued-input route's `getById` every 15 s |
+| delegation_environments | +0 | 0 | 0 | idle Runners never touch a binding row |
+| pending_events n_tup_upd | +0 | 0 | 0 | there is no heartbeat without a running Turn |
+
+The two idle Runners issue 2.44 statements/s, which is the model's 1.22 per Runner. The open
+console page adds ≈0.8 statements/s on the API.
+
+**sessions 2.72 /s.** This is not the API: the console's only Session lookup is the
+queued-input route, 0.067 /s. It is not the pending scan either, which has no pending Sessions
+to look up. It is the reconcile query's joins:
+
+- `terminatedExecutionIds` joins every open execution (status queued or running) to
+  `sessions` twice, for the child and the parent.
+- `terminatedParentWaits` joins every `waiting` wait to `sessions` once.
+
+On tables this small PostgreSQL runs these joins as nested loops over `sessions_pkey`, so every
+lookup counts as one idx_scan. The rate works out to (6,873 − 169) ÷ 1,339 = **5.0 lookups per
+scan**, for example 2 open executions and 1 waiting wait. These delegation records stay open
+while no Turn runs. Reconcile closes a record only when one of its Sessions is terminated, so it
+never closes these.
+
+The round-trip count does not change: the scan is still one statement. But the open records are
+a correctness smell. An orphaned `running` execution holds a quota slot until a sibling's
+`startExecution` marks it `recovery_required`, which #252 changes. Verify (read-only):
+
+```sql
+SELECT 'execution' AS kind, record->>'status' AS status, count(*) FROM oma_test.delegation_executions
+ WHERE record->>'status' IN ('queued', 'running') GROUP BY 2
+UNION ALL
+SELECT 'wait', record->>'status', count(*) FROM oma_test.delegation_waits
+ WHERE record->>'status' = 'waiting' GROUP BY 2;
+```
+
+We expect 2 × executions + waits ≈ 5, with none of their Sessions terminated.
+
+### Cumulative counters
+
+`pg_stat_database.stats_reset` is NULL, so the window is unknown. The per-Runner cadence
+counters measure Runner-seconds, not wall time:
+
+- session_cleanup idx_scan 137,972 ÷ 0.2 /s ≈ 690,000 Runner-seconds;
+- pending_events seq_scan 181,564 ÷ 0.267 /s ≈ 681,000;
+- loops idx_scan 46,435 ÷ 0.067 /s ≈ 697,000 (console polling inflates this one slightly).
+
+≈690,000 Runner-seconds is about 4 days with 2 Runners or 8 days with 1. oma_test was created
+on 2026-10-14. The first version of this report claimed "≈4 days"; that was an estimate that
+assumed 2 Runners throughout.
+
+The figures below are therefore per input or per Turn-second, which do not depend on the window.
+Only the averages per second are ranges.
+
+| Counter | Live | Interpretation |
 |---|---|---|
-| loops idx_scan | 46,435 | `dispatchDue` every 15 s × 2 Runners → 45,991 (−1 %) |
-| pending_events seq_scan | 181,564 | `listPendingSessionIds` at 5 s + 15 s × 2 Runners → 183,963 (+1 %) |
-| delegation_executions seq_scan | 184,256 | the reconcile status scan, same cadence → 183,963 |
-| delegation_waits seq_scan | 190,857 | reconcile 183,963 + 6,894 ≈ 11 per input (harness: 14 per Turn) |
-| pending_events n_tup_upd | 209,544 (≈350 per input) | ≈1 renew per active Turn-second → A_avg ≈ 0.6, ≈345 s per input |
-| delegation_executions idx_scan | 370,067 | 1 /s per active Turn (heartbeat) + 5 /s per waiting parent → W_avg ≈ 0.09 (≈32k waiting-seconds) |
-| delegation_commands seq_scan | 33,467 | 1 /s per active child → ≈33k child-seconds, matching the 32k waiting-seconds above |
+| pending_events n_tup_upd | 209,544 | ≈1 renew per active Turn-second, so ≈209k Turn-seconds: ≈345 s per input over 605 inputs. A_avg ≈ 0.3–0.6 |
 | events n_tup_ins | 33,181 | 55 per input (the harness Turn shape is calibrated to this) |
-| pending_events idx_scan | 1,884,711 | heartbeat 627k + non-owner claims 397k + delegation poll/fan-out 960k + appends/fences 95k ≈ 2.08M (+10 %) |
-| delegation_environments idx_scan | 546,854 (1.59 /s) | per-Turn use explains < 10k. The residual ≈1.56 /s matches **one cleanup row whose Sandbox binding is still in use, retried every 5 s**: `claimReclamation` refuses, then two `withEnvironmentLock` calls; 8 index lookups per retry × 0.2 /s = 1.6 /s. A gateway delete failure would cost only ≈0.4 /s, so it does not fit |
+| delegation_executions idx_scan | 370,067 | heartbeat 1 /s per Turn-second (≈209k), plus `get` 5 /s per waiting-parent second → ≈32k waiting-parent seconds. W_avg ≈ 0.05–0.09 |
+| delegation_commands seq_scan | 33,467 | 1 /s per active child second → ≈33k, matching the line above |
+| delegation_waits seq_scan | 190,857 | reconcile ≈184k + ≈6.9k from `listWaits`, ≈11 per input (harness: 14 per Turn) |
+| pending_events idx_scan | 1,884,711 | 2 Runners throughout would predict 2.08M (heartbeat 627k + non-owner claims 397k + delegation poll and fan-out 960k + appends and fences 95k). 1 Runner would predict ≈1.04M. The value in between fits a mixed replica history |
+| session_cleanup | 214 rows, 0 open, max 2 attempts, 218 attempts in total | **no stuck cleanup row.** The first version's hypothesis was wrong; F7 is insurance only |
+| delegation_environments idx_scan | 546,854 | driven by activity (Δ 0 while idle), see below |
 
-Hypothesis to verify (read-only):
-`SELECT session_id, attempts, retry_at FROM oma_test.session_cleanup WHERE completed_at IS NULL ORDER BY attempts DESC;`
-We expect one row with ≈70,000 attempts, probably a terminated Session whose binding a live
-Session still uses (for example a Child of a running parent). If it is there, that row is
-about a third of today's oma-test Runner load. Such a row only completes when the binding
-is released, so it can be retried for days.
+**delegation_environments.** The straight path per Turn costs ≈8 binding-row lookups:
+
+- input trigger 1;
+- `prepare`'s `withEnvironmentLock` 3;
+- lifecycle `begin` 2 and `finish` 2;
+- +6 more when the Turn creates the Sandbox.
+
+A tool op touches the row only after it fails (`recover`, +3). For 605 inputs that is ≈5–9k,
+1–2 % of the counter. The cleanup attempts add ≈3k.
+
+The remainder needs a loop. Two exist, each bounded at 185 s:
+
+- `withPreparationLock` retries every 100 ms (1 lookup each, up to ≈1,850) while another Turn's
+  Sandbox creation is pending on the same binding. A parent and its children share one binding.
+- `beginActivity` retries every 250 ms (2 lookups each, up to ≈1,480) while the binding is being
+  reclaimed.
+
+About 300 such waits would explain the counter. The harness does not model them, because its
+fake Sandbox is created instantly. Verify with pg_stat_statements if the instance has it, or by
+sampling `SELECT id, creation_pending, reclaiming FROM oma_test.delegation_environments WHERE
+creation_pending OR reclaiming;` while delegations run.
 
 ## 5. Ranked fixes
 
@@ -155,7 +233,7 @@ Savings are at N=4, A=100, W=20 (4,522 /s).
 | F4 | Indexes on delegation tables + filter `id` by column (migration 0021) | statements unchanged; removes ≈14 seq scans per Turn, 32 /min per Runner, 1 /s per child | low | #251, #252 |
 | F5 | Stop re-reading the whole log, 50 rows per page, on every claim | ⌈H/50⌉ → ⌈H/1000⌉ statements per claim; H rows → current Turn + context | low (page size) / medium (boundary) | #245, #247, #248, #253 |
 | F6 | One reconcile, not one per scan per Runner; Loop scan without its own recovery scan | −0.5 /s per Runner; −0.39 /s per active Turn per other Runner (part of F2) | low | #254 |
-| F7 | Exponential backoff for cleanup retries | −7.2 /s per stuck row (likely −7 /s in oma-test today) | low | none (termination path) |
+| F7 | Exponential backoff for cleanup retries | −7.2 /s per stuck row (oma-test has none today: insurance) | low | none (termination path) |
 | F8 | Tool fence from the local lease instead of an `ownsClaim` round trip | −0.28 /s per active Turn | medium | #240, #254 |
 
 **F1. Delegation wait.** `DelegationCoordinator.waitForResult` calls `assertOwner`
@@ -239,6 +317,12 @@ Other findings:
 - `requestInterrupt`'s `NOT EXISTS` reads every event of the Session. It should use the
   completion marker's idempotency key instead.
 - The oma-test Runners' polling is production load, because the RDS is shared.
+- Two 185 s retry loops poll the binding row: `withPreparationLock` every 100 ms and
+  `beginActivity` every 250 ms. They are the likely source of the cumulative
+  delegation_environments scans (§4). A wake when the creation or reclamation completes would
+  replace them.
+- Delegation records appear to stay open (queued, running or waiting) with no Turn running
+  (§4). Every reconcile scan on every Runner looks them up again.
 
 ## 6. Harness
 
