@@ -9,6 +9,7 @@ import type {
   SubagentCallContext, ToolExecutor, ToolFileSystem,
 } from "@open-managed-agents/adapter-core";
 import type { JournalEvent, TurnJournal } from "./turn-journal.js";
+import type { DanglingCallResolver, RepairResult } from "./dangling-call-results.js";
 
 export interface DelegationRun {
   session: Session;
@@ -122,11 +123,7 @@ export class DelegationCoordinator {
       },
       getResult: async (input, context) => {
         await this.assertOwner(run);
-        const priorWait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId))
-          .find((wait) => wait.callerToolUseId === context.toolUseId);
-        const execution = await this.deps.store.get(
-          run.session.tenantId, run.session.id, input.childId, priorWait?.executionId ?? input.executionId,
-        );
+        const execution = await this.queriedExecution(run.session, run.fence.eventId, context.toolUseId, input);
         if (!execution) throw new Error("Child Session or execution not found; legacy plugin child IDs cannot be resumed");
         // A terminal query also records its consumption intent. Only the
         // eventual durable tool result consumes/suppresses its async delivery.
@@ -140,6 +137,68 @@ export class DelegationCoordinator {
         }, run.fence);
         this.deps.wake(command.childId);
         return command;
+      },
+    };
+  }
+
+  /** The execution a get_subagent_result call reads: the one its wait fixed, else the one its arguments select. */
+  private async queriedExecution(
+    session: Pick<Session, "id" | "tenantId">, pendingEventId: string, toolUseId: string,
+    input: { childId: string; executionId?: string },
+  ): Promise<DelegationExecution | null> {
+    const priorWait = (await this.deps.store.listWaits(session.id, pendingEventId))
+      .find((wait) => wait.callerToolUseId === toolUseId);
+    return this.deps.store.get(session.tenantId, session.id, input.childId, priorWait?.executionId ?? input.executionId);
+  }
+
+  /**
+   * The result of each delegation tool, by name, for a call a takeover finds
+   * without one (#251): what the call's durable record says, as the tool
+   * returns it. Told its outcome is unknown, the Agent would delegate again
+   * under a new call id, which the (calling Turn, tool use) idempotency key
+   * cannot recognise, and create a second child. A call that left no record
+   * gets no result here and stays of unknown outcome. A call answered here is
+   * not answered by its wait as well: the plan resumes the calls that have a
+   * wait and repairs only the others.
+   */
+  danglingCallResolvers(): Record<string, DanglingCallResolver> {
+    const sessionOf = async (sessionId: string) => {
+      const session = await this.deps.sessions.getById(sessionId);
+      if (!session) throw new Error(`Session ${sessionId} not found`);
+      return session;
+    };
+    return {
+      // The Child Session and Delegation Execution the call created or resumed.
+      Agent: async (call, scope) => {
+        const { tenantId } = await sessionOf(scope.sessionId);
+        const [execution] = await this.deps.store.listExecutions(tenantId, {
+          callerSessionId: scope.sessionId, callerTurnId: scope.turnId, callerToolUseId: call.toolUseId, limit: 1,
+        });
+        return execution && toolResult(await this.readResult(execution));
+      },
+      // The selected execution as it is now. A wait the call recorded resumes
+      // instead, waiting again if the call asked to wait.
+      get_subagent_result: async (call, scope) => {
+        const { childId, executionId } = call.input ?? {};
+        if (typeof childId !== "string" || (executionId !== undefined && typeof executionId !== "string")) return undefined;
+        const session = await sessionOf(scope.sessionId);
+        const execution = await this.queriedExecution(session, scope.pendingEventId, call.toolUseId,
+          { childId, ...(executionId ? { executionId } : {}) });
+        return execution ? toolResult(await this.readResult(execution)) : undefined;
+      },
+      // The command the call issued, with the status it has reached. The
+      // child it names bounds the search; the call's identity selects it.
+      steer_subagent: async (call, scope) => {
+        const { childId } = call.input ?? {};
+        if (typeof childId !== "string") return undefined;
+        const { tenantId } = await sessionOf(scope.sessionId);
+        for (const execution of await this.deps.store.listExecutions(tenantId, { childId })) {
+          const command = (await this.deps.store.listCommands(execution.id)).find((candidate) =>
+            candidate.callerSessionId === scope.sessionId && candidate.callerTurnId === scope.turnId &&
+            candidate.callerToolUseId === call.toolUseId);
+          if (command) return toolResult(command);
+        }
+        return undefined;
       },
     };
   }
@@ -315,6 +374,10 @@ export function executionResult(execution: DelegationExecution): Record<string, 
     budget: { maxModelSteps: execution.maxSteps }, result: execution.result,
     trace: { sessionId: execution.childId, turnId: execution.turnId },
   };
+}
+/** A delegation tool's value as its result, the way the Pi tool returns it. */
+function toolResult(value: unknown): RepairResult {
+  return { content: [{ type: "text", text: JSON.stringify(value) ?? "null" }], isError: false };
 }
 function executionResultIsError(result: Record<string, unknown>): boolean {
   return result.status !== "completed";

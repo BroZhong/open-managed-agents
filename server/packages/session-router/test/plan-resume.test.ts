@@ -44,7 +44,7 @@ const started: Logged[] = [running, contextStart, userEntry];
 
 type NativeBlock = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
 const text = (value: string): NativeBlock => ({ type: "text", text: value });
-const call = (id: string, name = "bash"): NativeBlock => ({ type: "toolCall", id, name, arguments: {} });
+const call = (id: string, name = "bash", args: Record<string, unknown> = {}): NativeBlock => ({ type: "toolCall", id, name, arguments: args });
 
 /**
  * A native Pi assistant entry. Its presentation selects a display block per
@@ -91,8 +91,8 @@ const sessionError = (code: string): Logged => ["session.error", { error: { code
 
 /** A Turn that committed no model step and no output block starts at the first of each. */
 const FIRST_STEP = { completedModelSteps: 0, blockBase: 0 };
-const bash = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "bash" });
-const agentCall = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "Agent" });
+const bash = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "bash", input: {} });
+const agentCall = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "Agent", input: {} });
 /** The takeover an expired claim makes: every call without a result, as the Turn moved. */
 const expired = (...danglingToolUseIds: string[]) => ({ reason: "expired" as const, danglingToolUseIds });
 
@@ -209,8 +209,8 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
       assistant([call("call_native", "mcp")], { mcp: { call_native: { name: "search", serverName: "docs" } } }),
       mcpToolUse("call_display", "lookup")) }),
     pinned(resumed([
-      { type: "agent.mcp_tool_use", toolUseId: "call_native", name: "search", serverName: "docs" },
-      { type: "agent.mcp_tool_use", toolUseId: "call_display", name: "lookup" },
+      { type: "agent.mcp_tool_use", toolUseId: "call_native", name: "search", serverName: "docs", input: {} },
+      { type: "agent.mcp_tool_use", toolUseId: "call_display", name: "lookup", input: {} },
     ]))],
   ["A17 a lost takeover wrote some repairs: repair only the rest, continue",
     facts({ events: log(...started, assistant([call("call_1"), call("call_2")]),
@@ -267,6 +267,18 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
   ["C3 Agent tool call committed, delegation not accepted: no wait, unknown result, continue",
     facts({ events: log(...started, assistant([call("call_agent", "Agent")])) }),
     pinned(resumed([agentCall("call_agent")]))],
+  // Whether a record answers a delegation call is its resolver's to find (#251): the plan knows no tool.
+  ["C4–C6 dangling delegation calls: repaired as any call is, with the arguments their resolvers read",
+    facts({ events: log(...started, assistant([
+      call("call_agent", "Agent", { prompt: "triage", run_in_background: true }),
+      call("call_peek", "get_subagent_result", { childId: "sess_child", wait: false }),
+      call("call_steer", "steer_subagent", { childId: "sess_child", message: "also the closed ones" }),
+    ])) }),
+    pinned(resumed([
+      { type: "agent.tool_use", toolUseId: "call_agent", name: "Agent", input: { prompt: "triage", run_in_background: true } },
+      { type: "agent.tool_use", toolUseId: "call_peek", name: "get_subagent_result", input: { childId: "sess_child", wait: false } },
+      { type: "agent.tool_use", toolUseId: "call_steer", name: "steer_subagent", input: { childId: "sess_child", message: "also the closed ones" } },
+    ]))],
 
   // An Interrupt an earlier generation accepted ends the Turn as an Interrupted
   // Turn once the log neither completes nor ends it, before any other row. It

@@ -286,7 +286,7 @@ export class SessionRouter {
    * durable state the tool keeps (the delegation tools, #251). A call no
    * resolver answers is reported as of unknown outcome.
    */
-  private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>> = {};
+  private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>>;
   private readonly maxConcurrentSubagents: number;
   private readonly checkSession: (sessionId: string) => void;
 
@@ -309,6 +309,7 @@ export class SessionRouter {
         }).catch((error) => this.reportDrainError(sessionId, error));
       },
     });
+    this.danglingCallResolvers = this.delegations?.danglingCallResolvers() ?? {};
     this.eventLogStore = deps.eventLogStore;
     this.pendingEventStore = deps.pendingEventStore;
     this.sessionStore = deps.sessionStore;

@@ -89,6 +89,8 @@ export interface DanglingToolCall {
   name?: string;
   /** The server of an MCP call, when the call names it. */
   serverName?: string;
+  /** The call's arguments: a resolver of its tool may need them to find the record the call left. */
+  input?: Record<string, unknown>;
 }
 
 /** A session.error that ends a Turn; it names the Turn it ends. */
@@ -295,13 +297,17 @@ export function danglingToolCalls(events: readonly StoredEvent[]): DanglingToolC
   const dangling: DanglingToolCall[] = [];
   for (const event of displayed) {
     if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") continue;
-    const data = event.data as { toolUseId?: unknown; name?: unknown; serverName?: unknown } | null;
+    const data = event.data as { toolUseId?: unknown; name?: unknown; serverName?: unknown; input?: unknown } | null;
     if (typeof data?.toolUseId !== "string" || answered.has(data.toolUseId)) continue;
     dangling.push({ type: event.type, toolUseId: data.toolUseId,
       ...(typeof data.name === "string" ? { name: data.name } : {}),
-      ...(typeof data.serverName === "string" ? { serverName: data.serverName } : {}) });
+      ...(typeof data.serverName === "string" ? { serverName: data.serverName } : {}),
+      ...(isRecord(data.input) ? { input: data.input } : {}) });
     // A call recorded twice is one call.
     answered.add(data.toolUseId);
   }
   return dangling;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
