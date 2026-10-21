@@ -50,14 +50,6 @@ export class PiStreamAlignment {
     return this.blockBase + start;
   }
 
-  /** Stream index of each display block, for a Host that adds its own base. */
-  attach<T extends SessionEvent>(event: T): T {
-    const blocks = this.blocks(event);
-    if (!blocks) return event;
-    return { ...event, presentation: { version: 1, blocks: blocks.map(({ display, index }) =>
-      index === undefined ? display : { ...display, streamIndex: index }) } };
-  }
-
   /** Final blockIndex of each display block of a native assistant entry. */
   align<T extends SessionEvent>(event: T): T {
     const blocks = this.blocks(event);

@@ -1,6 +1,7 @@
 import type {
   Adapter,
   AdapterInput,
+  AdapterRunResult,
   SessionEvent,
   StreamEvent,
 } from "@open-managed-agents/adapter-core";
@@ -124,15 +125,14 @@ class StreamBlocks {
 /**
  * Writes one Adapter run's events through its Turn journal, in order: each
  * Delta on its numbered block, each Complete Event aligned with its stream
- * block and durable before the next event is written. The mock writes its
- * script with it; a hand-written test Adapter can write its events the same
- * way.
+ * block and durable before the next event is written; a failed write rejects.
+ * The mock writes its script with it; a hand-written test Adapter can write
+ * its events the same way.
  */
 export function journalWriter(
-  { journal, blockBase = 0 }: Pick<AdapterInput, "journal" | "blockBase">,
+  { journal, resume }: Pick<AdapterInput, "journal" | "resume">,
 ): (event: SessionEvent) => Promise<void> {
-  if (!journal) throw new Error("This Adapter writes through the Turn journal (ADR-0020)");
-  const blocks = new StreamBlocks(blockBase);
+  const blocks = new StreamBlocks(resume?.blockBase ?? 0);
   return async (event) => {
     if (isStreamEvent(event)) return journal.delta(event, blocks.delta(event));
     journal.record(blocks.complete(event));
@@ -153,22 +153,20 @@ export class MockAdapter implements Adapter {
     this.delayMs = options?.delayMs ?? 0;
   }
 
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+  async run(input: AdapterInput): Promise<AdapterRunResult> {
     const events =
       this.customEvents !== undefined
         ? this.customEvents
         : buildDefaultEvents();
     const write = journalWriter(input);
-    try {
-      for (let i = 0; i < events.length; i++) {
-        if (i > 0 && this.delayMs > 0) await delay(this.delayMs);
-        // An Interrupt ends the script; the Host ends the Turn.
-        if (input.signal?.aborted) return;
-        await write(events[i]!);
-      }
-    } catch {
-      // A failed write fails the journal for good; the Host stops the
-      // attempt on it (ADR-0020), so the script just ends here.
+    for (let i = 0; i < events.length; i++) {
+      if (i > 0 && this.delayMs > 0) await delay(this.delayMs);
+      // An Interrupt ends the script; the Host ends the Turn.
+      if (input.signal?.aborted) break;
+      // A failed write rejects run(); the Host stops the attempt on the
+      // journal's failure itself (ADR-0020).
+      await write(events[i]!);
     }
+    return "finished";
   }
 }

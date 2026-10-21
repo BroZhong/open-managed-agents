@@ -7,17 +7,19 @@ import { PiPresentation } from "./pi-presentation.js";
 interface JournalOptions {
   manager: SessionManager;
   input: AdapterInput;
+  /** Record a native context event through the Turn journal. */
   emit(event: Exclude<SessionEvent, StreamEvent>): void;
-  checkpoint(): SessionEvent[];
-  takeUncommitted(): SessionEvent[];
   compactionInfo(): { compactionId: string; reason: "manual" | "threshold" | "overflow" } | undefined;
 }
 
-const CONTEXT_TYPES = new Set(["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"]);
 /** Matches neither Pi's provider retry nor context-overflow patterns. */
 export const COMMIT_BARRIER_FAILED = "OMA commit barrier failed";
 
-/** Platform durability through public SDK events and a request gate. */
+/**
+ * The commit barrier over Pi's native journal (ADR-0020): it records each new
+ * native entry through the Turn journal and flushes only at Pi boundaries, at
+ * each `message_end`, the model request gate and a compaction commit.
+ */
 export class PiContextJournal {
   private cursor: number;
   private inputRecorded = false;
@@ -64,7 +66,7 @@ export class PiContextJournal {
     // Pi turns a request rejection into an error message and applies provider
     // retry and overflow recovery to its text, so a journal failure uses the
     // fixed barrier message.
-    if (this.failure) throw this.options.input.journal ? new Error(COMMIT_BARRIER_FAILED) : this.failure;
+    if (this.failure) throw new Error(COMMIT_BARRIER_FAILED);
     this.options.input.signal?.throwIfAborted();
     this.capture();
   }
@@ -77,31 +79,18 @@ export class PiContextJournal {
   async flush(): Promise<void> {
     if (!this.failure) {
       this.capture();
-      const write = this.commitWrite();
-      if (write) {
-        this.pending = this.pending.then(write).catch(error => {
-          this.failure = error instanceof Error ? error : new Error(String(error));
-        });
-      }
+      // The Turn journal writes everything recorded so far, in call order.
+      this.pending = this.pending.then(() => this.options.input.journal.flush()).catch(error => {
+        this.failure = error instanceof Error ? error : new Error(String(error));
+      });
     }
     await this.pending;
     if (this.failure) throw new Error(COMMIT_BARRIER_FAILED);
   }
 
-  /**
-   * A journal holds every recorded event in call order and writes them all.
-   * Without one, commit the context events the Host has not received yet.
-   */
-  private commitWrite(): (() => Promise<void>) | undefined {
-    const { journal, persistContext } = this.options.input;
-    if (journal) return () => journal.flush();
-    const events = this.options.takeUncommitted().filter(event => CONTEXT_TYPES.has(event.type));
-    return persistContext && events.length ? () => persistContext(structuredClone(events)) : undefined;
-  }
-
   private async commit(): Promise<void> {
     if (this.failure) throw this.failure;
-    const { input, manager, emit, checkpoint, compactionInfo } = this.options;
+    const { input, manager, emit, compactionInfo } = this.options;
     this.capture();
     // Pi 0.83.0 locates the extension event's entry by summary text. Equal
     // summaries can therefore report an old ID; the append-only journal is
@@ -109,7 +98,6 @@ export class PiContextJournal {
     const entry = manager.getEntries()[this.cursor];
     if (entry?.type !== "compaction") throw new Error("Missing newly appended Pi compaction");
     input.signal?.throwIfAborted();
-    if (!input.journal && !input.persistContext) throw new Error("Pi compaction requires a Host persistence barrier");
     const previous = manager.getEntries().slice(0, this.cursor).reverse().find(item => item.type === "message" && item.message.role === "assistant");
     const message = previous?.type === "message" ? previous.message : undefined;
     const measured = message?.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted"
@@ -117,18 +105,10 @@ export class PiContextJournal {
     const event: AgentContextEntryEvent = { id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
       sdk: "pi@0.83.0", turnId: input.turnId, entry: structuredClone(entry), ...compactionInfo(),
       tokensBeforeSource: measured !== undefined && measured === entry.tokensBefore ? "usage" : "estimate" };
-    if (input.journal) {
-      // Recorded behind everything before it, so one flush commits the prefix
-      // and the boundary. No request may use the summary until it resolves.
-      emit(event);
-      await input.journal.flush();
-    } else {
-      const preceding = checkpoint().filter(event => ["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"].includes(event.type));
-      await input.persistContext!([...preceding, event]);
-      emit(event);
-      // The batch above holds every context event emitted so far.
-      this.options.takeUncommitted();
-    }
+    // Recorded behind everything before it, so one flush commits the prefix
+    // and the boundary. No request may use the summary until it resolves.
+    emit(event);
+    await input.journal.flush();
     this.cursor++;
   }
 }

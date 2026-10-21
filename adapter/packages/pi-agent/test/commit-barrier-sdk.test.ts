@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, isContextOverflow, isRetryableAssistantError, type AssistantMessage } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import type { AdapterInput, HostSubagentCapability, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
-import { MemoryTurnJournal, runWithJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
+import { MemoryTurnJournal, runWithJournal, type DurableEvent, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { COMMIT_BARRIER_FAILED } from "../src/pi-context-journal.js";
@@ -46,7 +46,7 @@ beforeEach(() => {
   control.toolCall = { id: "ls-1", name: "ls", arguments: { path: "." } };
 });
 
-async function prepare(extra: Partial<AdapterInput>): Promise<AdapterInput> {
+async function prepare(extra: Partial<AdapterInput>): Promise<InputWithoutJournal> {
   const local = await createLocalToolExecutor();
   dispose = local.dispose;
   const executor: ToolExecutor = Object.assign(Object.create(local.executor), {
@@ -56,33 +56,12 @@ async function prepare(extra: Partial<AdapterInput>): Promise<AdapterInput> {
     message: { role: "user", content: [{ type: "text", text: "list" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, ...extra };
 }
 
-/** The no-journal path: the Host commits context through persistContext and reads run()'s stream. */
-async function run(persistContext: AdapterInput["persistContext"], extra: Partial<AdapterInput> = {}) {
-  const events: SessionEvent[] = [];
-  for await (const event of new PiAgentAdapter().run(await prepare({ persistContext, ...extra }))) events.push(event);
-  return events;
-}
-
 /** The Adapter's output through a journal whose flushes call `write`. */
-async function runThroughJournal(write: (batch: DurableEvent[]) => Promise<void>, extra: Partial<AdapterInput> = {}) {
+async function run(write: (batch: DurableEvent[]) => Promise<void>, extra: Partial<AdapterInput> = {}) {
   return runWithJournal(new PiAgentAdapter(), await prepare(extra), new MemoryTurnJournal(write));
 }
 
 describe("PiAgentAdapter commit barrier", () => {
-  it("commits the tool request before the tool runs and its result before the next request", async () => {
-    const events = await run(async batch => {
-      control.log.push(`commit:${batch.map(role).filter(Boolean).join(",")}`);
-      await new Promise(resolve => setTimeout(resolve, 20));
-    });
-    expect(events.filter(event => event.type === "session.error")).toEqual([]);
-    const commits = control.log.filter(item => item.startsWith("commit:") && item !== "commit:");
-    expect(commits).toEqual(["commit:user", "commit:assistant", "commit:toolResult", "commit:assistant"]);
-    const at = (item: string, from = 0) => control.log.indexOf(item, from);
-    expect(at("commit:user")).toBeLessThan(at("request"));
-    expect(at("commit:assistant")).toBeLessThan(at("tool"));
-    expect(at("commit:toolResult")).toBeLessThan(at("request", at("request") + 1));
-  });
-
   it("starts a delegation only after its tool request is durable and hands the Host no history", async () => {
     control.toolCall = { id: "agent-1", name: "Agent", arguments: { prompt: "child" } };
     const committed: SessionEvent[] = [];
@@ -93,7 +72,7 @@ describe("PiAgentAdapter commit barrier", () => {
       return { status: "completed", result: { output: "child done" } };
     });
     const subagents: HostSubagentCapability = { maxModelSteps: 500, delegate, getResult: vi.fn(), steer: vi.fn() };
-    const events = await runThroughJournal(async batch => {
+    const events = await run(async batch => {
       committed.push(...batch);
       control.log.push(`commit:${batch.map(role).filter(Boolean).join(",")}`);
     }, { subagents });
@@ -105,15 +84,6 @@ describe("PiAgentAdapter commit barrier", () => {
     expect(control.log.indexOf("commit:assistant")).toBeLessThan(control.log.indexOf("delegate"));
     const request = committedAtDelegation.find(event => role(event) === "assistant");
     expect(request).toMatchObject({ entry: { message: { content: [{ type: "toolCall", id: "agent-1", name: "Agent" }] } } });
-  });
-
-  it("stops before the tool and reports the original failure when a commit fails", async () => {
-    const events = await run(async batch => {
-      if (batch.some(event => role(event) === "assistant")) throw new Error("pending claim lease lost");
-    });
-    expect(control.log).not.toContain("tool");
-    expect(control.log.filter(item => item === "request")).toHaveLength(1);
-    expect(events.filter(event => event.type === "session.error")).toMatchObject([{ error: { message: "pending claim lease lost" } }]);
   });
 
   it("uses a rejection Pi neither retries nor treats as context overflow", () => {

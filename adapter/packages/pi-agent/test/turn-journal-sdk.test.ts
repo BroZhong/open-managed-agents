@@ -6,7 +6,7 @@ import type { AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-age
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
-import { MemoryTurnJournal, runWithJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
+import { MemoryTurnJournal, type DurableEvent, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 
 type Content = AssistantMessage["content"];
 /**
@@ -67,15 +67,17 @@ let dispose: (() => Promise<void>) | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); await dispose?.(); dispose = undefined; });
 beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; control.failStartup = false; });
 
+/** Run one attempt through `journal`; in PR-A every run that settles has finished. */
 async function run(journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}) {
   const local = await createLocalToolExecutor();
   dispose = local.dispose;
   const executor: ToolExecutor = Object.assign(Object.create(local.executor), {
     exec(command: string[], options?: Parameters<ToolExecutor["exec"]>[1]) { control.log.push("tool"); return local.executor.exec(command, options); },
   });
-  const value: AdapterInput = { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor,
+  const value: InputWithoutJournal = { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor,
     message: { role: "user", content: [{ type: "text", text: "list" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, ...extra };
-  return runWithJournal(new PiAgentAdapter(), value, journal);
+  expect(await new PiAgentAdapter().run({ ...value, journal })).toBe("finished");
+  return journal.events;
 }
 
 /** A journal whose writes take a while, logging each batch's native roles once it is durable. */
@@ -160,7 +162,7 @@ const deltas = (journal: MemoryTurnJournal) => journal.deltas
   .map(({ event, blockIndex }) => ({ type: event.type, blockIndex, ...("toolUseId" in event ? { toolUseId: event.toolUseId } : {}) }));
 
 describe("Delta and Complete Event alignment through the journal", () => {
-  it("numbers thinking, text, tool and MCP blocks from the Host's base, including interleaved argument streams", async () => {
+  it("numbers thinking, text, tool and MCP blocks of a new Turn from 0, including interleaved argument streams", async () => {
     const mcp = { type: "toolCall" as const, id: "mcp-1", name: "mcp", arguments: { tool: "web_search", args: '{"q":"oma"}', server: "web" } };
     control.responses = [
       { content: [{ type: "thinking", thinking: "plan" }, { type: "text", text: "calling" }, ls, mcp], stopReason: "toolUse",
@@ -174,19 +176,19 @@ describe("Delta and Complete Event alignment through the journal", () => {
       { content: [{ type: "text", text: "done" }], stopReason: "stop" },
     ];
     const journal = new MemoryTurnJournal();
-    await run(journal, { blockBase: 5, agent: { model: `${model.provider}/${model.id}`, system: "", mcpServers: [{ name: "web", url: "https://mcp.example.invalid" }] } });
+    await run(journal, { agent: { model: `${model.provider}/${model.id}`, system: "", mcpServers: [{ name: "web", url: "https://mcp.example.invalid" }] } });
     expect(deltas(journal)).toEqual([
-      { type: "agent.thinking_stream_start", blockIndex: 5 }, { type: "agent.thinking_chunk", blockIndex: 5 }, { type: "agent.thinking_stream_end", blockIndex: 5 },
-      { type: "agent.message_stream_start", blockIndex: 6 }, { type: "agent.message_chunk", blockIndex: 6 }, { type: "agent.message_stream_end", blockIndex: 6 },
-      { type: "agent.tool_use_input_stream_start", blockIndex: 7, toolUseId: "ls-1" }, { type: "agent.tool_use_input_stream_start", blockIndex: 8, toolUseId: "mcp-1" },
-      { type: "agent.tool_use_input_chunk", blockIndex: 8, toolUseId: "mcp-1" }, { type: "agent.tool_use_input_chunk", blockIndex: 7, toolUseId: "ls-1" },
-      { type: "agent.tool_use_input_stream_end", blockIndex: 7, toolUseId: "ls-1" }, { type: "agent.tool_use_input_stream_end", blockIndex: 8, toolUseId: "mcp-1" },
-      { type: "agent.message_stream_start", blockIndex: 9 }, { type: "agent.message_chunk", blockIndex: 9 }, { type: "agent.message_stream_end", blockIndex: 9 },
+      { type: "agent.thinking_stream_start", blockIndex: 0 }, { type: "agent.thinking_chunk", blockIndex: 0 }, { type: "agent.thinking_stream_end", blockIndex: 0 },
+      { type: "agent.message_stream_start", blockIndex: 1 }, { type: "agent.message_chunk", blockIndex: 1 }, { type: "agent.message_stream_end", blockIndex: 1 },
+      { type: "agent.tool_use_input_stream_start", blockIndex: 2, toolUseId: "ls-1" }, { type: "agent.tool_use_input_stream_start", blockIndex: 3, toolUseId: "mcp-1" },
+      { type: "agent.tool_use_input_chunk", blockIndex: 3, toolUseId: "mcp-1" }, { type: "agent.tool_use_input_chunk", blockIndex: 2, toolUseId: "ls-1" },
+      { type: "agent.tool_use_input_stream_end", blockIndex: 2, toolUseId: "ls-1" }, { type: "agent.tool_use_input_stream_end", blockIndex: 3, toolUseId: "mcp-1" },
+      { type: "agent.message_stream_start", blockIndex: 4 }, { type: "agent.message_chunk", blockIndex: 4 }, { type: "agent.message_stream_end", blockIndex: 4 },
     ]);
     expect(presentations(journal, "assistant")).toEqual([
-      [{ type: "agent.thinking", index: 0, blockIndex: 5 }, { type: "agent.message", index: 1, blockIndex: 6 },
-        { type: "agent.tool_use", index: 2, blockIndex: 7 }, { type: "agent.mcp_tool_use", index: 3, name: "search", serverName: "web", blockIndex: 8 }],
-      [{ type: "agent.message", index: 0, blockIndex: 9 }],
+      [{ type: "agent.thinking", index: 0, blockIndex: 0 }, { type: "agent.message", index: 1, blockIndex: 1 },
+        { type: "agent.tool_use", index: 2, blockIndex: 2 }, { type: "agent.mcp_tool_use", index: 3, name: "search", serverName: "web", blockIndex: 3 }],
+      [{ type: "agent.message", index: 0, blockIndex: 4 }],
     ]);
     // Results replace no stream block.
     expect(presentations(journal, "toolResult")).toEqual([[{ type: "agent.tool_result" }], [{ type: "agent.mcp_tool_result", serverName: "web" }]]);
@@ -224,7 +226,7 @@ describe("Delta and Complete Event alignment through the journal", () => {
     ] as SessionEvent[];
     control.responses = [{ content: [{ type: "text", text: "resumed" }], stopReason: "stop" }];
     const journal = new MemoryTurnJournal();
-    await run(journal, { history, continuation: { toolResults: [] }, blockBase: 3 });
+    await run(journal, { history, resume: { completedModelSteps: 1, blockBase: 3 } });
     expect(journal.recorded.filter(event => event.type === "session.error")).toEqual([]);
     expect(deltas(journal)).toEqual([
       { type: "agent.message_stream_start", blockIndex: 3 }, { type: "agent.message_chunk", blockIndex: 3 }, { type: "agent.message_stream_end", blockIndex: 3 },
@@ -232,10 +234,10 @@ describe("Delta and Complete Event alignment through the journal", () => {
     expect(presentations(journal, "assistant")).toEqual([[{ type: "agent.message", index: 0, blockIndex: 3 }]]);
   });
 
-  it("rejects a blockBase that is not a non-negative integer", async () => {
+  it("rejects a resume blockBase that is not a non-negative integer", async () => {
     const journal = new MemoryTurnJournal();
-    await run(journal, { blockBase: -1 });
+    await run(journal, { resume: { completedModelSteps: 0, blockBase: -1 } });
     expect(control.log).toEqual([]);
-    expect(journal.recorded).toMatchObject([{ type: "session.error", error: { message: "blockBase must be a non-negative integer" } }]);
+    expect(journal.recorded).toMatchObject([{ type: "session.error", error: { message: "resume.blockBase must be a non-negative integer" } }]);
   });
 });

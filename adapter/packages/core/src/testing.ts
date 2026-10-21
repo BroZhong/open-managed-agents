@@ -61,18 +61,19 @@ export class MemoryTurnJournal implements TurnJournalPort {
   }
 }
 
+/** An AdapterInput without its write entry, which {@link runWithJournal} supplies. */
+export type InputWithoutJournal = Omit<AdapterInput, "journal">;
+
 /**
  * Run an Adapter with `journal` as its write entry and return the journal's
  * `events`: everything the Adapter recorded or emitted as a Delta, in call
- * order. An Adapter given a journal must yield nothing from run().
+ * order. Rejects as run() does.
  */
 export async function runWithJournal(
   adapter: Adapter,
-  input: AdapterInput,
+  input: InputWithoutJournal,
   journal = new MemoryTurnJournal(),
 ): Promise<SessionEvent[]> {
-  for await (const event of adapter.run({ ...input, journal })) {
-    throw new Error(`run() yielded ${event.type} although it was given a journal`);
-  }
+  await adapter.run({ ...input, journal });
   return journal.events;
 }

@@ -9,7 +9,6 @@ import type {
   SessionFactoryArgs,
 } from "../src/pi-agent-adapter.js";
 import type {
-  AdapterInput,
   SessionEvent,
   AgentMessageEvent,
   AgentThinkingEvent,
@@ -22,9 +21,9 @@ import type {
   AgentToolUseInputStreamEndEvent,
   SpanModelRequestEndEvent,
 } from "@open-managed-agents/adapter-core";
-import { runWithJournal } from "@open-managed-agents/adapter-core/testing";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 
-function makeInput(prompt: string): AdapterInput {
+function makeInput(prompt: string): InputWithoutJournal {
   return {
     sessionId: "test-session",
     turnId: "test-turn",
@@ -366,7 +365,7 @@ describe("PiAgentAdapter (SDK)", () => {
       assistantEnd(200, 20),
     ];
 
-    function makeMcpInput(): AdapterInput {
+    function makeMcpInput(): InputWithoutJournal {
       const input = makeInput("Review recent sessions");
       input.agent.mcpServers = [
         { name: "session-data", command: "node", args: ["server.js"] },

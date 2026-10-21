@@ -94,8 +94,6 @@ export interface AdapterExecution {
   /** Model loop steps, not OMA Turns. Children default to 30; maximum 1000. */
   maxModelSteps?: number;
   thinking?: string;
-  /** Already persisted model requests in this same Turn during recovery. */
-  completedModelSteps?: number;
   /** Persist the actual configuration under the execution lease before starting Pi. */
   onResolved?(config: {
     model: string;
@@ -108,6 +106,18 @@ export interface AdapterExecution {
     takePending(): Promise<DelegationInstruction[]>;
     applied(id: string): Promise<void>;
   };
+}
+
+/** Where a continued Turn picks up, counted from what its earlier attempts committed. */
+export interface AdapterResume {
+  /** Model requests the Turn already made; they count against `maxModelSteps`. */
+  completedModelSteps: number;
+  /**
+   * blockIndex of this attempt's first output block: the highest blockIndex
+   * the Turn committed plus one. The Adapter numbers its Deltas and Complete
+   * Events from here.
+   */
+  blockBase: number;
 }
 
 export interface AdapterInput {
@@ -147,24 +157,21 @@ export interface AdapterInput {
   history: SessionEvent[];
   /** Durable identity of the promoted input, used to pair native/runtime history. */
   inputEventId?: string;
-  /** Host persistence barrier. Rejecting must stop requests using new context. */
-  persistContext?: (events: SessionEvent[]) => Promise<void>;
   /**
-   * The Turn attempt's write entry (ADR-0020). An Adapter given one records
-   * every Complete Event and emits every Delta through it, flushes before each
-   * tool execution and model request, and yields nothing from `run()`.
+   * The Turn attempt's only write entry (ADR-0020). The Adapter records every
+   * Complete Event and emits every Delta through it, and flushes before each
+   * tool execution and each model request.
    */
-  journal?: TurnJournalPort;
+  journal: TurnJournalPort;
   /**
-   * blockIndex of this attempt's first output block: the highest blockIndex
-   * already committed in the Turn plus one, or 0 for a new Turn. The Adapter
-   * numbers its Deltas and Complete Events from here.
+   * Continue a Turn an earlier attempt started instead of prompting `message`
+   * as a new Turn. `history` then ends with what the Turn already committed,
+   * with a durable result for every tool call. Absent for a new Turn, which
+   * starts at model step 0 and blockIndex 0.
    */
-  blockBase?: number;
+  resume?: AdapterResume;
   subagents?: HostSubagentCapability;
   execution?: AdapterExecution;
-  /** Resume the existing Turn from history, after Host persists these results. */
-  continuation?: { toolResults: AgentToolResultEvent[] };
   constraints?: {
     timeoutSeconds?: number;
     sandbox?: "none" | "read-only" | "workspace-write" | "full-access";
@@ -184,9 +191,9 @@ export interface AdapterInput {
   /**
    * The router's per-turn abort signal (issue #84). The Adapter wires it to its
    * runtime's **native** cancel (e.g. Pi's `AgentSession.abort()`) so that a
-   * user interrupt can unwedge a hung turn whose tool exec never returns — the
-   * turn otherwise blocks forever because the event stream never emits the next
-   * event to re-check the flag. Pure passthrough of the runtime's own cancel; no
+   * user interrupt can unwedge a hung turn whose tool exec never returns, and
+   * run() settles. The Host waits only briefly for that after an abort, then
+   * revokes the journal. Pure passthrough of the runtime's own cancel; no
    * timeout/watchdog is introduced. Absent ⇒ no native cancel is wired.
    */
   signal?: AbortSignal;

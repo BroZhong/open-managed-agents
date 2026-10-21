@@ -18,6 +18,7 @@ export type {
   AgentContextUsageEvent,
   AgentCompactionEvent,
   AdapterExecution,
+  AdapterResume,
   DelegationInstruction,
   HostSubagentCapability,
   SubagentCallContext,
@@ -55,7 +56,7 @@ export type {
   SessionEvent,
 } from "./types.js";
 
-export type { Adapter, TurnJournalPort } from "./interface.js";
+export type { Adapter, AdapterRunResult, TurnJournalPort } from "./interface.js";
 
 export type {
   ToolExecutor,

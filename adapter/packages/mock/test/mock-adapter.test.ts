@@ -1,14 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type {
-  AdapterInput,
   SessionEvent,
   StreamEvent,
 } from "@open-managed-agents/adapter-core";
-import { MemoryTurnJournal, runWithJournal } from "@open-managed-agents/adapter-core/testing";
+import { MemoryTurnJournal, runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 import { MockAdapter } from "../src/mock-adapter.js";
 
-// Minimal valid AdapterInput for tests
-const INPUT: AdapterInput = {
+// Minimal valid AdapterInput for tests; runWithJournal adds the journal.
+const INPUT: InputWithoutJournal = {
   sessionId: "test-session",
   turnId: "test-turn",
   message: {
@@ -251,7 +250,7 @@ describe("MockAdapter", () => {
 describe("MockAdapter with an injected Turn journal", () => {
   it("records the Complete Events and streams the Deltas on the message's block, numbered from the Host's base", async () => {
     const journal = new MemoryTurnJournal();
-    await runWithJournal(new MockAdapter(), { ...INPUT, blockBase: 4 }, journal);
+    await runWithJournal(new MockAdapter(), { ...INPUT, resume: { completedModelSteps: 1, blockBase: 4 } }, journal);
 
     expect(journal.deltas.map(({ event, blockIndex }) => [event.type, blockIndex])).toEqual([
       ["agent.message_stream_start", 4],
@@ -292,7 +291,7 @@ describe("MockAdapter with an injected Turn journal", () => {
       event("agent.tool_result", { toolUseId: "a", content: [] }),
     ];
     const journal = new MemoryTurnJournal();
-    await runWithJournal(new MockAdapter({ events }), { ...INPUT, blockBase: 2 }, journal);
+    await runWithJournal(new MockAdapter({ events }), { ...INPUT, resume: { completedModelSteps: 1, blockBase: 2 } }, journal);
 
     expect(journal.deltas.map(({ event, blockIndex }) => [event.type, blockIndex])).toEqual([
       ["agent.thinking_stream_start", 2],
@@ -352,19 +351,23 @@ describe("MockAdapter with an injected Turn journal", () => {
     ]);
   });
 
-  it("stops at a failed flush without running the tool, and run() still settles", async () => {
+  it("returns finished once the script is written", async () => {
+    await expect(new MockAdapter().run({ ...INPUT, journal: new MemoryTurnJournal() })).resolves.toBe("finished");
+  });
+
+  it("stops at a failed flush without running the tool, and run() rejects with the failure", async () => {
     const events: SessionEvent[] = [
       { id: "sevt_x1", timestamp: "2024-01-01T00:00:00.000Z", type: "agent.tool_use", toolUseId: "a", name: "bash", input: {} },
       { id: "sevt_x2", timestamp: "2024-01-01T00:00:01.000Z", type: "agent.tool_result", toolUseId: "a", content: [] },
     ];
     const journal = new MemoryTurnJournal(async () => { throw new Error("pending claim lease lost"); });
-    await runWithJournal(new MockAdapter({ events }), INPUT, journal);
+    await expect(runWithJournal(new MockAdapter({ events }), INPUT, journal)).rejects.toThrow("pending claim lease lost");
 
     expect(journal.recorded.map((e) => e.type)).toEqual(["agent.tool_use"]);
     expect(journal.committed).toEqual([]);
   });
 
-  it("ends the script at an Interrupt and still writes what it recorded before", async () => {
+  it("ends the script at an Interrupt as finished and still writes what it recorded before", async () => {
     const controller = new AbortController();
     // Interrupt while the message is streaming.
     const journal = new (class extends MemoryTurnJournal {
@@ -373,7 +376,7 @@ describe("MockAdapter with an injected Turn journal", () => {
         if (event.type === "agent.message_chunk") controller.abort();
       }
     })();
-    await runWithJournal(new MockAdapter(), { ...INPUT, signal: controller.signal }, journal);
+    await expect(new MockAdapter().run({ ...INPUT, signal: controller.signal, journal })).resolves.toBe("finished");
 
     expect(journal.deltas.map(({ event }) => event.type)).toEqual(["agent.message_stream_start", "agent.message_chunk"]);
     expect(journal.recorded.map((e) => e.type)).toEqual(["span.model_request_start"]);

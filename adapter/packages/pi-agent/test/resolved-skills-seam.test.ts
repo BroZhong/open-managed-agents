@@ -5,7 +5,7 @@ import type {
   AdapterInput,
   ToolExecutor,
 } from "@open-managed-agents/adapter-core";
-import { runWithJournal } from "@open-managed-agents/adapter-core/testing";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 
 const sdkSeam = vi.hoisted(() => ({
   loadSkillsCalls: 0,
@@ -125,7 +125,7 @@ const noopExecutor: ToolExecutor = {
   },
 };
 
-function input(withExecutor: boolean): AdapterInput {
+function input(withExecutor: boolean): InputWithoutJournal {
   return {
     sessionId: "resolved-skills",
     turnId: "turn-1",

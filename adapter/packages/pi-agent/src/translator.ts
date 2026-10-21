@@ -412,7 +412,7 @@ export class PiEventTranslator {
   }
 
   /**
-   * Finish one session.prompt() translation after its event queue has drained.
+   * Finish one session.prompt() translation once the prompt has settled.
    *
    * Pi represents provider failures as assistant messages with
    * `stopReason: "error"`. Neither value of agent_end.willRetry proves that the

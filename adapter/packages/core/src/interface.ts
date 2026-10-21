@@ -1,7 +1,22 @@
 import type { AdapterInput, SessionEvent, StreamEvent } from "./types.js";
 
+/**
+ * How a run ended (ADR-0020). `"finished"`: the Adapter is done with the Turn,
+ * including when it ended in an error it recorded or because of an Interrupt.
+ * `"stopped"`: the Adapter stopped before the Turn finished because the Host
+ * asked it to (#254); the Host writes no terminal event and leaves the Turn to
+ * a later attempt.
+ */
+export type AdapterRunResult = "finished" | "stopped";
+
 export interface Adapter {
-  run(input: AdapterInput): AsyncIterable<SessionEvent>;
+  /**
+   * Execute one Turn attempt. Everything the Adapter produces goes through
+   * `input.journal`; the returned Promise settles once the Adapter no longer
+   * runs the Turn. A rejection is an Adapter failure, which the Host records
+   * unless the Turn was interrupted or the attempt lost the Turn.
+   */
+  run(input: AdapterInput): Promise<AdapterRunResult>;
 }
 
 /**

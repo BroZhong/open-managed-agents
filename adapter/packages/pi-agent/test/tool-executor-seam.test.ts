@@ -2,14 +2,13 @@ import { describe, it, expect } from "vitest";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
-  AdapterInput,
   AgentToolResultEvent,
   ToolExecutor,
   ExecOptions,
   ExecOutputChunk,
   FileListEntry,
 } from "@open-managed-agents/adapter-core";
-import { runWithJournal } from "@open-managed-agents/adapter-core/testing";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import type {
   PiSessionLike,
@@ -21,7 +20,7 @@ function makeInput(
   prompt: string,
   toolExecutor?: ToolExecutor,
   sessionId = "seam-session",
-): AdapterInput {
+): InputWithoutJournal {
   return {
     sessionId,
     turnId: "t1",
