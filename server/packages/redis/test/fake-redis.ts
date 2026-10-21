@@ -3,13 +3,12 @@ import type { RedisLike } from "../src/redis-like.js";
 /**
  * Minimal in-memory fake implementing the RedisLike command surface used by
  * the transient stores. Enough to unit-test XADD/XRANGE/XLEN/DEL streams,
- * hashes, list queues and key expiry without a live Redis. Expiry reads the
- * injected clock, so tests can move time instead of waiting.
+ * hashes and key expiry without a live Redis. Expiry reads the injected
+ * clock, so tests can move time instead of waiting.
  */
 export class FakeRedis implements RedisLike {
   private streams = new Map<string, Array<[string, string[]]>>();
   private hashes = new Map<string, Record<string, string>>();
-  private lists = new Map<string, string[]>();
   private expiries = new Map<string, number>();
   private seq = 0;
 
@@ -32,25 +31,6 @@ export class FakeRedis implements RedisLike {
       return id;
     }
     throw new Error("FakeRedis received an unsupported Lua script");
-  }
-
-  // ─── Cursor scan ──────────────────────────────────────────────────────────
-  async scan(
-    _cursor: string | number,
-    _patternToken: "MATCH",
-    pattern: string,
-    _countToken: "COUNT",
-    _count: string | number,
-  ): Promise<[string, string[]]> {
-    this.evictExpired();
-    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-    const matcher = new RegExp(`^${escaped}$`);
-    const keys = new Set([
-      ...this.streams.keys(),
-      ...this.hashes.keys(),
-      ...this.lists.keys(),
-    ]);
-    return ["0", [...keys].filter((key) => matcher.test(key)).sort()];
   }
 
   // ─── Streams ───────────────────────────────────────────────────────────────
@@ -105,67 +85,6 @@ export class FakeRedis implements RedisLike {
     return { ...(this.hashes.get(key) ?? {}) };
   }
 
-  // ─── Lists ───────────────────────────────────────────────────────────────
-  async rpush(key: string, ...values: string[]): Promise<number> {
-    this.evictExpired();
-    const list = this.lists.get(key) ?? [];
-    list.push(...values);
-    this.lists.set(key, list);
-    return list.length;
-  }
-
-  async lpop(key: string): Promise<string | null> {
-    this.evictExpired();
-    const list = this.lists.get(key) ?? [];
-    return list.shift() ?? null;
-  }
-
-  async lindex(key: string, index: number): Promise<string | null> {
-    this.evictExpired();
-    const list = this.lists.get(key) ?? [];
-    const i = index < 0 ? list.length + index : index;
-    return list[i] ?? null;
-  }
-
-  async lrange(key: string, start: number, stop: number): Promise<string[]> {
-    this.evictExpired();
-    const list = this.lists.get(key) ?? [];
-    const from = start < 0 ? Math.max(list.length + start, 0) : start;
-    // Redis LRANGE stop is inclusive and clamps rather than erroring.
-    const to = stop < 0 ? list.length + stop : stop;
-    return list.slice(from, to + 1);
-  }
-
-  async lrem(key: string, count: number, value: string): Promise<number> {
-    this.evictExpired();
-    const list = this.lists.get(key) ?? [];
-    const max = count === 0 ? Number.POSITIVE_INFINITY : Math.abs(count);
-    let removed = 0;
-    if (count >= 0) {
-      for (let i = 0; i < list.length && removed < max;) {
-        if (list[i] === value) {
-          list.splice(i, 1);
-          removed++;
-        } else {
-          i++;
-        }
-      }
-    } else {
-      for (let i = list.length - 1; i >= 0 && removed < max; i--) {
-        if (list[i] === value) {
-          list.splice(i, 1);
-          removed++;
-        }
-      }
-    }
-    return removed;
-  }
-
-  async llen(key: string): Promise<number> {
-    this.evictExpired();
-    return this.lists.get(key)?.length ?? 0;
-  }
-
   // ─── Keyspace ──────────────────────────────────────────────────────────────
   async del(...keys: string[]): Promise<number> {
     this.evictExpired();
@@ -174,14 +93,13 @@ export class FakeRedis implements RedisLike {
       this.expiries.delete(key);
       if (this.streams.delete(key)) removed++;
       if (this.hashes.delete(key)) removed++;
-      if (this.lists.delete(key)) removed++;
     }
     return removed;
   }
 
   /** PEXPIRE: only reachable through the scripts the stores send. */
   private pexpire(key: string, ttlMs: number): number {
-    if (!this.streams.has(key) && !this.hashes.has(key) && !this.lists.has(key)) return 0;
+    if (!this.streams.has(key) && !this.hashes.has(key)) return 0;
     this.expiries.set(key, this.now() + ttlMs);
     return 1;
   }
@@ -194,7 +112,6 @@ export class FakeRedis implements RedisLike {
       this.expiries.delete(key);
       this.streams.delete(key);
       this.hashes.delete(key);
-      this.lists.delete(key);
     }
   }
 
