@@ -26,12 +26,6 @@ describe("durable Pi execution seam", () => {
     expect(history.filter((m: { role: string }) => m.role === "toolResult")).toHaveLength(2);
     expect(history.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "wait" });
   });
-  it("refuses to continue while any original tool result remains pending", async () => {
-    const resume = vi.fn(); const adapter = new PiAgentAdapter({ _sessionFactory: factory(vi.fn(), resume) });
-    const value = input(); value.history = [tool("wait")]; value.resume = { completedModelSteps: 1, blockBase: 1 };
-    expect(await collect(adapter, value)).toMatchObject([{ type: "session.error", error: { message: expect.stringContaining("pending tool calls") } }]);
-    expect(resume).not.toHaveBeenCalled();
-  });
   it("counts model requests instead of OMA Turns and fails after the default 500 child steps", async () => {
     let requests = 0;
     const adapter = new PiAgentAdapter({ _sessionFactory: factory(async args => { for (;;) { await args.beforeModelStep(); requests++; } }) });

@@ -315,7 +315,6 @@ export class PiAgentAdapter implements Adapter {
       if (input.execution?.isChild && !input.toolExecutor) throw new Error("Child execution requires its own managed ToolExecutor");
       if (input.execution?.isChild && (input.subagents || input.agent.mcpServers?.length)) throw new Error("Child executions cannot inherit delegation or MCP capabilities");
       const resume = input.resume;
-      if (resume) assertResumable(input.history);
       const historyMessages = eventLogToAgentMessages(input.history);
 
       // Resolve custom models and auth through the same Pi runtime used by
@@ -677,12 +676,4 @@ export class PiAgentAdapter implements Adapter {
       throw error;
     }
   }
-}
-
-/** A resumed Turn continues only once every tool call in its history has a durable result. */
-function assertResumable(history: SessionEvent[]): void {
-  const completed = new Set(history.filter(e => e.type === "agent.tool_result" || e.type === "agent.mcp_tool_result").map(e => (e as { toolUseId: string }).toolUseId));
-  const pending = history.filter(e => (e.type === "agent.tool_use" || e.type === "agent.mcp_tool_use") && !completed.has((e as { toolUseId: string }).toolUseId))
-    .map(e => (e as { toolUseId: string }).toolUseId);
-  if (pending.length) throw new Error(`Continuation requires durable results for pending tool calls: ${pending.join(", ")}`);
 }
