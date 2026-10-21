@@ -452,6 +452,26 @@ What remains:
 - Idle cost is linear in N only: 1.02 /s per Runner, two thirds of it the 5 s pending scan
   (`reconcileTerminatedExecutions` 2 statements, `listClaimableSessionIds` 1).
 
+### A child waiting for a concurrency slot (found during F1)
+
+Not in §1, because the harness never reaches the parent's concurrency limit (four
+children). A child whose execution could not start released its claim and was retried at
+once: the claim itself succeeded each time, which reset the retry backoff, so the child
+was retried every 100 ms for as long as it stayed queued. Each attempt claims, promotes its
+input, reads the log and tries `startExecution` under the global `delegation_lock`: 33
+statements. Measured with the harness metering (one Runner, limit 1, 2 s): **≈314
+statements/s per queued child before, 0 after** until a slot frees. The 200 ms delegation
+poll removed by F1 also woke it.
+
+The child now schedules no retry while it waits for a slot. The execution that ends wakes
+its parent's queued children (`DelegationCoordinator.wakeChildrenWaitingForSlot`), so a
+queued synchronous child still starts at once (`delegation.test.ts` "starts a queued
+synchronous child as soon as a sibling frees its slot, without polling for one"). What
+remains is each Runner's 5 s pending scan, which still attempts a queued child, since its
+head is claimable: ≈33 / 5 ≈ 6.6 statements/s per Runner per queued child. Checking the slot
+before the input is promoted would remove most of it; that changes drainLoop's order and is
+left as a follow-up.
+
 ### Latency kept
 
 Each is asserted by a test (fake time unless noted):
