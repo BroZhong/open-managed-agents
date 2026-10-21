@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AdapterInput, AgentToolResultEvent, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
+import { runWithJournal } from "@open-managed-agents/adapter-core/testing";
 import { PiAgentAdapter, type PiSessionLike, type SessionFactoryArgs } from "../src/pi-agent-adapter.js";
 
 function input(): AdapterInput { return { sessionId: "child", turnId: "turn", message: { role: "user", content: [{ type: "text", text: "task" }] }, history: [], agent: { model: "claude-sonnet-4-5", system: "test" } }; }
-async function collect(adapter: PiAgentAdapter, value: AdapterInput) { const out: SessionEvent[] = []; for await (const e of adapter.run(value)) out.push(e); return out; }
+const collect = runWithJournal;
 function factory(run: (args: SessionFactoryArgs, emit: (e: AgentSessionEvent) => void) => Promise<void>, resume?: ReturnType<typeof vi.fn>) {
   return async (args: SessionFactoryArgs): Promise<PiSessionLike> => {
     let emit = (_e: AgentSessionEvent) => {};

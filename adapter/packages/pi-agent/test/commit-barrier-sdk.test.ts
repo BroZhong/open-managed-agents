@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, isContextOverflow, isRetryableAssistantError, type AssistantMessage } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import type { AdapterInput, HostSubagentCapability, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
+import { MemoryTurnJournal, runWithJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { COMMIT_BARRIER_FAILED } from "../src/pi-context-journal.js";
@@ -45,17 +46,26 @@ beforeEach(() => {
   control.toolCall = { id: "ls-1", name: "ls", arguments: { path: "." } };
 });
 
-async function run(persistContext: AdapterInput["persistContext"], extra: Partial<AdapterInput> = {}) {
+async function prepare(extra: Partial<AdapterInput>): Promise<AdapterInput> {
   const local = await createLocalToolExecutor();
   dispose = local.dispose;
   const executor: ToolExecutor = Object.assign(Object.create(local.executor), {
     exec(command: string[], options?: Parameters<ToolExecutor["exec"]>[1]) { control.log.push("tool"); return local.executor.exec(command, options); },
   });
-  const value: AdapterInput = { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor, persistContext,
+  return { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor,
     message: { role: "user", content: [{ type: "text", text: "list" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, ...extra };
+}
+
+/** The no-journal path: the Host commits context through persistContext and reads run()'s stream. */
+async function run(persistContext: AdapterInput["persistContext"], extra: Partial<AdapterInput> = {}) {
   const events: SessionEvent[] = [];
-  for await (const event of new PiAgentAdapter().run(value)) events.push(event);
+  for await (const event of new PiAgentAdapter().run(await prepare({ persistContext, ...extra }))) events.push(event);
   return events;
+}
+
+/** The Adapter's output through a journal whose flushes call `write`. */
+async function runThroughJournal(write: (batch: DurableEvent[]) => Promise<void>, extra: Partial<AdapterInput> = {}) {
+  return runWithJournal(new PiAgentAdapter(), await prepare(extra), new MemoryTurnJournal(write));
 }
 
 describe("PiAgentAdapter commit barrier", () => {
@@ -83,7 +93,7 @@ describe("PiAgentAdapter commit barrier", () => {
       return { status: "completed", result: { output: "child done" } };
     });
     const subagents: HostSubagentCapability = { maxModelSteps: 500, delegate, getResult: vi.fn(), steer: vi.fn() };
-    const events = await run(async batch => {
+    const events = await runThroughJournal(async batch => {
       committed.push(...batch);
       control.log.push(`commit:${batch.map(role).filter(Boolean).join(",")}`);
     }, { subagents });

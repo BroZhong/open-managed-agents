@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { runWithJournal } from "@open-managed-agents/adapter-core/testing";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 
 const registry = vi.hoisted(() => ({ all: [] as string[], active: [] as string[] }));
@@ -39,8 +40,8 @@ async function run(isChild: boolean, ambient = false) {
   const { executor, dispose } = await createLocalToolExecutor();
   const host = { maxModelSteps: 30, delegate: vi.fn(async () => ({})), getResult: vi.fn(async () => ({})), steer: vi.fn(async () => ({})) };
   const input: AdapterInput = { sessionId: "registry", turnId: "turn", history: [], message: { role: "user", content: [{ type: "text", text: "task" }] }, agent: { model: "claude-sonnet-4-5", system: "Registry boundary test instructions." }, toolExecutor: executor, ...(isChild ? { execution: { isChild: true } } : { subagents: host }) };
-  const events: SessionEvent[] = [];
-  try { for await (const event of new PiAgentAdapter().run(input)) events.push(event); }
+  let events: SessionEvent[];
+  try { events = await runWithJournal(new PiAgentAdapter(), input); }
   finally { await dispose(); }
   expect(events.filter(event => event.type === "session.error")).toEqual([]);
   return host;

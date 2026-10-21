@@ -6,7 +6,7 @@ import type { AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-age
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
-import { MemoryTurnJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
+import { MemoryTurnJournal, runWithJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
 
 type Content = AssistantMessage["content"];
 /**
@@ -73,11 +73,9 @@ async function run(journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}
   const executor: ToolExecutor = Object.assign(Object.create(local.executor), {
     exec(command: string[], options?: Parameters<ToolExecutor["exec"]>[1]) { control.log.push("tool"); return local.executor.exec(command, options); },
   });
-  const value: AdapterInput = { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor, journal,
+  const value: AdapterInput = { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor,
     message: { role: "user", content: [{ type: "text", text: "list" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, ...extra };
-  const yielded: SessionEvent[] = [];
-  for await (const event of new PiAgentAdapter().run(value)) yielded.push(event);
-  return yielded;
+  return runWithJournal(new PiAgentAdapter(), value, journal);
 }
 
 /** A journal whose writes take a while, logging each batch's native roles once it is durable. */
@@ -94,7 +92,7 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
   it("makes the tool request durable before the tool runs and its result before the next request", async () => {
     control.responses = toolThenAnswer();
     const journal = slowJournal();
-    expect(await run(journal)).toEqual([]);
+    await run(journal);
     expect(journal.recorded.filter(event => event.type === "session.error")).toEqual([]);
     const commits = control.log.filter(item => item.startsWith("commit:") && item !== "commit:");
     expect(commits).toEqual(["commit:user", "commit:assistant", "commit:toolResult", "commit:assistant"]);
@@ -114,14 +112,14 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
       if (batch.some(event => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "custom_message")) control.log.push("commit:instruction");
     });
     const takePending = async () => delivered ? [] : (delivered = true, [{ id: "instruction1", message: "verify first" }]);
-    expect(await run(journal, { execution: { steering: { takePending, applied: async () => {} } } })).toEqual([]);
+    await run(journal, { execution: { steering: { takePending, applied: async () => {} } } });
     expect(control.log.filter(item => item === "commit:instruction" || item === "request")).toEqual(["commit:instruction", "request"]);
   });
 
   it("runs no tool and sends no request after a failed flush, and ends with the original failure", async () => {
     control.responses = toolThenAnswer();
     const journal = slowJournal(batch => batch.some(event => role(event) === "assistant") ? new Error("pending claim lease lost") : undefined);
-    expect(await run(journal)).toEqual([]);
+    await run(journal);
     expect(control.log).not.toContain("tool");
     expect(control.log.filter(item => item === "request")).toHaveLength(1);
     expect(journal.committed.some(event => role(event) === "assistant")).toBe(false);
@@ -131,7 +129,7 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
   it("leaves the input to later Turns when the session fails to start", async () => {
     control.failStartup = true;
     const journal = new MemoryTurnJournal();
-    expect(await run(journal)).toEqual([]);
+    await run(journal);
     expect(journal.recorded).toMatchObject([{ type: "session.error", error: { message: "Pi session startup failed" } }]);
     // The Host writes what was recorded; the input must stay replayable.
     const promoted = { id: "input", type: "user.message", content: [{ type: "text", text: "list" }] } as unknown as SessionEvent;
@@ -145,7 +143,7 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
     control.responses = [{ content: [{ type: "text", text: "half" }], stopReason: "stop", hold: true,
       events: partial => [{ type: "text_start", contentIndex: 0, partial }, { type: "text_delta", contentIndex: 0, delta: "half", partial }] }];
     const journal = new MemoryTurnJournal();
-    expect(await run(journal, { signal: controller.signal })).toEqual([]);
+    await run(journal, { signal: controller.signal });
     expect(journal.deltas.map(({ event, blockIndex }) => [event.type, blockIndex])).toEqual([["agent.message_stream_start", 0], ["agent.message_chunk", 0]]);
     const assistant = journal.committed.find(event => role(event) === "assistant");
     expect(assistant).toMatchObject({ entry: { message: { stopReason: "aborted", content: [{ type: "text", text: "half" }] } },
@@ -176,7 +174,7 @@ describe("Delta and Complete Event alignment through the journal", () => {
       { content: [{ type: "text", text: "done" }], stopReason: "stop" },
     ];
     const journal = new MemoryTurnJournal();
-    expect(await run(journal, { blockBase: 5, agent: { model: `${model.provider}/${model.id}`, system: "", mcpServers: [{ name: "web", url: "https://mcp.example.invalid" }] } })).toEqual([]);
+    await run(journal, { blockBase: 5, agent: { model: `${model.provider}/${model.id}`, system: "", mcpServers: [{ name: "web", url: "https://mcp.example.invalid" }] } });
     expect(deltas(journal)).toEqual([
       { type: "agent.thinking_stream_start", blockIndex: 5 }, { type: "agent.thinking_chunk", blockIndex: 5 }, { type: "agent.thinking_stream_end", blockIndex: 5 },
       { type: "agent.message_stream_start", blockIndex: 6 }, { type: "agent.message_chunk", blockIndex: 6 }, { type: "agent.message_stream_end", blockIndex: 6 },
@@ -203,7 +201,7 @@ describe("Delta and Complete Event alignment through the journal", () => {
           ...streamed({ ...partial, content: partial.content.slice(1) }).map(event => ({ ...event, contentIndex: 1 }))] },
     ];
     const journal = new MemoryTurnJournal();
-    expect(await run(journal)).toEqual([]);
+    await run(journal);
     expect(deltas(journal)).toEqual([
       { type: "agent.thinking_stream_start", blockIndex: 0 }, { type: "agent.thinking_chunk", blockIndex: 0 },
       { type: "agent.message_stream_start", blockIndex: 1 }, { type: "agent.message_chunk", blockIndex: 1 }, { type: "agent.message_stream_end", blockIndex: 1 },
@@ -226,7 +224,7 @@ describe("Delta and Complete Event alignment through the journal", () => {
     ] as SessionEvent[];
     control.responses = [{ content: [{ type: "text", text: "resumed" }], stopReason: "stop" }];
     const journal = new MemoryTurnJournal();
-    expect(await run(journal, { history, continuation: { toolResults: [] }, blockBase: 3 })).toEqual([]);
+    await run(journal, { history, continuation: { toolResults: [] }, blockBase: 3 });
     expect(journal.recorded.filter(event => event.type === "session.error")).toEqual([]);
     expect(deltas(journal)).toEqual([
       { type: "agent.message_stream_start", blockIndex: 3 }, { type: "agent.message_chunk", blockIndex: 3 }, { type: "agent.message_stream_end", blockIndex: 3 },
@@ -236,7 +234,7 @@ describe("Delta and Complete Event alignment through the journal", () => {
 
   it("rejects a blockBase that is not a non-negative integer", async () => {
     const journal = new MemoryTurnJournal();
-    expect(await run(journal, { blockBase: -1 })).toEqual([]);
+    await run(journal, { blockBase: -1 });
     expect(control.log).toEqual([]);
     expect(journal.recorded).toMatchObject([{ type: "session.error", error: { message: "blockBase must be a non-negative integer" } }]);
   });
