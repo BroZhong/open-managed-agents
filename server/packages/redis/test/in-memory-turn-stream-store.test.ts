@@ -60,6 +60,13 @@ describe("InMemoryTurnStreamStore", () => {
       expect((after[0].data as { text: string }).text).toBe("lo");
     });
 
+    it("keeps each delta's attempt", async () => {
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 2, attempt: 1, type: "chunk", data: { text: "lost" } });
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 2, attempt: 2, type: "chunk", data: { text: "resumed" } });
+
+      expect((await store.readDeltas("session", "turn_1")).map((d) => d.attempt)).toEqual([1, 2]);
+    });
+
     it("reclaims a turn's stream", async () => {
       await store.appendDelta("session", { turnId: "turn_1", blockIndex: 0, type: "chunk", data: null });
       await store.reclaim("session", "turn_1");

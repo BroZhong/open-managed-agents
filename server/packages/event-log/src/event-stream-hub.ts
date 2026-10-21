@@ -18,6 +18,11 @@ export interface StreamChunk {
   /** Which content block within the turn (see TurnDelta.blockIndex). */
   blockIndex?: number;
   /**
+   * The attempt that streamed this delta (see TurnDelta.attempt). Emitted so a
+   * client showing one Turn keeps only its highest attempt's deltas.
+   */
+  attempt?: number;
+  /**
    * The Redis stream entry id this delta was written under. Emitted so a
    * reconnecting client can skip live deltas already covered by the Redis
    * backfill (dedup by "entry id <= max backfilled id").
@@ -47,14 +52,15 @@ interface Subscriber {
 
 /**
  * Build the SSE `data` payload for a delta frame: the raw stream event with
- * `turnId` + `blockIndex` merged in for alignment. Used by both the live hub
- * and the server-side reconnect backfill so live and backfilled delta frames
- * are byte-identical to the client.
+ * `turnId`, `blockIndex` and `attempt` merged in for alignment. Used by both
+ * the live hub and the server-side reconnect backfill so live and backfilled
+ * delta frames are byte-identical to the client.
  */
 export function alignedChunkData(opts: {
   data: unknown;
   turnId?: string;
   blockIndex?: number;
+  attempt?: number;
   deltaId?: string;
 }): Record<string, unknown> {
   const base =
@@ -64,6 +70,7 @@ export function alignedChunkData(opts: {
   const out: Record<string, unknown> = { ...base };
   if (opts.turnId !== undefined) out.turnId = opts.turnId;
   if (opts.blockIndex !== undefined) out.blockIndex = opts.blockIndex;
+  if (opts.attempt !== undefined) out.attempt = opts.attempt;
   if (opts.deltaId !== undefined) out.deltaId = opts.deltaId;
   return out;
 }

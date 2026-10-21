@@ -1169,6 +1169,40 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     expect(live).toMatchObject({ turnId: "turn_1", blockIndex: 0, text: "!" });
   });
 
+  it("carries each delta's attempt on backfilled and live frames", async () => {
+    const { app, agentStore, sessionStore, eventStreamHub, turnStreamStore } = createMergeApp();
+    const { session } = await createTestSession(agentStore, sessionStore);
+
+    // A lost attempt and its successor stream into the same Turn and block.
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
+    const lost = await turnStreamStore.appendDelta(session.id, {
+      turnId: "turn_1", blockIndex: 0, attempt: 1, type: "agent.message_chunk", data: { type: "agent.message_chunk", text: "Hel" },
+    });
+    const resumed = await turnStreamStore.appendDelta(session.id, {
+      turnId: "turn_1", blockIndex: 0, attempt: 2, type: "agent.message_chunk", data: { type: "agent.message_chunk", text: "Hi" },
+    });
+
+    const res = await app.request(`/v1/sessions/${session.id}/events?replay=1&include=chunks`, {
+      headers: { accept: "text/event-stream" },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    eventStreamHub.publishChunk(session.id, {
+      type: "agent.message_chunk",
+      data: { type: "agent.message_chunk", text: " there" },
+      turnId: "turn_1",
+      blockIndex: 0,
+      attempt: 2,
+      deltaId: "0-2",
+    });
+
+    const frames = await readSSEFrames(res, 3, 400);
+    expect(frames.map((f) => f.data)).toEqual([
+      { type: "agent.message_chunk", text: "Hel", turnId: "turn_1", blockIndex: 0, attempt: 1, deltaId: lost },
+      { type: "agent.message_chunk", text: "Hi", turnId: "turn_1", blockIndex: 0, attempt: 2, deltaId: resumed },
+      { type: "agent.message_chunk", text: " there", turnId: "turn_1", blockIndex: 0, attempt: 2, deltaId: "0-2" },
+    ]);
+  });
+
   it("de-overlaps a live delta that duplicates a backfilled one (same Redis entry id)", async () => {
     const { app, agentStore, sessionStore, eventStreamHub, turnStreamStore } = createMergeApp();
     const { session } = await createTestSession(agentStore, sessionStore);

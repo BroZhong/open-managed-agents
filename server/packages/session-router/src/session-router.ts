@@ -870,6 +870,7 @@ export class SessionRouter {
   ): TurnJournal {
     return new TurnJournal({
       sessionId,
+      attempt: pendingFence.generation,
       append: async (event, key) => {
         const consumed = attempt.delegationRun &&
           await this.delegations?.consumeResult(attempt.delegationRun, event);

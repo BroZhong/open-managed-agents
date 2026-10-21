@@ -431,6 +431,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
                       data: delta.data,
                       turnId: delta.turnId,
                       blockIndex: delta.blockIndex,
+                      attempt: delta.attempt,
                       deltaId: delta.id,
                     });
                     if (!enqueue(

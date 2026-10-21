@@ -14,6 +14,12 @@ export interface JournalEvent {
 export interface JournalDelta {
   turnId: string;
   blockIndex: number;
+  /**
+   * The attempt that streamed it. Attempts of one input share the Turn and its
+   * block numbering, so this is what keeps a console from joining a lost
+   * attempt's partial output to its successor's.
+   */
+  attempt: number;
   type: string;
   data: StreamEvent;
 }
@@ -21,6 +27,8 @@ export interface JournalDelta {
 /** Persistence is injected by the Host; the journal knows no PG, Redis or delegation. */
 export interface TurnJournalOptions {
   sessionId: string;
+  /** This attempt's claim generation; tags every Delta it emits. */
+  attempt: number;
   /**
    * Fenced, idempotent append returning the stored row. Repeating a key
    * returns the original row. A rejection fails the journal permanently.
@@ -131,7 +139,7 @@ export class TurnJournal {
   /** Deltas leave one at a time so the live projection keeps call order. */
   private delta(event: StreamEvent, blockIndex: number): void {
     // The Adapter receives its port only once the Turn is bound.
-    const delta: JournalDelta = { turnId: this.turnId!, blockIndex, type: event.type, data: event };
+    const delta: JournalDelta = { turnId: this.turnId!, blockIndex, attempt: this.options.attempt, type: event.type, data: event };
     // Checked again at output time, after earlier Deltas have left.
     this.deltas = this.deltas.then(() => this.adapterOpen ? this.options.outputDelta(delta) : undefined).then(() => {}, () => {});
   }

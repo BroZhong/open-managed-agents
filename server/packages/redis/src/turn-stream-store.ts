@@ -15,6 +15,13 @@ export interface TurnDelta {
   turnId: string;
   /** Which content block within the turn (increments on each stream_start). */
   blockIndex: number;
+  /**
+   * The claim generation of the attempt that streamed this delta. Every attempt
+   * of one input appends to the same Turn stream and numbers its blocks after
+   * the committed ones, so a lost attempt's partial block and its successor's
+   * can share `(turnId, blockIndex)`; readers keep only the highest attempt.
+   */
+  attempt: number;
   /** Stream event type (e.g. "agent.message_chunk"). */
   type: string;
   /** The raw stream event payload. */
@@ -114,6 +121,8 @@ export class RedisTurnStreamStore implements TurnStreamStore {
       delta.turnId,
       "blockIndex",
       String(delta.blockIndex),
+      "attempt",
+      String(delta.attempt),
       "type",
       delta.type,
       "data",
@@ -135,6 +144,8 @@ export class RedisTurnStreamStore implements TurnStreamStore {
         id,
         turnId: map.turnId ?? turnId,
         blockIndex: Number(map.blockIndex ?? "0"),
+        // Claim generations start at 1, so an entry without one is the earliest.
+        attempt: Number(map.attempt ?? "0"),
         type: map.type ?? "",
         data: map.data !== undefined ? safeParse(map.data) : null,
       };

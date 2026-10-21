@@ -4,7 +4,7 @@ import type { RedisClient } from "./index.js";
 export interface SessionSignal {
   sessionId: string;
   kind: "wake" | "durable" | "chunk";
-  chunk?: { type: string; data: unknown; turnId?: string; blockIndex?: number; deltaId?: string };
+  chunk?: { type: string; data: unknown; turnId?: string; blockIndex?: number; attempt?: number; deltaId?: string };
 }
 export interface SessionSignals {
   publish(signal: SessionSignal): void;

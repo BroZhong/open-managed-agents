@@ -3,7 +3,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { PendingEventClaimLostError } from "@oma-server/store";
 import type { AgentMessageChunkEvent, AgentMessageEvent } from "@open-managed-agents/adapter-core";
-import { TurnJournal, type TurnJournalOptions } from "../src/turn-journal.js";
+import { TurnJournal, type JournalDelta, type TurnJournalOptions } from "../src/turn-journal.js";
 
 interface Frame { event: string; seq?: number; data: Record<string, unknown> }
 
@@ -49,6 +49,7 @@ async function fixture() {
   // publication and live Delta output.
   const options = (overrides: Partial<TurnJournalOptions> = {}): TurnJournalOptions => ({
     sessionId: session.id,
+    attempt: fence.generation,
     append: (event, key) => stores.eventLogStore.append(session.id, { ...event, sessionThreadId: "sthr_primary", idempotencyKey: key, pendingFence: fence }),
     publish: stored => hub.publish(session.id, { type: stored.type, seq: stored.seq, data: stored.data }),
     outputDelta: delta => hub.publishChunk(session.id, delta),
@@ -319,10 +320,27 @@ describe("TurnJournal", () => {
       slowFirst.open();
       await settle();
       expect(f.frames.filter(frame => frame.seq === undefined)).toEqual([
-        { event: "agent.message_chunk", data: expect.objectContaining({ id: "d1", text: "Hel", turnId: "turn_1", blockIndex: 4 }) },
-        { event: "agent.message_chunk", data: expect.objectContaining({ id: "d2", text: "lo", turnId: "turn_1", blockIndex: 4 }) },
+        { event: "agent.message_chunk", data: expect.objectContaining({ id: "d1", text: "Hel", turnId: "turn_1", blockIndex: 4, attempt: 1 }) },
+        { event: "agent.message_chunk", data: expect.objectContaining({ id: "d2", text: "lo", turnId: "turn_1", blockIndex: 4, attempt: 1 }) },
       ]);
       expect(await f.log()).toEqual([{ seq: 1, type: "agent.message", id: "a" }]);
+    });
+
+    it("tags every Delta with its attempt, so attempts sharing a Turn stay apart", async () => {
+      const f = await fixture();
+      const deltas: JournalDelta[] = [];
+      const first = f.journal({ attempt: 1, outputDelta: delta => { deltas.push(delta); } });
+      first.adapter.delta(chunk("d1", "Hel"), 3);
+      await settle();
+      first.revokeAdapter();
+      const second = f.journal({ attempt: 2, outputDelta: delta => { deltas.push(delta); } });
+      second.adapter.delta(chunk("d2", "Hello"), 3);
+      await settle();
+
+      expect(deltas.map(({ turnId, blockIndex, attempt, data }) => ({ turnId, blockIndex, attempt, id: data.id }))).toEqual([
+        { turnId: "turn_1", blockIndex: 3, attempt: 1, id: "d1" },
+        { turnId: "turn_1", blockIndex: 3, attempt: 2, id: "d2" },
+      ]);
     });
 
     it("keeps writing durable events when Delta output fails", async () => {

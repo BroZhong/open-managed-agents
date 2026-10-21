@@ -471,7 +471,7 @@ export const DelegationExecutionSchema = z.object({
 export const DelegationListSchema = z.object({ data: z.array(DelegationExecutionSchema), has_more: z.boolean(), next_cursor: z.string().optional(), origin: DelegationOriginSchema.optional() }).openapi("DelegationList");
 export const DelegationTraceSchema = z.object({
   execution: DelegationExecutionSchema, workspaceId: z.string(), data: z.array(StoredEventSchema),
-  deltas: z.array(z.object({ type: z.string(), data: z.unknown(), turnId: z.string(), blockIndex: z.number(), deltaId: z.string(), ts: DateTimeSchema })),
+  deltas: z.array(z.object({ type: z.string(), data: z.unknown(), turnId: z.string(), blockIndex: z.number(), attempt: z.number(), deltaId: z.string(), ts: DateTimeSchema })),
   has_more: z.boolean(), next_cursor: z.number(), usage: TokenUsageSchema,
 }).openapi("DelegationTrace");
 export const DelegationUsageSchema = z.object({ self: TokenUsageSchema, delegated: TokenUsageSchema, total: TokenUsageSchema, scope: z.string() }).openapi("DelegationUsage");

@@ -56,6 +56,16 @@ describe("RedisTurnStreamStore", () => {
       expect((deltas[1].data as { text: string }).text).toBe("lo");
     });
 
+    it("keeps each delta's attempt, so attempts sharing a Turn's stream stay apart", async () => {
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 2, attempt: 1, type: "agent.message_chunk", data: { text: "lost" } });
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 2, attempt: 2, type: "agent.message_chunk", data: { text: "resumed" } });
+
+      expect((await store.readDeltas("session", "turn_1")).map(({ blockIndex, attempt, data }) => ({ blockIndex, attempt, data }))).toEqual([
+        { blockIndex: 2, attempt: 1, data: { text: "lost" } },
+        { blockIndex: 2, attempt: 2, data: { text: "resumed" } },
+      ]);
+    });
+
     it("writes deltas to stream:session:{sessionId}:turn:{turnId} — a per-turn Redis key", async () => {
       await store.appendDelta("session", { turnId: "turn_42", blockIndex: 0, type: "agent.message_chunk", data: {} });
       expect(redis.hasStream("stream:session:session:turn:turn_42")).toBe(true);

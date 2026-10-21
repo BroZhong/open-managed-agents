@@ -1141,7 +1141,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
           "text/event-stream": {
             schema: z.string().openapi({
               description:
-                "Durable frames contain event, id (the event seq), and JSON data. Delta frames have no SSE id; their JSON data includes turnId and blockIndex. Streams also contain retry directives and keepalive comments, which are not events.",
+                "Durable frames contain event, id (the event seq), and JSON data. Delta frames have no SSE id; their JSON data includes turnId, blockIndex and attempt. Attempts of one input share a Turn, so a client keeps only the Deltas of a Turn's highest attempt. Streams also contain retry directives and keepalive comments, which are not events.",
               example:
                 'event: agent.message\nid: 42\ndata: {"content":[{"type":"text","text":"Hello"}]}\n\n',
             }),
