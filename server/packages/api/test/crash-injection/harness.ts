@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, it, vi } from "vitest";
-import { createMemoryStores } from "@oma-server/store-memory";
+import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore, type TurnDelta } from "@oma-server/redis";
 import type { SandboxManager, SandboxSession } from "@oma-server/sandbox";
@@ -43,6 +43,12 @@ export interface ModelRequest {
   results: Map<string, { isError: boolean; text: string }>;
   /** The Runner that sent it. */
   runner: number;
+  /** The model the request names, as the provider sees it (without the provider). */
+  model: string;
+  /** The request's thinking parameter, as the provider sees it. */
+  thinking: unknown;
+  /** The request's system prompt, serialized, for checks by substring. */
+  system: string;
 }
 
 export type ModelReply =
@@ -66,6 +72,8 @@ export interface Scenario {
   contextWindow?: number;
   /** session.error codes the scenario's Turns may end with. */
   errors?: string[];
+  /** What happens while no Runner executes the Session: after a Runner is lost, before the next one takes over. */
+  afterLoss?(run: Run): void | Promise<void>;
 }
 
 /** What one execution of a scenario produced, for assertions. */
@@ -102,6 +110,10 @@ export interface Run {
   /** The Session's durable log as it is now. */
   log(): Promise<StoredEvent[]>;
   readonly runner: number;
+  /** The stores as the API reaches them, for edits a user makes meanwhile; no Runner's loss affects them. */
+  readonly stores: MemoryStores;
+  readonly agentId: string;
+  readonly sessionId: string;
 }
 
 /** A store result or command that never settles: the process that awaited it is gone. */
@@ -209,7 +221,7 @@ function lostMidStream(blocks: Block[], streamed: () => boolean, lost: () => voi
   }), { headers: { "content-type": "text/event-stream" } });
 }
 
-function request(body: { system?: unknown; messages: Array<{ role: string; content: unknown }> }, runner: number, index: number): ModelRequest {
+function request(body: { model: string; thinking?: unknown; system?: unknown; messages: Array<{ role: string; content: unknown }> }, runner: number, index: number): ModelRequest {
   const results = new Map<string, { isError: boolean; text: string }>();
   let lastUser = "";
   for (const message of body.messages) {
@@ -220,8 +232,9 @@ function request(body: { system?: unknown; messages: Array<{ role: string; conte
       else if (message.role === "user" && block.type === "text" && block.text) lastUser = block.text;
     }
   }
-  return { index, summary: JSON.stringify(body.system ?? "").includes("You are a context summarization assistant"), lastUser,
-    text: JSON.stringify(body.messages), results, runner };
+  const system = JSON.stringify(body.system ?? "");
+  return { index, summary: system.includes("You are a context summarization assistant"), lastUser,
+    text: JSON.stringify(body.messages), results, runner, model: body.model, thinking: body.thinking, system };
 }
 
 /** A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool` as every tool. */
@@ -259,6 +272,8 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
 }
 
 export const PROVIDER = "scripted";
+/** The scripted provider's models: every scenario's Agent starts with the first. */
+export const MODELS = ["scripted-model", "scripted-model-next"] as const;
 
 /** Pi settings every scenario runs with: compaction on small windows only, and fast retries. */
 export async function piAgentDir(): Promise<{ dir: string; remove(): Promise<void> }> {
@@ -276,7 +291,7 @@ export async function piAgentDir(): Promise<{ dir: string; remove(): Promise<voi
  */
 export async function execute(scenario: Scenario, loseAfter: Array<number | undefined> = []): Promise<Outcome> {
   const stores = createMemoryStores();
-  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${PROVIDER}/scripted-model`, system: "",
+  const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${PROVIDER}/${MODELS[0]}`, system: "",
     runtime: "pi-agent", sandbox: { enabled: true } });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
@@ -284,7 +299,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<number | unde
     await stores.pendingEventStore.enqueue(session.id, { type: "user.message", data: { content: [{ type: "text", text }] }, sessionThreadId: "sthr_primary" });
   }
   const provider: CustomProviderDefinition = { id: PROVIDER, name: "Scripted", api: "anthropic-messages", baseUrl: "https://model.example.invalid",
-    apiKey: "controlled-test-key", models: [{ id: "scripted-model", name: "Scripted", contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] }] };
+    apiKey: "controlled-test-key", models: MODELS.map((id) => ({ id, name: id, contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] })) };
   const outcome: Outcome = { log: [], sessionId: session.id, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], errors: [], deltas: [] };
   // The Redis stand-in all Runners share; it records every Delta as it is appended.
   const turnStreams = new InMemoryTurnStreamStore();
@@ -301,7 +316,8 @@ export async function execute(scenario: Scenario, loseAfter: Array<number | unde
   const startRunner = (index: number) => {
     const runner = new Runner(index, loseAfter[index], lapse);
     const run: Run = { crash: () => runner.lose(), runner: index, log: readLog,
-      requestInterrupt: () => stores.pendingEventStore.requestInterrupt(session.id) };
+      requestInterrupt: () => stores.pendingEventStore.requestInterrupt(session.id),
+      stores, agentId: agent.id, sessionId: session.id };
     const fetchModel: typeof fetch = async (_url, init) => {
       if (runner.dead) return GONE;
       const sent = request(JSON.parse(String(init?.body)), index, outcome.requests.length);
@@ -333,12 +349,12 @@ export async function execute(scenario: Scenario, loseAfter: Array<number | unde
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       pendingClaimOwnerId: runner.ownerId, onDrainError: ({ error }) => outcome.errors.push({ runner: index, error }) });
     outcome.runners.push(runner);
-    return { runner, router };
+    return { runner, router, run };
   };
 
   for (let index = 0; ; index++) {
     if (index > 12) throw new Error("The Session was not drained after 12 Runners");
-    const { runner, router } = startRunner(index);
+    const { runner, router, run } = startRunner(index);
     // The first Runner is woken by the input's arrival; each later one finds
     // the input its predecessor left in its pending scan.
     if (index === 0) void router.handleNewEvent(session.id, agent);
@@ -347,6 +363,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<number | unde
     if (settled === "stuck") throw new Error(`Runner ${index} neither drained the Session nor was lost`);
     if (settled === "idle") break;
     outcome.losses.push(await lossOf(runner, await readLog(), scenario));
+    await scenario.afterLoss?.(run);
   }
   outcome.log = await readLog();
   return outcome;
