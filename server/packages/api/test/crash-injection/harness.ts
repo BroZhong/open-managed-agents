@@ -7,7 +7,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore, type TurnDelta } from "@oma-server/redis";
 import type { SandboxManager, SandboxSession } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
-import { presentEvent, type StoredEvent } from "@oma-server/store";
+import { presentEvent, type DelegationExecution, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, ExecOptions, ToolFileSystem } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition } from "@open-managed-agents/adapter-pi-agent";
 
@@ -80,6 +80,8 @@ export interface Scenario {
 export interface Outcome {
   log: StoredEvent[];
   sessionId: string;
+  /** The stores every Runner shared, as the last one left them. */
+  stores: MemoryStores;
   runners: Runner[];
   requests: ModelRequest[];
   toolCalls: ToolCall[];
@@ -124,9 +126,14 @@ const WRITES: Record<string, readonly string[]> = {
   eventLogStore: ["append"],
   pendingEventStore: ["claim", "releaseClaim", "ackCompletedTurn"],
   sessionStore: ["updateStatusIfClaimed"],
+  // The coordination records of a delegation scenario's Turns.
+  delegationStore: ["accept", "saveWait", "command", "consumeResult", "startExecution", "applyCommand", "finishExecution"],
 };
 
-export interface Write { store: string; method: string; result: unknown }
+export interface Write { store: string; method: string; args: unknown[]; result: unknown }
+
+/** When a Runner is lost: right after its Nth durable write, or right after the first write a predicate picks. */
+export type LoseAfter = number | ((write: Write) => boolean);
 
 /** One Runner process: its writes, and its loss. */
 export class Runner {
@@ -135,7 +142,7 @@ export class Runner {
   readonly died: Promise<void>;
   private markDied!: () => void;
 
-  constructor(readonly index: number, private readonly loseAfter: number | undefined, private readonly onLoss: (runner: Runner) => void) {
+  constructor(readonly index: number, private readonly loseAfter: LoseAfter | undefined, private readonly onLoss: (runner: Runner) => void) {
     this.died = new Promise((resolve) => { this.markDied = resolve; });
   }
 
@@ -151,7 +158,7 @@ export class Runner {
   /** Called with each durable write once it is committed; the Runner may be lost right after it. */
   wrote(write: Write): boolean {
     this.writes.push(write);
-    if (this.writes.length === this.loseAfter) this.lose();
+    if (typeof this.loseAfter === "function" ? this.loseAfter(write) : this.writes.length === this.loseAfter) this.lose();
     return this.dead;
   }
 
@@ -176,7 +183,7 @@ export class Runner {
             (settled) => {
               if (runner.dead) return GONE;
               if (!counted || (property === "claim" && settled === null)) return settled;
-              return runner.wrote({ store: name, method: String(property), result: settled }) ? GONE : settled;
+              return runner.wrote({ store: name, method: String(property), args, result: settled }) ? GONE : settled;
             },
             (error) => runner.dead ? GONE : Promise.reject(error),
           );
@@ -287,9 +294,10 @@ export async function piAgentDir(): Promise<{ dir: string; remove(): Promise<voi
 
 /**
  * Execute `scenario`, losing Runner i right after its `loseAfter[i]`th
- * durable write (never, when undefined), until a Runner drains the Session.
+ * durable write, or the first one `loseAfter[i]` picks (never, when
+ * undefined), until a Runner drains the Session.
  */
-export async function execute(scenario: Scenario, loseAfter: Array<number | undefined> = []): Promise<Outcome> {
+export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | undefined> = []): Promise<Outcome> {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${PROVIDER}/${MODELS[0]}`, system: "",
     runtime: "pi-agent", sandbox: { enabled: true } });
@@ -300,7 +308,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<number | unde
   }
   const provider: CustomProviderDefinition = { id: PROVIDER, name: "Scripted", api: "anthropic-messages", baseUrl: "https://model.example.invalid",
     apiKey: "controlled-test-key", models: MODELS.map((id) => ({ id, name: id, contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] })) };
-  const outcome: Outcome = { log: [], sessionId: session.id, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], errors: [], deltas: [] };
+  const outcome: Outcome = { log: [], sessionId: session.id, stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], errors: [], deltas: [] };
   // The Redis stand-in all Runners share; it records every Delta as it is appended.
   const turnStreams = new InMemoryTurnStreamStore();
   const appendDelta = turnStreams.appendDelta.bind(turnStreams);
@@ -362,17 +370,21 @@ export async function execute(scenario: Scenario, loseAfter: Array<number | unde
     const settled = await Promise.race([runner.died.then(() => "lost" as const), router.waitForIdle(30_000).then((idle) => idle ? "idle" as const : "stuck" as const)]);
     if (settled === "stuck") throw new Error(`Runner ${index} neither drained the Session nor was lost`);
     if (settled === "idle") break;
-    outcome.losses.push(await lossOf(runner, await readLog(), scenario));
+    outcome.losses.push(await lossOf(runner, session.id, await readLog(), scenario));
     await scenario.afterLoss?.(run);
   }
   outcome.log = await readLog();
   return outcome;
 }
 
-/** The input a lost Runner held, and its Turn's calls that had no result then. */
-async function lossOf(runner: Runner, log: StoredEvent[], scenario: Scenario): Promise<Loss> {
+/**
+ * The input of the Session a lost Runner held, and its Turn's calls that had
+ * no result then. The claims it held on Child Sessions are not the Session's.
+ */
+async function lossOf(runner: Runner, sessionId: string, log: StoredEvent[], scenario: Scenario): Promise<Loss> {
   let held: { event: { data: { content: Array<{ text: string }> } }; generation: number } | undefined;
   for (const write of runner.writes) {
+    if (write.store === "pendingEventStore" && write.args[0] !== sessionId) continue;
     if (write.method === "claim") held = write.result as typeof held;
     else if (write.method === "ackCompletedTurn" && (write.result as { acknowledged: boolean }).acknowledged) held = undefined;
     else if (write.method === "releaseClaim" && write.result === true) held = undefined;
@@ -411,15 +423,27 @@ const isUser = (event: StoredEvent) => event.type === "agent.context_entry" &&
 const isAssistant = (event: StoredEvent) => event.type === "agent.context_entry" &&
   (event.data as { entry?: { message?: { role?: string } } }).entry?.message?.role === "assistant";
 
+/** Tools the Host runs itself, not the Sandbox: the delegation records say what their calls did. */
+const HOST_TOOLS = new Set(["Agent", "get_subagent_result", "steer_subagent"]);
+
+export interface Expected {
+  /**
+   * Calls a lost Runner left dangling that the takeover answers from the
+   * delegation record they left (#251), instead of as of unknown outcome.
+   */
+  recorded?: string[];
+}
+
 /**
  * The assertions every resumed scenario meets (RECOVERY-MATRIX.md): each input
  * completes once, in its original Turn and in order, with no recovery error;
  * every call has exactly one result and only calls left dangling by a lost
- * Runner report an unknown outcome; no tool runs twice; model steps continue
- * from the log; each takeover is marked once, with why it happened and the
- * calls it found dangling; and no lost Runner writes after it is lost.
+ * Runner report an unknown outcome, unless their record answers them; no tool
+ * runs twice; model steps continue from the log; each takeover is marked
+ * once, with why it happened and the calls it found dangling; and no lost
+ * Runner writes after it is lost.
  */
-export function expectResumed(scenario: Scenario, outcome: Outcome): void {
+export function expectResumed(scenario: Scenario, outcome: Outcome, expected: Expected = {}): void {
   const { log } = outcome;
   // Each input completes exactly once, in the Turn its first attempt named, in order.
   const completions = log.filter((event) => event.type === "session.turn_completed");
@@ -441,17 +465,24 @@ export function expectResumed(scenario: Scenario, outcome: Outcome): void {
   const calls = [...new Set(shown.filter((event) => event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use")
     .map((event) => (event.data as { toolUseId: string }).toolUseId))];
   for (const call of calls) expect(results.filter((event) => (event.data as { toolUseId: string }).toolUseId === call), `results of ${call}`).toHaveLength(1);
-  // "Outcome unknown" exactly for the calls a lost Runner left without a result.
+  // "Outcome unknown" exactly for the calls a lost Runner left without a
+  // result, but those whose delegation record answers them.
   const unknown = results.filter((event) => JSON.stringify(event.data).includes(OUTCOME_UNKNOWN_PREFIX))
     .map((event) => (event.data as { toolUseId: string }).toolUseId);
-  expect(new Set(unknown)).toEqual(new Set(outcome.losses.flatMap((loss) => loss.dangling)));
-  // No tool runs twice; a call with a real result ran once.
+  const dangling = outcome.losses.flatMap((loss) => loss.dangling);
+  const recorded = expected.recorded ?? [];
+  for (const call of recorded) expect(dangling, `${call} was left dangling`).toContain(call);
+  expect(new Set(unknown)).toEqual(new Set(dangling.filter((call) => !recorded.includes(call))));
+  // No tool runs twice; a Sandbox call with a real result ran once.
   const executions = outcome.toolCalls.map((call) => call.id);
   expect(executions).toEqual([...new Set(executions)]);
-  for (const call of calls.filter((id) => !unknown.includes(id))) expect(executions, `${call} ran`).toContain(call);
+  const hostCalls = new Set(shown.filter((event) => HOST_TOOLS.has((event.data as { name?: string }).name ?? ""))
+    .map((event) => (event.data as { toolUseId: string }).toolUseId));
+  for (const call of calls.filter((id) => !unknown.includes(id) && !hostCalls.has(id))) expect(executions, `${call} ran`).toContain(call);
   // Model steps continue from the log: an attempt continues exactly when its
   // input is in the Turn's native history, from the steps the log counts.
-  for (const attempt of outcome.attempts) {
+  // A Child Session's attempts are its own Turns, not the Session's.
+  for (const attempt of outcome.attempts.filter((attempt) => attempt.input.sessionId === outcome.sessionId)) {
     const turn = attempt.log.filter((event) => turnIdOf(event) === attempt.input.turnId);
     const steps = turn.filter((event) => event.type === "span.model_request_start").length;
     expect(attempt.input.resume !== undefined, `attempt of runner ${attempt.runner} continues`).toBe(turn.some(isUser));
@@ -487,11 +518,28 @@ export function expectResumed(scenario: Scenario, outcome: Outcome): void {
   // No Runner reports a failure: a lost one is gone before it could, and the
   // one that takes over never loses its claim or a write.
   expect(outcome.errors).toEqual([]);
-  // Every row came from an append a live Runner made, or the idle its acknowledgement committed.
-  const written = new Set(outcome.runners.flatMap((runner) => runner.writes.flatMap((write) =>
-    write.method === "append" ? [(write.result as StoredEvent).seq]
-      : write.method === "ackCompletedTurn" && (write.result as { idleEvent?: StoredEvent }).idleEvent ? [(write.result as { idleEvent: StoredEvent }).idleEvent.seq] : [])));
+  // Every row came from a write a live Runner made: an append, the idle its
+  // acknowledgement committed, or a delegation transaction.
+  const written = new Set(outcome.runners.flatMap((runner) => runner.writes.flatMap((write) => rowsOf(write)
+    .filter((row) => row.sessionId === outcome.sessionId).map((row) => row.seq))));
   expect(log.filter((event) => !written.has(event.seq)).map((event) => event.type)).toEqual([]);
+}
+
+/** The rows a durable write committed to the event log. */
+function rowsOf(write: Write): Array<{ sessionId: string; seq: number }> {
+  switch (write.method) {
+    case "append": case "consumeResult": return [write.result as StoredEvent];
+    case "ackCompletedTurn": {
+      const { idleEvent } = write.result as { idleEvent?: StoredEvent };
+      return idleEvent ? [idleEvent] : [];
+    }
+    // An execution's end notifies its caller in the same transaction.
+    case "startExecution": case "finishExecution": {
+      const execution = write.result as DelegationExecution | null;
+      return execution?.notificationEventSeq === undefined ? [] : [{ sessionId: execution.callerSessionId, seq: execution.notificationEventSeq }];
+    }
+    default: return [];
+  }
 }
 
 /**
