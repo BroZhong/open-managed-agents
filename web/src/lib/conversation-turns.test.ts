@@ -79,3 +79,21 @@ it("closes consecutive Turns without intermediate idle and keeps idle out of Tur
   expect(result.map(t => t.completed)).toEqual([true, true]);
   expect(result.map(t => t.timing?.endedAt)).toEqual([start + 2000, start + 5000]);
 });
+
+it("shows a Turn ended by a later attempt as one Turn, pairing the repair with the call it answers", () => {
+  // The Runner is lost mid-tool; the attempt that takes over repairs the call
+  // and ends the Turn, every event naming the Turn the first attempt started.
+  const result = turns([
+    event(1, 0, "user.message", { content: [] }),
+    event(2, 1, "session.status_running"),
+    event(3, 2, "agent.tool_use", { turnId: "turn_1_a1", toolUseId: "call_1", name: "bash" }),
+    event(4, 40, "agent.tool_result", { turnId: "turn_1_a1", toolUseId: "call_1", isError: true, content: [{ type: "text", text: "Interrupted" }] }),
+    event(5, 40, "session.error", { turnId: "turn_1_a1", error: { code: "recovery_partial_turn_aborted", message: "Stopped" } }),
+    event(6, 41, "session.turn_completed", { turnId: "turn_1_a1" }),
+    event(7, 41, "session.status_idle"),
+  ]);
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({ turnId: "turn_1_a1", completed: false, running: false });
+  expect(result[0].responses.filter((message) => message.role === "tool_use"))
+    .toEqual([expect.objectContaining({ toolUseId: "call_1", result: expect.objectContaining({ isError: true }) })]);
+});

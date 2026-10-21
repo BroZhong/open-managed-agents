@@ -232,24 +232,28 @@ describe("session event stream state", () => {
     ]);
   });
 
-  it("replaces a crashed attempt's partial Delta when a new claim generation starts", () => {
+  it("replaces a crashed attempt's partial Delta when the next attempt resumes its Turn", () => {
+    // Every attempt of the input keeps the Turn its first attempt started and
+    // appends to its stream; only the attempt tells them apart.
     let state = sessionEventStreamReducer(initialSessionEventStreamState, {
       type: "delta.received",
       delta: {
         ...delta("agent.message_chunk", "1-1", { text: "Hel" }),
         turnId: "turn_10_a1",
+        attempt: 1,
       },
     });
     state = sessionEventStreamReducer(state, {
       type: "delta.received",
       delta: {
-        ...delta("agent.message_chunk", "1-1", { text: "Hello" }),
-        turnId: "turn_10_a2",
+        ...delta("agent.message_chunk", "1-2", { text: "Hello" }),
+        turnId: "turn_10_a1",
+        attempt: 2,
       },
     });
 
     expect(state.activeDeltas).toMatchObject([
-      { turnId: "turn_10_a2", deltaId: "1-1", data: { text: "Hello" } },
+      { turnId: "turn_10_a1", attempt: 2, deltaId: "1-2", data: { text: "Hello" } },
     ]);
   });
 });
