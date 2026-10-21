@@ -297,9 +297,10 @@ input's owner and generation. An expired child lease becomes
 tool history and external task identifiers before an explicit resume. Saved
 Workspace files remain available independently of that status.
 
-`delegation_waits` identifies the original parent Turn and tool call. Its
-checkpoint plus complete events lets a replacement Host continue that same
-Turn; a non-wait tool with an uncertain outcome is reported and not replayed.
+`delegation_waits` identifies the original parent Turn and tool call and
+records that Turn's model and thinking. With the complete event log, this lets a
+replacement Host continue that same Turn; a non-wait tool with an uncertain
+outcome is reported and not replayed.
 `subagent.result` is a visible result notification. Only
 `subagent.result_claimed` enters the model's history. An accepted Interrupt is
 reported as `requested`; the canonical aborted Turn confirms actual stopping.

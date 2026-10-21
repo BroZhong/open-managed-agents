@@ -46,8 +46,9 @@ _Avoid_: chat, thread, run
 Session thinking intensity is an optional persisted override. An absent/null
 preference follows the current Agent on each new Turn; Loop Sessions retain
 their Agent snapshot. Changing it affects future Turns only, never another
-Session or the Agent itself. Explicit Delegation Execution settings and resumed
-wait checkpoints retain precedence. Pi adapts the preference to model capabilities.
+Session or the Agent itself. Explicit Delegation Execution settings and the
+configuration recorded by a resumed wait retain precedence. Pi adapts the
+preference to model capabilities.
 
 **Child Session**:
 A durable Session created by a parent's `Agent` tool. It belongs to the same configured Agent and Tenant, retains its creation parent Session/Turn/tool-use identity, and shares the Workspace and Sandbox binding by default. It does not copy the parent conversation. `childId` is the Session ID; `resume` submits a new Delegation Input to that same Child Session.
@@ -246,8 +247,8 @@ ADR-0009 and ADR-0012.
 
 ## Session sharing
 
-Large tool results (at least 64 KiB of event JSON), including native Pi results
-and Delegation checkpoint copies, are stored as immutable OSS payloads. The event
+Large tool results (at least 64 KiB of event JSON), including native Pi results,
+are stored as immutable OSS payloads. The event
 journal keeps references; Host runtime reads restore the original data. Session
 history and SSE expose only metadata for these results. The console loads complete
 content only when expanded, without thumbnails. See ADR-0015 for the read contract

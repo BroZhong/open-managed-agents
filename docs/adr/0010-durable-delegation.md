@@ -7,6 +7,10 @@ for controlled Sandbox lifecycle management. Execution resource-use leases still
 fence work, but expiry is not evidence that remote execution has stopped and
 cannot authorize reclamation of a managed binding.
 
+#239 amends §4: a wait no longer carries a checkpoint of Complete Events. Each
+native message is committed before Pi runs its tools, so the event log already
+holds the history the checkpoint duplicated.
+
 Accepted. Supersedes ADR-0006's plugin delegation, shared parent ToolExecutor,
 private usage bridge and parent-scoped child lifetime. Retains ADR-0002/0003's
 Host/Adapter boundary and ADR-0009's concurrent Workspace write semantics.
@@ -100,10 +104,10 @@ use the same rule. `get_subagent_result(wait=false)` reads immediately, while
 `wait=true` waits on the selected execution, including while it is queued.
 
 A wait stores the original parent Turn, calling tool ID, selected execution and
-a structured checkpoint of current-Turn Complete Events. The Adapter captures
-these events synchronously before invoking the Host capability, closing the
-race where the tool callback runs before the Router consumes its event queue.
-Checkpoint events retain their IDs and are idempotently restored to history.
+the parent Turn's effective model and thinking. It stores no events: the
+Adapter commits each native message, including the requesting tool call, before
+Pi runs its tools, so the event log is the only source of resumed history.
+Waits saved with an earlier event checkpoint are not replayed.
 
 The Host retains the original pending input and Turn identity through waiting.
 On recovery it commits the result for the original tool, reconstructs complete

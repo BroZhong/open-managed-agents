@@ -12,6 +12,9 @@ ADR-0016 further consolidates new Pi message output into native entries and
 derives display events. The separate envelopes described below remain relevant
 to legacy data and other runtimes.
 
+Since #239 Delegation waits hold no event copies (ADR-0010 §4). The checkpoint
+copies below, and their migration, are no longer written or read.
+
 ## Decision
 
 Tool result event data of at least 64 KiB (UTF-8 JSON bytes), or containing
