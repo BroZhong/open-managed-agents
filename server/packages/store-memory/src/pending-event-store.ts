@@ -122,6 +122,7 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       ownerId,
       generation: current.generation,
       expiresAt: new Date(current.expiresAtMs),
+      priorInterrupt: current.interruptGeneration !== undefined && current.interruptGeneration < current.generation,
     };
   }
 

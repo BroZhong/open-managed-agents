@@ -20,6 +20,7 @@ interface PendingRow {
   claim_owner?: string | null;
   claim_expires_at?: Date | null;
   claim_generation?: string | number;
+  prior_interrupt?: boolean;
 }
 
 function rowToEvent(row: PendingRow): PendingEvent {
@@ -181,7 +182,8 @@ export class PgPendingEventStore implements PendingEventIngressStore {
          WHERE id = $1
            AND (claim_owner IS NULL OR claim_expires_at <= clock_timestamp())
          RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at,
-                   claim_owner, claim_expires_at, claim_generation`,
+                   claim_owner, claim_expires_at, claim_generation,
+                   (interrupt_requested_at IS NOT NULL AND interrupt_generation < claim_generation) AS prior_interrupt`,
         [head.rows[0].id, ownerId, leaseMs],
       );
       await client.query("COMMIT");
@@ -191,6 +193,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
         ownerId: row.claim_owner!,
         generation: Number(row.claim_generation),
         expiresAt: new Date(row.claim_expires_at!),
+        priorInterrupt: row.prior_interrupt === true,
       } : null;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});

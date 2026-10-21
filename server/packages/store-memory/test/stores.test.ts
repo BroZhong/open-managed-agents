@@ -338,6 +338,35 @@ describe("createMemoryStores", () => {
       expect(await stores.pendingEventStore.ack("s1", event.id, second!)).toBe(true);
     });
 
+    it("D1/D4 reports to the next claim an Interrupt an earlier generation accepted, never one of its own", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      expect(first.priorInterrupt).toBe(false);
+      expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
+      await stores.pendingEventStore.releaseClaim("s1", event.id, first);
+
+      // The Interrupt first's Runner accepted but never applied reaches the takeover...
+      const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
+      expect(second.priorInterrupt).toBe(true);
+      // ...without interrupting it the way its own Interrupt does.
+      expect(await stores.pendingEventStore.interruptRequested("s1", event.id)).toBe(false);
+      expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
+      expect(await stores.pendingEventStore.interruptRequested("s1", event.id)).toBe(true);
+      await stores.pendingEventStore.releaseClaim("s1", event.id, second);
+
+      expect((await stores.pendingEventStore.claim("s1", "host_c", 60_000))!.priorInterrupt).toBe(true);
+    });
+
+    it("D5 reports no Interrupt to the claim of the input queued behind the interrupted one", async () => {
+      const interrupted = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      await stores.pendingEventStore.requestInterrupt("s1");
+      expect(await stores.pendingEventStore.ack("s1", interrupted.id, first)).toBe(true);
+
+      expect((await stores.pendingEventStore.claim("s1", "host_a", 60_000))!.priorInterrupt).toBe(false);
+    });
+
     it("rejects a durable append from an old pending fence", async () => {
       const event = await stores.pendingEventStore.enqueue("s1", {
         type: "user.message",

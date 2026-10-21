@@ -32,6 +32,13 @@ export interface PendingEventClaimRef {
 export interface PendingEventClaim extends PendingEventClaimRef {
   event: PendingEvent;
   expiresAt: Date;
+  /**
+   * An earlier generation accepted an Interrupt for this input. The input is
+   * still queued, so the Interrupt has not ended its Turn: the Runner that
+   * accepted it stopped first. Unlike this generation's own Interrupt, which
+   * {@link PendingEventStore.interruptRequested} reports, it is read once here.
+   */
+  priorInterrupt: boolean;
 }
 
 export interface PendingEventFence extends PendingEventClaimRef {

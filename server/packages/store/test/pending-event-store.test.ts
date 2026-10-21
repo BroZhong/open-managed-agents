@@ -72,13 +72,20 @@ describe("PgPendingEventStore", () => {
     await seedSession("interrupt_generation");
     const event = await store.enqueue("interrupt_generation", { type: "user.message", data: { text: "work" }, sessionThreadId: "t" });
     const first = (await store.claim("interrupt_generation", "first-owner", 60_000))!;
+    expect(first.priorInterrupt).toBe(false);
     expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
     expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
     await store.releaseClaim("interrupt_generation", event.id, first);
-    await store.claim("interrupt_generation", "replacement-owner", 60_000);
+    // D1: the takeover learns of the Interrupt its predecessor never applied...
+    const replacement = (await store.claim("interrupt_generation", "replacement-owner", 60_000))!;
+    expect(replacement.priorInterrupt).toBe(true);
+    // D2: ...which does not interrupt it the way its own Interrupt does.
     expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(false);
     expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
     expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+    // D4: an Interrupt the takeover accepted is prior to the claim after it.
+    await store.releaseClaim("interrupt_generation", event.id, replacement);
+    expect((await store.claim("interrupt_generation", "third-owner", 60_000))!.priorInterrupt).toBe(true);
   });
 
   it("rolls back the complete ingress batch if any insert fails", async () => {
@@ -242,6 +249,20 @@ describe("PgPendingEventStore", () => {
     const second = await store.claim("sess_1", "host_a", 60_000);
     expect(second?.generation).toBe(first!.generation + 1);
     expect(await store.count("sess_1")).toBe(1);
+  });
+
+  it("D1 reports an Interrupt its predecessor accepted to the generation that takes over", async () => {
+    const event = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    const first = (await store.claim("sess_1", "host_a", 60_000))!;
+    expect(first.priorInterrupt).toBe(false);
+    // White-box the marker as requestInterrupt writes it: pg-mem cannot run its NOT EXISTS.
+    await harness.pool.query(
+      `UPDATE pending_events SET interrupt_requested_at = NOW(), interrupt_generation = claim_generation WHERE id = $1`,
+      [event.id],
+    );
+    await store.releaseClaim("sess_1", event.id, first);
+
+    expect((await store.claim("sess_1", "host_b", 60_000))!.priorInterrupt).toBe(true);
   });
 
   it("claim returns null on empty queue", async () => {
