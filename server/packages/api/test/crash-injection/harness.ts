@@ -7,7 +7,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore, type TurnDelta } from "@oma-server/redis";
 import type { SandboxManager, SandboxSession } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
-import { presentEvent, type DelegationExecution, type StoredEvent } from "@oma-server/store";
+import { presentEvent, type DelegationExecution, type PendingEventClaimEnd, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, ExecOptions, ToolFileSystem } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition } from "@open-managed-agents/adapter-pi-agent";
 
@@ -19,7 +19,9 @@ import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition }
  * model request and tool command it makes from then on never settles, so
  * none of its cleanup runs) and its claim lapses. The next Runner takes over
  * as a Runner's pending scan does. A sweep loses the first Runner after each
- * write the scenario makes, one run per write.
+ * write the scenario makes, one run per write. A scenario can also hand a
+ * Turn over, as a shutting-down Runner releases its claim, or make the event
+ * log refuse a write, which stops the attempt and lets its claim lapse.
  */
 
 /** How a takeover's result for a call of unknown outcome begins (#248). */
@@ -68,6 +70,11 @@ export interface Scenario {
   model(request: ModelRequest, run: Run): ModelReply | Promise<ModelReply>;
   /** A Sandbox tool call's output text; it may lose its Runner while it runs. */
   tool?(call: ToolCall, run: Run): string | Promise<string>;
+  /**
+   * Whether the event log refuses to store `event`, as PostgreSQL refuses a
+   * row it cannot store: the Runner's write fails with {@link RefusedWrite}.
+   */
+  refuse?(event: { type: string; data: unknown }, run: Run): boolean;
   /** The scripted model's context window; small windows make Pi compact. */
   contextWindow?: number;
   /** session.error codes the scenario's Turns may end with. */
@@ -96,6 +103,12 @@ export interface Outcome {
 
 export interface Loss {
   runner: number;
+  /**
+   * How its claim ended: it lapsed (`expired`), as a lost Runner's does and a
+   * Runner's stopped by a failed write, or the Runner handed the Turn over
+   * (`released`).
+   */
+  reason: PendingEventClaimEnd;
   /** The input whose claim the Runner held, by its position in Scenario.inputs; undefined when it held none. */
   input?: number;
   generation?: number;
@@ -107,6 +120,11 @@ export interface Loss {
 export interface Run {
   /** Lose the Runner that is executing now, as if its process were killed. */
   crash(): void;
+  /**
+   * Stop the Runner that is executing now as a graceful shutdown leaves its
+   * Turn (#254): it releases its claim, writes nothing more and exits.
+   */
+  handOff(): void;
   /** Accept an Interrupt for the Session's running Turn, as the API does. */
   requestInterrupt(): Promise<boolean>;
   /** The Session's durable log as it is now. */
@@ -117,6 +135,9 @@ export interface Run {
   readonly agentId: string;
   readonly sessionId: string;
 }
+
+/** The failure of a write the scenario made the event log refuse. */
+export class RefusedWrite extends Error {}
 
 /** A store result or command that never settles: the process that awaited it is gone. */
 const GONE = new Promise<never>(() => {});
@@ -138,19 +159,28 @@ export type LoseAfter = number | ((write: Write) => boolean);
 /** One Runner process: its writes, and its loss. */
 export class Runner {
   dead = false;
+  /** How its claim ended when it was lost. */
+  end: PendingEventClaimEnd = "expired";
   readonly writes: Write[] = [];
   readonly died: Promise<void>;
   private markDied!: () => void;
 
-  constructor(readonly index: number, private readonly loseAfter: LoseAfter | undefined, private readonly onLoss: (runner: Runner) => void) {
+  constructor(
+    readonly index: number,
+    private readonly loseAfter: LoseAfter | undefined,
+    private readonly onLoss: (runner: Runner) => void,
+    /** Whether the store refuses the call; the call then fails with {@link RefusedWrite}. */
+    private readonly refuses: (store: string, method: string, args: unknown[]) => boolean = () => false,
+  ) {
     this.died = new Promise((resolve) => { this.markDied = resolve; });
   }
 
   get ownerId(): string { return `runner-${this.index}`; }
 
-  lose(): void {
+  lose(end: PendingEventClaimEnd = "expired"): void {
     if (this.dead) return;
     this.dead = true;
+    this.end = end;
     this.onLoss(this);
     this.markDied();
   }
@@ -176,6 +206,7 @@ export class Runner {
         if (typeof value !== "function") return value;
         return (...args: unknown[]) => {
           if (runner.dead) return GONE;
+          if (runner.refuses(name, String(property), args)) return Promise.reject(new RefusedWrite(`${name}.${String(property)} refused`));
           const result = (value as (...a: unknown[]) => unknown).apply(target, args);
           if (!(result instanceof Promise)) return result;
           const counted = WRITES[name]?.includes(String(property));
@@ -315,15 +346,21 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
   turnStreams.appendDelta = async (sessionId, delta) => { outcome.deltas.push(delta); return appendDelta(sessionId, delta); };
   const readLog = async () => (await stores.eventLogStore.getEvents(session.id, { limit: 100_000 })).data;
 
-  // A lost Runner's claim lapses: the next claim takes the input over.
+  // A lost Runner's claim lapses: the next claim takes the input over. One
+  // that hands its Turn over releases its claim instead.
   const lapse = (runner: Runner) => {
     const state = stores.pendingEventStore.snapshotState();
-    for (const claim of state.claims.values()) if (claim.ownerId === runner.ownerId) claim.expiresAtMs = 0;
+    for (const claim of state.claims.values()) {
+      if (claim.ownerId !== runner.ownerId) continue;
+      claim.expiresAtMs = 0;
+      if (runner.end === "released") claim.ownerId = undefined;
+    }
     stores.pendingEventStore.restoreState(state);
   };
   const startRunner = (index: number) => {
-    const runner = new Runner(index, loseAfter[index], lapse);
-    const run: Run = { crash: () => runner.lose(), runner: index, log: readLog,
+    const runner: Runner = new Runner(index, loseAfter[index], lapse, (store, method, args) =>
+      store === "eventLogStore" && method === "append" && scenario.refuse?.(args[1] as { type: string; data: unknown }, run) === true);
+    const run: Run = { crash: () => runner.lose(), handOff: () => runner.lose("released"), runner: index, log: readLog,
       requestInterrupt: () => stores.pendingEventStore.requestInterrupt(session.id),
       stores, agentId: agent.id, sessionId: session.id };
     const fetchModel: typeof fetch = async (_url, init) => {
@@ -369,7 +406,13 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     else await router.recoverPendingEvents();
     const settled = await Promise.race([runner.died.then(() => "lost" as const), router.waitForIdle(30_000).then((idle) => idle ? "idle" as const : "stuck" as const)]);
     if (settled === "stuck") throw new Error(`Runner ${index} neither drained the Session nor was lost`);
-    if (settled === "idle") break;
+    if (settled === "idle" && await stores.pendingEventStore.peek(session.id)) {
+      // A refused write stops the attempt (ADR-0020). The Runner stays up, and
+      // the claim it no longer renews lapses after its lease.
+      const refused = outcome.errors.some((error) => error.runner === index && error.error instanceof RefusedWrite);
+      if (!refused) throw new Error(`Runner ${index} went idle and left the Session's input queued`);
+      runner.lose();
+    } else if (settled === "idle") break;
     outcome.losses.push(await lossOf(runner, session.id, await readLog(), scenario));
     await scenario.afterLoss?.(run);
   }
@@ -389,10 +432,10 @@ async function lossOf(runner: Runner, sessionId: string, log: StoredEvent[], sce
     else if (write.method === "ackCompletedTurn" && (write.result as { acknowledged: boolean }).acknowledged) held = undefined;
     else if (write.method === "releaseClaim" && write.result === true) held = undefined;
   }
-  if (!held) return { runner: runner.index, dangling: [] };
+  if (!held) return { runner: runner.index, reason: runner.end, dangling: [] };
   const input = scenario.inputs.indexOf(held.event.data.content[0].text);
   const events = eventsOfInput(log, scenario, input);
-  return { runner: runner.index, input, generation: held.generation,
+  return { runner: runner.index, reason: runner.end, input, generation: held.generation,
     completed: events.some((event) => event.type === "session.turn_completed"), dangling: dangling(events) };
 }
 
@@ -436,12 +479,12 @@ export interface Expected {
 
 /**
  * The assertions every resumed scenario meets (RECOVERY-MATRIX.md): each input
- * completes once, in its original Turn and in order, with no recovery error;
- * every call has exactly one result and only calls left dangling by a lost
- * Runner report an unknown outcome, unless their record answers them; no tool
- * runs twice; model steps continue from the log; each takeover is marked
- * once, with why it happened and the calls it found dangling; and no lost
- * Runner writes after it is lost.
+ * completes once, in its original Turn and in order, with no recovery error
+ * the scenario does not expect; every call has exactly one result and only
+ * calls left dangling by a lost Runner report an unknown outcome, unless their
+ * record answers them; no tool runs twice; model steps continue from the log;
+ * each takeover is marked once, with why it happened and the calls it found
+ * dangling; and no lost Runner writes after it is lost.
  */
 export function expectResumed(scenario: Scenario, outcome: Outcome, expected: Expected = {}): void {
   const { log } = outcome;
@@ -455,9 +498,8 @@ export function expectResumed(scenario: Scenario, outcome: Outcome, expected: Ex
     expect(events.filter((event) => event.type === "session.turn_completed").map(turnIdOf)).toEqual(named);
     expect(events.at(-1)?.type === "session.turn_completed" || events.at(-1)?.type === "session.status_idle").toBe(true);
   });
-  // No error but the scenario's own; never a recovery error.
+  // No error but the scenario's own: a recovery error only where it expects one (the takeover limit).
   const errorCodes = log.filter((event) => event.type === "session.error").map((event) => (event.data as { error: { code: string } }).error.code);
-  expect(errorCodes.filter((code) => code.startsWith("recovery_"))).toEqual([]);
   expect(errorCodes.filter((code) => !(scenario.errors ?? []).includes(code))).toEqual([]);
   // Every call has exactly one result.
   const shown = displayed(log);
@@ -508,16 +550,17 @@ export function expectResumed(scenario: Scenario, outcome: Outcome, expected: Ex
   for (const loss of takeovers) {
     const found = markerOf(loss.input!, loss.generation! + 1);
     expect(found.length, `markers of generation ${loss.generation! + 1}`).toBeLessThanOrEqual(1);
-    for (const marker of found) expect(marker.data).toMatchObject({ reason: "expired", danglingToolUseIds: loss.dangling });
+    for (const marker of found) expect(marker.data).toMatchObject({ reason: loss.reason, danglingToolUseIds: loss.dangling });
   }
   // The takeover that drained the Session marked itself, unless it only
   // acknowledged a completed Turn.
   const last = takeovers.at(-1);
   if (last && outcome.losses.at(-1) === last) expect(markerOf(last.input!, last.generation! + 1)).toHaveLength(last.completed ? 0 : 1);
   expect(markers.length).toBeLessThanOrEqual(takeovers.length);
-  // No Runner reports a failure: a lost one is gone before it could, and the
-  // one that takes over never loses its claim or a write.
-  expect(outcome.errors).toEqual([]);
+  // No Runner reports a failure but a write the scenario refused: a lost one
+  // is gone before it could, and the one that takes over never loses its
+  // claim or a write.
+  expect(outcome.errors.filter(({ error }) => !(error instanceof RefusedWrite))).toEqual([]);
   // Every row came from a write a live Runner made: an append, the idle its
   // acknowledgement committed, or a delegation transaction.
   const written = new Set(outcome.runners.flatMap((runner) => runner.writes.flatMap((write) => rowsOf(write)
