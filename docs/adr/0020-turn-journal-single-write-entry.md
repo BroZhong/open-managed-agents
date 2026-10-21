@@ -4,7 +4,8 @@
 
 Accepted for #234 (PR-A). The commit barrier landed first (b424238); the
 TurnJournal module and its interface tests land in #238; the Router (#241) and
-the Adapters (#242–#244) move onto it afterwards. Revises the ADR-0013 commit
+the Adapters (#242, #243) move onto it afterwards, and #244 makes it the
+Adapter contract. Revises the ADR-0002 Adapter contract, the ADR-0013 commit
 barrier, the ADR-0014 context journal snapshot timing and the ADR-0016
 Router-side alignment, as listed under "Revised decisions". Resuming a Turn
 after Runner loss is left to ADR-0021 (PR-B).
@@ -60,8 +61,9 @@ Within a journal a repeated key is never written twice; across attempts the
 event log's idempotency returns the original row.
 
 Any append failure, including a lost claim fence, fails the journal
-permanently: every later flush rejects with the original error, and the attempt
-stops on the same path as a lost lease, without terminal events.
+permanently: every later flush rejects with the original error. The journal
+tells its owner at the first failure, and the attempt stops on the same path as
+a lost lease (see "One stop path" below).
 
 However an attempt ends, the Router revokes the Adapter's port before it records
 closing events. Events recorded before revocation are written at the next flush.
@@ -79,6 +81,50 @@ Each flush that writes logs one JSON line, `turn_journal_flush`, with Session,
 Turn, event count, bytes (UTF-8 JSON of the written event data) and the duration
 the caller waited, plus the error message when it failed. Flush latency p50/p99
 come from these lines.
+
+### The Adapter contract
+
+`run(input)` returns `Promise<"finished" | "stopped">` and nothing else: there
+is no event stream. `input.journal` is required, and the Adapter records every
+Complete Event and emits every Delta through it. `"finished"` means the Adapter
+is done with the Turn, including an error it recorded or an Interrupt it obeyed.
+`"stopped"` is reserved for a stop the Host asks for (#254): the Adapter stopped
+before the Turn finished, and the Router takes the stop path below. In PR-A both
+Adapters return only `"finished"`. A rejection is an Adapter failure: unless the
+Turn was aborted or the attempt stopped, the Router records `adapter_error`.
+
+A Turn that an earlier attempt started continues with `input.resume`:
+`completedModelSteps`, which count against the step budget, and `blockBase`,
+the numbering base of its output blocks. Its presence is what makes Pi continue
+the Turn from its history instead of prompting the input; a new Turn has none
+and starts at step 0 and blockIndex 0.
+
+### Revocation timing
+
+The Router awaits `run()`. Once the Turn is aborted by an Interrupt it waits at
+most `interruptedAdapterDrainTimeoutMs` (2 s by default), then revokes the port
+and writes `turn_aborted` and `turn_completed`. Whatever the Adapter recorded
+until then lands: the message the Interrupt cut short, its usage, results of
+tools that stopped in time. The Router does not filter by event type; an
+Adapter does not record what it does not stand behind (Pi drops the error the
+Interrupt causes, and compaction checks for Interrupt before its boundary). A
+tool whose cancellation outlasts the wait, or an Adapter that never settles,
+cannot write after the closing events and no longer holds the Session.
+
+A run the Router stopped waiting for has not settled. A Sandbox activity is
+finished only once its runtime is observed to end (ADR-0019), so the Router
+keeps observing such a run in the background.
+
+### One stop path
+
+A lost lease, a failed journal write, the Session's termination and a
+`"stopped"` result end the attempt the same way: the port is revoked and the
+Turn signal aborted at once, the heartbeat stops, no terminal event is written
+and the input stays pending, for the next claim to handle by the recovery rules
+in force. The Router does not wait for the Adapter. A lost lease and a failed
+write are reported through `onDrainError`; `handleNewEvent` does not reject for
+them. Termination stops the attempt even after an Interrupt has already fired
+the Turn signal.
 
 ### Every native message is committed before Pi proceeds
 
@@ -115,6 +161,9 @@ Redis, claim or delegation code, and the Adapter sees none of them.
 
 ## Revised decisions
 
+- ADR-0002 §1: the Adapter contract is no longer `run(input):
+  AsyncIterable<SessionEvent>`; `run()` settles with its result and writes only
+  through the injected journal (#244).
 - ADR-0013 "Commit barrier and failure": the barrier covers every native
   message, not only a prepared compaction, and the Adapter commits through the
   journal port instead of `persistContext`, which standalone Adapter users no
@@ -127,22 +176,22 @@ Redis, claim or delegation code, and the Adapter sees none of them.
   Extensions and AgentSession listeners still see `message_end` before Pi's
   append, but an Agent listener registered after AgentSession's own sees it
   afterwards; that awaited listener snapshots and commits each native message.
-  After #244 the context journal is only this barrier.
+  The context journal is only this barrier (#244).
 - ADR-0016: the Adapter, not the Router, aligns projected completions with their
-  stream blocks. Interrupt draining under a renewed fence is replaced by
-  revocation of the Adapter's port.
+  stream blocks. Interrupt draining under a renewed fence, which accepted only
+  accounting, is replaced by the revocation timing above.
 
 ## Consequences
 
 Each tool round and each model request waits for one more PostgreSQL round trip,
 milliseconds against model latency in seconds. A lost Runner loses at most the
 Deltas of the output being streamed; every native message before it is durable.
-Until #244, Adapters that still return an event stream are written by the
-Router through the same journal, and an event recorded through both paths is
-written and published once. Until then, after a user Interrupt the Router also
-accepts only accounting through an Adapter's port and renews the claim before
-each of its flushes; a lost lease or a termination revokes the port at once.
-The Adapter-side event queue, checkpoint buffer and `persistContext`, and the
-Router's event-stream iteration, post-Interrupt type filter and alignment
-logic, are then removed. A brief window where in-flight Turns are logged behind
-execution during rollout is accepted.
+The Adapter-side event queue, checkpoint buffer and `persistContext`, the
+`continuation` field, and the Router's event-stream iteration, post-Interrupt
+type filter, event-count cap and alignment logic are gone (#244). After an
+Interrupt the heartbeat no longer renews the claim; the drain wait is short
+against the lease, and the append fence still rejects a write once the claim is
+lost, which stops the attempt. A later attempt's journal publishes the
+idempotent hits it meets first (the promoted input, the running status) again;
+subscribers keep events by seq. A brief window where in-flight Turns are logged
+behind execution during rollout is accepted.
