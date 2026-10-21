@@ -93,6 +93,29 @@ one: the delegation tools answer from their durable records (#251), and a
 Sandbox execution ledger could later answer bash. The plan knows no tool. The
 dangling calls of an Interrupted Turn keep the Interrupt's text instead.
 
+### Delegation calls answer from their records
+
+Told that an `Agent` call's outcome is unknown, the Agent delegates again under
+a new tool call id, which the (calling Turn, tool use) idempotency key of
+ADR-0010 cannot recognise: a second child doing the same work. So a dangling
+delegation call is answered with what the tool would have returned, read from
+the record the call left (#251):
+
+- `Agent`: the Delegation Execution accepted for the call, with its Child
+  Session and current status. A synchronous call's wait is accepted with it,
+  so it resumes instead and the resolver never answers it beside the wait.
+- `get_subagent_result`: the selected execution as it is now. A call that
+  recorded its wait (to wait, or to consume an ended execution's result)
+  resumes that wait instead. One lost before it recorded one reads the current
+  status, whether or not it asked to wait; the Agent can ask again. It
+  consumes nothing, so an asynchronous result is still delivered later.
+- `steer_subagent`: the command the call issued, with the status it reached
+  (`accepted`, `applied` or `not_applied`).
+
+A call that left no record (the Runner was lost before the delegation store
+accepted it) is of unknown outcome like any other. The resolvers only read,
+and only on a takeover, through the delegation store's indexed lookups.
+
 ### The takeover marker
 
 Each takeover records `session.turn_resumed { turnId, generation, reason,
