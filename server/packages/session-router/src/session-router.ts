@@ -54,6 +54,7 @@ const AGENT_FILE_ORDER = ["IDENTITY", "SOUL", "USER", "MEMORY"] as const;
 
 const SESSION_INTERRUPTED_MESSAGE = "Session interrupted";
 const SESSION_TERMINATED_MESSAGE = "Session terminated";
+const RUNNER_SHUTDOWN_MESSAGE = "Runner shutting down";
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
 
 /** How an Adapter's run() settled. */
@@ -86,6 +87,11 @@ interface ActiveSessionRun {
   /** Stops the running Turn attempt, if any, without terminal events. */
   stopAttempt?: (reason: unknown) => void;
   /**
+   * Stops the running Turn attempt, if any, on the same path and hands its
+   * Turn over as it stands: the handoff deadline of a shutdown (#254).
+   */
+  detach?: (reason: unknown) => void;
+  /**
    * The drain released its input because its Child execution waits for a
    * slot of the parent's concurrency limit. The sibling that frees one wakes
    * it; the pending scan covers a lost wake.
@@ -101,6 +107,11 @@ class PendingLeaseLostError extends Error {
 }
 
 export interface SessionRouterDeps {
+  /**
+   * Tell every Runner that a Session's input may be claimable: any of them
+   * may claim it. Delegation wakes a child with it, and a Runner handing its
+   * Turns over (#254) wakes the others for what it leaves.
+   */
   wakeSession?: (sessionId: string) => void;
   /**
    * Hint the owner of a Session's running Turn to re-read its durable state
@@ -289,6 +300,13 @@ export class SessionRouter {
   private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>>;
   private readonly maxConcurrentSubagents: number;
   private readonly checkSession: (sessionId: string) => void;
+  private readonly wakeSession?: (sessionId: string) => void;
+  /**
+   * Aborted once this Router hands its Turns over (#254): it claims nothing
+   * more, and each running Adapter is asked to stop before its next model
+   * request.
+   */
+  private readonly handoff = new AbortController();
 
   constructor(deps: SessionRouterDeps) {
     this.delegationStore = deps.delegationStore;
@@ -333,6 +351,7 @@ export class SessionRouter {
       deps.interruptedAdapterDrainTimeoutMs ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS;
     this.onDrainError = deps.onDrainError;
     this.checkSession = deps.checkSession ?? ((sessionId) => this.checkNow(sessionId));
+    this.wakeSession = deps.wakeSession;
     if (
       this.pendingClaimRenewIntervalMs <= 0 ||
       this.pendingClaimRenewIntervalMs >= this.pendingClaimLeaseMs
@@ -424,8 +443,12 @@ export class SessionRouter {
     this.claimRetryAttempts.delete(sessionId);
   }
 
+  private get handingOff(): boolean {
+    return this.handoff.signal.aborted;
+  }
+
   private scheduleClaimRetry(sessionId: string, agentConfig: Agent): void {
-    if (this.activeSessions.has(sessionId) || this.claimRetryTimers.has(sessionId)) return;
+    if (this.handingOff || this.activeSessions.has(sessionId) || this.claimRetryTimers.has(sessionId)) return;
     const attempt = (this.claimRetryAttempts.get(sessionId) ?? 0) + 1;
     this.claimRetryAttempts.set(sessionId, attempt);
     const delay = Math.min(
@@ -471,6 +494,40 @@ export class SessionRouter {
       this.idleWaiters.add(onIdle);
       this.notifyIdleIfSettled();
     });
+  }
+
+  /**
+   * Hand this Runner's running Turns to the other Runners as it shuts down
+   * (#254). It claims no more input and cancels its claim retries. Each
+   * running Adapter is asked to stop before its next model request; tools it
+   * runs are not cancelled, so their results are committed. A Turn still
+   * running after `timeoutMs` is detached on the one stop path: its write
+   * entry is revoked and what it runs in the Sandbox keeps running. Every
+   * claim this leaves is released without a terminal event, and the other
+   * Runners are woken to take the Turn over at once; a Turn that completes
+   * meanwhile leaves the input queued behind it to them the same way.
+   *
+   * Resolves once every drain has settled, true when no Turn needed
+   * detaching. The caller bounds the wait for the releases.
+   */
+  async handOff(timeoutMs: number): Promise<boolean> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new RangeError("handOff timeoutMs must be a finite non-negative number");
+    }
+    this.handoff.abort();
+    // A head this Router meant to retry is one the other Runners can take.
+    for (const sessionId of [...this.claimRetryTimers.keys()]) {
+      this.resetClaimRetry(sessionId);
+      this.wakeSession?.(sessionId);
+    }
+    if (await this.waitForIdle(timeoutMs)) return true;
+    const reason = new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError");
+    for (const activeRun of this.activeSessions.values()) activeRun.detach?.(reason);
+    await new Promise<void>((resolve) => {
+      this.idleWaiters.add(resolve);
+      this.notifyIdleIfSettled();
+    });
+    return false;
   }
 
   /**
@@ -557,6 +614,8 @@ export class SessionRouter {
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
+    // A Runner handing its Turns over takes none (#254).
+    if (this.handingOff) return;
     // Usually the active loop will pick up newly queued input itself. Remember
     // the wake as well, so an arrival after its final empty claim cannot be
     // stranded merely because the per-process active marker is still present.
@@ -591,9 +650,13 @@ export class SessionRouter {
       // a child waiting for a slot, unless the wake of a freed slot arrived
       // while this drain was still releasing its claim.
       try {
-        const retry = failed || ((!activeRun.waitingForSlot || wokenWhileActive) &&
-          await this.pendingEventStore.headClaimable(sessionId));
-        if (retry) {
+        if (this.handingOff) {
+          // What the drain left claimable, a Turn it handed over or the input
+          // queued behind a Turn it completed, goes to the other Runners now
+          // instead of at their next pending scan.
+          if (await this.pendingEventStore.headClaimable(sessionId)) this.wakeSession?.(sessionId);
+        } else if (failed || ((!activeRun.waitingForSlot || wokenWhileActive) &&
+          await this.pendingEventStore.headClaimable(sessionId))) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
           this.resetClaimRetry(sessionId);
@@ -1101,7 +1164,8 @@ export class SessionRouter {
   ): Promise<void> {
     const signal = activeRun.controller.signal;
     let lastOwnedTurn: ActiveTurnWriter | undefined;
-    while (!signal.aborted) {
+    // A Runner handing its Turns over claims no next input (#254).
+    while (!signal.aborted && !this.handingOff) {
       const claim = await this.claimPendingHead(sessionId);
       // An empty or owned head ends the drain; handleNewEvent decides at
       // handoff whether to retry.
@@ -1122,6 +1186,9 @@ export class SessionRouter {
       // journal write failed or the Session was terminated. It then writes no
       // terminal event and leaves its input to the next claim (ADR-0020).
       let stopped = false;
+      // Set when the attempt hands its Turn over (#254): its claim is
+      // released rather than left to expire, so the next claim takes over now.
+      let handedOff = false;
       let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
       let activitySandbox: SandboxSession | undefined;
       let executionSettled = false;
@@ -1158,6 +1225,15 @@ export class SessionRouter {
         markStopped();
       };
       activeRun.stopAttempt = stopAttempt;
+      // At the handoff deadline the attempt is stopped as it stands. What it
+      // runs in the Sandbox keeps running: the stopped attempt's executor
+      // refuses even the cancellation Pi sends as its Turn signal aborts.
+      const detach = (reason: unknown): void => {
+        if (stopped) return;
+        handedOff = true;
+        stopAttempt(reason);
+      };
+      activeRun.detach = detach;
 
       try {
 
@@ -1297,6 +1373,9 @@ export class SessionRouter {
       // Recovery must therefore use the durable Session snapshot even if the
       // Agent changes after commit but before the pending input is claimed.
       if (stopped) return;
+      // A Runner handing its Turns over prepares no Sandbox and resumes no
+      // wait for a Turn it would stop at once; the takeover marker is written.
+      if (this.handingOff) { handedOff = true; return; }
 
       // Existing Agents keep a retired runtime (claude-code, codex); they are
       // not migrated. Like the managed MCP refusal below, an unsupported
@@ -1540,6 +1619,7 @@ export class SessionRouter {
       // There is no separate sandbox orchestrator — the sandbox lives behind the
       // session and is invisible to the router and the adapter alike.
       if (stopped) return;
+      if (this.handingOff) { handedOff = true; return; }
       executionSettled = false;
       const run = (async () => adapter.run(adapterInput))().then(
         (result): AdapterOutcome => ({ result }),
@@ -1564,9 +1644,9 @@ export class SessionRouter {
       // attempts share, to the attempt that continues it.
       if (stopped) return;
       await journal.flush();
-      // An Adapter stops before the Turn finishes only at the Host's request
-      // (#254). The Turn is left to a later attempt, as on a lost lease.
-      if (outcome && "result" in outcome && outcome.result === "stopped") return;
+      // An Adapter stops before the Turn finishes only at the Host's request,
+      // a handoff (#254): the Turn goes to the next claim as it stands.
+      if (outcome && "result" in outcome && outcome.result === "stopped") { handedOff = true; return; }
       const interrupted = turnController.signal.aborted;
       // A rejection after an abort is how the abort ended the run, not a failure.
       const failure = outcome && "error" in outcome && !interrupted ? outcome : undefined;
@@ -1652,6 +1732,10 @@ export class SessionRouter {
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);
           if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
+          if (activeRun.detach === detach) activeRun.detach = undefined;
+          // Released, not left to expire: the next claim learns the Turn was
+          // handed over, which no takeover limit counts, and need not wait.
+          if (handedOff) await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
         }
       }
     }
@@ -1770,6 +1854,8 @@ export class SessionRouter {
       // The turn's abort signal (issue #84): the adapter wires it to its
       // runtime's native cancel so a user interrupt can end a hung turn.
       signal,
+      // A handoff stops the Turn before its next model request (#254).
+      stopRequest: this.handoff.signal,
     };
   }
 

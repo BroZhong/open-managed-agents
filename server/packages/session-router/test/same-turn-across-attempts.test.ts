@@ -298,20 +298,23 @@ describe("the Turn's Delta stream and active-Turn projection across attempts", (
   });
 
   it("an attempt that stops for a handoff leaves the Turn's Delta stream to the attempt that continues it", async () => {
-    const h = await harness(async (_input, write) => {
+    const h = await harness(async (input, write) => {
       await write(event("agent.tool_use", { toolUseId: "call_1", name: "bash", input: {} }));
       await write(event("agent.message_stream_start"));
       await write(event("agent.message_chunk", { text: "Hel" }));
-      await until(async () => await h.turns.deltaCount(h.session.id, "turn_1_a1") === 2);
+      await aborted(input.stopRequest!);
       return "stopped";
     });
     await h.enqueue("A");
-    await h.runner("runner-a").handleNewEvent(h.session.id, h.agent);
-    // The Runner shuts down; the Turn is left to the next claim.
-    h.lost.add("runner-a");
+    const router = h.runner("runner-a");
+    void router.handleNewEvent(h.session.id, h.agent);
+    await until(async () => await h.turns.deltaCount(h.session.id, "turn_1_a1") === 2);
+    // The Runner shuts down; the Turn goes to the next claim.
+    expect(await router.handOff(4000)).toBe(true);
 
     expect(await h.ofType("session.turn_completed")).toEqual([]);
     expect(await h.turns.deltaCount(h.session.id, "turn_1_a1")).toBe(2);
+    expect(await h.stores.pendingEventStore.headClaimable(h.session.id)).toBe(true);
   });
 
   it("E7 a stale generation cannot overwrite the projection a newer generation of its Turn wrote", async () => {

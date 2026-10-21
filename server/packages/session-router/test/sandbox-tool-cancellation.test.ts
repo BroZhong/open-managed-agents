@@ -179,4 +179,27 @@ describe("cancelling a running Sandbox tool through the fenced executor", () => 
     leaseHeld = true;
     expect(await h.router.waitForIdle(5000)).toBe(true);
   }, 15000);
+
+  it("F2 sends nothing to the running execution when the handoff deadline detaches its Turn", async () => {
+    const tool = bashAdapter();
+    const h = await harness(tool.adapter);
+    const running = h.router.handleNewEvent(h.session.id, h.agent);
+    await tool.ready;
+
+    // The Runner shuts down and its grace period ends while bash still runs.
+    expect(await h.router.handOff(0)).toBe(false);
+    await tool.aborted;
+    await tool.settled;
+    await running;
+
+    // The Turn goes to the next claim as it stands: the process is neither
+    // asked to stop nor killed, and finishes what it was doing.
+    expect(h.sandbox.commands).toHaveLength(1);
+    expect(frames(h.sandbox.commands[0]).at(-1)?.type).toBe("result");
+    expect(h.sandbox.commands[0].exit).toEqual({ exitCode: 0 });
+    expect(await survived()).toBe(true);
+    expect((await h.log()).filter((event) => event.type === "session.turn_aborted" || event.type === "session.turn_completed")).toEqual([]);
+    expect(await h.stores.pendingEventStore.headClaimable(h.session.id)).toBe(true);
+    expect(h.errors).toEqual([]);
+  }, 15000);
 });
