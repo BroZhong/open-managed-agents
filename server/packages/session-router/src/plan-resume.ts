@@ -74,7 +74,10 @@ export interface CompletePlan {
     | "answered"
     /** The Child execution the input runs has ended. */
     | "execution_ended"
-    /** An earlier attempt accepted an Interrupt it did not live to apply: the Turn ends as an Interrupted Turn. */
+    /**
+     * An earlier attempt accepted an Interrupt it did not live to apply, or the
+     * parent asked to stop the Child execution: the Turn ends as an Interrupted Turn.
+     */
     | "interrupted"
     /**
      * The Turn's Runner was lost again and again without the Turn committing

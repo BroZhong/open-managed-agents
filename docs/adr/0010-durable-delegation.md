@@ -14,7 +14,9 @@ holds the history the checkpoint duplicated.
 [ADR-0021](0021-resumed-turn.md) supersedes §7 and revises §4: a Turn whose
 Runner was lost continues on another Runner; a call whose outcome was not
 committed is reported to the Agent as unknown instead of ending the Turn, and
-the Host answers every dangling call before the Turn continues.
+the Host answers every dangling call before the Turn continues. A Child
+execution whose owner was lost or handed it over continues in the same Turn
+under the claim that takes it over, in the slot it holds (#252).
 
 Accepted. Supersedes ADR-0006's plugin delegation, shared parent ToolExecutor,
 private usage bridge and parent-scoped child lifetime. Retains ADR-0002/0003's
@@ -60,8 +62,8 @@ by the Session Router. A Child Session executes one Turn at a time. Parent child
 concurrency defaults to four; excess inputs remain durable and queued. A parent
 waiting for a result does not occupy a child execution slot. A queued child does
 not poll for a slot (#234): the execution that ends and frees one wakes its
-queued siblings, and the pending scan covers a lost wake or a slot freed by a
-lost owner.
+queued siblings, and the pending scan covers a lost wake. A running execution
+holds its slot until it ends, also while its owner is lost (#252).
 
 Each accepted Delegation Input snapshots the calling parent Turn's resolved
 provider/model, including on resume, and pins it through queueing and recovery.

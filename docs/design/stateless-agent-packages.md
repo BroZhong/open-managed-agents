@@ -314,8 +314,8 @@ poller 只负责一件事：找到该推进的 Session，调用 `drive(sessionId
 | 9 | 最后一条是 toolResult、steering、输入本身，或 stopReason 为 error/aborted 的 assistant | continue |
 
 没有老规则分支：普通 Turn 不会因为被接管而以 recovery 错误结束。compaction 边界不是消息：Pi 在最终回答之后（阈值）和请求失败之后
-（溢出）都会压缩，边界前的那条消息决定走第 7 行还是继续。Child Session 的执行另有一行：执行已结束则完成 Turn（#252 决定丢失
-owner 的执行如何续跑）。
+（溢出）都会压缩，边界前的那条消息决定走第 7 行还是继续。Child Session 的执行另有一行：执行已结束则完成 Turn；还在运行的执行由接管
+它的 claim 接管，在同一个 Turn 内续跑，并保留它占用的并发名额（#252）。
 
 每次接管写一条 `session.turn_resumed { turnId, generation, reason, danglingToolUseIds }`，`reason` 来自 claim 返回的上一个 claim 状态
 （`expired` / `released`；PG 从 claim 已经锁住的那一行读取，不增加语句）。对话视图不显示，轨迹页可见。`turnId` 沿用第一次 attempt；

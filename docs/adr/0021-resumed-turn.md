@@ -45,12 +45,14 @@ the Turn's delegation waits, the claim and, for a Child Session, its execution.
 The first row that applies decides:
 
 1. `session.turn_completed` is committed: acknowledge the input.
-2. The Child execution the input runs has ended: complete the Turn (#252
-   decides how a lost owner's execution continues).
+2. The Child execution the input runs has ended: complete the Turn. One that
+   still runs is this claim's now and continues like any Turn (#252, "Child
+   executions" below).
 3. The log ends the Turn (`session.status_idle`, `session.error`,
    `session.turn_aborted`): repair the dangling calls and complete it.
-4. An earlier generation accepted an Interrupt that never took effect: end the
-   Turn as an **Interrupted Turn** (#249).
+4. An earlier generation accepted an Interrupt that never took effect, or the
+   parent asked to stop the Child execution before this claim: end the Turn as
+   an **Interrupted Turn** (#249, #252).
 5. This claim is the fourth expired takeover since the Turn last committed
    progress: repair the dangling calls, record `recovery_limit_exceeded`, stop
    the synchronous children and complete the Turn (#250, "The takeover limit"
@@ -165,6 +167,37 @@ this way gives its parent a `recovery_required` result, whose reason is the
 error's message. The limit outranks a resumed wait: a parent whose Runner is
 lost four times while it waits on a child ends its Turn.
 
+### Child executions
+
+A Child Session's Turn is resumed like any other (#252). Starting the
+Delegation Execution under a claim that takes its input over makes that claim
+its owner: the execution keeps running, takes the claim's owner and
+generation, and names the Turn the takeover continues, the one an earlier
+attempt named or, when none named it in the log, this attempt's. It keeps the
+configuration its first attempt recorded and the slot of the parent's
+concurrency limit it occupies. A running execution holds its slot until it
+ends, also while its owner is lost: a queued sibling does not start in its
+slot before its own Session's takeover continues it, and counting the running
+siblings reads no claim. The step budget counts the steps the log records, as
+every Turn's model steps do, so the count continues across takeovers; a step
+recorded right before a loss counts though its request may not have reached
+the model. The parent's synchronous wait receives the execution's outcome
+when the takeover completes the child's Turn.
+
+The parent stops a synchronous child with an Interrupt command, which the
+child's owner applies on its heartbeat. A command accepted before the child's
+takeover, or one its lost owner applied without the Turn stopping, never took
+effect. Starting the execution on a takeover reads its commands; when one is
+there, the takeover applies it (`session.interrupt_requested`, after its
+marker) and ends the Turn as an Interrupted Turn without a model request
+(row 4). A first start reads no commands: an execution that never ran had no
+owner to miss one.
+
+Starting an execution no longer ends it as `recovery_required` ("execution
+lease expired; external tool effects may be uncertain"), nor its running
+siblings whose owner was lost. The parent sees `recovery_required` only for a
+Child execution the takeover limit ends.
+
 ### Continuing in Pi
 
 The Adapter is handed every committed event but the input itself, and
@@ -275,15 +308,25 @@ tool runs, past the deadline of one, while the model streams, while parallel
 tools run with input queued behind the Turn, once per Runner of a rolling
 restart, before a new owner is lost, and, for the takeover limit, as a Runner
 takes the Turn over. A handoff's marker says `released`, and only a deadline
-leaves calls of unknown outcome. Session Router tests run
+leaves calls of unknown outcome.
+
+A delegation scenario runs its Child Sessions on their parent's Runner, so a
+loss loses both, or on Runners of their own, and every Session's log meets
+the assertions (#252). Sweeps lose the child's Runner while the parent's waits
+on, the parent's while the child runs on, and the one both run on, after each
+of their writes; the cases add a parent lost after its child completed, a
+child steered right before its loss, two children sharing one slot, a child's
+step budget across takeovers, a parent interrupted while its child's Runner
+is lost, a poison child, and a child's Runner shut down. Session Router tests run
 several Routers over one store, waking each other as the Redis signal does,
 for the same cases, a synchronous delegation wait and Runners racing for a
 released claim.
 
 ## Consequences
 
-`recovery_partial_turn_aborted` and the `recovery_required` of a resumed wait
-beside an uncertain call no longer exist. A rollout, a liveness restart or an
+`recovery_partial_turn_aborted`, the `recovery_required` of a resumed wait
+beside an uncertain call and that of a Child execution whose owner was lost
+no longer exist. A rollout, a liveness restart or an
 OOM costs a Turn at most a repeated request and the results it had not
 committed, not the Turn, unless the Turn itself keeps losing its Runner: four
 losses without progress end it with `recovery_limit_exceeded`. An Agent may
@@ -299,7 +342,10 @@ tool's result.
 
 - ADR-0010 §7 is superseded: an ordinary Turn whose Runner was lost continues;
   its uncertain calls are reported to the Agent, which inspects before it
-  repeats. Child executions follow with #252.
+  repeats. So does a Child execution, in its slot, under the claim that takes
+  it over (#252).
+- ADR-0010 §2: only an execution that ends frees a slot; the pending scan
+  covers a lost wake, and frees no slot of a lost owner.
 - ADR-0010 §4: the Host, not the Adapter, guarantees that a continued history
   has a result for every call (#245); the plan answers dangling calls first.
 - ADR-0013 "Decision": uncertain executions are recovered automatically, by
