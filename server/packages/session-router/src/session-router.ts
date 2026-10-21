@@ -1060,6 +1060,7 @@ export class SessionRouter {
     journal: TurnJournal,
     sessionId: string,
     pendingEventId: string,
+    promotedSeq: number,
     turnId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
@@ -1070,8 +1071,8 @@ export class SessionRouter {
     const execution = await this.delegationStore?.getByPendingEventId(pendingEventId);
     if (execution && !isTerminalExecution(execution) && this.delegationStore) {
       const log = await this.readAllEvents(sessionId);
-      const startSeq = Number(/^turn_(\d+)/.exec(turnId)?.[1] ?? 0);
-      const turnEvents = log.filter((event) => event.seq > startSeq);
+      // The Turn is everything after its input, whatever attempt named it.
+      const turnEvents = log.filter((event) => event.seq > promotedSeq);
       const interrupted = turnEvents.some((event) => event.type === "session.turn_aborted");
       const finished = await this.delegationStore.finishExecution(execution.id, pendingFence,
         outcomeFromEvents({ ...execution, turnId }, turnEvents, interrupted));
@@ -1321,7 +1322,7 @@ export class SessionRouter {
             executionPlan.repairOutcome, executionPlan.error);
           await this.endTurnStream(sessionId, executionPlan.turnId, projectionWriter);
           lastOwnedTurn = projectionWriter;
-          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, executionPlan.turnId, pendingFence)) return;
+          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, executionPlan.turnId, pendingFence)) return;
           continue;
         }
         if (executionPlan.kind !== "acknowledge") plan = executionPlan;
@@ -1347,6 +1348,7 @@ export class SessionRouter {
           journal,
           sessionId,
           pendingEvent.id,
+          promotedEvent.seq,
           turnId,
           pendingFence,
         )) return;
@@ -1405,6 +1407,7 @@ export class SessionRouter {
           journal,
           sessionId,
           pendingEvent.id,
+          promotedEvent.seq,
           turnId,
           pendingFence,
         )) return;
@@ -1431,6 +1434,7 @@ export class SessionRouter {
           journal,
           sessionId,
           pendingEvent.id,
+          promotedEvent.seq,
           turnId,
           pendingFence,
         )) return;
@@ -1500,6 +1504,7 @@ export class SessionRouter {
             journal,
             sessionId,
             pendingEvent.id,
+            promotedEvent.seq,
             turnId,
             pendingFence,
           )) return;
@@ -1581,7 +1586,7 @@ export class SessionRouter {
             danglingToolCalls(interruptedEvents.filter((event) => event.seq > promotedEvent.seq)), "interrupted");
           journal.record({ type: "session.turn_aborted", data: { turnId } },
             this.turnKey(pendingEvent.id, "turn_aborted"));
-          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
+          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, turnId, pendingFence)) return;
           continue;
         }
         if (!(error instanceof ManagedMcpResolutionError)) throw error;
@@ -1599,6 +1604,7 @@ export class SessionRouter {
           journal,
           sessionId,
           pendingEvent.id,
+          promotedEvent.seq,
           turnId,
           pendingFence,
         )) return;
@@ -1728,6 +1734,7 @@ export class SessionRouter {
         journal,
         sessionId,
         pendingEvent.id,
+        promotedEvent.seq,
         turnId,
         pendingFence,
       )) return;

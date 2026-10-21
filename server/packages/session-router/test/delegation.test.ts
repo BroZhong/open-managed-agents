@@ -672,6 +672,45 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(h.errors).toEqual([expect.any(PendingEventClaimLostError)]);
   });
   // Which durable boundaries end such a Turn is planResume's table; this is its wiring.
+  it("takes the outcome of a taken-over Child execution from its own input on, whatever an earlier attempt named its Turn", async () => {
+    const h = await harness({ async run(input) {
+      if (!input.execution?.isChild) throw new Error("The parent's Runner is lost");
+      await journalWriter(input)(text("child answer after takeover"));
+      return "finished";
+    } });
+    const pending = await h.enqueue();
+    const claim = (await h.stores.pendingEventStore.claim(h.parent.id, "dead-host", 30000))!;
+    const fence = { eventId: pending.id, ownerId: claim.ownerId, generation: claim.generation };
+    const promoted = await h.stores.eventLogStore.append(h.parent.id, { type: pending.type, data: pending.data,
+      sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pending.id}`, pendingFence: fence });
+    const execution = await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id,
+      callerTurnId: `turn_${promoted.seq}_a1`, callerToolUseId: "call", prompt: "child", mode: "sync", parentModel: "test",
+      maxSteps: 30, sandboxSessionId: h.parent.id }, fence);
+    // An earlier Turn of the Child Session ended in an error; it is not this execution's.
+    await h.stores.eventLogStore.append(execution.childId, { type: "session.error",
+      data: { turnId: "earlier-turn", error: { code: "adapter_error", message: "an earlier Turn failed" } }, sessionThreadId: "sthr_primary" });
+    // The child's first attempt named the Turn and was lost. The name is
+    // opaque: it says nothing about where the Turn's input is in the log.
+    const lost = (await h.stores.pendingEventStore.claim(execution.childId, "dead-host", 30000))!;
+    const lostFence = { eventId: execution.pendingEventId, ownerId: lost.ownerId, generation: lost.generation };
+    const input = (await h.stores.pendingEventStore.peek(execution.childId))!;
+    await h.stores.eventLogStore.append(execution.childId, { type: input.type, data: input.data,
+      sessionThreadId: "sthr_primary", idempotencyKey: `pending:${input.id}`, pendingFence: lostFence });
+    await h.stores.delegationStore.startExecution(execution.id, lostFence, "child-turn", {}, 4);
+    await h.stores.eventLogStore.append(execution.childId, { type: "agent.context_start",
+      data: { ...event("agent.context_start", { sdk: "pi@0.83.0" }), turnId: "child-turn" }, sessionThreadId: "sthr_primary", pendingFence: lostFence });
+    await h.stores.pendingEventStore.releaseClaim(execution.childId, execution.pendingEventId, lostFence);
+
+    const child = (await h.stores.sessionStore.getById(execution.childId))!;
+    await h.router.handleNewEvent(child.id, child.agent);
+
+    expect((await h.log(child.id)).filter(e => e.type === "session.turn_completed"))
+      .toEqual([expect.objectContaining({ data: expect.objectContaining({ turnId: "child-turn" }) })]);
+    expect(await h.stores.delegationStore.getExecution("tenant", execution.id)).toMatchObject({ status: "completed",
+      result: { status: "completed", output: "child answer after takeover" } });
+    expect(h.errors).toEqual([]);
+  });
+
   it("does not restart a consumed-wait parent after a durable turn_aborted but before its completion marker", async () => {
     let parentRuns = 0;
     const h = await harness({ async run(input: AdapterInput) { const write = journalWriter(input); parentRuns++; await write(text("unexpected extra model execution")); return "finished"; } });
