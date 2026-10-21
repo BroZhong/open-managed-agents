@@ -52,7 +52,7 @@ it("continues a Turn after persisting binary tool output instead of emitting ada
     const content = [{ type: "text" as const, text: "ELF\u0000binary" }];
     let executions = 0;
     const adapter: Adapter = {
-      async *run(input: AdapterInput) {
+      async run(input: AdapterInput) {
         const write = journalWriter(input);
         executions++;
         const timestamp = new Date().toISOString();
@@ -62,6 +62,7 @@ it("continues a Turn after persisting binary tool output instead of emitting ada
           entry: { id: "native", parentId: null, type: "message", timestamp,
             message: { role: "toolResult", toolCallId: "bash1", toolName: "bash", content, isError: false, timestamp: Date.now() } } });
         await write({ id: "finished", timestamp, type: "agent.message", content: [{ type: "text", text: "continued after binary output" }] });
+        return "finished";
       },
     };
     const router = new SessionRouter({ eventLogStore: stores.eventLogStore, pendingEventStore: stores.pendingEventStore,

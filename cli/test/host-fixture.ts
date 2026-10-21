@@ -21,13 +21,13 @@ const router = new SessionRouter({
   ...stores,
   eventStreamHub: hub,
   resolveAdapter: () => ({
-    async *run(input) {
+    async run(input) {
       const text = input.message.content
         .filter((b) => b.type === "text")
         .map((b) => b.text)
         .join("");
       await new Promise((r) => setTimeout(r, 100));
-      yield {
+      input.journal.record({
         id: "reply-" + text,
         timestamp: new Date().toISOString(),
         type: "agent.message",
@@ -35,7 +35,9 @@ const router = new SessionRouter({
           { type: "text", text: "reply " + text },
           { type: "text", text: "second block" },
         ],
-      };
+      });
+      await input.journal.flush();
+      return "finished";
     },
   }),
 });

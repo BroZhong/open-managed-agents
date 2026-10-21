@@ -19,6 +19,7 @@ import { SessionRouter } from "@oma-server/session-router";
 import type { SessionSignal, SessionSignals } from "@oma-server/redis";
 import type { Agent, SandboxLifecycleStore, Session } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { RunnerDispatch } from "../../src/lib/runner-dispatch.js";
 import { LoopScheduler } from "../../src/lib/loop-scheduler.js";
 import { pgStatements, type CallFacts, type Statement } from "./pg-statements.js";
@@ -283,33 +284,34 @@ async function touchSandbox(executor: ToolExecutor, operations: number): Promise
 }
 
 /**
- * Written against the Adapter contract at 85f2a69 (events are yielded and
- * the Router flushes each Complete Event). When #244 moves Adapters to the
- * injected journal, only this function changes.
+ * Writes each Complete Event through the injected journal and flushes it
+ * before the next, the write pattern the Router applied to yielded events
+ * before #244.
  */
 export function scriptedAdapter(parent: TurnShape): Adapter {
   return {
-    async *run(input: AdapterInput) {
+    async run(input: AdapterInput) {
+      const write = journalWriter(input);
       const shape = input.execution?.isChild ? parent.child! : parent;
       const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
       // Pi resolves its configuration once, then checks steering before every model request.
       await input.execution?.onResolved?.({ model: input.agent.model, thinking: "off", thinkingSource: "agent" });
-      yield event("agent.context_start", { sdk: "pi@0.83.0", turnId: input.turnId, inputEventId: input.inputEventId });
+      await write(event("agent.context_start", { sdk: "pi@0.83.0", turnId: input.turnId, inputEventId: input.inputEventId }));
       for (let step = 0; step <= shape.steps; step++) {
         await input.execution?.steering?.takePending();
-        yield event("span.model_request_start", { model: input.agent.model });
+        await write(event("span.model_request_start", { model: input.agent.model }));
         await sleep(shape.modelMs, input.signal);
         if (step === shape.steps) {
-          yield native(input.turnId, { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" }, [{ type: "agent.message", index: 0 }]);
-          yield event("span.model_request_end", { usage });
-          return;
+          await write(native(input.turnId, { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" }, [{ type: "agent.message", index: 0 }]));
+          await write(event("span.model_request_end", { usage }));
+          return "finished";
         }
         const toolUseId = `call_${randomUUID()}`;
         const delegating = shape.delegateAtStep === step && input.subagents !== undefined;
         const toolName = delegating ? "Agent" : "bash";
-        yield native(input.turnId, { role: "assistant", content: [{ type: "toolCall", id: toolUseId, name: toolName, arguments: {} }], stopReason: "toolUse" },
-          [{ type: "agent.tool_use", index: 0 }]);
-        yield event("span.model_request_end", { usage });
+        await write(native(input.turnId, { role: "assistant", content: [{ type: "toolCall", id: toolUseId, name: toolName, arguments: {} }], stopReason: "toolUse" },
+          [{ type: "agent.tool_use", index: 0 }]));
+        await write(event("span.model_request_end", { usage }));
         let output: unknown = "ok";
         if (delegating) {
           output = await as("delegation-wait", () => input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId }));
@@ -317,9 +319,10 @@ export function scriptedAdapter(parent: TurnShape): Adapter {
           await as("tool-op", () => touchSandbox(input.toolExecutor!, shape.sandboxOpsPerTool));
           await sleep(shape.toolMs, input.signal);
         }
-        yield native(input.turnId, { role: "toolResult", toolCallId: toolUseId, toolName, content: [{ type: "text", text: JSON.stringify(output) }], isError: false },
-          [{ type: "agent.tool_result" }]);
+        await write(native(input.turnId, { role: "toolResult", toolCallId: toolUseId, toolName, content: [{ type: "text", text: JSON.stringify(output) }], isError: false },
+          [{ type: "agent.tool_result" }]));
       }
+      return "finished";
     },
   };
 }

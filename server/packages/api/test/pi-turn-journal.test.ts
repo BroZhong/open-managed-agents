@@ -7,7 +7,7 @@ import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
-import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import type { Adapter, AdapterInput } from "@open-managed-agents/adapter-core";
 import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition } from "@open-managed-agents/adapter-pi-agent";
 
 /** One Anthropic Messages response as server-sent events, streaming each block. */
@@ -49,10 +49,9 @@ afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await rm(agent
 it("writes each Pi event once through the Turn journal and keeps Deltas aligned across a resumed delegation wait", async () => {
   const pi = new PiAgentAdapter({ configureModelRuntime: (_input, runtime) => registerCustomProvider(runtime, provider, model) });
   const inputs: AdapterInput[] = [];
-  const streamed: SessionEvent[] = [];
-  const adapter: Adapter = { async *run(input) {
+  const adapter: Adapter = { async run(input) {
     inputs.push(input);
-    for await (const event of pi.run(input)) streamed.push(event);
+    return pi.run(input);
   } };
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${provider.id}/scripted-model`, system: "", runtime: "pi-agent", sandbox: { enabled: true } });
@@ -85,14 +84,14 @@ it("writes each Pi event once through the Turn journal and keeps Deltas aligned 
   const replacement = makeRouter();
   await replacement.recoverPendingEvents();
   expect(await replacement.waitForIdle(20000)).toBe(true);
-  expect(errors).toEqual([]);
+  // The lost Runner reports its lost claim as it stops; nothing else failed.
+  expect(errors).toEqual([expect.any(PendingEventClaimLostError)]);
 
-  // Every Pi run wrote through its journal entry and streamed nothing.
-  expect(streamed).toEqual([]);
+  // The resumed wait continues the same Turn after the blocks it committed.
   const parentRuns = inputs.filter(input => input.sessionId === parent.id);
-  expect(parentRuns.map(input => [input.turnId, input.blockBase, typeof input.journal?.record])).toEqual([
-    [parentRuns[0].turnId, 0, "function"], [parentRuns[0].turnId, 3, "function"]]);
-  expect(inputs.filter(input => input.sessionId !== parent.id).map(input => input.blockBase)).toEqual([0]);
+  expect(parentRuns.map(input => [input.turnId, input.resume?.blockBase])).toEqual([
+    [parentRuns[0].turnId, undefined], [parentRuns[0].turnId, 3]]);
+  expect(inputs.filter(input => input.sessionId !== parent.id).map(input => input.resume)).toEqual([undefined]);
 
   const log = (await stores.eventLogStore.getEvents(parent.id, { limit: 1000 })).data;
   expect(log.filter(event => event.type === "session.error")).toEqual([]);

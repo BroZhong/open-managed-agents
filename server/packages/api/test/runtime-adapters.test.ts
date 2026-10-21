@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { runtimeAdapters } from "../src/lib/runtime-adapters.js";
 
-const adapter = (): Adapter => ({ async *run() {} });
+const adapter = (): Adapter => ({ async run() { return "finished"; } });
 
 describe("Runner runtime adapters", () => {
   it("run only the wired runtimes; retired and unknown runtimes stay unresolved", () => {

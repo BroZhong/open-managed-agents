@@ -6,7 +6,6 @@ import type { LoopStore } from "@oma-server/store";
 import type {
   Adapter,
   AdapterInput,
-  SessionEvent,
 } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { createApp } from "../src/app.js";
@@ -24,7 +23,7 @@ describe("Loop + managed Supabase MCP end to end", () => {
     const eventStreamHub = new InProcessEventStreamHub();
     const adapterInputs: AdapterInput[] = [];
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
         const write = journalWriter(input);
         adapterInputs.push(input);
         await write({
@@ -57,6 +56,7 @@ describe("Loop + managed Supabase MCP end to end", () => {
             text: "Agent 优化点：为重复工具失败增加一次有界重试，并在失败后给出可执行诊断。",
           }],
         });
+        return "finished";
       },
     };
     const sessionRouter = new SessionRouter({

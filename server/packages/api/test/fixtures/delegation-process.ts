@@ -18,15 +18,16 @@ const eventStreamHub = new RedisEventStreamHub(signals);
 const turnStreamStore = new BestEffortTurnStreamStore(new RedisTurnStreamStore(redis), () => redis.status === "ready");
 const event = (type: string, data: object): SessionEvent => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (value: string) => event("agent.message", { content: [{ type: "text", text: value }] });
-const adapter: Adapter = { async *run(input) {
+const adapter: Adapter = { async run(input) {
   const write = journalWriter(input);
-  if (input.execution?.isChild) { await write(text(`child PID ${process.pid}; model ${input.agent.model}; budget ${input.execution.maxModelSteps}`)); return; }
-  if (input.message.source === "subagent_result") { await write(text(`async result handled PID ${process.pid}`)); return; }
+  if (input.execution?.isChild) { await write(text(`child PID ${process.pid}; model ${input.agent.model}; budget ${input.execution.maxModelSteps}`)); return "finished"; }
+  if (input.message.source === "subagent_result") { await write(text(`async result handled PID ${process.pid}`)); return "finished"; }
   const call = event("agent.tool_use", { toolUseId: "cross-process", name: "Agent", input: { prompt: "child" } });
   await write(call);
   const output = await input.subagents!.delegate({ prompt: "child", runInBackground: process.env.DELEGATION_MODE === "async" }, { toolUseId: "cross-process" });
   await write(event("agent.tool_result", { toolUseId: "cross-process", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }));
   await write(text(`parent PID ${process.pid}`));
+  return "finished";
 } };
 const activities = new PgSandboxLifecycleStore(pool);
 const client = new FakeSandboxClient();
