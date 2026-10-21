@@ -97,7 +97,8 @@ export interface SessionRouterDeps {
   pendingEventStore: PendingEventStore;
   sessionStore: SessionStore;
   eventStreamHub: EventStreamHub;
-  resolveAdapter: (runtime: string) => Adapter;
+  /** The Adapter for an Agent runtime, or undefined when this Runner cannot execute it. */
+  resolveAdapter: (runtime: string) => Adapter | undefined;
   /**
    * The single owner of sandbox lifecycle (ADR-0005 §1, design doc §2/§6).
    * When present and the agent is sandboxed, the router `open`s exactly one
@@ -212,7 +213,7 @@ export class SessionRouter {
   private readonly pendingEventStore: PendingEventStore;
   private readonly sessionStore: SessionStore;
   private readonly eventStreamHub: EventStreamHub;
-  private readonly resolveAdapter: (runtime: string) => Adapter;
+  private readonly resolveAdapter: (runtime: string) => Adapter | undefined;
   private readonly sandboxManager?: SandboxManager;
   private readonly workspaceMount?: Omit<WorkspaceMountSpec, "prefix">;
   private readonly agentFileStore?: AgentFileStore;
@@ -1304,6 +1305,41 @@ export class SessionRouter {
       // Agent changes after commit but before the pending input is claimed.
       if (leaseLost) return;
 
+      // Existing Agents keep a retired runtime (claude-code, codex); they are
+      // not migrated. Like the managed MCP refusal below, an unsupported
+      // runtime is durable, not transient: record one terminal Turn and
+      // acknowledge its input, or every claim retry and recovery scan would
+      // run it again.
+      const adapter = this.resolveAdapter(currentAgent.runtime);
+      if (!adapter) {
+        const errorEvent = await this.eventLogStore.append(sessionId, {
+          type: "session.error",
+          data: { error: {
+            code: "unsupported_runtime",
+            message: `Agent runtime "${currentAgent.runtime}" is not supported`,
+          } },
+          sessionThreadId: "sthr_primary",
+          idempotencyKey: this.turnKey(pendingEvent.id, "unsupported_runtime"),
+          pendingFence,
+        });
+        this.eventStreamHub.publish(sessionId, {
+          type: errorEvent.type,
+          seq: errorEvent.seq,
+          data: errorEvent.data,
+        });
+        if (this.turnStreamStore) {
+          await this.turnStreamStore.reclaim(sessionId, turnId);
+          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
+        }
+        if (!await this.completeTurn(
+          sessionId,
+          pendingEvent.id,
+          turnId,
+          pendingFence,
+        )) return;
+        continue;
+      }
+
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
       // must NOT run — otherwise the adapter falls back to built-in fs/bash tools
       // that write to the server pod filesystem. Emit a session.error, mark the
@@ -1542,7 +1578,6 @@ export class SessionRouter {
       // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
       // There is no separate sandbox orchestrator — the sandbox lives behind the
       // session and is invisible to the router and the adapter alike.
-      const adapter = this.resolveAdapter(currentAgent.runtime);
       executionSettled = false;
       const events = adapter.run(adapterInput);
       const eventIterator = events[Symbol.asyncIterator]();
