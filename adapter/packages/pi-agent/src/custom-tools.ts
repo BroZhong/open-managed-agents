@@ -1,9 +1,10 @@
-import { posix } from "node:path";
+import { readFileSync } from "node:fs";
+import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createBashToolDefinition, createReadToolDefinition, createWriteToolDefinition,
   createEditToolDefinition, createLsToolDefinition, createGrepToolDefinition,
-  createFindToolDefinition, defineTool, VERSION,
+  createFindToolDefinition, defineTool, getAgentDir, VERSION,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { SANDBOX_WORKSPACE_ROOT, type ToolExecutor, type ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -16,8 +17,23 @@ const MAX_TIMER_SECONDS = (2 ** 31 - 1) / 1000;
 const MAX_TOOL_WAIT_SECONDS = 3 * 60 * 60;
 const mutationQueues = new WeakMap<ToolFileSystem, Map<string, Promise<void>>>();
 
+type ToolModel = { provider?: string; id?: string; inputLimits?: unknown } | undefined;
+
+/**
+ * Pi 1.x reads `inputLimits` from models.json into the model and resizes
+ * `read` images with it; 0.83 validates the field but drops it. Attach it to
+ * the Sandbox request until the upgrade makes this native.
+ */
+function withInputLimits(model: ToolModel, modelsPath: string): ToolModel {
+  if (!model) return model;
+  let config: { providers?: Record<string, { models?: { id?: string; inputLimits?: unknown }[] }> };
+  try { config = JSON.parse(readFileSync(modelsPath, "utf8")); } catch { return model; }
+  const inputLimits = config.providers?.[model.provider ?? ""]?.models?.find(entry => entry.id === model.id)?.inputLimits;
+  return inputLimits ? { ...model, inputLimits } : model;
+}
+
 /** Public customTools registrations. Native execute/render callbacks never run on Host. */
-export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
+export function buildCustomTools(executor: ToolExecutor, modelsPath = join(getAgentDir(), "models.json")): ToolDefinition[] {
   const fs = executorFileSystem(executor);
   const factories = [createBashToolDefinition, createReadToolDefinition, createWriteToolDefinition,
     createEditToolDefinition, createLsToolDefinition, createGrepToolDefinition, createFindToolDefinition];
@@ -36,7 +52,8 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
         signal?.throwIfAborted();
         const input = { ...(args as Record<string, unknown>) };
         const run = () => executeSandboxTool(executor, { sdkVersion: VERSION, id, name: native.name,
-          args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT, model: context?.model }, signal, onUpdate,
+          args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT,
+          model: native.name === "read" ? withInputLimits(context?.model, modelsPath) : context?.model }, signal, onUpdate,
           // A paused Sandbox freezes Pi's internal timer. Mirror an explicitly
           // requested bash deadline on the Host transport, allowing five seconds
           // for Pi to terminate its process group and return the settled frame.

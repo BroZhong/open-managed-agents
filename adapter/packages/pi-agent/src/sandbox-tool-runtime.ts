@@ -23,9 +23,12 @@ try {
   const modulePath = process.env.OMA_PI_TOOL_MODULE || "/opt/oma-pi-tools/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
   const pi = await import(pathToFileURL(modulePath).href);
   if (pi.VERSION !== request.sdkVersion) throw new Error("Sandbox Pi version mismatch: expected " + request.sdkVersion + ", got " + pi.VERSION);
+  // Pi 1.x resizes read images with the model's inputLimits; 0.83 only has
+  // fixed defaults. Skip Pi's pass so each image is encoded once.
+  const resize = request.name === "read" ? request.model?.inputLimits?.images?.resize : undefined;
   const factories = {
     bash: () => pi.createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
-    read: () => pi.createReadToolDefinition(process.cwd()),
+    read: () => pi.createReadToolDefinition(process.cwd(), { autoResizeImages: !resize }),
     write: () => pi.createWriteToolDefinition(process.cwd()),
     edit: () => pi.createEditToolDefinition(process.cwd()),
     ls: () => pi.createLsToolDefinition(process.cwd()),
@@ -36,6 +39,18 @@ try {
   if (!factory) throw new Error("Unsupported sandbox tool: " + request.name);
   const result = await factory().execute(request.id, request.args, controller.signal,
     result => emit({ type: "update", result }), { cwd: process.cwd(), model: request.model });
+  if (resize) {
+    const content = [];
+    for (const block of result.content) {
+      if (block.type !== "image") { content.push(block); continue; }
+      const resized = await pi.resizeImage(Buffer.from(block.data, "base64"), block.mimeType, resize);
+      if (!resized) { content.push({ type: "text", text: "[Image omitted: could not be resized below the inline image size limit.]" }); continue; }
+      content.push({ type: "image", data: resized.data, mimeType: resized.mimeType });
+      const note = pi.formatDimensionNote(resized);
+      if (note) content.push({ type: "text", text: note });
+    }
+    result.content = content;
+  }
   emit(controller.signal.aborted ? { type: "cancelled", message: "Command aborted" } : { type: "result", result });
 } catch (error) {
   emit({ type: controller.signal.aborted ? "cancelled" : "error", message: error instanceof Error ? error.message : String(error) });

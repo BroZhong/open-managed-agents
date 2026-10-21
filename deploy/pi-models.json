@@ -190,6 +190,15 @@
             "text",
             "image"
           ],
+          "inputLimits": {
+            "images": {
+              "resize": {
+                "maxWidth": 2000,
+                "maxHeight": 2000,
+                "maxBytes": 1048576
+              }
+            }
+          },
           "contextWindow": 1000000,
           "maxTokens": 384000,
           "cost": {

@@ -3,12 +3,33 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 import { LocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { buildCustomTools } from "../src/custom-tools.js";
 
 // Real 2x2 RGB fixtures, encoded by Pillow as PNG and JPEG.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGN8YCDAwMDAxMDAwMDAAAAOegEkxs/ipgAAAABJRU5ErkJggg==", "base64");
 const JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDAooor5Y/UT//Z", "base64");
+
+// Seeded RGB noise does not compress, so the PNG exceeds any small byte limit.
+function noisePng(width: number, height: number): Buffer {
+  let seed = 1;
+  const raw = Buffer.alloc((width * 3 + 1) * height);
+  for (let i = 0; i < raw.length; i++) if (i % (width * 3 + 1)) raw[i] = (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24;
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
 
 let root: string;
 let executor: LocalToolExecutor;
@@ -43,6 +64,33 @@ describe("raw filesystem seam through Pi's native read tool", () => {
     expect(result.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"))
       .toBe(`Read image file [${mimeType}]`);
     expect(JSON.stringify(result)).not.toContain("\\u0000");
+  });
+
+  it("encodes a read image once with the model's models.json inputLimits", async () => {
+    const config = await mkdtemp(join(tmpdir(), "oma-models-"));
+    try {
+      const modelsPath = join(config, "models.json");
+      await writeFile(modelsPath, JSON.stringify({ providers: { deepseek: { models: [{ id: "deepseek-flash",
+        inputLimits: { images: { resize: { maxWidth: 300, maxHeight: 300, maxBytes: 200_000 } } } }] } } }));
+      const png = noisePng(600, 400);
+      await writeFile(join(root, "frame.png"), png);
+      const tool = buildCustomTools(executor, modelsPath).find(({ name }) => name === "read")!;
+      const limited = await tool.execute("read-limited", { path: "frame.png" } as never, undefined, undefined,
+        { model: { provider: "deepseek", id: "deepseek-flash", input: ["text", "image"] } } as never);
+      const image = limited.content.find((block) => block.type === "image");
+      expect(image).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+      expect(image?.type === "image" && image.data.length).toBeLessThan(200_000);
+      expect(limited.content.flatMap((block) => block.type === "text" ? [block.text] : [])).toEqual([
+        "Read image file [image/png]",
+        "[Image: original 600x400, displayed at 300x200. Multiply coordinates by 2.00 to map to original image.]",
+      ]);
+      // A model without inputLimits keeps Pi's default read.
+      const unlimited = await tool.execute("read-default", { path: "frame.png" } as never, undefined, undefined,
+        { model: { provider: "openai-codex", id: "gpt-5.6-sol", input: ["text", "image"] } } as never);
+      expect(unlimited.content).toContainEqual({ type: "image", mimeType: "image/png", data: png.toString("base64") });
+    } finally {
+      await rm(config, { recursive: true, force: true });
+    }
   });
 
   it("preserves UTF-8 text, Chinese, emoji, replacement characters and literal escapes", async () => {
