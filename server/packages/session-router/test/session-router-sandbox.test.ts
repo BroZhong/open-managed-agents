@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { InMemoryAgentStore } from "@oma-server/store-memory";
+import { createMemoryStores, InMemoryAgentStore } from "@oma-server/store-memory";
 import { PendingEventClaimLostError } from "@oma-server/store";
 import {
   FakeSandboxClient,
@@ -9,18 +9,7 @@ import {
   DefaultSandboxManager,
 } from "@oma-server/sandbox";
 import type {
-  EventLogStore,
-  EventLogStoreAppendInput,
-  EventLogStoreGetEventsOpts,
   PendingEventStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
-  SessionStore,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  Session,
-  SessionStatus,
-  StoredEvent,
   PaginatedResult,
   Agent,
   AgentStore,
@@ -41,166 +30,6 @@ import type {
 beforeEach(() => {
   process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
 });
-
-// ─── In-memory EventLogStore ────────────────────────────────────────────────
-
-class InMemoryEventLogStore implements EventLogStore {
-  private events: Map<string, StoredEvent[]> = new Map();
-  private seqCounters: Map<string, number> = new Map();
-
-  async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
-    const currentSeq = this.seqCounters.get(sessionId) ?? 0;
-    const nextSeq = currentSeq + 1;
-    this.seqCounters.set(sessionId, nextSeq);
-
-    const stored: StoredEvent = {
-      sessionId,
-      seq: nextSeq,
-      type: event.type,
-      data: event.data,
-      ts: new Date(),
-      sessionThreadId: event.sessionThreadId,
-    };
-
-    const sessionEvents = this.events.get(sessionId) ?? [];
-    sessionEvents.push(stored);
-    this.events.set(sessionId, sessionEvents);
-
-    return stored;
-  }
-
-  async getEvents(
-    sessionId: string,
-    opts?: EventLogStoreGetEventsOpts,
-  ): Promise<PaginatedResult<StoredEvent>> {
-    const allEvents = this.events.get(sessionId) ?? [];
-    const afterSeq = opts?.afterSeq ?? 0;
-    const limit = opts?.limit ?? 50;
-
-    const filtered = allEvents.filter((e) => e.seq > afterSeq);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-
-    return { data, hasMore };
-  }
-}
-
-// ─── In-memory PendingEventStore ─────────────────────────────────────────────
-
-class InMemoryPendingEventStore implements PendingEventStore {
-  private queues: Map<string, PendingEvent[]> = new Map();
-  private nextId = 1;
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue.length === 0) return null;
-    return queue.shift()!;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue[0] ?? null;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue.length;
-  }
-}
-
-// ─── In-memory SessionStore ──────────────────────────────────────────────────
-
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(
-    tenantId: string,
-    opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    return { data, hasMore };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    session.updatedAt = new Date();
-    return session;
-  }
-}
 
 // ─── Minimal in-memory Skill stores (metadata + non-empty check) ─────────────
 //
@@ -401,9 +230,7 @@ function createDeps(opts: {
     Record<string, Readonly<Record<string, string>>>
   >;
 }) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
   const provisionSource = opts.provisionSource ?? new FakeProvisionSource();

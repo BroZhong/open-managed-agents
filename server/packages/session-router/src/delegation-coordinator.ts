@@ -47,7 +47,7 @@ export class DelegationCoordinator {
 
   async assertOwner(run: DelegationRun): Promise<void> {
     run.signal.throwIfAborted();
-    if (this.deps.pending.ownsClaim && !await this.deps.pending.ownsClaim(
+    if (!await this.deps.pending.ownsClaim(
       run.session.id, run.fence.eventId, run.fence,
     )) throw new PendingEventClaimLostError(run.session.id, run.fence.eventId, run.fence.ownerId, run.fence.generation);
   }
@@ -145,7 +145,7 @@ export class DelegationCoordinator {
 
   private async setWaiting(run: DelegationRun, waiting: boolean): Promise<void> {
     await this.assertOwner(run);
-    await this.deps.sessions.updateStatusIfClaimed?.(run.session.id, waiting ? "waiting" : "running", run.fence);
+    await this.deps.sessions.updateStatusIfClaimed(run.session.id, waiting ? "waiting" : "running", run.fence);
     const event = await this.deps.events.append(run.session.id, {
       type: waiting ? "session.status_waiting" : "session.status_running",
       data: { turnId: run.turnId }, sessionThreadId: "sthr_primary", pendingFence: run.fence,

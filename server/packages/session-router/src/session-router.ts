@@ -332,29 +332,18 @@ export class SessionRouter {
     };
   }
 
-  /** Compatibility for narrow single-process test doubles; production PG has claim(). */
   private async claimPendingHead(sessionId: string): Promise<PendingEventClaim | null> {
-    if (typeof this.pendingEventStore.claim === "function") {
-      return this.pendingEventStore.claim(
-        sessionId,
-        this.pendingClaimOwnerId,
-        this.pendingClaimLeaseMs,
-      );
-    }
-    const event = await this.pendingEventStore.peek(sessionId);
-    return event ? {
-      event,
-      ownerId: this.pendingClaimOwnerId,
-      generation: 1,
-      expiresAt: new Date(Date.now() + this.pendingClaimLeaseMs),
-    } : null;
+    return this.pendingEventStore.claim(
+      sessionId,
+      this.pendingClaimOwnerId,
+      this.pendingClaimLeaseMs,
+    );
   }
 
   private async renewPendingClaim(
     sessionId: string,
     claim: PendingEventClaim,
   ): Promise<boolean> {
-    if (typeof this.pendingEventStore.renewClaim !== "function") return true;
     return this.pendingEventStore.renewClaim(
       sessionId,
       claim.event.id,
@@ -393,17 +382,11 @@ export class SessionRouter {
       ) {
         return;
       }
-      if (this.turnStreamStore.compareAndSetActiveTurn) {
-        if (await this.turnStreamStore.compareAndSetActiveTurn(
-          sessionId,
-          current?.turnId ?? null,
-          next,
-        )) return;
-        continue;
-      }
-      // Narrow test-double fallback; production Redis uses the atomic CAS.
-      await this.turnStreamStore.setActiveTurn(sessionId, next);
-      return;
+      if (await this.turnStreamStore.compareAndSetActiveTurn(
+        sessionId,
+        current?.turnId ?? null,
+        next,
+      )) return;
     }
     // Redis is a projection: only the PostgreSQL claim can revoke execution.
   }
@@ -413,17 +396,11 @@ export class SessionRouter {
     expectedTurnId: string,
   ): Promise<boolean> {
     if (!this.turnStreamStore) return true;
-    if (this.turnStreamStore.compareAndSetActiveTurn) {
-      return this.turnStreamStore.compareAndSetActiveTurn(
-        sessionId,
-        expectedTurnId,
-        null,
-      );
-    }
-    const current = await this.turnStreamStore.getActiveTurn(sessionId);
-    if (current?.turnId !== expectedTurnId) return false;
-    await this.turnStreamStore.clearActiveTurn(sessionId);
-    return true;
+    return this.turnStreamStore.compareAndSetActiveTurn(
+      sessionId,
+      expectedTurnId,
+      null,
+    );
   }
 
   private reportDrainError(sessionId: string, error: unknown): void {
@@ -519,7 +496,7 @@ export class SessionRouter {
           stop();
           return;
         }
-        let shouldInterrupt = await this.pendingEventStore.interruptRequested?.(sessionId, claim.event.id) ?? false;
+        let shouldInterrupt = await this.pendingEventStore.interruptRequested(sessionId, claim.event.id);
         const execution = await this.delegationStore?.getByPendingEventId(claim.event.id);
         if (execution && this.delegationStore) {
           for (const command of await this.delegationStore.listCommands(execution.id)) {
@@ -550,7 +527,7 @@ export class SessionRouter {
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
     // Usually the active loop will pick up newly queued input itself. Remember
-    // the wake as well, so an arrival after its final empty dequeue cannot be
+    // the wake as well, so an arrival after its final empty claim cannot be
     // stranded merely because the per-process active marker is still present.
     if (this.activeSessions.has(sessionId)) {
       this.wakeRequested.add(sessionId);
@@ -653,7 +630,6 @@ export class SessionRouter {
 
   /** Accept a durable command; execution confirms interruption in its history. */
   async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
-    if (!this.pendingEventStore.requestInterrupt) return { requested: true, interrupted: this.interrupt(sessionId) };
     const requested = await this.pendingEventStore.requestInterrupt(sessionId);
     // The owner observes the exact durable input marker on its heartbeat; a
     // local abort here could hit the next Turn after a completion race.
@@ -1037,38 +1013,13 @@ export class SessionRouter {
     pendingEventId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
-    if (this.pendingEventStore.ackCompletedTurn) {
-      const result = await this.pendingEventStore.ackCompletedTurn(sessionId, pendingEventId, pendingFence);
-      if (result.idleEvent) {
-        this.eventStreamHub.publish(sessionId, {
-          type: result.idleEvent.type, seq: result.idleEvent.seq, data: result.idleEvent.data,
-        });
-      }
-      return result.acknowledged;
+    const result = await this.pendingEventStore.ackCompletedTurn(sessionId, pendingEventId, pendingFence);
+    if (result.idleEvent) {
+      this.eventStreamHub.publish(sessionId, {
+        type: result.idleEvent.type, seq: result.idleEvent.seq, data: result.idleEvent.data,
+      });
     }
-
-    // Compatibility for narrow single-process stores. Durable production stores
-    // commit acknowledgement, empty-queue observation and idle in one transaction.
-    // The executing input is still the queue head until acknowledgement.
-    if ((await this.pendingEventStore.peek(sessionId))?.id !== pendingEventId) return false;
-    if (await this.pendingEventStore.count(sessionId) === 1) {
-      const session = await this.sessionStore.getById(sessionId);
-      if (session && session.status !== "terminated") {
-        if (this.sessionStore.updateStatusIfClaimed) {
-          await this.sessionStore.updateStatusIfClaimed(sessionId, "idle", pendingFence);
-        } else {
-          await this.sessionStore.updateStatus(sessionId, "idle");
-        }
-        const idleEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.status_idle", data: {}, sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEventId, "status_idle"), pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: idleEvent.type, seq: idleEvent.seq, data: idleEvent.data,
-        });
-      }
-    }
-    return this.pendingEventStore.ack(sessionId, pendingEventId, pendingFence);
+    return result.acknowledged;
   }
 
   private async drainLoop(
@@ -1179,7 +1130,7 @@ export class SessionRouter {
           this.maxConcurrentSubagents,
         );
         if (!started) {
-          await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);
+          await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
           return;
         }
         delegationExecution = started;
@@ -1276,9 +1227,7 @@ export class SessionRouter {
       }
 
       // Set session status to running
-      const runningSession = this.sessionStore.updateStatusIfClaimed
-        ? await this.sessionStore.updateStatusIfClaimed(sessionId, "running", pendingFence)
-        : await this.sessionStore.updateStatus(sessionId, "running");
+      const runningSession = await this.sessionStore.updateStatusIfClaimed(sessionId, "running", pendingFence);
       if (!runningSession || runningSession.status === "terminated") {
         await this.pendingEventStore.clear(sessionId);
         break;
@@ -1343,7 +1292,7 @@ export class SessionRouter {
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
       // must NOT run — otherwise the adapter falls back to built-in fs/bash tools
       // that write to the server pod filesystem. Emit a session.error, mark the
-      // turn handled (it was already dequeued), and skip the adapter for this turn.
+      // turn handled (it was already claimed), and skip the adapter for this turn.
       if (this.isSandboxedButUnprovisionable(currentAgent)) {
         const error = {
           message:
@@ -1968,7 +1917,7 @@ export class SessionRouter {
       // durable wait. Reclaim the same input and continue from the event log.
       if (!turnController.signal.aborted && this.delegationStore &&
         (await this.delegationStore.listWaits(sessionId, pendingEvent.id)).some((wait) => wait.status === "waiting")) {
-        await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);
+        await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
         return;
       }
 

@@ -1,282 +1,29 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import type {
-  TurnStreamStore,
-  TurnDelta,
-  StoredTurnDelta,
-  ActiveTurn,
+import { createMemoryStores } from "@oma-server/store-memory";
+import {
+  InMemoryTurnStreamStore,
+  type TurnDelta,
+  type StoredTurnDelta,
 } from "@oma-server/redis";
-import type {
-  EventLogStore,
-  EventLogStoreAppendInput,
-  EventLogStoreGetEventsOpts,
-  EventLogUsageScope,
-  PendingEventStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
-  SessionStore,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  Session,
-  SessionStatus,
-  StoredEvent,
-  PaginatedResult,
-  TokenUsageSummary,
-  Agent,
-} from "@oma-server/store";
+import type { Agent, PendingEventStore, SessionStore } from "@oma-server/store";
 import type {
   Adapter,
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
 
-// ─── In-memory EventLogStore (canonical log only) ────────────────────────────
+// ─── Turn stream (Redis stand-in) that keeps reclaimed deltas observable ─────
 
-class InMemoryEventLogStore implements EventLogStore {
-  private events: Map<string, StoredEvent[]> = new Map();
-  private seqCounters: Map<string, number> = new Map();
-  private usageEvents: Array<{
-    sessionId: string;
-    apiKeyId?: string;
-    type: string;
-    data: unknown;
-  }> = [];
-
-  async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
-    const currentSeq = this.seqCounters.get(sessionId) ?? 0;
-    const nextSeq = currentSeq + 1;
-    this.seqCounters.set(sessionId, nextSeq);
-
-    const stored: StoredEvent = {
-      sessionId,
-      seq: nextSeq,
-      type: event.type,
-      data: event.data,
-      ts: new Date(),
-      sessionThreadId: event.sessionThreadId,
-    };
-
-    const sessionEvents = this.events.get(sessionId) ?? [];
-    sessionEvents.push(stored);
-    this.events.set(sessionId, sessionEvents);
-    this.usageEvents.push({
-      sessionId,
-      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
-      type: event.type,
-      data: event.data,
-    });
-
-    return stored;
-  }
-
-  async getEvents(
-    sessionId: string,
-    opts?: EventLogStoreGetEventsOpts,
-  ): Promise<PaginatedResult<StoredEvent>> {
-    const allEvents = this.events.get(sessionId) ?? [];
-    const afterSeq = opts?.afterSeq ?? 0;
-    const limit = opts?.limit ?? 50;
-
-    const filtered = allEvents.filter((e) => e.seq > afterSeq);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-
-    return { data, hasMore };
-  }
-
-  async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let cacheWriteTokens = 0;
-    const count = (value: unknown) =>
-      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-    for (const event of this.usageEvents) {
-      const inScope = "sessionId" in scope
-        ? event.sessionId === scope.sessionId
-        : event.apiKeyId === scope.apiKeyId;
-      if (!inScope || event.type !== "span.model_request_end") continue;
-      const data = event.data as { usage?: Record<string, unknown> };
-      inputTokens += count(data.usage?.inputTokens);
-      outputTokens += count(data.usage?.outputTokens);
-      cacheReadTokens += count(data.usage?.cacheReadTokens);
-      cacheWriteTokens += count(data.usage?.cacheWriteTokens);
-    }
-    return {
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      totalTokens: inputTokens + outputTokens,
-      cacheHitRate: inputTokens === 0 ? null : cacheReadTokens / inputTokens,
-    };
-  }
-}
-
-// ─── In-memory PendingEventStore ─────────────────────────────────────────────
-
-class InMemoryPendingEventStore implements PendingEventStore {
-  private queues: Map<string, PendingEvent[]> = new Map();
-  private nextId = 1;
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue.length === 0) return null;
-    return queue.shift()!;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue[0] ?? null;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue.length;
-  }
-}
-
-// ─── In-memory TurnStreamStore (Redis stand-in) ──────────────────────────────
-
-class InMemoryTurnStreamStore implements TurnStreamStore {
-  streams = new Map<string, StoredTurnDelta[]>();
-  activeTurns = new Map<string, ActiveTurn>();
+class RecordingTurnStreamStore extends InMemoryTurnStreamStore {
   /** Every delta ever appended, retained across reclaim() for assertions. */
   appendedDeltas: StoredTurnDelta[] = [];
-  private seq = 0;
 
-  async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
-    const id = `0-${this.seq++}`;
-    const list = this.streams.get(JSON.stringify([sessionId, delta.turnId])) ?? [];
-    const stored = { ...delta, id };
-    list.push(stored);
-    this.streams.set(JSON.stringify([sessionId, delta.turnId]), list);
-    this.appendedDeltas.push(stored);
+  override async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
+    const id = await super.appendDelta(sessionId, delta);
+    this.appendedDeltas.push({ ...delta, id });
     return id;
-  }
-
-  async readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
-    const list = this.streams.get(JSON.stringify([sessionId, turnId])) ?? [];
-    if (!afterId) return [...list];
-    const idx = list.findIndex((d) => d.id === afterId);
-    return list.slice(idx + 1);
-  }
-
-  async deltaCount(sessionId: string, turnId: string): Promise<number> {
-    return this.streams.get(JSON.stringify([sessionId, turnId]))?.length ?? 0;
-  }
-
-  async reclaim(sessionId: string, turnId: string): Promise<void> {
-    this.streams.delete(JSON.stringify([sessionId, turnId]));
-  }
-
-  async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
-    this.activeTurns.set(sessionId, { ...turn });
-  }
-
-  async getActiveTurn(sessionId: string): Promise<ActiveTurn | null> {
-    return this.activeTurns.get(sessionId) ?? null;
-  }
-
-  async clearActiveTurn(sessionId: string): Promise<void> {
-    this.activeTurns.delete(sessionId);
-  }
-}
-
-// ─── In-memory SessionStore ──────────────────────────────────────────────────
-
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      loopId: input.loopId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(
-    tenantId: string,
-    opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    return { data, hasMore };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    session.updatedAt = new Date();
-    return session;
   }
 }
 
@@ -327,9 +74,7 @@ function createTestDeps(
     "interruptedAdapterDrainTimeoutMs" | "interruptedAdapterDrainMaxEvents"
   > = {},
 ) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
 
   const router = new SessionRouter({
@@ -345,11 +90,9 @@ function createTestDeps(
 }
 
 function createTestDepsWithTurnStream(adapter: Adapter) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
-  const turnStreamStore = new InMemoryTurnStreamStore();
+  const turnStreamStore = new RecordingTurnStreamStore();
 
   const router = new SessionRouter({
     eventLogStore,
@@ -416,6 +159,62 @@ describe("SessionRouter", () => {
 
       // Verify pending queue is empty
       expect(await pendingEventStore.count(session.id)).toBe(0);
+    });
+
+    it("executes the Turn under a live claim and fences every durable write with it", async () => {
+      const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
+      const appends = vi.spyOn(eventLogStore, "append");
+      let fenceLiveDuringRun: boolean | undefined;
+      const adapter: Adapter = {
+        async *run(): AsyncIterable<SessionEvent> {
+          const fence = appends.mock.calls[0]?.[1].pendingFence;
+          fenceLiveDuringRun = fence !== undefined &&
+            await pendingEventStore.ownsClaim(session.id, fence.eventId, fence);
+          yield {
+            id: "evt_1",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "fenced" }],
+          };
+        },
+      };
+      const router = new SessionRouter({
+        eventLogStore,
+        pendingEventStore,
+        sessionStore,
+        eventStreamHub: new InProcessEventStreamHub(),
+        resolveAdapter: () => adapter,
+        pendingClaimOwnerId: "host_fenced",
+      });
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      const input = await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await router.handleNewEvent(session.id, testAgent);
+
+      expect(fenceLiveDuringRun).toBe(true);
+      expect(appends.mock.calls.map(([, event]) => event.type)).toEqual([
+        "user.message",
+        "session.status_running",
+        "agent.message",
+        "session.turn_completed",
+      ]);
+      for (const [, event] of appends.mock.calls) {
+        expect(event.pendingFence, event.type).toEqual({
+          eventId: input.id,
+          ownerId: "host_fenced",
+          generation: 1,
+        });
+      }
+      expect((await sessionStore.getById(session.id))!.status).toBe("idle");
     });
 
     it("handles a revoked managed MCP connection once without poisoning the pending queue", async () => {
@@ -1642,8 +1441,8 @@ describe("SessionRouter", () => {
 
     async function runOneTurn(
       router: SessionRouter,
-      sessionStore: InMemorySessionStore,
-      pendingEventStore: InMemoryPendingEventStore,
+      sessionStore: SessionStore,
+      pendingEventStore: PendingEventStore,
       sessionId: string,
       agent: Agent,
     ) {
@@ -1661,9 +1460,7 @@ describe("SessionRouter", () => {
     it("resolves the model from the Agent's current config, not the session snapshot", async () => {
       const models: string[] = [];
       const adapter = createModelCapturingAdapter(models);
-      const eventLogStore = new InMemoryEventLogStore();
-      const pendingEventStore = new InMemoryPendingEventStore();
-      const sessionStore = new InMemorySessionStore();
+      const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
       const eventStreamHub = new InProcessEventStreamHub();
       const agentStore = createFakeAgentStore({ ...testAgent });
 
@@ -1717,9 +1514,7 @@ describe("SessionRouter", () => {
     it("keeps a Loop-created Session on the Agent snapshot captured at dispatch", async () => {
       const models: string[] = [];
       const adapter = createModelCapturingAdapter(models);
-      const eventLogStore = new InMemoryEventLogStore();
-      const pendingEventStore = new InMemoryPendingEventStore();
-      const sessionStore = new InMemorySessionStore();
+      const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
       const eventStreamHub = new InProcessEventStreamHub();
       const agentStore = createFakeAgentStore({ ...testAgent });
       const router = new SessionRouter({

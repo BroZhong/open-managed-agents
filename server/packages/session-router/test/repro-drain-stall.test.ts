@@ -1,195 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
-import { SessionRouter } from "../src/session-router.js";
+import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import {
-  createMemoryStores,
-  InMemoryEventLogStore as DurableInMemoryEventLogStore,
-} from "@oma-server/store-memory";
+import { createMemoryStores } from "@oma-server/store-memory";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
-import type {
-  EventLogStore,
-  EventLogStoreAppendInput,
-  EventLogStoreGetEventsOpts,
-  PendingEventStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
-  SessionStore,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  Session,
-  SessionStatus,
-  StoredEvent,
-  PaginatedResult,
-  Agent,
-} from "@oma-server/store";
+import type { PendingEventStore, Agent } from "@oma-server/store";
 import type {
   Adapter,
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
-
-// ─── Minimal in-memory stores (mirrors session-router.test.ts) ───────────────
-
-class InMemoryEventLogStore implements EventLogStore {
-  private events = new Map<string, StoredEvent[]>();
-  private seqCounters = new Map<string, number>();
-
-  async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
-    const nextSeq = (this.seqCounters.get(sessionId) ?? 0) + 1;
-    this.seqCounters.set(sessionId, nextSeq);
-    const stored: StoredEvent = {
-      sessionId,
-      seq: nextSeq,
-      type: event.type,
-      data: event.data,
-      ts: new Date(),
-      sessionThreadId: event.sessionThreadId,
-    };
-    const list = this.events.get(sessionId) ?? [];
-    list.push(stored);
-    this.events.set(sessionId, list);
-    return stored;
-  }
-
-  async getEvents(
-    sessionId: string,
-    opts?: EventLogStoreGetEventsOpts,
-  ): Promise<PaginatedResult<StoredEvent>> {
-    const all = this.events.get(sessionId) ?? [];
-    const afterSeq = opts?.afterSeq ?? 0;
-    const limit = opts?.limit ?? 50;
-    const filtered = all.filter((e) => e.seq > afterSeq);
-    return { data: filtered.slice(0, limit), hasMore: filtered.length > limit };
-  }
-}
-
-class InMemoryPendingEventStore implements PendingEventStore {
-  private queues = new Map<string, PendingEvent[]>();
-  private nextId = 1;
-  duplicateListedSessions = false;
-  failNextAck = false;
-  /** Test-only queue boundary hook: runs after an empty head read is observed. */
-  onEmptyRead?: (sessionId: string) => Promise<void>;
-
-  private async notifyEmptyRead(sessionId: string): Promise<void> {
-    if (!this.onEmptyRead) return;
-    const hook = this.onEmptyRead;
-    this.onEmptyRead = undefined;
-    await hook(sessionId);
-  }
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    const next = queue.shift() ?? null;
-    if (!next) await this.notifyEmptyRead(sessionId);
-    return next;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const next = (this.queues.get(sessionId) ?? [])[0] ?? null;
-    if (!next) await this.notifyEmptyRead(sessionId);
-    return next;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    if (this.failNextAck) {
-      this.failNextAck = false;
-      throw new Error("simulated crash before pending acknowledgement");
-    }
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    const ids = [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-    return this.duplicateListedSessions ? [...ids, ...ids] : ids;
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    return (this.queues.get(sessionId) ?? []).length;
-  }
-}
-
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-  failBeforeAdapterOnce = false;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    return { data: filtered.slice(0, limit), hasMore: filtered.length > limit };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    if (status === "running" && this.failBeforeAdapterOnce) {
-      this.failBeforeAdapterOnce = false;
-      throw new Error("simulated crash before adapter start");
-    }
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    return session;
-  }
-}
 
 const testAgent: Agent = {
   id: "agent_1",
@@ -206,9 +25,7 @@ const testAgent: Agent = {
 };
 
 function makeDeps(adapter: Adapter) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const router = new SessionRouter({
     eventLogStore,
@@ -218,6 +35,32 @@ function makeDeps(adapter: Adapter) {
     resolveAdapter: () => adapter,
   });
   return { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, router };
+}
+
+/**
+ * A crashed process keeps its claim until the lease lapses. Short leases let a
+ * "restarted" Router take over within a test instead of after 30 seconds.
+ */
+const RESTART_LEASE = {
+  pendingClaimLeaseMs: 50,
+  pendingClaimRenewIntervalMs: 10,
+  pendingClaimRetryMinMs: 5,
+  pendingClaimRetryMaxMs: 10,
+} satisfies Partial<SessionRouterDeps>;
+
+/** Fresh store-memory stores plus a factory for Routers that model process restarts. */
+function makeRestartableDeps(adapter: Adapter) {
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
+  const eventStreamHub = new InProcessEventStreamHub();
+  const makeRouter = () => new SessionRouter({
+    eventLogStore,
+    pendingEventStore,
+    sessionStore,
+    eventStreamHub,
+    resolveAdapter: () => adapter,
+    ...RESTART_LEASE,
+  });
+  return { eventLogStore, pendingEventStore, sessionStore, makeRouter };
 }
 
 async function enqueueUser(
@@ -346,12 +189,19 @@ describe("REPRO 3c — drain handoff does not lose a wakeup", () => {
     });
 
     await enqueueUser(pendingEventStore, session.id, "first");
-    pendingEventStore.onEmptyRead = async () => {
-      // This is the exact lost-wakeup window: dequeue has already decided the
-      // queue is empty, but handleNewEvent still sees this Session as active.
-      await enqueueUser(pendingEventStore, session.id, "arrived during handoff");
-      await router.handleNewEvent(session.id, testAgent);
-    };
+    const claim = pendingEventStore.claim.bind(pendingEventStore);
+    let arriveDuringHandoff = true;
+    vi.spyOn(pendingEventStore, "claim").mockImplementation(async (...args) => {
+      const claimed = await claim(...args);
+      if (!claimed && arriveDuringHandoff) {
+        arriveDuringHandoff = false;
+        // This is the exact lost-wakeup window: claim has already decided the
+        // queue is empty, but handleNewEvent still sees this Session as active.
+        await enqueueUser(pendingEventStore, session.id, "arrived during handoff");
+        await router.handleNewEvent(session.id, testAgent);
+      }
+      return claimed;
+    });
 
     await router.handleNewEvent(session.id, testAgent);
 
@@ -373,22 +223,6 @@ describe("REPRO 3c — drain handoff does not lose a wakeup", () => {
 
 describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   it("retries after a crash that committed the user Event but happened before pending acknowledgement", async () => {
-    const durableEvents = new DurableInMemoryEventLogStore();
-    let failAfterCommit = true;
-    const crashingEventStore: EventLogStore = {
-      async append(sessionId, event) {
-        const stored = await durableEvents.append(sessionId, event);
-        if (failAfterCommit && event.type === "user.message") {
-          failAfterCommit = false;
-          throw new Error("simulated crash after Event commit");
-        }
-        return stored;
-      },
-      getEvents: (sessionId, opts) => durableEvents.getEvents(sessionId, opts),
-    };
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let replies = 0;
     const adapter: Adapter = {
       async *run(): AsyncIterable<SessionEvent> {
@@ -401,12 +235,16 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
         };
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore: crashingEventStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
+    const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
+    const append = eventLogStore.append.bind(eventLogStore);
+    let failAfterCommit = true;
+    vi.spyOn(eventLogStore, "append").mockImplementation(async (sessionId, event) => {
+      const stored = await append(sessionId, event);
+      if (failAfterCommit && event.type === "user.message") {
+        failAfterCommit = false;
+        throw new Error("simulated crash after Event commit");
+      }
+      return stored;
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -434,7 +272,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       discarded: [],
       failed: [],
     });
-    const stored = await durableEvents.getEvents(session.id, { limit: 100 });
+    const stored = await eventLogStore.getEvents(session.id, { limit: 100 });
     expect(stored.data.filter((event) => event.type === "user.message")).toHaveLength(1);
     expect(stored.data.filter((event) => event.type === "agent.message")).toHaveLength(1);
   });
@@ -467,7 +305,11 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     await enqueueUser(pendingEventStore, valid.id, "valid");
     await enqueueUser(pendingEventStore, terminated.id, "discard terminated");
     await enqueueUser(pendingEventStore, "sess_missing", "discard missing");
-    pendingEventStore.duplicateListedSessions = true;
+    const listPendingSessionIds = pendingEventStore.listPendingSessionIds.bind(pendingEventStore);
+    vi.spyOn(pendingEventStore, "listPendingSessionIds").mockImplementation(async () => {
+      const ids = await listPendingSessionIds();
+      return [...ids, ...ids];
+    });
 
     const recovery = await router.recoverPendingEvents();
 
@@ -484,10 +326,6 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   });
 
   it("keeps input pending when the process dies before the Adapter starts, then executes it on restart", async () => {
-    const eventLogStore = new DurableInMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let adapterRuns = 0;
     const adapter: Adapter = {
       async *run(): AsyncIterable<SessionEvent> {
@@ -500,13 +338,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
         };
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
-    });
+    const { pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_1",
@@ -514,7 +346,16 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       workspaceId: "ws_test",
     });
     await enqueueUser(pendingEventStore, session.id, "survive pre-adapter crash");
-    sessionStore.failBeforeAdapterOnce = true;
+    const updateStatusIfClaimed = sessionStore.updateStatusIfClaimed.bind(sessionStore);
+    let failBeforeAdapter = true;
+    vi.spyOn(sessionStore, "updateStatusIfClaimed").mockImplementation(async (id, status, fence) => {
+      const updated = await updateStatusIfClaimed(id, status, fence);
+      if (status === "running" && failBeforeAdapter) {
+        failBeforeAdapter = false;
+        throw new Error("simulated crash before adapter start");
+      }
+      return updated;
+    });
 
     await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
       "simulated crash before adapter start",
@@ -529,10 +370,6 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   });
 
   it("does not rerun or duplicate durable Events when completion committed before the ack crash", async () => {
-    const eventLogStore = new DurableInMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let adapterRuns = 0;
     const adapter: Adapter = {
       async *run(): AsyncIterable<SessionEvent> {
@@ -545,13 +382,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
         };
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
-    });
+    const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_1",
@@ -559,7 +390,9 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       workspaceId: "ws_test",
     });
     await enqueueUser(pendingEventStore, session.id, "complete before ack");
-    pendingEventStore.failNextAck = true;
+    vi.spyOn(pendingEventStore, "ackCompletedTurn").mockRejectedValueOnce(
+      new Error("simulated crash before pending acknowledgement"),
+    );
 
     await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
       "simulated crash before pending acknowledgement",
@@ -574,14 +407,14 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     });
     const afterRecovery = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(adapterRuns).toBe(1);
-    expect(afterRecovery).toEqual(beforeRecovery);
+    // Recovery only acknowledges: the Turn's durable Events are untouched and
+    // the one addition is the idle transition that acknowledgement commits.
+    expect(afterRecovery.slice(0, beforeRecovery.length)).toEqual(beforeRecovery);
+    expect(afterRecovery.slice(beforeRecovery.length).map((event) => event.type))
+      .toEqual(["session.status_idle"]);
   });
 
   it("abandons a partial durable attempt without mixing output from a rerun", async () => {
-    const eventLogStore = new DurableInMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let adapterRuns = 0;
     const adapter: Adapter = {
       async *run(): AsyncIterable<SessionEvent> {
@@ -594,13 +427,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
         };
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
-    });
+    const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_1",
