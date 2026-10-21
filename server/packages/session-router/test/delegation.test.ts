@@ -444,6 +444,41 @@ describe("Host-owned delegation through the Session Router", () => {
     expect((await h.stores.delegationStore.list("tenant", h.parent.id)).every((e) => e.status === "completed")).toBe(true);
     expect(h.errors).toEqual([]);
   });
+  it("starts a queued synchronous child as soon as a sibling frees its slot, without polling for one", async () => {
+    const firstGate = gate(); let secondStartedAt = 0;
+    const h = await harness({ async run(input) {
+      const write = journalWriter(input);
+      if (input.execution?.isChild) {
+        const prompt = input.message.content[0].type === "text" ? input.message.content[0].text : "";
+        if (prompt === "first") await firstGate.promise;
+        else secondStartedAt = Date.now();
+        await write(text("child done")); return "finished";
+      }
+      if (input.message.source === "subagent_result") return "finished";
+      const first = tool("first"); await write(first);
+      await write(result("first", await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first" })));
+      const second = tool("second"); await write(second);
+      await write(result("second", await input.subagents!.delegate({ prompt: "second", runInBackground: false }, { toolUseId: "second" })));
+      return "finished";
+    } }, { quota: 1 });
+    // The production claim retry backoff: 100 ms doubling up to 5 s.
+    const router = h.makeRouter({ pendingClaimRetryMinMs: 100, pendingClaimRetryMaxMs: 5_000 });
+    await h.enqueue(); void router.handleNewEvent(h.parent.id, h.agent);
+    await until(async () => (await h.stores.delegationStore.list("tenant", h.parent.id)).map((e) => e.status).sort().join() === "queued,running");
+    // Each attempt claims, promotes and tries startExecution under the global
+    // delegation lock; a child waiting for a slot makes none until one frees.
+    const starts = vi.spyOn(h.stores.delegationStore, "startExecution");
+    await sleep(1_600);
+    expect(starts).not.toHaveBeenCalled();
+
+    const releasedAt = Date.now();
+    firstGate.release();
+    await until(async () => secondStartedAt > 0);
+    expect(secondStartedAt - releasedAt).toBeLessThan(500);
+    expect(await router.waitForIdle(4000)).toBe(true);
+    expect(h.errors).toEqual([]);
+  });
+
   it("finishes the parent first, keeps the shared Sandbox usable, and processes one durable asynchronous result", async () => {
     const childGate = gate();
     const parentInputs: AdapterInput[] = [];

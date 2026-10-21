@@ -55,6 +55,16 @@ export class DelegationCoordinator {
     for (const wakeup of this.waits.get(sessionId) ?? []) wakeup.notify();
   }
 
+  /**
+   * An ended execution frees a slot of its parent's concurrency limit. Its
+   * queued siblings do not poll for one: wake them now.
+   */
+  async wakeChildrenWaitingForSlot(ended: DelegationExecution): Promise<void> {
+    for (const execution of await this.deps.store.list(ended.tenantId, ended.callerSessionId)) {
+      if (execution.status === "queued") this.deps.wake(execution.childId);
+    }
+  }
+
   private caller(run: DelegationRun, toolUseId: string): DelegationCaller {
     return {
       tenantId: run.session.tenantId,

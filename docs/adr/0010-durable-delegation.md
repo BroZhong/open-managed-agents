@@ -53,7 +53,10 @@ The in-memory store is a development/test implementation, not crash durability.
 Child Delegation Inputs enter the ordinary pending input queue and are driven
 by the Session Router. A Child Session executes one Turn at a time. Parent child
 concurrency defaults to four; excess inputs remain durable and queued. A parent
-waiting for a result does not occupy a child execution slot.
+waiting for a result does not occupy a child execution slot. A queued child does
+not poll for a slot (#234): the execution that ends and frees one wakes its
+queued siblings, and the pending scan covers a lost wake or a slot freed by a
+lost owner.
 
 Each accepted Delegation Input snapshots the calling parent Turn's resolved
 provider/model, including on resume, and pins it through queueing and recovery.

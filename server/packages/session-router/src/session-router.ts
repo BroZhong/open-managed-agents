@@ -84,6 +84,12 @@ interface ActiveSessionRun {
   controller: AbortController;
   /** Stops the running Turn attempt, if any, without terminal events. */
   stopAttempt?: (reason: unknown) => void;
+  /**
+   * The drain released its input because its Child execution waits for a
+   * slot of the parent's concurrency limit. The sibling that frees one wakes
+   * it; the pending scan covers a lost wake.
+   */
+  waitingForSlot?: boolean;
 }
 
 class PendingLeaseLostError extends Error {
@@ -567,15 +573,19 @@ export class SessionRouter {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
       }
-      this.wakeRequested.delete(sessionId);
+      const wokenWhileActive = this.wakeRequested.delete(sessionId);
 
       // Always inspect the durable queue at handoff. This covers the original
       // empty→unlock lost wake, a preloaded tail after user interrupt, and a
       // claim/PG failure that must retry without waiting for a new request.
       // A head under a live claim is not retried: its owner drains the queue,
-      // and the pending scan finds it once a lost owner's lease expires.
+      // and the pending scan finds it once a lost owner's lease expires. Nor is
+      // a child waiting for a slot, unless the wake of a freed slot arrived
+      // while this drain was still releasing its claim.
       try {
-        if (failed || await this.pendingEventStore.headClaimable(sessionId)) {
+        const retry = failed || ((!activeRun.waitingForSlot || wokenWhileActive) &&
+          await this.pendingEventStore.headClaimable(sessionId));
+        if (retry) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
           this.resetClaimRetry(sessionId);
@@ -1001,6 +1011,8 @@ export class SessionRouter {
       // A synchronous wait on another Runner reads the result on the hint;
       // the local drain delivers an asynchronous result.
       this.checkSession(finished.callerSessionId);
+      void this.delegations?.wakeChildrenWaitingForSlot(finished)
+        .catch((error) => this.reportDrainError(finished.callerSessionId, error));
       const parent = await this.sessionStore.getById(finished.callerSessionId);
       if (parent && parent.status !== "terminated") {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
@@ -1189,6 +1201,7 @@ export class SessionRouter {
         );
         if (!started) {
           await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
+          activeRun.waitingForSlot = true;
           return;
         }
         delegationExecution = started;
