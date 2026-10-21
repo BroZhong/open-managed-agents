@@ -109,9 +109,7 @@
         }
       },
       "seqScans": {
-        "delegation_waits": 208,
         "delegation_resource_uses": 32,
-        "delegation_executions": 96,
         "pending_events (full by design)": 96
       }
     },
@@ -235,9 +233,7 @@
         }
       },
       "seqScans": {
-        "delegation_waits": 304,
         "delegation_resource_uses": 32,
-        "delegation_executions": 192,
         "pending_events (full by design)": 192
       }
     },
@@ -361,9 +357,7 @@
         }
       },
       "seqScans": {
-        "delegation_waits": 496,
         "delegation_resource_uses": 32,
-        "delegation_executions": 384,
         "pending_events (full by design)": 384
       }
     },
@@ -444,17 +438,17 @@
       },
       {
         "events before the Turn": 500,
-        "getEvents statements per Turn": 11,
+        "getEvents statements per Turn": 1,
         "rows returned per Turn": 501
       },
       {
         "events before the Turn": 2000,
-        "getEvents statements per Turn": 41,
+        "getEvents statements per Turn": 3,
         "rows returned per Turn": 2001
       },
       {
         "events before the Turn": 5000,
-        "getEvents statements per Turn": 101,
+        "getEvents statements per Turn": 6,
         "rows returned per Turn": 5001
       }
     ],
@@ -541,5 +535,6 @@
         "totalAttempts": 218
       }
     }
-  }
+  },
+  "harnessNote": "harness: DB_LOAD_JSON output at 18e5300 (migration 0021 access marks, 1,000-row log pages); statement counts equal those at 85f2a69 except the log-read case"
 }

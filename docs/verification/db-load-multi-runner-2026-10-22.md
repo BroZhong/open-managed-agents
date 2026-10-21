@@ -18,6 +18,12 @@ database the bottleneck before the polling does.
 Three fixes remove ≈93 % of the projected load: the delegation wait (F1), non-owner claims
 (F2) and the heartbeat cadence (F3). Indexes (F4) remove the unbounded scans.
 
+**Implemented on this branch:** F4 (**migration `deploy/migrations/0021_delegation_lookup_indexes.sql`**,
+to be applied before or after the Runner image), the F5 page size, and F7. F1–F3 wait for
+#244 and are coordinated with #249/#251/#252/#254. Rates in §1–§3 are for the code at
+85f2a69, before these changes. F4 and F7 change no statement counts. F5 changes only the
+log-read row.
+
 Measured with `server/packages/api/test/db-load.test.ts` (harness in `test/db-load/`), at
 feat/stateless-runner 85f2a69. All rates below are **SQL statements per second**: every
 round trip, BEGIN and COMMIT included, as issued by the PostgreSQL stores in
@@ -36,7 +42,7 @@ oma-test: 12 tool steps, 55 durable events and ≈339 s per Turn.
 | Background loops | **1.22 /s per Runner** (pending scan 0.60, Loop scan 0.40, cleanup discovery 0.22) | N | `reconcileTerminatedExecutions` (2 seq scans), `SELECT DISTINCT session_id FROM pending_events`, `dispatchDue` |
 | Heartbeat | **6.0 /s per active Turn**; +1.0 /s `listCommands` (seq scan) per active Child Turn | A | renew tx (4), `interruptRequested` (1), `getByPendingEventId` (1, also for non-children) |
 | Turn lifecycle (claim → ack) | **660 per Turn** = 550 event appends (55 × 10) + 110 control; ≈1.95 /s amortized | A (Turn rate) | fenced append tx = 10 statements per durable event; `ackCompletedTurn` 13; `listWaits` (seq) 14 |
-| Full log read on claim | **+⌈H/50⌉ statements and H rows per claim** (H = events already in the Session): 1 / 11 / 41 / 101 statements at H = 0 / 500 / 2,000 / 5,000 | history | `readAllEvents` pages 50 rows; also downloads every OSS-offloaded payload |
+| Full log read on claim | **+⌈H/50⌉ statements and H rows per claim** (H = events already in the Session): 1 / 11 / 41 / 101 statements at H = 0 / 500 / 2,000 / 5,000. After F5: 1 / 1 / 3 / 6 | history | `readAllEvents` paged 50 rows (now 1,000); it also downloads every OSS-offloaded payload |
 | Tool fence | **4 per sandbox op** (`ownsClaim` tx); +21 once per Session for Sandbox creation | A (tool rate) | `SELECT … FOR UPDATE` + `SELECT` on pending_events |
 | Scan lookups | **0.263 /s per active Turn per Runner** | A × N | `sessions.getById` per pending Session per scan per Runner |
 | Non-owner claim attempts | **2.87 /s per active Turn per other Runner** (161 failed claims per Turn per other Runner, 6 statements each) | **A × (N−1)** | claim tx (4) + 2 × `peek`; from: retry timer 1.27, 5 s scan 1.19, 15 s Loop scan 0.39 |
@@ -48,18 +54,19 @@ oma-test: 12 tool steps, 55 durable events and ≈339 s per Turn.
 
 Whole-table scans (`seq` = no usable index; `full` = by design on a small table):
 
-| Table | Per Turn (Turn activity) | Per Runner per minute (scans) | Why |
-|---|---|---|---|
-| delegation_waits | 14 | 16 | `listWaits` on every tool result and twice per claim; no index at all |
-| delegation_executions | 0 | 16 | status scan in `reconcileTerminatedExecutions`; `record->>'id'` filter in every delegation transaction |
-| delegation_resource_uses | 4 | 0 | `record->>'sessionId'/'sandboxSessionId'` filters, no index |
-| delegation_commands | 0 | 0 | `listCommands` on `record->>'executionId'`, no index (1 /s per active Child Turn) |
-| pending_events (full) | 0 | 16 | `listPendingSessionIds` (small table, fine) |
-| skills | 1 per equipped Skill (not exercised) | 0 | `WHERE skill_id = $1` cannot use the `(tenant_id, skill_id)` key |
+| Table | Per Turn (Turn activity) | Per Runner per minute (scans) | After 0021 | Why |
+|---|---|---|---|---|
+| delegation_waits | 14 | 16 | 0 | `listWaits` on every tool result and twice per claim; no index at all |
+| delegation_executions | 0 | 16 | 0 (1 per delegation, `accept`) | status scan in `reconcileTerminatedExecutions`; `record->>'id'` filter in every delegation transaction |
+| delegation_resource_uses | 4 | 0 | 4 | `record->>'sessionId'/'sandboxSessionId'` filters, no index |
+| delegation_commands | 0 | 0 | 0 | `listCommands` on `record->>'executionId'`, no index (1 /s per active Child Turn) |
+| pending_events (full) | 0 | 16 | 16 | `listPendingSessionIds` (small table, fine) |
+| skills | 1 per equipped Skill (not exercised) | 0 | unchanged | `WHERE skill_id = $1` cannot use the `(tenant_id, skill_id)` key |
 
 One synchronous delegation (parent Turn of 2 steps, child Turn of 3 steps, ≈87 s) adds
 13 delegation_waits, 9 delegation_resource_uses, 6 delegation_executions and 93
-delegation_commands scans.
+delegation_commands scans. After 0021 it adds 9 delegation_resource_uses scans and 1
+delegation_executions scan.
 
 The delegation tables are never pruned. These scans are cheap at today's 182–184 rows. They
 grow linearly with every delegation ever made. At N=4 and A=100, delegation_waits alone is
@@ -230,10 +237,10 @@ Savings are at N=4, A=100, W=20 (4,522 /s).
 | F1 | Delegation wait without the 200 ms poll and per-poll wake broadcast | **−2,668 /s (59 %)** | low–medium | #248 (recoverWaits), #251, #252, #254 |
 | F2 | No claim attempts on heads another Runner owns | **−966 /s (21 %)** | low | #254, #248/#255 (takeover latency), #250 |
 | F3 | Heartbeat at the renew interval; Interrupt via the renew row + Redis hint; no delegation lookup for non-children | **−560 /s (12 %)** | medium | #249, #240, #252, #254 |
-| F4 | Indexes on delegation tables + filter `id` by column (migration 0021) | statements unchanged; removes ≈14 seq scans per Turn, 32 /min per Runner, 1 /s per child | low | #251, #252 |
-| F5 | Stop re-reading the whole log, 50 rows per page, on every claim | ⌈H/50⌉ → ⌈H/1000⌉ statements per claim; H rows → current Turn + context | low (page size) / medium (boundary) | #245, #247, #248, #253 |
+| F4 | Indexes on delegation tables + filter `id` by column (migration 0021) — **done** | statements unchanged; removes ≈14 seq scans per Turn, 32 /min per Runner, 1 /s per child | low | #251, #252 |
+| F5 | Stop re-reading the whole log, 50 rows per page, on every claim — **page size done** | ⌈H/50⌉ → ⌈H/1000⌉ statements per claim (done); H rows → current Turn + context (later) | low (page size) / medium (boundary) | #245, #247, #248, #253 |
 | F6 | One reconcile, not one per scan per Runner; Loop scan without its own recovery scan | −0.5 /s per Runner; −0.39 /s per active Turn per other Runner (part of F2) | low | #254 |
-| F7 | Exponential backoff for cleanup retries | −7.2 /s per stuck row (oma-test has none today: insurance) | low | none (termination path) |
+| F7 | Exponential backoff for cleanup retries — **done** | −7.2 /s per stuck row (oma-test has none today: insurance) | low | none (termination path) |
 | F8 | Tool fence from the local lease instead of an `ownsClaim` round trip | −0.28 /s per active Turn | medium | #240, #254 |
 
 **F1. Delegation wait.** `DelegationCoordinator.waitForResult` calls `assertOwner`
@@ -278,33 +285,60 @@ Per active Turn: 6.0 → 0.4 /s. Quick wins can land first and alone: skip
 `getByPendingEventId` for non-children (−1 /s per Turn) and fold `interruptRequested` into
 the renew (−1 /s).
 
-**F4. Indexes (draft for `deploy/migrations/0021_delegation_lookup_indexes.sql` + `schema.ts`).**
-The tables are tiny, so a plain `CREATE INDEX` under the usual `lock_timeout` is enough:
+**F4. Indexes — done: migration `deploy/migrations/0021_delegation_lookup_indexes.sql`, mirrored in `schemaDdl`.**
+The tables hold a few hundred rows. Migrations run in one transaction, as do 0012, 0015,
+0018 and 0020 (and atomically through the test schema's RPC path), so the migration uses
+plain `CREATE INDEX` under a 5 s `lock_timeout` rather than `CONCURRENTLY`:
 
 ```sql
 CREATE INDEX IF NOT EXISTS delegation_waits_input_idx ON oma.delegation_waits ((record->>'callerSessionId'), (record->>'parentPendingEventId'));
-CREATE INDEX IF NOT EXISTS delegation_waits_waiting_idx ON oma.delegation_waits ((record->>'callerSessionId')) WHERE record->>'status' = 'waiting';
+CREATE INDEX IF NOT EXISTS delegation_waits_waiting_idx ON oma.delegation_waits (id) WHERE record->>'status' = 'waiting';
 CREATE INDEX IF NOT EXISTS delegation_commands_execution_idx ON oma.delegation_commands ((record->>'executionId'));
-CREATE INDEX IF NOT EXISTS delegation_executions_open_idx ON oma.delegation_executions ((record->>'status')) WHERE record->>'status' IN ('queued', 'running');
-CREATE INDEX IF NOT EXISTS delegation_resource_uses_binding_idx ON oma.delegation_resource_uses ((record->>'sandboxSessionId'));
-CREATE INDEX IF NOT EXISTS skills_skill_id_idx ON oma.skills (skill_id);
+CREATE INDEX IF NOT EXISTS delegation_executions_open_idx ON oma.delegation_executions (id) WHERE record->>'status' IN ('queued', 'running');
 ```
 
-Two code changes go with them:
+Reconciliation reads open rows `ORDER BY id LIMIT`, so the open-state partial indexes are
+keyed by `id`. A partial index keyed by status was not enough: with sequential scans
+disabled, the planner then walked the whole primary key. `PgDelegationStore`'s transaction
+`read` now looks up executions and commands by the `id` column.
 
-- `PgDelegationStore`'s transaction `read` should map an `id` filter to the `id` column.
-  Today every delegation transaction runs `this.execution(tx, id)`, which filters
-  `record->>'id'` and scans the table.
-- `releaseResourceUse` should read the row by its id, which is the pendingEventId.
+`test/delegation-index-plans.test.ts` (runs when `PG_TEST_URL` is set) captures the store's
+own lookups and plans them with sequential scans disabled. Against PostgreSQL 18.6 (PGlite)
+every lookup on the three tables uses an index:
 
-Pruning old delegation rows is a separate follow-up.
+| Lookup | Index |
+|---|---|
+| `listWaits` | delegation_waits_input_idx |
+| `listCommands` | delegation_commands_execution_idx |
+| `getByPendingEventId` | delegation_pending_identity_idx (existing) |
+| reconcile, executions | delegation_executions_open_idx + sessions_pkey |
+| reconcile, waits | delegation_waits_waiting_idx + sessions_pkey |
+| transaction reads of waits by caller (`cancelWaits`, `saveWait`, `consumeResult`) | delegation_waits_input_idx |
+| `hasResourceUsers`, queued executions | delegation_executions_open_idx |
+| executions and commands by id | their primary keys |
 
-**F5. Log read.** `readAllEvents` pages 50 rows. Step one: use 1,000, as `EventCatchup` does.
+The same run showed that parameterized keys (`record ->> $1 = $2`) are folded into
+constants in node-postgres' unnamed-statement plans and match the expression indexes. The
+migration also applied cleanly to a pre-0021 schema, and a second time as a no-op.
+
+Not covered, and left as follow-ups:
+
+- `delegation_resource_uses` (4 scans per Turn), which needs a `sandboxSessionId` index, plus
+  reading leases by id (= pendingEventId);
+- `skills.skill_id`;
+- `accept`'s child-sequence read (`record->>'childId'` without `tenantId`);
+- `command`'s caller-identity read on delegation_commands;
+- pruning old delegation rows.
+
+**F5. Log read.** `readAllEvents` paged 50 rows. Step one is done: it uses 1,000, as `EventCatchup` does.
 Then build Adapter history from the last compaction boundary, and let planResume read only
 the current Turn's events after the promoted seq. Each claim also decodes every OSS-offloaded
 payload in the Session's history, so a long Session pays OSS GETs on every Turn.
 
-**F6–F8** are as in the table. Not a #234 goal ("本期不做: 批量 append"): appends are 550 of
+**F7 — done.** `PgSessionCleanupStore.sweep` now doubles the retry delay after each failed
+attempt: 5 s, 10 s, 20 s, … up to 10 minutes. Before, the delay was 5 s forever.
+
+**F6 and F8** are as in the table. Not a #234 goal ("本期不做: 批量 append"): appends are 550 of
 the 660 statements of a Turn. Group commit per flush would cut 10 statements per event to
 ≈1.5: one fence, one counter update and a multi-row INSERT.
 
@@ -348,7 +382,7 @@ Other findings:
   theory.
 - **Assertions** are behavioural: every Turn completes with no drain errors, idle Sessions are
   never touched, and cleanup retries without backoff. The tripwires are set at about twice
-  today's cost. No production source was changed.
+  today's cost. The harness itself changes no production source.
 - **Limits.**
   - The cost map is static. It is not EXPLAIN on a live database, and the planner will pick
     seq scans on tiny tables anyway.
