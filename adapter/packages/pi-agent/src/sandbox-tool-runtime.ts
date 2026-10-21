@@ -52,7 +52,7 @@ try {
           let opaque = true;
           for (let i = 3; opaque && i < pixels.length; i += 4) opaque = pixels[i] === 255;
           if (!opaque) continue;
-          const data = Buffer.from(image.get_bytes_jpeg(95)).toString("base64");
+          const data = Buffer.from(image.get_bytes_jpeg(85)).toString("base64");
           if (data.length < block.data.length) result.content[index] = { type: "image", data, mimeType: "image/jpeg" };
         } catch { /* keep Pi's image */ } finally { image?.free(); }
       }
