@@ -164,7 +164,8 @@ files and history survive termination.
 `node --import tsx`. Copy it into a stable Runner Pod and run `init` once with an
 absolute evidence-file path. It creates its own tenant and revokes each temporary
 API key. The default target is the public production URL; set `OMA_LIVE_BASE_URL`
-for an isolated staging API and `VERIFY_SCHEMA=oma_split_stage` for its database.
+for an isolated staging API and `VERIFY_SCHEMA=oma_split_stage` for its database
+(`VERIFY_SCHEMA=oma_test` with `https://agentry-test.welltop.tech/api` for the test environment).
 Do not point staging Runners at the production schema or Redis for fault injection.
 
 Run phases in order: `basic`, `real-start`, `real-finish`, `interrupt`,

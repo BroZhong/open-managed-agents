@@ -8,7 +8,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);const {Pool}=require('/app/server/packages/store/node_modules/pg');
 const {PgApiKeyStore}=await import('/app/server/packages/store/src/postgres/api-key-store.ts');
-const [phase,file='/tmp/oma-split-evidence.json']=process.argv.slice(2);const schema=process.env.VERIFY_SCHEMA||'oma';assert(/^(oma|oma_split_stage)$/.test(schema));
+const [phase,file='/tmp/oma-split-evidence.json']=process.argv.slice(2);const schema=process.env.VERIFY_SCHEMA||'oma';assert(/^(oma|oma_test|oma_split_stage)$/.test(schema));
 const pool=new Pool({host:process.env.PG_HOST,port:Number(process.env.PG_PORT),user:process.env.PG_USER,password:process.env.PG_PASSWORD,database:process.env.PG_DATABASE,options:`-c search_path=${schema}`,max:3});
 const keys=new PgApiKeyStore(pool);const base=process.env.OMA_LIVE_BASE_URL||'https://agentry.welltop.tech/api';
 let e;try{e=JSON.parse(await readFile(file,'utf8'))}catch{assert.equal(phase,'init');e={runId:`split-release-${Date.now()}`,schema,checks:[],sessions:{}}}assert.equal(e.schema,schema);assert(/^split-release-\d+$/.test(e.runId));
