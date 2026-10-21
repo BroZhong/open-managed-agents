@@ -8,7 +8,8 @@ the Adapters (#242, #243) move onto it afterwards, and #244 makes it the
 Adapter contract. Revises the ADR-0002 Adapter contract, the ADR-0013 commit
 barrier, the ADR-0014 context journal snapshot timing and the ADR-0016
 Router-side alignment, as listed under "Revised decisions". Resuming a Turn
-after Runner loss is left to ADR-0021 (PR-B).
+after Runner loss is [ADR-0021](0021-resumed-turn.md) (PR-B): the recovery
+rules the next claim applies after the "One stop path" are its plan.
 
 ## Context
 

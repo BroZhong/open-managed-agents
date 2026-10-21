@@ -8,6 +8,10 @@ The snapshot timing in "Context persistence through public hooks" is revised by
 message; model-request, `tool_call` and settlement snapshots are no longer the
 durability boundary.
 
+[ADR-0021](0021-resumed-turn.md) extends "Structured continuation" to every
+Turn another Runner takes over, and drops trailing failed requests from the
+agent's context before Pi continues.
+
 Accepted. Supersedes ADR-0005's requirement to execute native tool factories on
 Host through injected I/O, ADR-0010's patched continuation entry point, and
 ADR-0013's SDK patch and no-JSONL-import implementation decisions. Their Session,

@@ -11,6 +11,11 @@ cannot authorize reclamation of a managed binding.
 native message is committed before Pi runs its tools, so the event log already
 holds the history the checkpoint duplicated.
 
+[ADR-0021](0021-resumed-turn.md) supersedes §7 and revises §4: a Turn whose
+Runner was lost continues on another Runner; a call whose outcome was not
+committed is reported to the Agent as unknown instead of ending the Turn, and
+the Host answers every dangling call before the Turn continues.
+
 Accepted. Supersedes ADR-0006's plugin delegation, shared parent ToolExecutor,
 private usage bridge and parent-scoped child lifetime. Retains ADR-0002/0003's
 Host/Adapter boundary and ADR-0009's concurrent Workspace write semantics.

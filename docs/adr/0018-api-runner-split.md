@@ -10,6 +10,11 @@ renewal every renew interval, and at once on a `check` hint (below). It also
 stops Runners from contending for input another Runner owns, and a synchronous
 delegation wait from polling.
 
+[ADR-0021](0021-resumed-turn.md) revises the "Release boundary": a Turn whose
+Runner exits is continued by the next Runner instead of ending by the earlier
+recovery rules; general Turn recovery now exists, its checkpoint being the
+committed log.
+
 ## Decision
 
 The same server image exposes `src/api-server.ts` and `src/runner-server.ts`.

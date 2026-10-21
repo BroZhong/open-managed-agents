@@ -71,7 +71,7 @@ An Agent-owned recurring instruction. On each due interval the Host creates a fr
 _Avoid_: cron job, scheduled Session (the Loop is the schedule; each occurrence creates a Session)
 
 **Turn**:
-One accepted input and the Agent execution that responds to it within a **Session**. The input can be a user message, a **Delegation Input**, or a claimed **Delegation Result**. A synchronous delegation waits within the original Turn; an asynchronous result may start a later Turn.
+One accepted input and the Agent execution that responds to it within a **Session**. The input can be a user message, a **Delegation Input**, or a claimed **Delegation Result**. A synchronous delegation waits within the original Turn; an asynchronous result may start a later Turn. A Turn is not bound to one Runner process; see **Resumed Turn**.
 _Avoid_: request, job, invocation
 
 A Turn's durable `session.turn_completed` Event ends that Turn independently of
@@ -94,8 +94,12 @@ _Avoid_: pending message, optimistic message, draft, backlog
 A **Turn** that ended because of an **Interrupt** rather than by the Agent finishing. Its output is kept and shown as it was left — recognizably cut short rather than presented as a finished answer — because a user who stopped an Agent still wants to see how far it got. What the Agent half-produced is history, but it is not treated as work the Agent stands behind: a later Turn continues from the last point the Agent actually completed.
 _Avoid_: failed Turn, cancelled Turn, error (an Interrupt is the user's intent, not a fault)
 
+**Resumed Turn**:
+A **Turn** that continues on another Runner after the Runner executing it stopped — a crash, restart or deployment. It keeps the same Turn, input, model and thinking; work it already committed is never executed again. Each tool call whose outcome was not committed is reported to the Agent as unknown: it may not have run, may have partly or fully completed, and a process it started may still be running, so the Agent inspects the current state before deciding whether to repeat it. Delegation tools report their durable delegation state instead. An Interrupt accepted before the Runner stopped still ends the Turn as an **Interrupted Turn**. After three consecutive takeovers without newly committed progress, the Turn ends with an error.
+_Avoid_: retry, rerun, replay (committed work is never repeated; only the Agent may choose to repeat an uncertain call)
+
 **Delta**:
-A transient increment of an Agent's output emitted while the current **Turn** is running. Deltas form a live projection of that Turn only: they are never part of a Session's durable history, are replaced by the corresponding complete event as it arrives, and are discarded if the Turn ends without one.
+A transient increment of an Agent's output emitted while the current **Turn** is running. Deltas form a live projection of that Turn only: they are never part of a Session's durable history, are replaced by the corresponding complete event as it arrives, and are discarded if the Turn ends without one or resumes on another Runner.
 _Avoid_: event, message, token (a Delta may contain text beyond one token)
 
 **Complete Event**:

@@ -150,8 +150,8 @@ explicitly. The following commands are for the separately authorized release:
 Route the Service back to the **compatible bridge** and scale split roles down only
 under the existing Turn shutdown/recovery policy. Leave migration 0015 installed;
 it is additive. Do not roll readers back before ADR-0016 native-event support or
-mix pre-split processes with split Runners. A Runner exit may produce
-`recovery_required` or the existing partial-Turn recovery error; queued unstarted
+mix pre-split processes with split Runners. A Turn whose Runner exits is
+continued by the next Runner that claims its input (ADR-0021); queued unstarted
 inputs remain durable. API rollbacks do not require Runner restarts.
 
 Cleanup errors leave retryable rows. Lease loss is not execution settlement and

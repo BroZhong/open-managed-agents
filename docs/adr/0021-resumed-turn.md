@@ -1,0 +1,178 @@
+# ADR-0021: A lost Runner's Turn continues on another Runner
+
+## Status
+
+Accepted for #234 (PR-B). #248 lands the resume rows of the plan, outcome-unknown
+results, the takeover marker and the crash-injection tests. #249 (an Interrupt
+the lost Runner accepted), #250 (the takeover limit), #251 (delegation tool
+results), #252 (Child executions), #253 (the Turn's original model and
+thinking) and #254 (shutdown handoff) complete it.
+
+Supersedes ADR-0010 §7. Revises ADR-0010 §4, ADR-0013 ("without adding
+automatic recovery of uncertain executions"), ADR-0014 "Structured
+continuation", ADR-0016 on Host-generated results, ADR-0018 "Release boundary"
+("does not introduce ... general Turn checkpoint recovery") and ADR-0020 "One
+stop path", as listed under "Revised decisions".
+
+## Context
+
+A Runner can disappear in the middle of a Turn: OOM, kill -9, a liveness
+restart, a deployment. Until now its Turn ended on the next claim with
+`recovery_partial_turn_aborted`, or, beside a resumed delegation wait, with
+`recovery_required`: the Host did not know what had happened after the last
+row it wrote. ADR-0020 removed that ignorance. Every native message is
+committed before Pi runs a tool or sends the next request, so the log is an
+exact prefix of the Turn. What a lost Runner can leave uncertain is narrow: the
+model output being streamed (Deltas, never durable) and the outcome of tool
+calls whose results were not committed.
+
+## Decision
+
+### A Turn is not bound to one Runner
+
+A claim whose predecessor expired (the Runner holding it was lost) or was
+released (a handoff, a Turn left waiting) takes the input's Turn over and
+continues it as a **Resumed Turn**. It is the same Turn: its turnId is the one
+the first attempt named (#247), its input is not prompted again once Pi
+committed it, its model steps are counted from the log and its output blocks
+are numbered after the committed ones (`resume.completedModelSteps`,
+`resume.blockBase`). Committed work is never executed again.
+
+### The plan
+
+`planResume` decides, without I/O, from the events after the promoted input,
+the Turn's delegation waits, the claim and, for a Child Session, its execution.
+The first row that applies decides:
+
+1. `session.turn_completed` is committed: acknowledge the input.
+2. The Child execution the input runs has ended: complete the Turn (#252
+   decides how a lost owner's execution continues).
+3. The log ends the Turn (`session.status_idle`, `session.error`,
+   `session.turn_aborted`): repair the dangling calls and complete it.
+4. An earlier generation accepted an Interrupt that never took effect: end the
+   Turn as an **Interrupted Turn** (#249).
+5. Three consecutive expired takeovers committed no new native message: end
+   the Turn with `recovery_limit_exceeded` (#250).
+6. The Turn waits on synchronous delegations: resume the waits, give every
+   other dangling call an outcome-unknown result, continue.
+7. The input is not in the Turn's native history yet (Pi claims it with
+   `agent.context_start` and commits it as its user message): prompt it again in
+   the same Turn, on top of what the Turn committed (a compaction, say).
+8. The Turn's last message is the Agent's final answer (an assistant message
+   that requests no tool and whose request did not fail): complete the Turn
+   without a model request.
+9. Otherwise (the input, a tool call, a tool result, steering, a failed or
+   aborted request): give each dangling call an outcome-unknown result and
+   continue.
+
+There are no other rows: an ordinary Turn is never ended because it was taken
+over. A compaction boundary is not a message. Pi compacts after a final answer
+(threshold) and after a failed request (overflow), and the message before the
+boundary says which: the first completes, the second continues on the
+compacted context. A runtime without a native chain (the mock) commits display
+rows, which classify the same way.
+
+### Outcome unknown, never rerun
+
+A dangling call gets an `isError` tool result whose text is:
+
+> The agent runtime restarted while this tool call was in progress, so its
+> outcome is unknown. It may not have run, may have partially completed, or may
+> have finished, and a process it started may still be running. Inspect the
+> current state before deciding whether to retry. Do not assume it succeeded.
+
+No tool is rerun automatically. The Agent decides whether to repeat the call;
+a repeated side effect is accepted, and business operations stay idempotent.
+A process the lost Runner started is not killed in this phase. The Router
+writes the result as the display row of the call's kind (an MCP call keeps its
+`serverName`) under one key per call, so a takeover lost while writing repairs
+leaves the next one only the rest. Pi replays it as the call's toolResult.
+
+The result comes from a resolver registered for the call's tool when there is
+one: the delegation tools answer from their durable records (#251), and a
+Sandbox execution ledger could later answer bash. The plan knows no tool. The
+dangling calls of an Interrupted Turn keep the Interrupt's text instead.
+
+### The takeover marker
+
+Each takeover records `session.turn_resumed { turnId, generation, reason,
+danglingToolUseIds }` before anything else it writes for the Turn, once per
+generation; a lost takeover's marker stays and the next takeover adds its own.
+`reason` is the claim's previous state, `expired` or `released`, which the
+claim reports: PostgreSQL reads the previous owner from the row the claim
+already locks, so it costs no statement. `danglingToolUseIds` lists every call
+of the Turn that had no result when it moved, delegation waits included. The
+conversation view leaves the marker out; the trace lists it. #250 counts the
+`expired` markers since the last committed native message.
+
+### Continuing in Pi
+
+The Adapter is handed every committed event but the input itself, and
+`resume` when the plan continues. Pi continues through the `oma.continuation`
+control message (ADR-0014), which makes one request from the committed context
+under Pi's own retry and compaction. Pi refuses to continue from an assistant
+message and the provider requires a result for every tool call, which is why
+every dangling call is answered first and a final answer is not continued.
+
+A resumed Turn can end in the failed request the lost attempt committed. When
+the resumed attempt's own request fails as well, Pi's retry and overflow
+recovery drop one failed request before they continue and then refuse the one
+left. The Adapter drops every trailing failed or aborted request from the
+agent's context before Pi continues; such requests never reach the provider,
+and the session tree, so the durable history, keeps them.
+
+The lost attempt's Deltas carry its attempt; consoles keep the highest attempt
+of a Turn (#246), and the Turn's Delta stream is deleted only when the Turn
+completes (#247).
+
+### What a loss costs
+
+The Deltas being streamed and the model request in flight: the takeover asks
+again. Tool results that were not committed: reported as unknown. Pi 0.83 runs
+a message's tool calls in parallel and appends their results only after every
+call of the batch has finished, so a Runner lost while one call of a batch runs
+reports every call of the batch as unknown, including those that had finished.
+
+## Verification
+
+The crash-injection tests (`server/packages/api/test/crash-injection`) run a
+Session through real Routers, the real Pi SDK, a scripted model and scripted
+Sandbox tools over one in-memory store. A Runner is lost as kill -9 loses it:
+right after its Nth durable write, everything it awaits from then on never
+settles and its claim lapses; the next Runner takes over from its pending scan.
+A sweep loses the Runner after each write of a scenario and checks the
+assertions of every resumed Turn: each input completes once, in its original
+Turn and in order; no recovery error; one result per call; outcome unknown
+exactly for the calls a lost Runner left dangling; no tool runs twice; model
+steps continue from the log; one marker per takeover with its reason and
+dangling calls; no row written by a lost Runner. Later tickets add their
+scenarios to the same harness.
+
+## Consequences
+
+`recovery_partial_turn_aborted` and the `recovery_required` of a resumed wait
+beside an uncertain call no longer exist. A rollout, a liveness restart or an
+OOM costs a Turn at most a repeated request and the results it had not
+committed, not the Turn. An Agent may repeat a call whose effect already
+happened. Each takeover that writes results reads the log once more. The mock
+runtime has no history to continue: a taken-over mock Turn runs its script
+again.
+
+## Revised decisions
+
+- ADR-0010 §7 is superseded: an ordinary Turn whose Runner was lost continues;
+  its uncertain calls are reported to the Agent, which inspects before it
+  repeats. Child executions follow with #252.
+- ADR-0010 §4: the Host, not the Adapter, guarantees that a continued history
+  has a result for every call (#245); the plan answers dangling calls first.
+- ADR-0013 "Decision": uncertain executions are recovered automatically, by
+  reporting their outcome as unknown and continuing the Turn.
+- ADR-0014 "Structured continuation" serves every takeover, and trailing failed
+  requests leave the agent's context before Pi continues.
+- ADR-0016: Host-written results for calls without a native result, takeover
+  repairs as well as recovered waits, continue the native chain on replay.
+- ADR-0018 "Release boundary": general Turn recovery is introduced; the
+  committed log is its checkpoint. Graceful pause before the next request is
+  #254.
+- ADR-0020 "One stop path": the recovery rules the next claim applies are this
+  ADR's.
