@@ -125,6 +125,22 @@ The lost attempt's Deltas carry its attempt; consoles keep the highest attempt
 of a Turn (#246), and the Turn's Delta stream is deleted only when the Turn
 completes (#247).
 
+### The Turn's model and thinking
+
+Pi names the model (`provider/id`) and thinking level it resolved for an
+attempt in `agent.context_start`, which it writes when it claims the input,
+before its first model request. The plan runs every later attempt with the
+ones the Turn's first `agent.context_start` names (`RunPlan.config`): the
+Router hands the model as the Agent's and the level as the execution's
+thinking. Editing the Agent's model or the Session's thinking mid-Turn
+therefore changes only later Turns, as changing thinking always did, whether
+the takeover continues the Turn or prompts its input again. A delegation
+wait's configuration (ADR-0010) and a Child execution's own model and thinking
+keep precedence. Everything else is assembled from the configuration current
+when the attempt starts: the system prompt, Agent Files, Skills, MCP servers
+and tools. A Turn whose input no attempt claimed yet made no model request, so
+it starts with the current configuration.
+
 ### What a loss costs
 
 The Deltas being streamed and the model request in flight: the takeover asks

@@ -46,7 +46,8 @@ _Avoid_: chat, thread, run
 Session thinking intensity is an optional persisted override. An absent/null
 preference follows the current Agent on each new Turn; Loop Sessions retain
 their Agent snapshot. Changing it affects future Turns only, never another
-Session or the Agent itself. Explicit Delegation Execution settings and the
+Session or the Agent itself; a **Resumed Turn** keeps the thinking its first
+attempt ran with. Explicit Delegation Execution settings and the
 configuration recorded by a resumed wait retain precedence. Pi adapts the
 preference to model capabilities.
 
