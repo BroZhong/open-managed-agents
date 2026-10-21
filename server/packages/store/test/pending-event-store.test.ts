@@ -254,6 +254,24 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(1);
   });
 
+  it("reports to each claim how the claim before it ended: none, expired or released", async () => {
+    const event = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    const first = (await store.claim("sess_1", "host_a", 60_000))!;
+    expect(first.previous).toBeNull();
+    // The Runner holding it is lost: white-box its lapsed lease.
+    await harness.pool.query(`UPDATE pending_events SET claim_expires_at = $2 WHERE id = $1`, [event.id, new Date(Date.now() - 1_000)]);
+    const second = (await store.claim("sess_1", "host_b", 60_000))!;
+    expect(second.previous).toBe("expired");
+    // A Runner that hands the input over releases its claim.
+    await store.releaseClaim("sess_1", event.id, second);
+    const third = (await store.claim("sess_1", "host_c", 60_000))!;
+    expect(third.previous).toBe("released");
+    // The input queued behind an acknowledged one has no earlier claim.
+    await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    expect(await store.ack("sess_1", event.id, third)).toBe(true);
+    expect((await store.claim("sess_1", "host_a", 60_000))!.previous).toBeNull();
+  });
+
   it("D1 reports an Interrupt its predecessor accepted to the generation that takes over", async () => {
     const event = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
     const first = (await store.claim("sess_1", "host_a", 60_000))!;

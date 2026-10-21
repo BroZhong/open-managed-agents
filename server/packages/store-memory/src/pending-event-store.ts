@@ -108,6 +108,8 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     };
     const live = current.ownerId !== undefined && current.expiresAtMs > now;
     if (live) return null;
+    // A released claim drops its owner; an expired one keeps it. Generation 0 never had one.
+    const previous = current.generation === 0 ? null : current.ownerId === undefined ? "released" as const : "expired" as const;
     current.generation++;
     current.ownerId = ownerId;
     current.expiresAtMs = now + leaseMs;
@@ -118,6 +120,7 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       generation: current.generation,
       expiresAt: new Date(current.expiresAtMs),
       priorInterrupt: current.interruptGeneration !== undefined && current.interruptGeneration < current.generation,
+      previous,
     };
   }
 

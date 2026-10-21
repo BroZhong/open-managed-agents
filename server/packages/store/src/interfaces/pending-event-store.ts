@@ -39,7 +39,18 @@ export interface PendingEventClaim extends PendingEventClaimRef {
    * {@link PendingEventStore.renewClaim} reports, it is read once here.
    */
   priorInterrupt: boolean;
+  /**
+   * How the claim before this one on the same input ended: its lease
+   * `expired` (the Runner holding it was lost) or its owner `released` it (a
+   * handoff, or a Turn left waiting). Null for the input's first claim. A
+   * claim with a predecessor takes over a Turn another attempt may have
+   * started.
+   */
+  previous: PendingEventClaimEnd | null;
 }
+
+/** How a claim on an input ended without acknowledging it. */
+export type PendingEventClaimEnd = "expired" | "released";
 
 export interface PendingEventFence extends PendingEventClaimRef {
   eventId: string;

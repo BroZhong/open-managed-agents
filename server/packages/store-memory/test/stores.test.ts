@@ -357,6 +357,27 @@ describe("createMemoryStores", () => {
       expect((await stores.pendingEventStore.claim("s1", "host_c", 60_000))!.priorInterrupt).toBe(true);
     });
 
+    it("reports to each claim how the claim before it ended: none, expired or released", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 20))!;
+      expect(first.previous).toBeNull();
+      // The Runner holding it is lost: its lease runs out unrenewed.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
+      expect(second.previous).toBe("expired");
+      // A Runner that hands the input over releases its claim.
+      await stores.pendingEventStore.releaseClaim("s1", event.id, second);
+      expect((await stores.pendingEventStore.claim("s1", "host_c", 60_000))!.previous).toBe("released");
+    });
+
+    it("reports no earlier claim to the claim of the input queued behind an acknowledged one", async () => {
+      const done = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      expect(await stores.pendingEventStore.ack("s1", done.id, first)).toBe(true);
+      expect((await stores.pendingEventStore.claim("s1", "host_a", 60_000))!.previous).toBeNull();
+    });
+
     it("D5 reports no Interrupt to the claim of the input queued behind the interrupted one", async () => {
       const interrupted = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
       await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });

@@ -84,6 +84,7 @@ export type {
   PendingEvent,
   PendingEventEnqueueInput,
   PendingEventClaim,
+  PendingEventClaimEnd,
   PendingEventClaimRef,
   PendingEventFence,
   PendingEventRenewal,

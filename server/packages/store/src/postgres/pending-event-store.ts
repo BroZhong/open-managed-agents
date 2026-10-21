@@ -154,9 +154,11 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       await client.query("BEGIN");
       // Acquire the row lock without any time predicate. PostgreSQL may evaluate
       // WHERE/SET expressions before a lock wait, so all lease-clock checks must
-      // happen in the following statement, after this SELECT has returned.
-      const head = await client.query<{ id: string }>(
-        `SELECT id FROM pending_events
+      // happen in the following statement, after this SELECT has returned. The
+      // locked row is the version the UPDATE replaces, so its owner tells how
+      // the previous claim ended: release clears it, expiry leaves it.
+      const head = await client.query<{ id: string; claim_owner: string | null; claim_generation: string | number }>(
+        `SELECT id, claim_owner, claim_generation FROM pending_events
          WHERE session_id = $1
          ORDER BY seq ASC
          LIMIT 1
@@ -187,6 +189,8 @@ export class PgPendingEventStore implements PendingEventIngressStore {
         generation: Number(row.claim_generation),
         expiresAt: new Date(row.claim_expires_at!),
         priorInterrupt: row.prior_interrupt === true,
+        previous: Number(head.rows[0].claim_generation) === 0 ? null
+          : head.rows[0].claim_owner === null ? "released" : "expired",
       } : null;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
