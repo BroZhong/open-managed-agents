@@ -559,19 +559,9 @@ export class SessionRouter {
         const renewal = await this.renewPendingClaim(sessionId, claim);
         if (stopped) return;
         if (!renewal.renewed) { lost(new PendingLeaseLostError()); return; }
-        let shouldInterrupt = renewal.interruptRequested;
         const execution = heartbeat.execution;
-        if (execution && this.delegationStore) {
-          for (const command of await this.delegationStore.listCommands(execution.id)) {
-            if (command.kind !== "interrupt" || command.status !== "accepted") continue;
-            await this.delegationStore.applyCommand(command.id, this.fenceFor(claim), {
-              type: "session.interrupt_requested", data: { commandId: command.id, turnId: execution.turnId, source: "delegation" },
-              sessionThreadId: "sthr_primary", idempotencyKey: `interrupt:${command.id}`,
-            });
-            shouldInterrupt = true;
-          }
-        }
-        if (shouldInterrupt) { this.interrupt(sessionId); return; }
+        const commanded = execution !== undefined && await this.applyInterruptCommands(sessionId, execution, this.fenceFor(claim));
+        if (renewal.interruptRequested || commanded) { this.interrupt(sessionId); return; }
       } catch (error) {
         if (!stopped) lost(error);
         return;
@@ -599,6 +589,33 @@ export class SessionRouter {
     timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
     this.claimHeartbeats.set(sessionId, heartbeat);
     return heartbeat;
+  }
+
+  /**
+   * Record each Interrupt the parent accepted for a Child execution in the
+   * child's log, once, under this claim. True when there was one: the Turn
+   * must stop.
+   */
+  private async applyInterruptCommands(sessionId: string, execution: DelegationExecution, fence: PendingEventFence): Promise<boolean> {
+    if (!this.delegationStore) return false;
+    let accepted = false;
+    for (const command of await this.delegationStore.listCommands(execution.id)) {
+      if (command.kind !== "interrupt" || command.status !== "accepted") continue;
+      const applied = await this.delegationStore.applyCommand(command.id, fence, {
+        type: "session.interrupt_requested", data: { commandId: command.id, turnId: execution.turnId, source: "delegation" },
+        sessionThreadId: "sthr_primary", idempotencyKey: `interrupt:${command.id}`,
+      });
+      // The command's transaction appended it, outside the journal.
+      if (applied.appliedEventSeq !== undefined) await this.publishCommitted(sessionId, applied.appliedEventSeq);
+      accepted = true;
+    }
+    return accepted;
+  }
+
+  /** Publish an event another store transaction committed to the log. */
+  private async publishCommitted(sessionId: string, seq: number): Promise<void> {
+    const stored = (await this.eventLogStore.getEvents(sessionId, { afterSeq: seq - 1, limit: 1 })).data[0];
+    if (stored?.seq === seq) this.eventStreamHub.publish(sessionId, { type: stored.type, seq: stored.seq, data: stored.data });
   }
 
   /**
@@ -1260,7 +1277,7 @@ export class SessionRouter {
         events: priorEvents.filter((event) => event.seq > promotedEvent.seq),
         waits: await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [],
       };
-      const plan = planResume(facts);
+      let plan = planResume(facts);
       turnId = plan.turnId;
       journal.bindTurn(turnId);
       // A completed Turn is never run again. Its acknowledgement must still
@@ -1308,8 +1325,12 @@ export class SessionRouter {
         delegationExecution = started;
         heartbeat.execution = started;
         // Starting the execution is how this claim learns its state. One that
-        // has not ended changes no plan; one that has ends the Turn now.
-        const executionPlan = planResume({ ...facts, execution: started });
+        // has not ended changes no plan, unless the parent asked to stop it
+        // before this claim and its lost owner never did; one that has ended
+        // ends the Turn now. A first start has no earlier owner to have missed it.
+        const interruptRequested = claim.previous !== null && !isTerminalExecution(started) &&
+          (await this.delegationStore.listCommands(started.id)).some((command) => command.kind === "interrupt" && command.status !== "not_applied");
+        const executionPlan = planResume({ ...facts, execution: { ...started, interruptRequested } });
         if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
           this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
           await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
@@ -1319,10 +1340,17 @@ export class SessionRouter {
           if (!await this.completeTurn(journal, sessionId, pendingEvent.id, executionPlan.turnId, pendingFence)) return;
           continue;
         }
+        if (executionPlan.kind !== "acknowledge") plan = executionPlan;
       }
 
       this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover);
       if (plan.kind === "complete") {
+        if (plan.cause === "interrupted" && delegationExecution) {
+          // The parent's Interrupt takes effect now, after the takeover marker:
+          // the child's log records it as its lost owner would have.
+          await journal.flush();
+          await this.applyInterruptCommands(sessionId, delegationExecution, pendingFence);
+        }
         if (plan.interruptChildren) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
         await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId, plan.repairs, plan.repairOutcome, plan.error);
         // Under the key of the attempt that accepted the Interrupt: whichever writes it, it is written once.

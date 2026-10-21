@@ -27,9 +27,13 @@ export interface ResumeFacts {
    * The Child execution the input runs, as starting it under this claim left
    * it. The Router starts it only once the plan without it is not to
    * acknowledge, then plans again: an execution that has not ended changes
-   * no plan, one that has ended ends the Turn.
+   * no plan, one that has ended ends the Turn. A running one a lost owner
+   * left is this claim's now, and its Turn continues like any other.
    */
-  execution?: Pick<DelegationExecution, "status" | "turnId" | "result">;
+  execution?: Pick<DelegationExecution, "status" | "turnId" | "result"> & {
+    /** The parent asked to stop the execution before this claim, and the stop never took effect. */
+    interruptRequested?: boolean;
+  };
 }
 
 export type ResumePlan = AcknowledgePlan | CompletePlan | RunPlan;
@@ -68,7 +72,7 @@ export interface CompletePlan {
     | "turn_ended"
     /** The Agent's final answer is committed: the Turn is done, no model request is made. */
     | "answered"
-    /** The Child execution the input runs has ended, or its lost owner left its outcome uncertain. */
+    /** The Child execution the input runs has ended. */
     | "execution_ended"
     /** An earlier attempt accepted an Interrupt it did not live to apply: the Turn ends as an Interrupted Turn. */
     | "interrupted"
@@ -139,7 +143,8 @@ export interface RunPlan {
  *   1. its Turn completed: acknowledge the input;
  *   2. the Child execution it runs has ended: complete the Turn;
  *   3. the log ends the Turn: repair the dangling calls, complete it;
- *   4. an earlier generation accepted an Interrupt: repair, end as an Interrupted Turn;
+ *   4. an earlier generation accepted an Interrupt, or the parent asked to
+ *      stop the Child execution: repair, end as an Interrupted Turn;
  *   5. this claim is the fourth expired takeover since the Turn last made
  *      progress: repair, end it with recovery_limit_exceeded;
  *   6. the Turn waits on delegations: resume the waits, give every other
@@ -175,20 +180,16 @@ export function planResume(facts: ResumeFacts): ResumePlan {
     kind: "complete", cause, turnId, repairs: dangling, repairOutcome: "unknown", interruptChildren: false, ...plan, ...takeover,
   });
   const execution = facts.execution;
-  if (execution && isTerminalExecution(execution)) {
-    const executionTurnId = execution.turnId ?? turnId;
-    return execution.status === "recovery_required"
-      ? complete("execution_ended", { turnId: executionTurnId,
-        error: { phase: "recovery_required", code: "recovery_required", message: execution.result?.reason } })
-      : complete("execution_ended", { turnId: executionTurnId, repairs: [] });
-  }
+  // An execution ends with the outcome its Turn's log records, or before it ran: nothing is left to add.
+  if (execution && isTerminalExecution(execution)) return complete("execution_ended", { turnId: execution.turnId ?? turnId, repairs: [] });
   if (output.some((event) => event.type === "session.status_idle" || event.type === "session.error" || event.type === "session.turn_aborted")) {
     return complete("turn_ended", { interruptChildren: true,
       repairOutcome: output.some((event) => event.type === "session.turn_aborted") ? "interrupted" : "unknown" });
   }
-  // The user stopped this Turn and the log shows the stop never took effect.
-  // Continuing it would ignore the stop, so it ends as the Interrupt would have ended it.
-  if (facts.claim.priorInterrupt) return complete("interrupted", { repairOutcome: "interrupted", interruptChildren: true });
+  // The user, or the parent of a Child execution, stopped this Turn and the
+  // log shows the stop never took effect. Continuing it would ignore the
+  // stop, so it ends as the Interrupt would have ended it.
+  if (facts.claim.priorInterrupt || execution?.interruptRequested) return complete("interrupted", { repairOutcome: "interrupted", interruptChildren: true });
   // A Turn that loses its Runner at the same point every time would take the
   // Runners down one after another. Losses between which it commits progress
   // are what a long Turn costs; losses without any are the symptom.

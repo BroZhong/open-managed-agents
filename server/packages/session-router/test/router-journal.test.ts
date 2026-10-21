@@ -203,15 +203,18 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
   });
 
   describe("writes that used to be appended without being published", () => {
-    it("publishes the recovery_required error of a Child execution its lost owner left running", async () => {
+    it("C12 publishes the Interrupt a Child execution's parent asked for before its lost owner applied it, and the Interrupted Turn", async () => {
       const h = await harness({ async run() { throw new Error("must not run"); } });
       const parent = await h.deadClaim();
-      const execution = await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.session.id,
-        callerTurnId: parent.turnId, callerToolUseId: "call", prompt: "child", mode: "sync", parentModel: "test",
-        maxSteps: 30, sandboxSessionId: h.session.id }, parent.fence);
+      const caller = { tenantId: "tenant", callerSessionId: h.session.id, callerTurnId: parent.turnId };
+      const execution = await h.stores.delegationStore.accept({ ...caller, callerToolUseId: "call", prompt: "child", mode: "sync",
+        parentModel: "test", maxSteps: 30, sandboxSessionId: h.session.id }, parent.fence);
       const lost = (await h.stores.pendingEventStore.claim(execution.childId, "dead-host", 30_000))!;
       const lostFence = { eventId: execution.pendingEventId, ownerId: lost.ownerId, generation: lost.generation };
       await h.stores.delegationStore.startExecution(execution.id, lostFence, "child-turn", {}, 4);
+      // The parent was interrupted while it waited; the child's Runner was lost before it saw the command.
+      const command = await h.stores.delegationStore.command({ ...caller, callerToolUseId: `interrupt_${execution.id}`,
+        childId: execution.childId, executionId: execution.id, kind: "interrupt", message: "The originating synchronous parent Turn was interrupted" }, parent.fence);
       await h.stores.pendingEventStore.releaseClaim(execution.childId, execution.pendingEventId, lostFence);
       const childFrames = watch(h.hub, execution.childId);
 
@@ -220,9 +223,13 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       await sleep(0);
 
       const log = await h.log(child.id);
-      expect(log.map(stored => stored.type)).toEqual(["delegation.input", "session.turn_resumed", "session.error", "session.turn_completed", "session.status_idle"]);
-      expect(log[2].data).toMatchObject({ error: { code: "recovery_required" } });
+      expect(log.map(stored => stored.type)).toEqual(["delegation.input", "session.turn_resumed", "session.interrupt_requested",
+        "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
+      expect(log[2].data).toMatchObject({ commandId: command.id, source: "delegation" });
       expectPublishedInOrder(childFrames, log);
+      expect(await h.stores.delegationStore.getExecution("tenant", execution.id)).toMatchObject({ status: "interrupted" });
+      expect(await h.stores.delegationStore.listCommands(execution.id)).toEqual([expect.objectContaining({ id: command.id, status: "applied", appliedEventSeq: log[2].seq })]);
+      expect(h.errors).toEqual([]);
     });
 
     it("publishes the results a resumed wait and its dangling sibling get before the Turn continues", async () => {

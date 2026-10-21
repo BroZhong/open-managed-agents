@@ -407,22 +407,18 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
 
 /** The Child execution of the input, as starting it under the new claim left it. */
 const CHILD_TURN = "turn_3_a1";
-const lostOwner = { status: "recovery_required", turnId: CHILD_TURN, result: { status: "recovery_required",
-  reason: "Execution lease expired; external tool effects may be uncertain. Inspect history and resume explicitly.",
-  output: "", trace: { sessionId: "sess", turnId: CHILD_TURN } } } as const;
-const RECOVERY_REQUIRED = { phase: "recovery_required", code: "recovery_required", message: lostOwner.result.reason };
-const executionEnded = (turnId: string, repairs: DanglingToolCall[] = [], error?: typeof RECOVERY_REQUIRED): ResumePlan => ({
-  kind: "complete", cause: "execution_ended", turnId, repairs, repairOutcome: "unknown", interruptChildren: false,
-  ...(error ? { error } : {}), takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
+const executionEnded = (turnId: string): ResumePlan => ({
+  kind: "complete", cause: "execution_ended", turnId, repairs: [], repairOutcome: "unknown", interruptChildren: false, takeover: expired() });
+/** A running Child execution the parent asked to stop before this claim: its Interrupt never took effect. */
+const stopRequested = { status: "running", turnId: CHILD_TURN, interruptRequested: true } as const;
 const executionRows: Array<[string, ResumeFacts, ResumePlan]> = [
-  ["C7 the Child execution's lost owner left it running: recovery_required in its Turn, repair its call",
-    facts({ execution: lostOwner, events: log(running, toolUse("call_1")) }),
-    executionEnded(CHILD_TURN, [bash("call_1")], RECOVERY_REQUIRED)],
-  ["C7 a lost owner's execution outranks the output it left",
-    facts({ execution: lostOwner, events: log(...started, assistant([text("half done")])) }),
-    executionEnded(CHILD_TURN, [], RECOVERY_REQUIRED)],
   ["the Child execution ended before its Turn's completion marker: complete, nothing to add",
     facts({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(...started, assistant([text("done")])) }),
+    executionEnded(CHILD_TURN)],
+  // Only a session.error in its log ends an execution as recovery_required (#250): the log says it already.
+  ["an execution the takeover limit ended before its completion marker: complete, nothing to add",
+    facts({ execution: { status: "recovery_required", turnId: CHILD_TURN, result: { status: "recovery_required", reason: "limit", output: "",
+      trace: { sessionId: "sess", turnId: CHILD_TURN } } }, events: log(running, toolUse("call_1"), toolResult("call_1"), sessionError("recovery_limit_exceeded")) }),
     executionEnded(CHILD_TURN)],
   ["a Child execution that ended without running completes this attempt's Turn",
     facts({ execution: { status: "interrupted" } }),
@@ -433,6 +429,15 @@ const executionRows: Array<[string, ResumeFacts, ResumePlan]> = [
   ["D1 a Child execution that has ended outranks the Interrupt its lost owner accepted",
     afterInterrupt({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(...started, assistant([text("done")])) }),
     executionEnded(CHILD_TURN)],
+  ["C12 the parent asked to stop the Child execution and its owner was lost mid-tool: repair, Interrupted Turn",
+    facts({ execution: stopRequested, events: log(...started, assistant([text("running it"), call("call_1")])) }),
+    interrupted([bash("call_1")])],
+  ["C12 the parent asked to stop the Child execution after its final answer was committed: Interrupted Turn",
+    facts({ execution: stopRequested, events: log(...started, assistant([text("done")])) }),
+    interrupted()],
+  ["C12 the stop took effect before the owner was lost: the log ends the Turn, complete it",
+    facts({ execution: stopRequested, events: log(...started, assistant([call("call_1")]), ["session.turn_aborted", { turnId: TURN }]) }),
+    ended([bash("call_1")], { repairOutcome: "interrupted" })],
 ];
 
 describe("planResume", () => {
@@ -441,9 +446,10 @@ describe("planResume", () => {
   });
 
   // The Router learns an execution's state by starting it, once the input is not to be acknowledged.
+  // C7/C10: a running execution its lost owner left, now this claim's, continues like any Turn.
   it.each(rows)("a Child execution that has not ended changes no plan: %s", (_name, given, plan) => {
     for (const status of ["queued", "running"] as const) {
-      expect(planResume({ ...given, execution: { status, turnId: CHILD_TURN } })).toEqual(plan);
+      expect(planResume({ ...given, execution: { status, turnId: CHILD_TURN, interruptRequested: false } })).toEqual(plan);
     }
   });
 });
