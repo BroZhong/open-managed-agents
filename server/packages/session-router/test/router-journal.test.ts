@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
+import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { presentEvent, type StoredEvent } from "@oma-server/store";
 import type { Adapter, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
@@ -394,5 +395,96 @@ describe("an Adapter that writes through its journal entry", () => {
     expect(recorded).toEqual(["usage"]);
     expect(failures).toEqual(["Turn journal write entry revoked"]);
     expect((await h.log()).map(stored => stored.type)).not.toContain("span.model_request_end");
+  });
+});
+
+describe("Deltas of a Turn attempt", () => {
+  /** The Delta frames an SSE subscriber that asked for chunks receives, as parsed data. */
+  function watchDeltas(hub: InProcessEventStreamHub, sessionId: string): Array<Record<string, unknown>> {
+    const reader = hub.subscribe(sessionId, { includeChunks: true }).stream.getReader();
+    const deltas: Array<Record<string, unknown>> = [];
+    void (async () => {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        const lines = value.trim().split("\n");
+        // Durable frames carry their seq as the SSE id; Deltas have none.
+        if (lines.some(line => line.startsWith("id: "))) continue;
+        deltas.push(JSON.parse(lines.find(line => line.startsWith("data: "))!.slice("data: ".length)));
+      }
+    })();
+    return deltas;
+  }
+
+  it("tags live Delta frames and Redis records with the claim generation, also after an expired claim", async () => {
+    const turnStreamStore = new InMemoryTurnStreamStore();
+    const turnIds: string[] = [];
+    let streamed!: () => void;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const h = await harness({ async *run(input) {
+      turnIds.push(input.turnId);
+      input.journal!.delta(event("agent.message_stream_start") as StreamEvent, input.blockBase!);
+      input.journal!.delta(event("agent.message_chunk", { text: `attempt ${turnIds.length}` }) as StreamEvent, input.blockBase!);
+      streamed();
+      // The first attempt is lost before it commits anything, so the input is safely rerun.
+      if (turnIds.length === 1) {
+        await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
+        return;
+      }
+      await finished;
+      input.journal!.record(text("done") as DurableEvent);
+    } });
+    const live = watchDeltas(h.hub, h.session.id);
+    // Attempts may share the Turn's stream, so each check reads only what is new since the last.
+    const seenIds = new Set<string>();
+    let seenFrames = 0;
+    /** The attempt's two Deltas in Redis and on the live stream, as (attempt, type) pairs. */
+    const streamedBy = async (turnId: string) => {
+      const fresh = async () => (await turnStreamStore.readDeltas(h.session.id, turnId)).filter(delta => !seenIds.has(delta.id));
+      await until(async () => (await fresh()).length === 2 && live.length - seenFrames === 2);
+      const redis = await fresh();
+      redis.forEach(delta => seenIds.add(delta.id));
+      const frames = live.slice(seenFrames);
+      seenFrames = live.length;
+      expect(frames.every(frame => frame.turnId === turnId)).toBe(true);
+      return {
+        redis: redis.map(({ attempt, type }) => ({ attempt, type })),
+        live: frames.map(({ attempt, type }) => ({ attempt, type })),
+      };
+    };
+    const tagged = (attempt: number) => [
+      { attempt, type: "agent.message_stream_start" },
+      { attempt, type: "agent.message_chunk" },
+    ];
+    // runner-a loses its lease mid-attempt and never claims again.
+    let lostOwner: string | undefined;
+    const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) =>
+      claim.ownerId === lostOwner ? false : renew(sessionId, eventId, claim, leaseMs);
+    const claim = h.stores.pendingEventStore.claim.bind(h.stores.pendingEventStore);
+    h.stores.pendingEventStore.claim = async (sessionId, ownerId, leaseMs) =>
+      ownerId === lostOwner ? null : claim(sessionId, ownerId, leaseMs);
+    await h.enqueue();
+
+    let started = new Promise<void>((resolve) => { streamed = resolve; });
+    const first = h.makeRouter({ turnStreamStore, pendingClaimOwnerId: "runner-a", pendingClaimLeaseMs: 100,
+      pendingClaimRenewIntervalMs: 30, wakeSession: () => {} });
+    const lost = first.handleNewEvent(h.session.id, h.agent);
+    await started;
+    expect(await streamedBy(turnIds[0])).toEqual({ redis: tagged(1), live: tagged(1) });
+    lostOwner = "runner-a";
+    await lost;
+    await sleep(120); // the lost claim expires
+
+    started = new Promise<void>((resolve) => { streamed = resolve; });
+    const replacement = h.makeRouter({ turnStreamStore, pendingClaimOwnerId: "runner-b" });
+    const resumed = replacement.handleNewEvent(h.session.id, h.agent);
+    await started;
+    expect(await streamedBy(turnIds[1])).toEqual({ redis: tagged(2), live: tagged(2) });
+    finish();
+    await resumed;
+    expect(await replacement.waitForIdle(4000)).toBe(true);
+    expect((await h.log()).filter(stored => stored.type === "session.turn_completed")).toHaveLength(1);
   });
 });
