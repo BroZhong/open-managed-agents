@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { ContentBlock, SessionEvent } from "./types.js";
+import type { ContentBlock, SessionEvent, StreamEvent } from "./types.js";
 
 /**
  * Generate a unique event ID with `sevt_` prefix.
@@ -66,7 +66,7 @@ export function isCanonicalEvent(event: SessionEvent): boolean {
   return CANONICAL_TYPES.has(event.type);
 }
 
-export function isStreamEvent(event: SessionEvent): boolean {
+export function isStreamEvent(event: SessionEvent): event is StreamEvent {
   return STREAM_TYPES.has(event.type);
 }
 

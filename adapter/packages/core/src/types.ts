@@ -1,3 +1,4 @@
+import type { TurnJournalPort } from "./interface.js";
 import type { ToolExecutor } from "./tool-executor.js";
 
 // ─── Content blocks ──────────────────────────────────────────────────────────
@@ -148,6 +149,18 @@ export interface AdapterInput {
   inputEventId?: string;
   /** Host persistence barrier. Rejecting must stop requests using new context. */
   persistContext?: (events: SessionEvent[]) => Promise<void>;
+  /**
+   * The Turn attempt's write entry (ADR-0020). An Adapter given one records
+   * every Complete Event and emits every Delta through it, flushes before each
+   * tool execution and model request, and yields nothing from `run()`.
+   */
+  journal?: TurnJournalPort;
+  /**
+   * blockIndex of this attempt's first output block: the highest blockIndex
+   * already committed in the Turn plus one, or 0 for a new Turn. The Adapter
+   * numbers its Deltas and Complete Events from here.
+   */
+  blockBase?: number;
   subagents?: HostSubagentCapability;
   execution?: AdapterExecution;
   /** Resume the existing Turn from history, after Host persists these results. */
@@ -294,7 +307,13 @@ export type SpanEvent =
 
 // ─── Canonical agent events ──────────────────────────────────────────────────
 
-export interface AgentMessageEvent extends BaseEvent {
+/** A Complete Event that replaces the Deltas of one streamed output block. */
+interface StreamedBlockEvent extends BaseEvent {
+  /** Output block within the Turn; equals the blockIndex its Deltas carried. */
+  blockIndex?: number;
+}
+
+export interface AgentMessageEvent extends StreamedBlockEvent {
   type: "agent.message";
   content: ContentBlock[];
   /**
@@ -320,12 +339,12 @@ export interface AgentMessageEvent extends BaseEvent {
   stopReason?: string;
 }
 
-export interface AgentThinkingEvent extends BaseEvent {
+export interface AgentThinkingEvent extends StreamedBlockEvent {
   type: "agent.thinking";
   text: string;
 }
 
-export interface AgentToolUseEvent extends BaseEvent {
+export interface AgentToolUseEvent extends StreamedBlockEvent {
   type: "agent.tool_use";
   toolUseId: string;
   name: string;
@@ -345,7 +364,7 @@ export interface AgentToolResultEvent extends BaseEvent {
   isError?: boolean;
 }
 
-export interface AgentMcpToolUseEvent extends BaseEvent {
+export interface AgentMcpToolUseEvent extends StreamedBlockEvent {
   type: "agent.mcp_tool_use";
   toolUseId: string;
   serverName: string;
