@@ -2,6 +2,12 @@
 
 ## Status
 
+The snapshot timing in "Context persistence through public hooks" is revised by
+[ADR-0020](0020-turn-journal-single-write-entry.md): an awaited Agent
+`message_end` listener, which runs after Pi's native append, commits each native
+message; model-request, `tool_call` and settlement snapshots are no longer the
+durability boundary.
+
 Accepted. Supersedes ADR-0005's requirement to execute native tool factories on
 Host through injected I/O, ADR-0010's patched continuation entry point, and
 ADR-0013's SDK patch and no-JSONL-import implementation decisions. Their Session,
