@@ -164,10 +164,12 @@ export interface AdapterInput {
    */
   journal: TurnJournalPort;
   /**
-   * Continue a Turn an earlier attempt started instead of prompting `message`
-   * as a new Turn. `history` then ends with what the Turn already committed,
-   * with a durable result for every tool call. Absent for a new Turn, which
-   * starts at model step 0 and blockIndex 0.
+   * Continue a Turn an earlier attempt started instead of prompting `message`.
+   * `history` then ends with what the Turn already committed, with a durable
+   * result for every tool call; its last message is never a final answer.
+   * Absent when `message` is prompted: a new Turn, or one whose earlier
+   * attempts never committed the input into its native history. Such a Turn
+   * starts at model step 0 and blockIndex 0, after whatever `history` holds.
    */
   resume?: AdapterResume;
   subagents?: HostSubagentCapability;
