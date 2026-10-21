@@ -30,9 +30,31 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionEvent } from "@open-managed-agents/adapter-core";
+import type { SessionEvent, StreamEvent } from "@open-managed-agents/adapter-core";
+import { MemoryTurnJournal, runWithJournal, type DurableEvent } from "@open-managed-agents/adapter-core/testing";
 import { LocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/index.js";
+
+function print(event: SessionEvent) {
+  const { id, timestamp, type, ...rest } = event as any;
+  const payload = Object.keys(rest).length > 0 ? JSON.stringify(rest) : "";
+  console.log(
+    `[${timestamp}] ${type}${payload ? " " + payload.slice(0, 200) : ""}`,
+  );
+}
+
+/** The Adapter writes through its Turn journal; print each event as it arrives. */
+class PrintingJournal extends MemoryTurnJournal {
+  override record(event: DurableEvent): void {
+    print(event);
+    super.record(event);
+  }
+
+  override delta(event: StreamEvent, blockIndex: number): void {
+    print(event);
+    super.delta(event, blockIndex);
+  }
+}
 
 async function main() {
   // Strip the argv separator "--" that pnpm passes through when this script is
@@ -69,7 +91,7 @@ async function main() {
     console.log(`(tool executor root: ${root})\n`);
   }
 
-  const events = adapter.run({
+  await runWithJournal(adapter, {
     sessionId: "e2e-session",
     turnId: "e2e-turn",
     message: { role: "user", content: [{ type: "text", text: prompt }] },
@@ -94,15 +116,7 @@ async function main() {
     history: [],
     constraints: { timeoutSeconds: 120 },
     ...(toolExecutor ? { toolExecutor } : {}),
-  });
-
-  for await (const event of events as AsyncIterable<SessionEvent>) {
-    const { id, timestamp, type, ...rest } = event as any;
-    const payload = Object.keys(rest).length > 0 ? JSON.stringify(rest) : "";
-    console.log(
-      `[${timestamp}] ${type}${payload ? " " + payload.slice(0, 200) : ""}`,
-    );
-  }
+  }, new PrintingJournal());
 
   console.log("\n--- Done ---");
 }
