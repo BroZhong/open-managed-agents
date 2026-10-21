@@ -222,6 +222,26 @@ describe("TurnJournal", () => {
       expect(() => journal.adapter.record(message("bad"))).not.toThrow();
       await expect(journal.adapter.flush()).rejects.toBe(invalid);
     });
+
+    it("tells its owner once, at the first failure, so the owner can stop the attempt", async () => {
+      const f = await fixture();
+      const base = f.options();
+      const outage = new Error("connection terminated");
+      const failures: unknown[] = [];
+      const journal = f.journal({
+        append: async (event, key) => { if ((event.data as { id?: string }).id === "b") throw outage; return base.append(event, key); },
+        onFail: error => failures.push(error),
+      });
+      journal.adapter.record(message("a"));
+      await journal.adapter.flush();
+      expect(failures).toEqual([]);
+      journal.adapter.record(message("b"));
+      const flushed = journal.adapter.flush();
+      await expect(flushed).rejects.toBe(outage);
+      expect(failures).toEqual([outage]);
+      await expect(journal.flush()).rejects.toBe(outage);
+      expect(failures).toEqual([outage]);
+    });
   });
 
   describe("Adapter revocation", () => {

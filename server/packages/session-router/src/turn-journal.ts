@@ -40,6 +40,11 @@ export interface TurnJournalOptions {
   outputDelta(delta: JournalDelta): void | Promise<unknown>;
   /** Durable form and idempotency key of an event the Adapter recorded. */
   fromAdapter(event: Exclude<SessionEvent, StreamEvent>): { event: JournalEvent; key: string };
+  /**
+   * Called once, at the first failure, before the failing flush rejects: the
+   * owner stops the attempt on it as on a lost lease (ADR-0020).
+   */
+  onFail?(error: unknown): void;
   logger?: Pick<Console, "info">;
 }
 
@@ -149,6 +154,7 @@ export class TurnJournal {
     if (this.failed) return;
     this.failed = true;
     this.failure = error;
+    this.options.onFail?.(error);
   }
 
   /** Group commit: one flush writes everything recorded until it runs. */
