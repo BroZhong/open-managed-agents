@@ -16,6 +16,6 @@ export class BestEffortTurnStreamStore implements TurnStreamStore {
   clearActiveTurn(sessionId: string) { return this.attempt(undefined, () => this.inner.clearActiveTurn(sessionId)); }
   compareAndSetActiveTurn(sessionId: string, expected: string | null, next: ActiveTurn | null) {
     // Failure is not a lost execution lease. Only PG fences execution authority.
-    return this.attempt(true, () => this.inner.compareAndSetActiveTurn!(sessionId, expected, next));
+    return this.attempt(true, () => this.inner.compareAndSetActiveTurn(sessionId, expected, next));
   }
 }

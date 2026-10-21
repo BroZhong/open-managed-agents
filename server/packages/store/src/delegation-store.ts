@@ -175,7 +175,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       const siblings = await tx.read<DelegationExecution>("executions", { tenantId: execution.tenantId, callerSessionId: execution.callerSessionId, status: "running" });
       let active = 0;
       for (const sibling of siblings) {
-        const owns = sibling.ownerId && sibling.generation !== undefined && await tx.pending.ownsClaim?.(sibling.childId, sibling.pendingEventId, { ownerId: sibling.ownerId, generation: sibling.generation });
+        const owns = sibling.ownerId && sibling.generation !== undefined && await tx.pending.ownsClaim(sibling.childId, sibling.pendingEventId, { ownerId: sibling.ownerId, generation: sibling.generation });
         if (owns) active++;
         else await this.finish(tx, sibling, { status: "recovery_required", reason: "Execution owner lease expired; inspect uncertain effects before resume.", output: "", trace: { sessionId: sibling.childId, turnId: sibling.turnId } });
       }
@@ -350,7 +350,7 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
           if ((await tx.sessions.getById(use.sessionId))?.status !== "terminated") return true;
           continue;
         }
-        if (await tx.pending.ownsClaim?.(use.sessionId, use.pendingEventId, use)) return true;
+        if (await tx.pending.ownsClaim(use.sessionId, use.pendingEventId, use)) return true;
         await tx.remove("resource_uses", use.pendingEventId);
       }
       // A queued accepted child still depends on the same environment (e.g.

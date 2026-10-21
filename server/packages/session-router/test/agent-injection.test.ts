@@ -2,9 +2,7 @@ import { describe, it, expect } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import {
-  InMemoryEventLogStore,
-  InMemoryPendingEventStore,
-  InMemorySessionStore,
+  createMemoryStores,
   InMemoryAgentFileStore,
   InMemorySkillStore,
   InMemorySkillArtifactStore,
@@ -51,9 +49,7 @@ async function runOneTurn(deps: {
   agent?: Agent;
   thinking?: Agent["thinking"];
 }) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const { adapter, last } = capturingAdapter();
   const agent = deps.agent ?? AGENT;

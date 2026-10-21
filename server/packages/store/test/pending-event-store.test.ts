@@ -45,6 +45,13 @@ describe("PgPendingEventStore", () => {
     );
   }
 
+  /** Remove the FIFO head the only supported way: claim it, then ack it under that fence. */
+  async function take(sessionId: string) {
+    const claim = await store.claim(sessionId, "host_take", 60_000);
+    if (claim) expect(await store.ack(sessionId, claim.event.id, claim)).toBe(true);
+    return claim?.event ?? null;
+  }
+
   it("atomically enqueues a whole batch only while the Session is active", async () => {
     await seedSession("sess_active");
     const accepted = await store.enqueueBatchIfSessionActive("sess_active", [
@@ -86,7 +93,7 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(0);
   });
 
-  it("enqueue writes an event and dequeue returns it FIFO then deletes", async () => {
+  it("enqueue writes an event that claim returns FIFO and a fenced ack deletes", async () => {
     await store.enqueue("sess_1", {
       type: "user.message",
       data: { content: "hello" },
@@ -94,7 +101,7 @@ describe("PgPendingEventStore", () => {
       apiKeyId: "apikey_1",
     });
 
-    const event = await store.dequeue("sess_1");
+    const event = await take("sess_1");
     expect(event).not.toBeNull();
     expect(event!.sessionId).toBe("sess_1");
     expect(event!.type).toBe("user.message");
@@ -104,7 +111,7 @@ describe("PgPendingEventStore", () => {
     expect(event!.arrivedAt).toBeInstanceOf(Date);
     expect(event!.id).toBeDefined();
 
-    const next = await store.dequeue("sess_1");
+    const next = await take("sess_1");
     expect(next).toBeNull();
   });
 
@@ -121,14 +128,14 @@ describe("PgPendingEventStore", () => {
     expect(claim?.event.apiKeyId).toBe("apikey_batch");
   });
 
-  it("dequeue returns events in FIFO order", async () => {
+  it("claims events in FIFO order", async () => {
     await store.enqueue("sess_1", { type: "m", data: { n: 1 }, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: { n: 2 }, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: { n: 3 }, sessionThreadId: "t" });
 
-    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 1 });
-    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 2 });
-    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 3 });
+    expect((await take("sess_1"))!.data).toEqual({ n: 1 });
+    expect((await take("sess_1"))!.data).toEqual({ n: 2 });
+    expect((await take("sess_1"))!.data).toEqual({ n: 3 });
   });
 
   it("peek returns the next event without removing it", async () => {
@@ -145,11 +152,11 @@ describe("PgPendingEventStore", () => {
     const peekedAgain = await store.peek("sess_1");
     expect(peekedAgain!.id).toBe(peeked!.id);
 
-    const dequeued = await store.dequeue("sess_1");
-    expect(dequeued!.id).toBe(peeked!.id);
+    const claimed = await store.claim("sess_1", "host_a", 60_000);
+    expect(claimed!.event.id).toBe(peeked!.id);
   });
 
-  it("ack removes exactly the peeked FIFO head and is idempotent", async () => {
+  it("ack removes exactly the claimed FIFO head and is idempotent", async () => {
     const first = await store.enqueue("sess_1", {
       type: "user.message",
       data: { content: "first" },
@@ -161,11 +168,12 @@ describe("PgPendingEventStore", () => {
       sessionThreadId: "sthr_primary",
     });
 
-    expect(await store.ack("sess_1", second.id)).toBe(false);
+    const claim = await store.claim("sess_1", "host_a", 60_000);
+    expect(await store.ack("sess_1", second.id, claim!)).toBe(false);
     expect((await store.peek("sess_1"))?.id).toBe(first.id);
-    expect(await store.ack("sess_1", first.id)).toBe(true);
+    expect(await store.ack("sess_1", first.id, claim!)).toBe(true);
     expect((await store.peek("sess_1"))?.id).toBe(second.id);
-    expect(await store.ack("sess_1", first.id)).toBe(false);
+    expect(await store.ack("sess_1", first.id, claim!)).toBe(false);
   });
 
   it("grants the FIFO head to exactly one live owner", async () => {
@@ -188,7 +196,11 @@ describe("PgPendingEventStore", () => {
     expect(winner.event.id).toBe(event.id);
     expect(winner.generation).toBe(1);
     expect(winner.expiresAt.getTime()).toBeGreaterThan(Date.now());
-    expect(await store.ack("sess_1", event.id)).toBe(false);
+    const losingOwner = winner.ownerId === "host_a" ? "host_b" : "host_a";
+    expect(await store.ack("sess_1", event.id, {
+      ownerId: losingOwner,
+      generation: winner.generation,
+    })).toBe(false);
   });
 
   it("expires and fences an old owner before a new attempt can ack", async () => {
@@ -232,8 +244,8 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(1);
   });
 
-  it("dequeue returns null on empty queue", async () => {
-    const result = await store.dequeue("sess_nonexistent");
+  it("claim returns null on empty queue", async () => {
+    const result = await store.claim("sess_nonexistent", "host_a", 60_000);
     expect(result).toBeNull();
   });
 
@@ -246,7 +258,7 @@ describe("PgPendingEventStore", () => {
 
     expect(await store.count("sess_1")).toBe(3);
 
-    await store.dequeue("sess_1");
+    await take("sess_1");
     expect(await store.count("sess_1")).toBe(2);
   });
 
@@ -286,13 +298,13 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(2);
     expect(await store.count("sess_2")).toBe(1);
 
-    const from1 = await store.dequeue("sess_1");
+    const from1 = await take("sess_1");
     expect(from1!.data).toEqual({ msg: "a" });
 
-    const from2 = await store.dequeue("sess_2");
+    const from2 = await take("sess_2");
     expect(from2!.data).toEqual({ msg: "b" });
 
-    const from1Again = await store.dequeue("sess_1");
+    const from1Again = await take("sess_1");
     expect(from1Again!.data).toEqual({ msg: "c" });
   });
 

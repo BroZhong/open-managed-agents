@@ -140,43 +140,6 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     }
   }
 
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    // Legacy-only destructive pop. Lock the FIFO head, then return it only if
-    // this transaction actually deleted it. A claimed head cannot be bypassed,
-    // and a losing concurrent transaction never returns the winner's row.
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const head = await client.query<PendingRow>(
-        `SELECT id, session_id, type, data, session_thread_id, api_key_id, arrived_at
-         FROM pending_events
-         WHERE session_id = $1
-         ORDER BY seq ASC
-         LIMIT 1
-         FOR UPDATE`,
-        [sessionId],
-      );
-      const selected = head.rows[0];
-      if (!selected) {
-        await client.query("COMMIT");
-        return null;
-      }
-      const deleted = await client.query<{ id: string }>(
-        `DELETE FROM pending_events
-         WHERE id = $1 AND claim_owner IS NULL
-         RETURNING id`,
-        [selected.id],
-      );
-      await client.query("COMMIT");
-      return deleted.rows[0] ? rowToEvent(selected) : null;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
   async peek(sessionId: string): Promise<PendingEvent | null> {
     const { rows } = await this.pool.query<PendingRow>(
       `SELECT id, session_id, type, data, session_thread_id, api_key_id, arrived_at
@@ -336,7 +299,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
   async ack(
     sessionId: string,
     eventId: string,
-    claim?: PendingEventClaimRef,
+    claim: PendingEventClaimRef,
   ): Promise<boolean> {
     return (await this.acknowledge(sessionId, eventId, claim, false)).acknowledged;
   }
@@ -348,7 +311,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
   private async acknowledge(
     sessionId: string,
     eventId: string,
-    claim: PendingEventClaimRef | undefined,
+    claim: PendingEventClaimRef,
     completed: boolean,
   ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }> {
     const client = await this.pool.connect();
@@ -382,19 +345,14 @@ export class PgPendingEventStore implements PendingEventIngressStore {
         await client.query("COMMIT");
         return { acknowledged: false };
       }
-      const params: unknown[] = [sessionId, eventId];
-      let fence = "AND claim_owner IS NULL";
-      if (claim) {
-        params.push(claim.ownerId, claim.generation);
-        fence = `AND claim_owner = $3
-                 AND claim_generation = $4
-                 AND claim_expires_at > clock_timestamp()`;
-      }
       const { rows } = await client.query<{ id: string }>(
         `DELETE FROM pending_events
-         WHERE session_id = $1 AND id = $2 ${fence}
+         WHERE session_id = $1 AND id = $2
+           AND claim_owner = $3
+           AND claim_generation = $4
+           AND claim_expires_at > clock_timestamp()
          RETURNING id`,
-        params,
+        [sessionId, eventId, claim.ownerId, claim.generation],
       );
       let idleEvent: StoredEvent | undefined;
       if (completed && rows.length > 0) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMemoryStores, type MemoryStores } from "../src/index.js";
+import { createMemoryStores, InMemoryPendingEventStore, type MemoryStores } from "../src/index.js";
 
 describe("createMemoryStores", () => {
   let stores: MemoryStores;
@@ -247,19 +247,20 @@ describe("createMemoryStores", () => {
   });
 
   describe("PendingEventStore", () => {
-    it("enqueues and dequeues in FIFO order", async () => {
+    it("claims and acknowledges in FIFO order", async () => {
       await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "first" }, sessionThreadId: "th1", apiKeyId: "key_1" });
       await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "second" }, sessionThreadId: "th1" });
 
-      const first = await stores.pendingEventStore.dequeue("s1");
-      expect(first?.data).toEqual({ text: "first" });
-      expect(first?.apiKeyId).toBe("key_1");
+      const first = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(first?.event.data).toEqual({ text: "first" });
+      expect(first?.event.apiKeyId).toBe("key_1");
+      expect(await stores.pendingEventStore.ack("s1", first!.event.id, first!)).toBe(true);
 
-      const second = await stores.pendingEventStore.dequeue("s1");
-      expect(second?.data).toEqual({ text: "second" });
+      const second = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(second?.event.data).toEqual({ text: "second" });
+      expect(await stores.pendingEventStore.ack("s1", second!.event.id, second!)).toBe(true);
 
-      const empty = await stores.pendingEventStore.dequeue("s1");
-      expect(empty).toBeNull();
+      expect(await stores.pendingEventStore.claim("s1", "host_a", 60_000)).toBeNull();
     });
 
     it("counts pending events", async () => {
@@ -297,7 +298,7 @@ describe("createMemoryStores", () => {
       expect(await stores.pendingEventStore.count("s1")).toBe(1);
     });
 
-    it("acknowledges only the peeked FIFO head", async () => {
+    it("acknowledges only the claimed FIFO head", async () => {
       const first = await stores.pendingEventStore.enqueue("s1", {
         type: "a",
         data: {},
@@ -309,8 +310,9 @@ describe("createMemoryStores", () => {
         sessionThreadId: "th1",
       });
 
-      expect(await stores.pendingEventStore.ack("s1", second.id)).toBe(false);
-      expect(await stores.pendingEventStore.ack("s1", first.id)).toBe(true);
+      const claim = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(await stores.pendingEventStore.ack("s1", second.id, claim!)).toBe(false);
+      expect(await stores.pendingEventStore.ack("s1", first.id, claim!)).toBe(true);
       expect((await stores.pendingEventStore.peek("s1"))?.id).toBe(second.id);
     });
 
@@ -324,7 +326,10 @@ describe("createMemoryStores", () => {
       const first = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
       expect(first?.generation).toBe(1);
       expect(await stores.pendingEventStore.claim("s1", "host_b", 60_000)).toBeNull();
-      expect(await stores.pendingEventStore.ack("s1", event.id)).toBe(false);
+      expect(await stores.pendingEventStore.ack("s1", event.id, {
+        ownerId: "host_b",
+        generation: first!.generation,
+      })).toBe(false);
       expect(await stores.pendingEventStore.releaseClaim("s1", event.id, first!)).toBe(true);
 
       const second = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
@@ -356,6 +361,15 @@ describe("createMemoryStores", () => {
         sessionThreadId: "th1",
         pendingFence: { eventId: event.id, ...first! },
       })).rejects.toMatchObject({ code: "pending_event_claim_lost" });
+    });
+
+    it("refuses to complete a Turn when standalone, since it cannot commit Session idle", async () => {
+      const standalone = new InMemoryPendingEventStore();
+      const event = await standalone.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const claim = await standalone.claim("s1", "host_a", 60_000);
+
+      await expect(standalone.ackCompletedTurn("s1", event.id, claim!)).rejects.toThrow("createMemoryStores");
+      expect(await standalone.count("s1")).toBe(1);
     });
 
     it("lists and clears retained Session queues", async () => {

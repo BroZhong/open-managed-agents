@@ -61,7 +61,7 @@ export interface TurnStreamStore {
   /** Clear the active-turn record for a session. */
   clearActiveTurn(sessionId: string): Promise<void>;
   /** Atomically replace/delete only the exact active turn observed by caller. */
-  compareAndSetActiveTurn?(
+  compareAndSetActiveTurn(
     sessionId: string,
     expectedTurnId: string | null,
     next: ActiveTurn | null,

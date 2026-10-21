@@ -40,48 +40,45 @@ export interface PendingEventFence extends PendingEventClaimRef {
 
 export interface PendingEventStore {
   /** Persist an Interrupt for the currently claimed input only. */
-  requestInterrupt?(sessionId: string): Promise<boolean>;
-  interruptRequested?(sessionId: string, eventId: string): Promise<boolean>;
+  requestInterrupt(sessionId: string): Promise<boolean>;
+  interruptRequested(sessionId: string, eventId: string): Promise<boolean>;
   enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent>;
-  /** @deprecated Runtime drainers must use claim + fenced ack. */
-  dequeue(sessionId: string): Promise<PendingEvent | null>;
   peek(sessionId: string): Promise<PendingEvent | null>;
   /**
    * Atomically claim the FIFO head. A competing live claim returns null. An
    * expired claim starts a new monotonically fenced generation.
    */
-  claim?(sessionId: string, ownerId: string, leaseMs: number): Promise<PendingEventClaim | null>;
+  claim(sessionId: string, ownerId: string, leaseMs: number): Promise<PendingEventClaim | null>;
   /** Extend only the exact, still-live owner+generation lease. */
-  renewClaim?(
+  renewClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
   ): Promise<boolean>;
   /** Read-only live-fence check around external storage availability checks. */
-  ownsClaim?(
+  ownsClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
   ): Promise<boolean>;
   /** Relinquish only the exact owner+generation claim. */
-  releaseClaim?(
+  releaseClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
   ): Promise<boolean>;
   /**
-   * Remove the FIFO head. A claimed row requires the exact, unexpired fence;
-   * omitting claim is retained only for unclaimed legacy/test callers.
+   * Remove the claimed FIFO head without a Turn outcome. Requires the exact,
+   * unexpired fence: every executed input is claimed first.
    */
-  ack(sessionId: string, eventId: string, claim?: PendingEventClaimRef): Promise<boolean>;
+  ack(sessionId: string, eventId: string, claim: PendingEventClaimRef): Promise<boolean>;
   /**
    * Acknowledge an input with a durable turn_completed marker. Atomically
    * remove it and, only if the queue empties, commit Session idle + its Event.
-   * Production stores serialize this with ingress and fence the claimed head.
-   * Optional for legacy stores and narrow single-process test doubles.
+   * Serialized with ingress and fenced by the claimed head.
    */
-  ackCompletedTurn?(
+  ackCompletedTurn(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
@@ -104,11 +101,8 @@ export interface PendingEventStore {
    * lease means the attempt that held it lost ownership and its Turn is being
    * torn down, so that input really is waiting to be executed by whoever claims
    * it next.
-   *
-   * Optional for the same reason as {@link claim}: narrow single-process test
-   * doubles need not implement it, and callers fall back to {@link count}.
    */
-  listUnclaimed?(sessionId: string, limit: number): Promise<PendingEvent[]>;
+  listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]>;
 }
 
 /**

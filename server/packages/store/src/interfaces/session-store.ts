@@ -42,8 +42,8 @@ export interface SessionStore {
   getById(id: string): Promise<Session | null>;
   list(tenantId: string, opts?: SessionStoreListOpts): Promise<SessionStoreListResult>;
   updateStatus(id: string, status: SessionStatus): Promise<Session | null>;
-  /** PG-backed fenced variant used by a claimed turn owner. */
-  updateStatusIfClaimed?(
+  /** Fenced variant used by a claimed Turn owner. */
+  updateStatusIfClaimed(
     id: string,
     status: SessionStatus,
     fence: PendingEventFence,
