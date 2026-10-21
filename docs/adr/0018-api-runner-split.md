@@ -13,7 +13,8 @@ delegation wait from polling.
 [ADR-0021](0021-resumed-turn.md) revises the "Release boundary": a Turn whose
 Runner exits is continued by the next Runner instead of ending by the earlier
 recovery rules; general Turn recovery now exists, its checkpoint being the
-committed log.
+committed log. A Runner that is shut down hands its running Turns to the other
+Runners instead of draining them (#254, "Shutdown" below).
 
 ## Decision
 
@@ -61,6 +62,13 @@ take (a released claim, input queued behind an Interrupt), never for a head
 another Runner's live claim holds. A wake still makes every Runner try once. A
 lost owner's input is listed again when its lease expires, so another Runner
 takes it over within the lease plus one scan (35 s).
+
+A Runner that receives SIGTERM stops listening to wakes, stops its scan and
+claims nothing more, but keeps acting on check hints for the Turns it still
+runs. It hands them over (ADR-0021): each stops before its next model request,
+or is detached at the 20 s deadline (`SHUTDOWN_GRACE_MS`); its claim is
+released and a `wake` makes another Runner take the Turn over at once, or
+within one scan without Redis.
 
 Delegation wakes use the same signals. A synchronous wait wakes its child once,
 when the wait starts or a takeover resumes it. The child's Runner sends the
@@ -123,6 +131,8 @@ mixed rolling fleet. First prepare a compatible combined bridge release, then
 move ingress and execution separately. Ordinary Turn restart recovery remains
 bounded by the existing recovery rules; this decision does not introduce graceful
 pause-at-next-input, general Turn checkpoint recovery or automatic scaling.
+ADR-0021 later introduces the latter two's first parts: Turn recovery from the
+committed log, and the shutdown handoff.
 
 See [operations and cutover](../api-runner-operations.md) and
 [local verification](../verification/api-runner-split.md).

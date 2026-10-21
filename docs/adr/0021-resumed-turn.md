@@ -209,6 +209,46 @@ a message's tool calls in parallel and appends their results only after every
 call of the batch has finished, so a Runner lost while one call of a batch runs
 reports every call of the batch as unknown, including those that had finished.
 
+### A Runner that shuts down hands its Turns over
+
+On SIGTERM (a rollout, a scale-down) a Runner hands its running Turns to the
+other Runners instead of draining them (#254), within the grace period it
+already had (20 s, of Kubernetes' 30 s):
+
+1. It claims nothing more. The pending scan stops, wakes are ignored, its claim
+   retries are cancelled and a drain takes no next input. A claim it took as
+   the shutdown began is released once its takeover marker is written, before
+   any Sandbox preparation. Check hints still reach the Turns it runs.
+2. It asks each running Adapter to stop (`AdapterInput.stopRequest`). Pi stops
+   only at its model request gate, once the gate's flush has made everything
+   it recorded durable; never at `message_end`, where the results of parallel
+   tools still running could not be committed yet, and never by cancelling
+   anything. A running tool finishes and its result is committed; a request
+   in flight completes, and an answer that ends the Turn completes it on this
+   Runner. At the gate Pi aborts the request it was about to send, so it
+   neither retries nor compacts, records nothing more and returns
+   `"stopped"`. Summary requests pass the same gate: a compaction not started
+   yet is left to a later attempt.
+3. At the deadline a Turn still running is detached on the one stop path
+   (ADR-0020): its write entry is revoked and its Turn signal aborted. Its
+   executor refuses the SIGTERM Pi then sends the tool wrapper, so the
+   Sandbox process keeps running, and the next owner reports the call as of
+   unknown outcome. A synchronous delegation wait is detached the same way and
+   resumes on the next owner.
+4. Every claim a handoff leaves is released, never left to expire, and no
+   terminal event is written. The other Runners are woken (`wake`) and the
+   first to claim takes the Turn over at once, marked `released`; the
+   takeover limit (#250) does not count it. A Turn that completed during the
+   shutdown leaves the input queued behind it to them the same way.
+
+A handoff costs a Turn nothing it committed: the next owner continues from the
+log as after any takeover. The Runner holds a claim only while the Turn still
+runs on it, so the Turn moves when it reaches its next request gate, or at the
+deadline at the latest, not a lease after the process exits. Releasing the
+claims of detached Turns may take up to 5 s of the 10 s Kubernetes reserves.
+A Runner killed before it released keeps its claims until their lease
+expires, as a lost Runner does.
+
 ## Verification
 
 The crash-injection tests (`server/packages/api/test/crash-injection`) run a
@@ -222,11 +262,23 @@ Turn and in order; no recovery error but the takeover limit's, where a
 scenario expects it; one result per call; outcome unknown exactly for the
 calls a lost Runner left dangling; no tool runs twice; model steps continue
 from the log; one marker per takeover with its reason and dangling calls; no
-row written by a lost Runner. A scenario can also hand a Turn over, releasing
-its claim, or make the event log refuse a write. The takeover limit is tested
+row written by a lost Runner. A scenario can also make the event log refuse a
+write. The takeover limit is tested
 on a Turn that loses its Runner at the same point every time, and on losses
 between which the Turn makes progress, handoffs and refused writes. Later
 tickets add their scenarios to the same harness.
+
+The harness shuts a Runner down as SIGTERM does (#254): the Router's handoff
+runs, and the process exits once it is done. A handoff sweep shuts the first
+Runner down after each write of a scenario; scenarios shut it down while a
+tool runs, past the deadline of one, while the model streams, while parallel
+tools run with input queued behind the Turn, once per Runner of a rolling
+restart, before a new owner is lost, and, for the takeover limit, as a Runner
+takes the Turn over. A handoff's marker says `released`, and only a deadline
+leaves calls of unknown outcome. Session Router tests run
+several Routers over one store, waking each other as the Redis signal does,
+for the same cases, a synchronous delegation wait and Runners racing for a
+released claim.
 
 ## Consequences
 
@@ -238,7 +290,10 @@ losses without progress end it with `recovery_limit_exceeded`. An Agent may
 repeat a call whose effect already happened. Each takeover that writes results
 reads the log once more. The mock runtime has no history to continue: a
 taken-over mock Turn runs its script again, and since it commits no native
-message, four losses of one mock Turn end it.
+message, four losses of one mock Turn end it. A shutdown no longer waits for
+running Turns to finish: a rolling restart moves each to another Runner at its
+next model request, and one that is still in a tool at the deadline costs that
+tool's result.
 
 ## Revised decisions
 
@@ -254,7 +309,10 @@ message, four losses of one mock Turn end it.
 - ADR-0016: Host-written results for calls without a native result, takeover
   repairs as well as recovered waits, continue the native chain on replay.
 - ADR-0018 "Release boundary": general Turn recovery is introduced; the
-  committed log is its checkpoint. Graceful pause before the next request is
-  #254.
+  committed log is its checkpoint. A Runner shutting down pauses each running
+  Turn before its next model request and hands it over (#254) instead of
+  draining it.
 - ADR-0020 "One stop path": the recovery rules the next claim applies are this
-  ADR's.
+  ADR's. A `"stopped"` result and a handoff's deadline take that path and then
+  release the claim, so the input goes to the next claim at once instead of
+  after its lease. Pi returns `"stopped"` (ADR-0020 "The Adapter contract").
