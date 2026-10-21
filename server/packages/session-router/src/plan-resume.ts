@@ -71,7 +71,13 @@ export interface CompletePlan {
     /** The Child execution the input runs has ended, or its lost owner left its outcome uncertain. */
     | "execution_ended"
     /** An earlier attempt accepted an Interrupt it did not live to apply: the Turn ends as an Interrupted Turn. */
-    | "interrupted";
+    | "interrupted"
+    /**
+     * The Turn's Runner was lost again and again without the Turn committing
+     * progress: it is likely what loses them, so it ends instead of being
+     * continued once more (#250).
+     */
+    | "stalled";
   /** Tool calls of the Turn without a result; each gets one before the Turn completes. */
   repairs: DanglingToolCall[];
   repairOutcome: RepairOutcome;
@@ -134,14 +140,16 @@ export interface RunPlan {
  *   2. the Child execution it runs has ended: complete the Turn;
  *   3. the log ends the Turn: repair the dangling calls, complete it;
  *   4. an earlier generation accepted an Interrupt: repair, end as an Interrupted Turn;
- *   5. the Turn waits on delegations: resume the waits, give every other
+ *   5. this claim is the fourth expired takeover since the Turn last made
+ *      progress: repair, end it with recovery_limit_exceeded;
+ *   6. the Turn waits on delegations: resume the waits, give every other
  *      dangling call an outcome-unknown result, continue;
- *   6. the input is not in the Turn's native history yet: prompt it;
- *   7. the last message is the Agent's final answer: complete the Turn without a model request;
- *   8. otherwise (a tool call, a tool result, steering, the input itself, a
+ *   7. the input is not in the Turn's native history yet: prompt it;
+ *   8. the last message is the Agent's final answer: complete the Turn without a model request;
+ *   9. otherwise (a tool call, a tool result, steering, the input itself, a
  *      failed or aborted request): give each dangling call an outcome-unknown
  *      result, continue.
- * No row reruns a tool or ends a Turn because it was taken over.
+ * No row reruns a tool. Only row 5 ends a Turn because it was taken over.
  *
  * Every attempt of the input executes one Turn, the one its first attempt
  * started: the plan names it after the first event of the input that names a
@@ -181,6 +189,12 @@ export function planResume(facts: ResumeFacts): ResumePlan {
   // The user stopped this Turn and the log shows the stop never took effect.
   // Continuing it would ignore the stop, so it ends as the Interrupt would have ended it.
   if (facts.claim.priorInterrupt) return complete("interrupted", { repairOutcome: "interrupted", interruptChildren: true });
+  // A Turn that loses its Runner at the same point every time would take the
+  // Runners down one after another. Losses between which it commits progress
+  // are what a long Turn costs; losses without any are the symptom.
+  if (expiredTakeoversSinceProgress(output, facts.claim.previous) > TAKEOVER_LIMIT) {
+    return complete("stalled", { interruptChildren: true, error: RECOVERY_LIMIT_EXCEEDED });
+  }
   const config = turnConfig(output, turnId);
   const run = (start: RunPlan["start"], plan: Partial<RunPlan> = {}): RunPlan => ({
     kind: "run", start, turnId, progress: turnProgress(output, turnId), repairs: dangling, waits: [],
@@ -211,6 +225,49 @@ function turnConfig(output: readonly StoredEvent[], turnId: string): DelegationW
     }
   }
   return undefined;
+}
+
+/**
+ * How many expired takeovers in a row, without progress between them, a Turn
+ * is continued through; the next one ends it (#250).
+ */
+export const TAKEOVER_LIMIT = 3;
+
+const RECOVERY_LIMIT_EXCEEDED: RecoveryError = {
+  phase: "recovery_limit_exceeded",
+  code: "recovery_limit_exceeded",
+  message: `The Runner executing this Turn was lost ${TAKEOVER_LIMIT + 1} times without the Turn committing new progress in between, ` +
+    "so it was ended instead of being resumed again. Inspect what the Turn was doing before retrying it.",
+};
+
+/**
+ * The Turn's expired takeovers since it last made progress, this claim's
+ * included. Each takeover's marker records how the claim before it ended:
+ * `expired` when the Runner holding the Turn was lost, or stopped after a
+ * failed write, which leaves its claim to lapse rather than release it. A
+ * released claim (a handoff, a Turn left waiting) neither counts nor resets
+ * the count. A takeover lost before it recorded its marker is not counted.
+ */
+function expiredTakeoversSinceProgress(output: readonly StoredEvent[], previous: PendingEventClaimEnd | null): number {
+  let count = 0;
+  for (const event of output) {
+    if (isProgress(event)) count = 0;
+    else if (event.type === "session.turn_resumed" && (event.data as { reason?: unknown } | null)?.reason === "expired") count++;
+  }
+  return previous === "expired" ? count + 1 : count;
+}
+
+/**
+ * A native message that moves the Turn on: a tool result, or an assistant
+ * message whose request did not fail. A failed request, a compaction,
+ * steering and the results a takeover writes for dangling calls are none.
+ */
+function isProgress(event: StoredEvent): boolean {
+  if (event.type !== "agent.context_entry") return false;
+  const entry = (event.data as { entry?: { type?: string; message?: { role?: string; stopReason?: string } } } | null)?.entry;
+  const message = entry?.type === "message" ? entry.message : undefined;
+  return message?.role === "toolResult" ||
+    (message?.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted");
 }
 
 /** A message of the Turn's conversation, native or display, as the runtime would rebuild it. */

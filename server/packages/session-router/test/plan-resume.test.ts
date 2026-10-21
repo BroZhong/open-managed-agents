@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { DelegationWait, StoredEvent } from "@oma-server/store";
+import type { DelegationExecution, DelegationWait, PendingEventClaimEnd, StoredEvent } from "@oma-server/store";
+import { outcomeFromEvents } from "../src/delegation-coordinator.js";
 import { planResume, turnProgress, type DanglingToolCall, type ResumeFacts, type ResumePlan, type RunPlan } from "../src/plan-resume.js";
 
 /** The claimed input, promoted at seq 10 and claimed by generation 2. */
@@ -122,6 +123,25 @@ function wait(callerToolUseId: string, status: DelegationWait["status"] = "waiti
 const CONFIG = { model: "provider/model", thinking: "low" };
 const modelRequest: Logged = ["span.model_request_start", { turnId: WAITING_TURN }];
 const delegationResult = (toolUseId: string): Logged => ["agent.tool_result", { toolUseId, content: [], isError: false, turnId: WAITING_TURN }];
+
+/** The marker the takeover of `generation` recorded: how the claim before it ended, and the calls it found dangling. */
+const takenOver = (reason: PendingEventClaimEnd, generation: number, ...danglingToolUseIds: string[]): Logged =>
+  ["session.turn_resumed", { turnId: TURN, generation, reason, danglingToolUseIds }];
+/** A takeover after the Runner holding the Turn was lost: its lease expired. */
+const lost = (generation: number, ...dangling: string[]) => takenOver("expired", generation, ...dangling);
+/** A takeover after the Runner holding the Turn released it: a handoff, or a Turn left waiting. */
+const handedOver = (generation: number, ...dangling: string[]) => takenOver("released", generation, ...dangling);
+/** The claim of `generation`, whose predecessor ended as `previous`, over `events`. */
+const claimed = (generation: number, previous: PendingEventClaimEnd, events: Logged[], overrides: Partial<ResumeFacts> = {}): ResumeFacts =>
+  facts({ claim: { generation, priorInterrupt: false, previous }, events: log(...events), ...overrides });
+/** Continue the committed native history of a Turn the Runner holding it handed over. */
+const continuedAfterHandoff: RunPlan = { kind: "run", start: "continue", turnId: TURN, progress: FIRST_STEP, repairs: [], waits: [],
+  takeover: { reason: "released", danglingToolUseIds: [] } };
+/** End the Turn instead of continuing it once more: repair its calls, record recovery_limit_exceeded, stop its children. */
+const stalled = (repairs: DanglingToolCall[] = [], turnId = TURN): ResumePlan => ({ kind: "complete", cause: "stalled", turnId, repairs,
+  repairOutcome: "unknown", interruptChildren: true,
+  error: { phase: "recovery_limit_exceeded", code: "recovery_limit_exceeded", message: expect.any(String) as string },
+  takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
 
 /** Every row plans an input that runs no Child execution, or one that has not ended. */
 const rows: Array<[string, ResumeFacts, ResumePlan]> = [
@@ -318,6 +338,71 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
   ["A13 Interrupt accepted after turn_completed was committed: acknowledge only",
     afterInterrupt({ events: log(running, ["agent.message", { content: [] }], completed) }),
     { kind: "acknowledge", turnId: TURN }],
+
+  // The takeover limit (#250): a Turn whose Runner is lost again and again
+  // without the Turn committing progress is ended by the fourth such takeover.
+  ["E1 three expired takeovers committed no native message and this claim expired too: recovery_limit_exceeded, complete",
+    claimed(5, "expired", [...started, modelRequest, lost(2), modelRequest, lost(3), modelRequest, lost(4), modelRequest]),
+    stalled()],
+  ["E1 the third expired takeover without progress still continues the Turn",
+    claimed(4, "expired", [...started, lost(2), lost(3)]),
+    pinned(resumed())],
+  ["E1 a call the lost attempts left dangling is repaired as unknown when the limit ends the Turn",
+    claimed(5, "expired", [...started, assistant([call("call_1")]), lost(2, "call_1"), lost(3, "call_1"), lost(4, "call_1")]),
+    stalled([bash("call_1")])],
+  ["E1 a Turn whose input was never committed is ended by the limit as well",
+    claimed(5, "expired", [running, contextStart, lost(2), lost(3), lost(4)]),
+    stalled()],
+  ["E1 the takeover that ended the Turn was lost before its completion: the log ends the Turn, complete it",
+    claimed(6, "expired", [...started, lost(2), lost(3), lost(4), lost(5), sessionError("recovery_limit_exceeded")]),
+    ended()],
+  ["E1 the limit outranks a final answer whose completion the lost attempts never committed",
+    claimed(5, "expired", [...started, assistant([text("done")]), lost(2), lost(3), lost(4)]),
+    stalled()],
+  ["E1 the limit outranks a resumed wait: the waiting Turn ends and its synchronous children are stopped",
+    claimed(5, "expired", [...started, assistant([call("call_agent", "Agent")]), lost(2, "call_agent"), lost(3, "call_agent"), lost(4, "call_agent")],
+      { waits: [wait("call_agent")] }),
+    stalled([agentCall("call_agent")], WAITING_TURN)],
+  ["E1 an Interrupt the lost attempts accepted outranks the limit: Interrupted Turn",
+    claimed(5, "expired", [...started, lost(2), lost(3), lost(4)], { claim: { generation: 5, priorInterrupt: true, previous: "expired" } }),
+    interrupted()],
+  ["E1 a completed Turn is only acknowledged, whatever its takeovers",
+    claimed(5, "expired", [...started, lost(2), lost(3), lost(4), completed]),
+    { kind: "acknowledge", turnId: TURN }],
+
+  ["E2 an answer committed after the takeovers resets the count: continue the Turn",
+    claimed(5, "expired", [...started, lost(2), lost(3), lost(4), assistant([call("call_1")]), nativeResult("call_1")]),
+    pinned(resumed())],
+  ["E2 an answer requesting a tool after the takeovers resets the count: unknown result, continue",
+    claimed(5, "expired", [...started, lost(2), lost(3), lost(4), assistant([call("call_1")])]),
+    pinned(resumed([bash("call_1")]))],
+  ["E2 a failed model request is no progress: the limit still ends the Turn",
+    claimed(5, "expired", [...started, lost(2), assistant([text("")], { stopReason: "error" }), lost(3), lost(4)]),
+    stalled()],
+  ["E2 a compaction boundary is no progress: the limit still ends the Turn",
+    claimed(5, "expired", [...started, assistant([text("")], { stopReason: "error" }), lost(2), compaction, lost(3), lost(4)]),
+    stalled()],
+  ["E2 the takeovers' own repairs are no progress: the limit still ends the Turn",
+    claimed(5, "expired", [...started, assistant([call("call_1")]), lost(2, "call_1"), toolResult("call_1"), lost(3), lost(4)]),
+    stalled()],
+
+  ["E3 a released claim is not counted: three losses, then a handoff, continue",
+    claimed(5, "released", [...started, lost(2), lost(3), lost(4)]),
+    pinned(continuedAfterHandoff)],
+  ["E3 handoffs without progress never end the Turn",
+    claimed(6, "released", [...started, handedOver(2), handedOver(3), handedOver(4), handedOver(5)]),
+    pinned(continuedAfterHandoff)],
+  ["E3/F7 a handoff between losses neither counts nor resets the count: the fourth loss ends the Turn",
+    claimed(6, "expired", [...started, lost(2), lost(3), handedOver(4), lost(5)]),
+    stalled()],
+  ["F7 a handoff, then the new owner is lost: one loss, continue",
+    claimed(3, "expired", [...started, handedOver(2)]),
+    pinned(resumed())],
+  ["E3 a Turn released while it waits on a delegation is not counted: resume the wait",
+    claimed(5, "expired", [...started, modelRequest, assistant([text("delegating"), call("call_agent", "Agent")], { blockIndex: 0 }),
+      lost(2, "call_agent"), lost(3, "call_agent"), handedOver(4, "call_agent")], { waits: [wait("call_agent")] }),
+    { kind: "run", start: "continue", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 2 }, repairs: [],
+      waits: [wait("call_agent")], config: CONFIG, takeover: expired("call_agent") }],
 ];
 
 /** The Child execution of the input, as starting it under the new claim left it. */
@@ -465,5 +550,18 @@ describe("turnProgress", () => {
 
   it("output of another Turn does not count", () => {
     expect(turnProgress(committed, "turn_4_a1")).toEqual(FIRST_STEP);
+  });
+});
+
+describe("a Child execution the takeover limit ends", () => {
+  it("E1 gives its parent a recovery_required result that says why", () => {
+    const plan = planResume(claimed(5, "expired", [...started, lost(2), lost(3), lost(4)]));
+    if (plan.kind !== "complete" || !plan.error) throw new Error("The limit ends the Turn with an error");
+    // The Router records the plan's error as the session.error that ends the Child's Turn.
+    const childTurn = log(...started, lost(2), lost(3), lost(4),
+      ["session.error", { turnId: TURN, error: { code: plan.error.code, message: plan.error.message } }]);
+    const execution = { childId: "sess_child", turnId: TURN } as DelegationExecution;
+    expect(outcomeFromEvents(execution, childTurn)).toEqual({ status: "recovery_required", reason: plan.error.message, output: "",
+      trace: { sessionId: "sess_child", turnId: TURN } });
   });
 });
