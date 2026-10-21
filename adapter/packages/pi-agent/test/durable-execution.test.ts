@@ -15,18 +15,6 @@ const tool = (id: string): SessionEvent => ({ id: `use-${id}`, timestamp: "2026-
 const result = (id: string): AgentToolResultEvent => ({ id: `result-${id}`, timestamp: "2026-01-01", type: "agent.tool_result", toolUseId: id, content: [{ type: "text", text: "completed" }] });
 
 describe("durable Pi execution seam", () => {
-  it("exposes the current tool request in a checkpoint before the async event consumer persists it", async () => {
-    let snapshot: SessionEvent[] = [];
-    const adapter = new PiAgentAdapter({ _sessionFactory: factory(async (args, emit) => {
-      emit({ type: "message_update", assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, partial: { content: [] }, toolCall: { id: "wait-tool", name: "Agent", arguments: { prompt: "child" } } } } as unknown as AgentSessionEvent);
-      snapshot = args.checkpoint();
-    }) });
-    const value = input(); value.history = [tool("old"), result("old")];
-    const events = await collect(adapter, value);
-    expect(snapshot.filter(e => e.type === "agent.tool_use")).toEqual(events.filter(e => e.type === "agent.tool_use"));
-    expect(snapshot.some(e => (e as { toolUseId?: string }).toolUseId === "old")).toBe(false);
-    expect(snapshot.find(e => e.type === "agent.tool_use")).toMatchObject({ toolUseId: "wait-tool" });
-  });
   it("continues the original structured history exactly once without re-prompting or rerunning completed tools", async () => {
     const resume = vi.fn(); const prompt = vi.fn();
     const adapter = new PiAgentAdapter({ _sessionFactory: factory(prompt, resume) });

@@ -14,7 +14,7 @@ export interface DelegationRouteDeps {
   turnStreamStore?: TurnStreamStore;
 }
 
-/** Coordination leases, billing credentials and execution checkpoints are Host-private. */
+/** Coordination leases and billing credentials are Host-private. */
 function publicExecution(execution: DelegationExecution) {
   const config = execution.effectiveConfig;
   return {

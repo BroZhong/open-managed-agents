@@ -132,7 +132,8 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       const execution: DelegationExecution = { ...callerFilter(input), id, sequence, childId: child.id, pendingEventId: pending.id, mode: input.mode, status: "queued", prompt: input.prompt, apiKeyId: input.apiKeyId, model: input.parentModel, modelSource: "parent", thinking: input.thinking, maxSteps: input.maxSteps, createdAt: now, updatedAt: now };
       await tx.put("executions", id, execution);
       if (input.mode === "sync") {
-        const wait: DelegationWait = { ...callerFilter(input), executionId: id, parentPendingEventId: fence.eventId, checkpoint: input.checkpoint ?? {}, status: "waiting" };
+        const config = { model: input.parentModel, ...(input.parentThinking !== undefined ? { thinking: input.parentThinking } : {}) };
+        const wait: DelegationWait = { ...callerFilter(input), executionId: id, parentPendingEventId: fence.eventId, config, status: "waiting" };
         await tx.put("waits", identity(wait), wait);
       }
       return execution;

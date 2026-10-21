@@ -363,8 +363,8 @@ export class PiAgentAdapter implements Adapter {
           return await input.execution?.steering?.takePending() ?? [];
         },
       });
-      // Translate synchronously, before a following tool execute callback can
-      // register a durable wait. The snapshot and emitted events share IDs.
+      // Translate synchronously, so the buffer the commit barrier reads is
+      // current at every native message boundary.
       const unsubscribe = session.subscribe((event) => {
         const observed = event.type === "compaction_end" && !event.result && input.signal?.aborted
           ? { ...event, aborted: true } : event;
@@ -459,7 +459,7 @@ export class PiAgentAdapter implements Adapter {
     // built-in fs/bash tools ("builtin") and register custom tools that proxy
     // into the executor (ADR-0002 §2). When absent, keep Pi's default tools.
     const customTools = args.input.toolExecutor
-      ? [...buildCustomTools(args.input.toolExecutor), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents, args.checkpoint) : [])]
+      ? [...buildCustomTools(args.input.toolExecutor), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents) : [])]
       : undefined;
 
     const agentDir = getAgentDir();

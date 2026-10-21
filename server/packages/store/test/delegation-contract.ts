@@ -111,9 +111,21 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(await stores.pendingEventStore.count(input.callerSessionId)).toBe(1);
       expect((await stores.delegationStore.getExecution(input.tenantId, child.id))?.notificationStatus).toBe("consumed");
     });
+    it("records only the parent Turn configuration for a synchronous wait", async () => {
+      const child = await stores.delegationStore.accept({ ...input, mode: "sync", parentThinking: "low", thinking: "high" }, parentFence);
+      const caller = { tenantId: "tenant-a", callerSessionId: input.callerSessionId, callerTurnId: "parent-turn" };
+      const query = await stores.delegationStore.saveWait({ ...caller, callerToolUseId: "query-tool", executionId: child.id,
+        parentPendingEventId: parentFence.eventId, config: { model: "provider/parent-model", thinking: "low" } }, parentFence);
+      const waits = await stores.delegationStore.listWaits(input.callerSessionId, parentFence.eventId);
+      expect(waits.sort((a, b) => a.callerToolUseId.localeCompare(b.callerToolUseId))).toEqual([
+        { ...caller, callerToolUseId: "query-tool", executionId: child.id, parentPendingEventId: parentFence.eventId, status: "waiting", config: { model: "provider/parent-model", thinking: "low" } },
+        { ...caller, callerToolUseId: "tool-1", executionId: child.id, parentPendingEventId: parentFence.eventId, status: "waiting", config: { model: "provider/parent-model", thinking: "low" } },
+      ]);
+      expect(waits).toContainEqual(query);
+    });
     it("keeps sync wait bound to exact execution and never queues automatic callback", async () => {
       const child = await stores.delegationStore.accept({ ...input, mode: "sync" }, parentFence);
-      const wait = await stores.delegationStore.saveWait({ ...input, executionId: child.id, parentPendingEventId: parentFence.eventId, checkpoint: { turnId: "parent-turn", tools: ["already-done"] } }, parentFence);
+      const wait = await stores.delegationStore.saveWait({ ...input, executionId: child.id, parentPendingEventId: parentFence.eventId, config: { model: "provider/parent-model" } }, parentFence);
       expect(wait.status).toBe("waiting");
       const f = await fenceFor(child);
       await stores.delegationStore.startExecution(child.id, f, "child-turn", {}, 4); await finish(child, f);
@@ -169,7 +181,7 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       const asynchronous = await stores.delegationStore.accept({ ...input, callerToolUseId: "independent-async" }, parentFence);
       const asyncFence = await fenceFor(asynchronous);
       await stores.delegationStore.startExecution(asynchronous.id, asyncFence, "async-turn", {}, 4);
-      await stores.delegationStore.saveWait({ ...input, callerToolUseId: "wait-async", executionId: asynchronous.id, parentPendingEventId: parentFence.eventId, checkpoint: {} }, parentFence);
+      await stores.delegationStore.saveWait({ ...input, callerToolUseId: "wait-async", executionId: asynchronous.id, parentPendingEventId: parentFence.eventId, config: {} }, parentFence);
       await stores.sessionStore.terminate(input.callerSessionId);
       await stores.pendingEventStore.clear(input.callerSessionId);
       const reconciled = await stores.delegationStore.reconcileTerminatedExecutions(input.callerSessionId);

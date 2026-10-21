@@ -1,6 +1,6 @@
 import type {
   DelegationCaller, DelegationExecution, DelegationOutcome, DelegationStore,
-  DelegationWait, EventLogStore, PendingEventFence, PendingEventStore, Session,
+  DelegationWait, DelegationWaitConfig, EventLogStore, PendingEventFence, PendingEventStore, Session,
   SessionStore, StoredEvent,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, presentContextData, presentEvent } from "@oma-server/store";
@@ -75,10 +75,10 @@ export class DelegationCoordinator {
           maxSteps,
           apiKeyId: run.apiKeyId,
           sandboxSessionId: run.session.id,
-          checkpoint: { events: context.checkpoint, config: run.effectiveConfig },
+          parentThinking: waitConfig(run).thinking,
         }, run.fence);
-        // Persist the wait before waking the child. The checkpoint closes the
-        // gap between the SDK calling a tool and its Event reaching the Router.
+        // Persist the wait before waking the child, so a replacement owner
+        // resumes this Turn even if the child finishes after this one is lost.
         if (execution.mode === "sync") await this.saveWait(run, execution, context);
         this.deps.wake(execution.childId);
         return execution.mode === "sync"
@@ -87,7 +87,7 @@ export class DelegationCoordinator {
       },
       getResult: async (input, context) => {
         await this.assertOwner(run);
-        const priorWait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
+        const priorWait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId))
           .find((wait) => wait.callerToolUseId === context.toolUseId);
         const execution = await this.deps.store.get(
           run.session.tenantId, run.session.id, input.childId, priorWait?.executionId ?? input.executionId,
@@ -112,8 +112,7 @@ export class DelegationCoordinator {
   private async saveWait(run: DelegationRun, execution: DelegationExecution, context: SubagentCallContext): Promise<void> {
     await this.deps.store.saveWait({
       ...this.caller(run, context.toolUseId), executionId: execution.id,
-      parentPendingEventId: run.fence.eventId,
-      checkpoint: { events: context.checkpoint, config: run.effectiveConfig },
+      parentPendingEventId: run.fence.eventId, config: waitConfig(run),
     }, run.fence);
   }
 
@@ -131,7 +130,7 @@ export class DelegationCoordinator {
         await delay(this.deps.pollMs ?? 200, run.signal);
       }
     } finally {
-      if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
+      if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
         .some((wait) => wait.status === "waiting")) await this.setWaiting(run, false);
     }
   }
@@ -154,32 +153,14 @@ export class DelegationCoordinator {
     this.deps.publish(event);
   }
 
-  /** Complete the exact original tool, under the new owner after a restart. */
+  /**
+   * Complete the exact original tool, under the new owner after a restart.
+   * The event log already holds the requesting tool call: the Adapter commits
+   * each native message before running its tools.
+   */
   async recoverWaits(run: DelegationRun, waits: DelegationWait[]): Promise<void> {
     for (const wait of waits) {
-      if (wait.status === "cancelled") continue;
-      const snapshot = wait.checkpoint.events;
-      if (Array.isArray(snapshot)) {
-        for (const event of snapshot as SessionEvent[]) {
-          // The checkpoint consists solely of complete SDK events. Lifecycle
-          // markers are owned by Router; user input is already promoted.
-          if (!event.id || !event.type.startsWith("agent.") && !event.type.startsWith("span.")) continue;
-          // Tool results have a separate atomic consumption key. Restoring an
-          // SDK snapshot must not append the same result under an event-ID key.
-          if (event.type === "agent.tool_result" && waits.some((item) => item.callerToolUseId === event.toolUseId)) continue;
-          // Native results use the same atomic consumption identity on replay;
-          // an event-ID append would duplicate an already consumed native row.
-          if (event.type === "agent.context_entry" && await this.persistToolResult(run, event)) continue;
-          const stored = await this.deps.events.append(run.session.id, {
-            type: event.type, data: { ...event, turnId: run.turnId },
-            sessionThreadId: "sthr_primary", apiKeyId: run.apiKeyId,
-            idempotencyKey: `pending:${run.fence.eventId}:event:${event.id}`,
-            pendingFence: run.fence,
-          });
-          this.deps.publish(stored);
-        }
-      }
-      if (wait.status === "consumed") continue;
+      if (wait.status !== "waiting") continue;
       const execution = await this.deps.store.getExecution(run.session.tenantId, wait.executionId);
       if (!execution) throw new Error("Waiting execution not found");
       const result = await this.waitForResult(run, execution);
@@ -198,7 +179,7 @@ export class DelegationCoordinator {
       : presentContextData(event.type, event).find(item => item.type === "agent.tool_result")?.data;
     if (!result) return null;
     const toolUseId = result.toolUseId as string;
-    const wait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
+    const wait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId))
       .find((item) => item.callerToolUseId === toolUseId && item.status !== "cancelled");
     if (!wait) return null;
     const execution = await this.deps.store.getExecution(run.session.tenantId, wait.executionId);
@@ -210,7 +191,7 @@ export class DelegationCoordinator {
         idempotencyKey: `pending:${run.fence.eventId}:delegation_result:${toolUseId}`,
       });
     this.deps.publish(stored);
-    if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId, { checkpoint: "reference" }))
+    if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
       .some((item) => item.status === "waiting")) await this.setWaiting(run, false);
     return stored;
   }
@@ -269,6 +250,12 @@ export function executionResult(execution: DelegationExecution): Record<string, 
 }
 function executionResultIsError(result: Record<string, unknown>): boolean {
   return result.status !== "completed";
+}
+
+/** Only what a recovered wait needs to resume the same Turn configuration. */
+function waitConfig(run: DelegationRun): DelegationWaitConfig {
+  const { model, thinking } = run.effectiveConfig ?? {};
+  return { ...(typeof model === "string" ? { model } : {}), ...(typeof thinking === "string" ? { thinking } : {}) };
 }
 
 export function outcomeFromEvents(execution: DelegationExecution, events: StoredEvent[], interrupted = false): DelegationOutcome {

@@ -6,7 +6,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { SessionRouter } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
-import { presentEvent } from "@oma-server/store";
+import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (message: string) => event("agent.message", { content: [{ type: "text", text: message }], stopReason: "stop" });
@@ -77,7 +77,7 @@ describe("Host-owned delegation through the Session Router", () => {
       }
       const call = native("parent-call", { role: "assistant", content: [{ type: "toolCall", id: "native-wait", name: "Agent", arguments: { prompt: "child" } }] }, [{ type: "agent.tool_use", index: 0 }]);
       yield call;
-      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "native-wait", checkpoint: [call] });
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "native-wait" });
       const result = native("parent-result", { role: "toolResult", toolCallId: "native-wait", toolName: "Agent", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }, [{ type: "agent.tool_result" }]);
       await input.persistContext!([result]); yield result;
     } });
@@ -146,7 +146,7 @@ describe("Host-owned delegation through the Session Router", () => {
       if (input.execution?.isChild) { yield text("child result"); return; }
       if (++parentTurns > 1) { yield text("notification handled"); return; }
       const call = tool("live-result"); yield call;
-      const output = await input.subagents!.delegate({ prompt: "child", runInBackground }, { toolUseId: "live-result", checkpoint: [call] });
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground }, { toolUseId: "live-result" });
       yield result("live-result", output);
       await parentGate.promise;
       yield text("parent done");
@@ -186,7 +186,7 @@ describe("Host-owned delegation through the Session Router", () => {
       await h.stores.agentStore.update(h.agent.id, { model: "unrelated/new-configuration" });
       const toolId = `delegate-${parentTurns}`;
       const call = tool(toolId); yield call;
-      const output = await input.subagents!.delegate({ prompt: "child", resume: childId, runInBackground: false }, { toolUseId: toolId, checkpoint: [call] }) as { childId: string };
+      const output = await input.subagents!.delegate({ prompt: "child", resume: childId, runInBackground: false }, { toolUseId: toolId }) as { childId: string };
       childId = output.childId;
       yield result(toolId, output);
     } });
@@ -209,7 +209,7 @@ describe("Host-owned delegation through the Session Router", () => {
       inputs.push(input);
       if (input.sessionId === childId || input.execution?.isChild) { yield text("child done"); return; }
       const call = tool("create-child"); yield call;
-      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "create-child", checkpoint: [call] }) as { childId: string };
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "create-child" }) as { childId: string };
       childId = output.childId; yield result("create-child", output);
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
@@ -244,7 +244,7 @@ describe("Host-owned delegation through the Session Router", () => {
       }
       if (++parentTurns > 1) { yield text("queued input processed"); return; }
       const call = tool("interrupt-sync"); yield call;
-      const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "interrupt-sync", checkpoint: [call] });
+      const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "interrupt-sync" });
       yield result("interrupt-sync", done);
     } }, { leaseMs: 150 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
@@ -266,10 +266,10 @@ describe("Host-owned delegation through the Session Router", () => {
       if (input.execution?.isChild) { await childGate.promise; yield text("background done"); return; }
       if (++parentTurns > 1) { yield text("callback processed"); return; }
       const call = tool("background"); yield call;
-      const accepted = await input.subagents!.delegate({ prompt: "child", runInBackground: true }, { toolUseId: "background", checkpoint: [call] }) as { childId: string; executionId: string };
+      const accepted = await input.subagents!.delegate({ prompt: "child", runInBackground: true }, { toolUseId: "background" }) as { childId: string; executionId: string };
       const acceptedResult = result("background", accepted); yield acceptedResult;
       const query = event("agent.tool_use", { toolUseId: "wait-bg", name: "get_subagent_result", input: { childId: accepted.childId, wait: true } }); yield query;
-      const done = await input.subagents!.getResult({ ...accepted, wait: true }, { toolUseId: "wait-bg", checkpoint: [call, acceptedResult, query] });
+      const done = await input.subagents!.getResult({ ...accepted, wait: true }, { toolUseId: "wait-bg" });
       yield result("wait-bg", done);
     } }, { leaseMs: 300 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
@@ -292,10 +292,10 @@ describe("Host-owned delegation through the Session Router", () => {
       }
       if (++parentTurns > 1) { yield text("callback"); return; }
       const first = tool("first"); yield first;
-      const accepted = await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first", checkpoint: [first] });
+      const accepted = await input.subagents!.delegate({ prompt: "first", runInBackground: true }, { toolUseId: "first" });
       const firstResult = result("first", accepted); yield firstResult;
       const second = tool("second"); yield second;
-      const done = await input.subagents!.delegate({ prompt: "second", runInBackground: false }, { toolUseId: "second", checkpoint: [first, firstResult, second] });
+      const done = await input.subagents!.delegate({ prompt: "second", runInBackground: false }, { toolUseId: "second" });
       yield result("second", done); yield text("parent done");
     } }, { quota: 1 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
@@ -325,7 +325,7 @@ describe("Host-owned delegation through the Session Router", () => {
       if (input.message.source === "subagent_result") { yield text("processed child result"); return; }
       await input.toolExecutor!.writeFile("/tmp/shared-parent-file", "same sandbox");
       const call = tool("delegate"); yield call;
-      const accepted = await input.subagents!.delegate({ prompt: "child", runInBackground: true }, { toolUseId: "delegate", checkpoint: [call] });
+      const accepted = await input.subagents!.delegate({ prompt: "child", runInBackground: true }, { toolUseId: "delegate" });
       yield result("delegate", accepted);
       yield text("parent done");
     } });
@@ -354,7 +354,7 @@ describe("Host-owned delegation through the Session Router", () => {
       parentTurns.push(input.turnId);
       if (parentTurns.length > 1) { yield text("user followup"); return; }
       const call = tool("sync"); yield call;
-      const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "sync", checkpoint: [call] });
+      const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "sync" });
       expect(done).toMatchObject({ status: "completed", runInBackground: false });
       yield result("sync", done); yield text("parent continued");
     } });
@@ -393,7 +393,7 @@ describe("Host-owned delegation through the Session Router", () => {
       }
       parentTurns++;
       const id = `call${parentTurns}`; const call = tool(id); yield call;
-      const output = await input.subagents!.delegate({ prompt: "child", resume: childId || undefined, runInBackground: false }, { toolUseId: id, checkpoint: [call] }) as { childId: string };
+      const output = await input.subagents!.delegate({ prompt: "child", resume: childId || undefined, runInBackground: false }, { toolUseId: id }) as { childId: string };
       childId = output.childId; yield result(id, output); yield text("done");
     } });
     await h.enqueue(); await h.router.handleNewEvent(h.parent.id, h.agent);
@@ -421,7 +421,7 @@ describe("Host-owned delegation through the Session Router", () => {
         yield event("session.error", { error: { code: "stream_read_error", message: "stream failed" } }); return;
       }
       const call = tool("call"); yield call;
-      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "call", checkpoint: [call] });
+      const output = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "call" });
       expect(output).toMatchObject({ status: "failed", result: { output: "", reason: "stream failed" } });
       expect(await input.toolExecutor!.readFile("partial.txt")).toBe("saved");
       yield result("call", output); yield text("failure acknowledged");
@@ -430,37 +430,62 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(h.errors).toEqual([]);
   });
 
-  it("restores a persisted wait checkpoint into the original parent Turn without rerunning its tool", async () => {
-    let continuation: AdapterInput | undefined;
-    const compacted = event("agent.context_entry", { sdk: "pi@0.83.0", turnId: "original", entry: { type: "compaction", id: "summary1", summary: "checkpoint summary", firstKeptEntryId: "kept" } });
-    const contextStart = event("agent.context_start", { sdk: "pi@0.83.0", inputEventId: "promoted", turnId: "original" });
-    const started = event("agent.compaction", { compactionId: "compact1", status: "started", reason: "threshold" });
+  it("continues the original Turn from the event log when the Runner is lost after acceptance and before the child completes", async () => {
+    const contextStart = event("agent.context_start", { sdk: "pi@0.83.0" });
+    const call = event("agent.context_entry", { sdk: "pi@0.83.0", entry: { id: "parent-call", parentId: null, type: "message",
+      message: { role: "assistant", content: [{ type: "toolCall", id: "lost-wait", name: "Agent", arguments: { prompt: "child" } }], stopReason: "toolUse" } },
+      presentation: { version: 1, blocks: [{ type: "agent.tool_use", index: 0 }] } });
+    const turns: AdapterInput[] = [];
     const h = await harness({ async *run(input) {
-      if (input.execution?.isChild) { yield text("recovered queued child"); return; }
-      continuation = input;
-      expect(input.continuation).toBeDefined();
-      expect(input.history.filter((e) => e.type === "agent.tool_result")).toHaveLength(1);
-      yield text("continued original Turn");
+      if (input.execution?.isChild) { yield text("child answer after takeover"); return; }
+      turns.push(input);
+      if (turns.length > 1) { yield text("continued original Turn"); return; }
+      await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
+      // The commit barrier makes the tool request durable before Pi runs the tool.
+      await input.persistContext!([contextStart, call]);
+      yield contextStart; yield call;
+      await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "lost-wait" });
+      throw new Error("A lost Runner never observes the delegation result");
     } });
+    // The Runner is lost right after the acceptance transaction commits: its
+    // claim lapses before it can wake the child or write anything else.
+    const accept = h.stores.delegationStore.accept.bind(h.stores.delegationStore);
+    vi.spyOn(h.stores.delegationStore, "accept").mockImplementationOnce(async (input, fence) => {
+      await accept(input, fence);
+      await h.stores.pendingEventStore.releaseClaim(h.parent.id, fence.eventId, fence);
+      throw new PendingEventClaimLostError(h.parent.id, fence.eventId, fence.ownerId, fence.generation);
+    });
     const pending = await h.enqueue();
-    const claim = (await h.stores.pendingEventStore.claim(h.parent.id, "dead-host", 30000))!;
-    const fence = { eventId: pending.id, ownerId: claim.ownerId, generation: claim.generation };
-    const promoted = await h.stores.eventLogStore.append(h.parent.id, { type: pending.type, data: pending.data, sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pending.id}`, pendingFence: fence });
-    const originalTurn = `turn_${promoted.seq}_a${claim.generation}`;
-    const call = tool("restored-call");
-    await h.stores.delegationStore.accept({ tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "restored-call", prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30, sandboxSessionId: h.parent.id, checkpoint: { events: [contextStart, started, compacted, compacted, call] } }, fence);
-    await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
-    await h.router.recoverPendingEvents();
-    expect(await h.router.waitForIdle(4000)).toBe(true);
-    expect(continuation?.turnId).toBe(originalTurn);
-    expect(continuation?.history.filter(e => e.type === "agent.context_start")).toHaveLength(1);
-    expect(continuation?.history.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
-    expect(continuation?.history.find(e => e.type === "agent.context_entry")).toMatchObject({ entry: { summary: "checkpoint summary" } });
-    expect(continuation?.history.filter(e => e.type === "agent.compaction")).toHaveLength(1);
+    await h.router.handleNewEvent(h.parent.id, h.agent);
+    const [execution] = await h.stores.delegationStore.list("tenant", h.parent.id);
+    expect(execution.status).toBe("queued");
+    const originalTurn = turns[0].turnId;
+    expect(await h.stores.delegationStore.listWaits(h.parent.id, pending.id)).toEqual([{
+      tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "lost-wait",
+      executionId: execution.id, parentPendingEventId: pending.id, status: "waiting",
+      config: { model: "test", thinking: "low" },
+    }]);
+
+    // A later Agent edit must not change the configuration of the resumed Turn.
+    await h.stores.agentStore.update(h.agent.id, { model: "unrelated/new-configuration" });
+    const replacement = h.makeRouter();
+    await replacement.recoverPendingEvents();
+    expect(await replacement.waitForIdle(4000)).toBe(true);
+
+    expect(turns).toHaveLength(2);
+    const resumed = turns[1];
+    expect(resumed).toMatchObject({ turnId: originalTurn, agent: { model: "test" }, execution: { thinking: "low", completedModelSteps: 0 } });
+    expect(resumed.history.filter(e => e.type === "agent.context_start")).toHaveLength(1);
+    expect(resumed.history.filter(e => e.type === "agent.context_entry")).toEqual([expect.objectContaining({ id: call.id, turnId: originalTurn })]);
+    const results = resumed.history.filter(e => e.type === "agent.tool_result");
+    expect(results).toEqual([expect.objectContaining({ toolUseId: "lost-wait", isError: false })]);
+    expect(JSON.stringify(results[0])).toContain("child answer after takeover");
     const log = await h.log();
-    expect(log.filter((e) => e.type === "agent.tool_use")).toHaveLength(1);
-    expect(log.filter((e) => e.type === "agent.tool_result")).toHaveLength(1);
-    expect(log.filter((e) => e.type === "session.turn_completed")).toHaveLength(1);
+    expect(log.filter(e => e.type === "agent.context_entry")).toHaveLength(1);
+    expect(log.filter(e => e.type === "agent.tool_result")).toHaveLength(1);
+    expect(log.filter(e => e.type === "session.error")).toEqual([]);
+    expect(log.filter(e => e.type === "session.turn_completed")).toEqual([expect.objectContaining({ data: expect.objectContaining({ turnId: originalTurn }) })]);
+    expect((await h.stores.delegationStore.getExecution("tenant", execution.id))?.status).toBe("completed");
     expect(h.errors).toEqual([]);
   });
   it.each(["idle", "recovery_required", "adapter_error", "turn_aborted"])("does not restart a consumed-wait parent after durable %s but before its completion marker", async (boundary) => {
@@ -477,7 +502,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const call = tool("finished-call");
     const caller = { tenantId: "tenant", callerSessionId: h.parent.id, callerTurnId: originalTurn, callerToolUseId: "finished-call" };
     const child = await h.stores.delegationStore.accept({ ...caller, prompt: "child", mode: "sync", parentModel: "test", maxSteps: 30,
-      sandboxSessionId: h.parent.id, checkpoint: { events: [call] } }, fence);
+      sandboxSessionId: h.parent.id }, fence);
     const childClaim = (await h.stores.pendingEventStore.claim(child.childId, "dead-host", 30000))!;
     const childFence = { eventId: child.pendingEventId, ownerId: childClaim.ownerId, generation: childClaim.generation };
     await h.stores.delegationStore.startExecution(child.id, childFence, "child-turn", {}, 4);

@@ -58,15 +58,25 @@ export interface DelegationAcceptInput extends DelegationCaller {
   apiKeyId?: string;
   /** Trusted Host snapshot of the calling parent Turn model, including its provider. */
   parentModel: string;
+  /** Trusted Host snapshot of the calling parent Turn thinking level; a synchronous wait resumes with it. */
+  parentThinking?: string;
   thinking?: string;
   maxSteps: number;
   sandboxSessionId: string;
-  checkpoint?: Record<string, unknown>;
+}
+/**
+ * The calling parent Turn's effective configuration, so recovery resumes that
+ * Turn unchanged. History is never stored here: each native message, including
+ * the requesting tool call, reaches the event log before Pi runs its tools.
+ */
+export interface DelegationWaitConfig {
+  model?: string;
+  thinking?: string;
 }
 export interface DelegationWait extends DelegationCaller {
   executionId: string;
   parentPendingEventId: string;
-  checkpoint: Record<string, unknown>;
+  config: DelegationWaitConfig;
   status: "waiting" | "consumed" | "cancelled";
   toolResultSeq?: number;
 }
@@ -110,7 +120,7 @@ export interface DelegationStore {
   /** Child terminal + parent notification event + async pending input commit together. */
   finishExecution(executionId: string, fence: PendingEventFence, outcome: DelegationOutcome): Promise<DelegationExecution>;
   saveWait(wait: Omit<DelegationWait, "status">, fence: PendingEventFence): Promise<DelegationWait>;
-  listWaits(parentSessionId: string, parentPendingEventId: string, options?: { checkpoint: "reference" }): Promise<DelegationWait[]>;
+  listWaits(parentSessionId: string, parentPendingEventId: string): Promise<DelegationWait[]>;
   /** Append final parent tool result and suppress unclaimed async delivery atomically. */
   consumeResult(executionId: string, caller: DelegationCaller, fence: PendingEventFence, event: EventLogStoreAppendInput): Promise<StoredEvent>;
   markNotificationProcessed(executionId: string, parentFence: PendingEventFence): Promise<void>;

@@ -1164,8 +1164,8 @@ export class SessionRouter {
       // Child restrictions belong to the Session, including later direct user
       // input that has no DelegationExecution record for this pending event.
       if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };
-      const waitingConfig = resumableWaits[0]?.checkpoint.config as { model?: string; thinking?: string } | undefined;
-      if (typeof waitingConfig?.model === "string") currentAgent = { ...currentAgent, model: waitingConfig.model };
+      const waitingConfig = resumableWaits[0]?.config;
+      if (waitingConfig?.model) currentAgent = { ...currentAgent, model: waitingConfig.model };
       let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
       if (delegationExecution && this.delegationStore) {
         currentAgent = { ...currentAgent, mcpServers: undefined,
@@ -1645,7 +1645,7 @@ export class SessionRouter {
 
       // The Adapter awaits this at every native message boundary and before
       // using a newly compacted context. Writes use the same fence and event IDs
-      // as ordinary iteration and checkpoints.
+      // as ordinary iteration.
       adapterInput.persistContext = async (contextEvents) => {
         for (const event of contextEvents) {
           if (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type === "compaction") {
@@ -1930,7 +1930,7 @@ export class SessionRouter {
       if (leaseLost) return;
 
       // A temporary Adapter return cannot finish a Turn that still owns a
-      // durable wait. Reclaim the same input and continue from its checkpoint.
+      // durable wait. Reclaim the same input and continue from the event log.
       if (!turnController.signal.aborted && this.delegationStore &&
         (await this.delegationStore.listWaits(sessionId, pendingEvent.id)).some((wait) => wait.status === "waiting")) {
         await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);

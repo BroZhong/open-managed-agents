@@ -62,7 +62,7 @@ export class EventPayloadCodec {
   constructor(private readonly objects: EventPayloadStore) {}
 
   async encode(sessionId: string, type: string, data: unknown): Promise<unknown> {
-    if (eventPayloadRef(data, type)) return data; // Already externalized checkpoint.
+    if (eventPayloadRef(data, type)) return data; // Already externalized.
     const projection = lazyEventData(type, data);
     const ref = eventPayloadRef(projection, type);
     if (ref) await this.objects.put(sessionId, ref.sha256, Buffer.from(JSON.stringify(data)));
@@ -77,14 +77,5 @@ export class EventPayloadCodec {
       throw new Error("Session result integrity check failed");
     }
     return JSON.parse(body.toString("utf8"));
-  }
-
-  async checkpoint(sessionId: string, checkpoint: Record<string, unknown>, decode = false): Promise<Record<string, unknown>> {
-    if (!Array.isArray(checkpoint.events)) return checkpoint;
-    const events = [];
-    for (const event of checkpoint.events) {
-      events.push(decode ? await this.decode(sessionId, event, event.type) : await this.encode(sessionId, event.type, event));
-    }
-    return { ...checkpoint, events };
   }
 }

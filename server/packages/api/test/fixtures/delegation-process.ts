@@ -22,7 +22,7 @@ const adapter: Adapter = { async *run(input) {
   if (input.message.source === "subagent_result") { yield text(`async result handled PID ${process.pid}`); return; }
   const call = event("agent.tool_use", { toolUseId: "cross-process", name: "Agent", input: { prompt: "child" } });
   yield call;
-  const output = await input.subagents!.delegate({ prompt: "child", runInBackground: process.env.DELEGATION_MODE === "async" }, { toolUseId: "cross-process", checkpoint: [call] });
+  const output = await input.subagents!.delegate({ prompt: "child", runInBackground: process.env.DELEGATION_MODE === "async" }, { toolUseId: "cross-process" });
   yield event("agent.tool_result", { toolUseId: "cross-process", content: [{ type: "text", text: JSON.stringify(output) }], isError: false });
   yield text(`parent PID ${process.pid}`);
 } };

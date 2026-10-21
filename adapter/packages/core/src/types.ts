@@ -68,8 +68,6 @@ export interface SkillDescriptor {
 export interface SubagentCallContext {
   toolUseId: string;
   signal?: AbortSignal;
-  /** Current Turn Complete events only (no history/prompt), including the waiting tool request. */
-  checkpoint: SessionEvent[];
 }
 
 export interface HostSubagentCapability {
