@@ -1,5 +1,5 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { ContentBlock, SessionEvent } from "@open-managed-agents/adapter-core";
+import type { ContentBlock, SessionErrorEvent, SessionEvent } from "@open-managed-agents/adapter-core";
 import {
   generateEventId,
   generateTimestamp,
@@ -421,7 +421,7 @@ export class PiEventTranslator {
    * this prompt-settlement boundary prevents both dropped recovery output and a
    * stale error when a later continuation succeeds.
    */
-  finalize(): SessionEvent[] {
+  finalize(): SessionErrorEvent[] {
     if (!this.pendingProviderError) return [];
     const message = this.pendingProviderError;
     this.pendingProviderError = undefined;
@@ -434,7 +434,7 @@ export class PiEventTranslator {
           message,
           code: "pi_agent_error",
         },
-      } as SessionEvent,
+      },
     ];
   }
 }

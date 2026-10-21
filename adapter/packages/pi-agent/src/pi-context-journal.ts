@@ -1,5 +1,5 @@
 import type { ExtensionFactory, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import type { AdapterInput, AgentContextEntryEvent, SessionEvent, StreamEvent } from "@open-managed-agents/adapter-core";
 
 import { isContinuationEntry } from "./pi-continuation.js";
 import { PiPresentation } from "./pi-presentation.js";
@@ -7,7 +7,7 @@ import { PiPresentation } from "./pi-presentation.js";
 interface JournalOptions {
   manager: SessionManager;
   input: AdapterInput;
-  emit(event: SessionEvent): void;
+  emit(event: Exclude<SessionEvent, StreamEvent>): void;
   checkpoint(): SessionEvent[];
   takeUncommitted(): SessionEvent[];
   compactionInfo(): { compactionId: string; reason: "manual" | "threshold" | "overflow" } | undefined;
@@ -61,7 +61,10 @@ export class PiContextJournal {
 
   async ready(): Promise<void> {
     await this.pending;
-    if (this.failure) throw this.failure;
+    // Pi turns a request rejection into an error message and applies provider
+    // retry and overflow recovery to its text, so a journal failure uses the
+    // fixed barrier message.
+    if (this.failure) throw this.options.input.journal ? new Error(COMMIT_BARRIER_FAILED) : this.failure;
     this.options.input.signal?.throwIfAborted();
     this.capture();
   }
@@ -72,18 +75,28 @@ export class PiContextJournal {
    * stays sticky and every later boundary rejects with a fixed message.
    */
   async flush(): Promise<void> {
-    const persist = this.options.input.persistContext;
     if (!this.failure) {
       this.capture();
-      const events = this.options.takeUncommitted().filter(event => CONTEXT_TYPES.has(event.type));
-      if (persist && events.length) {
-        this.pending = this.pending.then(() => persist(structuredClone(events))).catch(error => {
+      const write = this.commitWrite();
+      if (write) {
+        this.pending = this.pending.then(write).catch(error => {
           this.failure = error instanceof Error ? error : new Error(String(error));
         });
       }
     }
     await this.pending;
     if (this.failure) throw new Error(COMMIT_BARRIER_FAILED);
+  }
+
+  /**
+   * A journal holds every recorded event in call order and writes them all.
+   * Without one, commit the context events the Host has not received yet.
+   */
+  private commitWrite(): (() => Promise<void>) | undefined {
+    const { journal, persistContext } = this.options.input;
+    if (journal) return () => journal.flush();
+    const events = this.options.takeUncommitted().filter(event => CONTEXT_TYPES.has(event.type));
+    return persistContext && events.length ? () => persistContext(structuredClone(events)) : undefined;
   }
 
   private async commit(): Promise<void> {
@@ -96,19 +109,26 @@ export class PiContextJournal {
     const entry = manager.getEntries()[this.cursor];
     if (entry?.type !== "compaction") throw new Error("Missing newly appended Pi compaction");
     input.signal?.throwIfAborted();
-    if (!input.persistContext) throw new Error("Pi compaction requires a Host persistence barrier");
+    if (!input.journal && !input.persistContext) throw new Error("Pi compaction requires a Host persistence barrier");
     const previous = manager.getEntries().slice(0, this.cursor).reverse().find(item => item.type === "message" && item.message.role === "assistant");
     const message = previous?.type === "message" ? previous.message : undefined;
     const measured = message?.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted"
       ? message.usage.totalTokens || message.usage.input + message.usage.output + message.usage.cacheRead + message.usage.cacheWrite : undefined;
-    const event: SessionEvent = { id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
+    const event: AgentContextEntryEvent = { id: `pi_entry_${entry.id}`, type: "agent.context_entry", timestamp: entry.timestamp,
       sdk: "pi@0.83.0", turnId: input.turnId, entry: structuredClone(entry), ...compactionInfo(),
       tokensBeforeSource: measured !== undefined && measured === entry.tokensBefore ? "usage" : "estimate" };
-    const preceding = checkpoint().filter(event => ["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"].includes(event.type));
-    await input.persistContext([...preceding, event]);
-    emit(event);
-    // The batch above holds every context event emitted so far.
-    this.options.takeUncommitted();
+    if (input.journal) {
+      // Recorded behind everything before it, so one flush commits the prefix
+      // and the boundary. No request may use the summary until it resolves.
+      emit(event);
+      await input.journal.flush();
+    } else {
+      const preceding = checkpoint().filter(event => ["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"].includes(event.type));
+      await input.persistContext!([...preceding, event]);
+      emit(event);
+      // The batch above holds every context event emitted so far.
+      this.options.takeUncommitted();
+    }
     this.cursor++;
   }
 }

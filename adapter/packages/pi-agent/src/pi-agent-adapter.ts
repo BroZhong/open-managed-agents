@@ -20,15 +20,18 @@ import type {
 import type {
   Adapter,
   AdapterInput,
+  SessionErrorEvent,
   SessionEvent,
   SkillDescriptor,
   DelegationInstruction,
+  StreamEvent,
 } from "@open-managed-agents/adapter-core";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
   generateTimestamp,
+  isStreamEvent,
   SANDBOX_WORKSPACE_ROOT,
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
@@ -125,7 +128,7 @@ export interface SessionFactoryArgs {
   checkpoint(): SessionEvent[];
   /** Complete events emitted since the previous call, in order; each is returned once. */
   takeUncommitted(): SessionEvent[];
-  emitContext(event: SessionEvent): void;
+  emitContext(event: Exclude<SessionEvent, StreamEvent>): void;
   compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
 }
@@ -291,6 +294,13 @@ export class PiAgentAdapter implements Adapter {
     // it knows the whole drain-wave boundary, while this adapter sees only one
     // turn. Emitting them here too doubled every turn's lifecycle events. The
     // adapter now yields only real content/errors.
+    const turnJournal = input.journal;
+    const record = (event: Exclude<SessionEvent, StreamEvent>) => {
+      // The Host ends an Interrupted Turn with turn_aborted. The error the
+      // interrupt causes in Pi is not the Agent's output.
+      if (event.type === "session.error" && input.signal?.aborted) return;
+      turnJournal!.record(event);
+    };
     let session: PiSessionLike | undefined;
     try {
       const promptText = input.message.content
@@ -329,11 +339,13 @@ export class PiAgentAdapter implements Adapter {
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
 
+      const blockBase = input.blockBase ?? 0;
+      if (!Number.isInteger(blockBase) || blockBase < 0) throw new Error("blockBase must be a non-negative integer");
       const queue = new EventQueue<SessionEvent>();
       const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
       const checkpointEvents: SessionEvent[] = [];
       let committedEvents = 0;
-      const streamAlignment = new PiStreamAlignment();
+      const streamAlignment = new PiStreamAlignment(blockBase);
       const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 500 : undefined);
       if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
       let steps = input.execution?.completedModelSteps ?? 0;
@@ -348,9 +360,10 @@ export class PiAgentAdapter implements Adapter {
           return events;
         },
         emitContext(event) {
-          event = streamAlignment.attach(event);
-          checkpointEvents.push(event);
-          queue.push(event);
+          if (turnJournal) return record(streamAlignment.align(event));
+          const attached = streamAlignment.attach(event);
+          checkpointEvents.push(attached);
+          queue.push(attached);
         },
         compactionInfo: () => translator.activeCompaction,
         async beforeModelStep() {
@@ -369,8 +382,13 @@ export class PiAgentAdapter implements Adapter {
         const observed = event.type === "compaction_end" && !event.result && input.signal?.aborted
           ? { ...event, aborted: true } : event;
         for (const translated of translator.processEvent(observed)) {
-          streamAlignment.observe(translated);
+          const blockIndex = streamAlignment.observe(translated);
           if (session!.nativeContext && PI_DISPLAY_TYPES.has(translated.type)) continue;
+          if (turnJournal) {
+            if (isStreamEvent(translated)) turnJournal.delta(translated, blockIndex!);
+            else record(blockIndex === undefined ? translated : { ...translated, blockIndex } as typeof translated);
+            continue;
+          }
           if (!translated.type.includes("_stream_") && !translated.type.endsWith("_chunk")) checkpointEvents.push(translated);
           queue.push(translated);
         }
@@ -409,25 +427,29 @@ export class PiAgentAdapter implements Adapter {
         const operation = input.continuation
           ? (session.continue ? session.continue() : Promise.reject(new Error("Pi session does not support structured continuation")))
           : session.prompt(prompt);
-        operation.then(
-          () => {
-            // Close on the next tick so any events synchronously following the
-            // prompt settlement are enqueued first. Buffered events still drain
-            // before iteration completes.
-            queue.closeSoon();
-          },
-          (error: unknown) => {
-            queue.fail(error instanceof Error ? error : new Error(String(error)));
-          },
-        );
-
-        for await (const event of queue) yield event;
-        if (budgetExceeded) {
-          yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.error", error: { message: `Model step budget exhausted (${maxSteps})`, code: "model_step_budget_exhausted" } };
+        if (turnJournal) {
+          // Output went to the journal as it happened; a rejection ends the run.
+          await operation;
         } else {
-          for (const e of translator.finalize()) {
-            if (!session.nativeContext || !PI_DISPLAY_TYPES.has(e.type)) yield e;
-          }
+          operation.then(
+            () => {
+              // Close on the next tick so any events synchronously following the
+              // prompt settlement are enqueued first. Buffered events still drain
+              // before iteration completes.
+              queue.closeSoon();
+            },
+            (error: unknown) => {
+              queue.fail(error instanceof Error ? error : new Error(String(error)));
+            },
+          );
+          for await (const event of queue) yield event;
+        }
+        const closing: SessionErrorEvent[] = budgetExceeded
+          ? [{ id: generateEventId(), timestamp: generateTimestamp(), type: "session.error", error: { message: `Model step budget exhausted (${maxSteps})`, code: "model_step_budget_exhausted" } }]
+          : translator.finalize();
+        for (const event of closing) {
+          if (turnJournal) record(event);
+          else yield event;
         }
       } finally {
         unsubscribe();
@@ -435,12 +457,14 @@ export class PiAgentAdapter implements Adapter {
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      yield {
+      const failure: SessionErrorEvent = {
         id: generateEventId(),
         timestamp: generateTimestamp(),
         type: "session.error",
         error: { message: msg, code: msg.startsWith("Model step budget exhausted") ? "model_step_budget_exhausted" : "pi_agent_error" },
-      } as SessionEvent;
+      };
+      if (turnJournal) record(failure);
+      else yield failure;
     } finally {
       try {
         await session?.dispose();
@@ -586,6 +610,8 @@ export class PiAgentAdapter implements Adapter {
         // Also gates native summary requests, which bypass transformContext.
         await journal.ready();
         captureContextUsage();
+        // What was recorded so far, this snapshot included, is durable first.
+        if (args.input.journal) await journal.flush();
         return streamFunction(model, context, options);
       };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));

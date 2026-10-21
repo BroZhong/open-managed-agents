@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
+import { MemoryTurnJournal } from "./memory-turn-journal.js";
 
-const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, overflowError: "prompt is too long: context window exceeded", summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
+const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, overflowError: "prompt is too long: context window exceeded", summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined, onAppendCompaction: undefined as (() => void) | undefined }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -21,6 +22,11 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
     async createAgentSession(options: Parameters<typeof sdk.createAgentSession>[0]) {
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 30 }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
       const result = await sdk.createAgentSession({ ...options, model: { ...options!.model!, contextWindow: 1000 }, settingsManager });
+      // Pi checks its own cancellation before appending a summary; this hook
+      // lets an Interrupt arrive just after that check.
+      const manager = result.session.sessionManager;
+      const appendCompaction = manager.appendCompaction.bind(manager);
+      manager.appendCompaction = (...args) => { const id = appendCompaction(...args); control.onAppendCompaction?.(); return id; };
       result.session.agent.streamFunction = async (model, context, options) => {
         // Model responses arrive after request dispatch. Avoid same-millisecond
         // compaction/message timestamps changing the native stale-usage branch.
@@ -87,7 +93,7 @@ async function run(input: AdapterInput) {
 }
 const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => key === "timestamp" ? undefined : v));
 afterEach(() => vi.unstubAllEnvs());
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.overflowError = "prompt is too long: context window exceeded"; control.cancelSummary = false; control.toolPending = false; control.streamedResponse = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.overflowError = "prompt is too long: context window exceeded"; control.cancelSummary = false; control.toolPending = false; control.streamedResponse = false; control.pauseSummary = false; control.onSummary = undefined; control.onAppendCompaction = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("attaches stable stream indices to native blocks before they enter the persistence queue", async () => {
@@ -382,4 +388,50 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     expect(control.requests.map(r => r.summary)).toEqual(boundary === "after_compaction" ? [false] : [true, false]);
   });
 
+});
+
+describe("Pi compaction through an injected Turn journal", () => {
+  const isBoundary = (event: SessionEvent) => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "compaction";
+  const promoted = { id: "input1", type: "user.message", content: [{ type: "text", text: "continue" }] } as unknown as SessionEvent;
+  async function runWith(history: SessionEvent[], journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}) {
+    const yielded: SessionEvent[] = [];
+    for await (const event of new PiAgentAdapter().run({ ...input(history, undefined), journal, ...extra })) yielded.push(event);
+    return yielded;
+  }
+
+  it("commits the boundary before any request uses the summary", async () => {
+    let requestsAtCommit: number | undefined;
+    const history = records(seed());
+    const journal = new MemoryTurnJournal(async batch => { if (batch.some(isBoundary)) requestsAtCommit = control.requests.length; });
+    expect(await runWith(history, journal)).toEqual([]);
+    expect(journal.recorded.filter(e => e.type === "session.error")).toEqual([]);
+    expect(control.requests.map(r => r.summary)).toEqual([true, false]);
+    expect(requestsAtCommit).toBe(1);
+    expect(journal.recorded.filter(isBoundary)).toHaveLength(1);
+    const restored = restorePiSession([...history, promoted, ...journal.committed]);
+    expect(restored.getEntries().filter(e => e.type === "compaction")).toHaveLength(1);
+  });
+
+  it.each([false, true])("never uses a summary whose boundary failed to commit (overflow=%s)", async overflow => {
+    if (overflow) control.overflow = 1;
+    const journal = new MemoryTurnJournal(async batch => { if (batch.some(isBoundary)) throw new Error("context storage unavailable"); });
+    expect(await runWith(records(seed(!overflow)), journal)).toEqual([]);
+    expect(journal.committed.some(isBoundary)).toBe(false);
+    expect(control.requests.map(r => r.summary)).toEqual(overflow ? [false, true] : [true]);
+    expect(journal.recorded.filter(e => e.type === "session.error")).toMatchObject([{ error: { message: "context storage unavailable" } }]);
+  });
+
+  it("commits no boundary when an Interrupt arrives after Pi accepted the summary", async () => {
+    const controller = new AbortController();
+    control.onAppendCompaction = () => controller.abort();
+    const history = records(seed());
+    const journal = new MemoryTurnJournal();
+    expect(await runWith(history, journal, { signal: controller.signal })).toEqual([]);
+    expect(journal.recorded.some(isBoundary)).toBe(false);
+    expect(control.requests.map(r => r.summary)).toEqual([true]);
+    expect(journal.recorded.some(e => e.type === "agent.compaction" && e.status === "cancelled")).toBe(true);
+    // The Interrupted Turn ends with the Router's turn_aborted, not an error.
+    expect(journal.recorded.filter(e => e.type === "session.error")).toEqual([]);
+    expect(restorePiSession([...history, promoted, ...journal.committed]).getEntries().some(e => e.type === "compaction")).toBe(false);
+  });
 });
