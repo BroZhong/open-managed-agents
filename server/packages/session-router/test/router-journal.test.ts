@@ -317,6 +317,29 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
   });
 });
 
+describe("recovery repairs written through the journal", () => {
+  it("A15 answers dangling MCP calls under their server, or unknown when the call names none", async () => {
+    const h = await harness({ async run() { throw new Error("must not run"); } });
+    const parent = await h.deadClaim();
+    for (const call of [{ toolUseId: "named", serverName: "docs" }, { toolUseId: "unnamed" }]) {
+      await h.append(h.session.id, { type: "agent.mcp_tool_use", data: { ...event("agent.mcp_tool_use", { ...call, name: "search", input: {} }), turnId: parent.turnId },
+        sessionThreadId: "sthr_primary", pendingFence: parent.fence });
+    }
+    await h.append(h.session.id, { type: "session.error", data: { error: { code: "adapter_error", message: "lost" } },
+      sessionThreadId: "sthr_primary", pendingFence: parent.fence });
+    await h.stores.pendingEventStore.releaseClaim(h.session.id, parent.pending.id, parent.claim);
+
+    await h.router.handleNewEvent(h.session.id, h.agent);
+
+    const log = await h.log();
+    expect(log.filter(stored => stored.type === "agent.mcp_tool_result").map(stored => stored.data)).toEqual([
+      expect.objectContaining({ toolUseId: "named", serverName: "docs", isError: true }),
+      expect.objectContaining({ toolUseId: "unnamed", serverName: "unknown", isError: true }),
+    ]);
+    expect(log.filter(stored => stored.type === "session.turn_completed")).toHaveLength(1);
+  });
+});
+
 describe("an Adapter that writes through its journal entry", () => {
   /** An Adapter that waits for its Interrupt, then writes what an interrupted Pi would. */
   function interrupted(write: (journal: TurnJournalPort) => Promise<void>) {

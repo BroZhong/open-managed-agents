@@ -14,7 +14,7 @@ import type {
   DelegationExecution,
   SandboxActivity,
 } from "@oma-server/store";
-import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent } from "@oma-server/store";
+import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
@@ -42,6 +42,7 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
+import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts } from "./plan-resume.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -864,14 +865,6 @@ export class SessionRouter {
     return `pending:${pendingEventId}:${phase}`;
   }
 
-  private turnCompleted(events: StoredEvent[], pendingEventId: string): boolean {
-    return events.some((event) => {
-      if (event.type !== "session.turn_completed") return false;
-      const data = event.data as { pendingEventId?: unknown } | null;
-      return data?.pendingEventId === pendingEventId;
-    });
-  }
-
   private async reclaimEarlierAttempts(
     sessionId: string,
     promotedSeq: number,
@@ -905,34 +898,22 @@ export class SessionRouter {
     }
   }
 
-  /** Record a result for each tool call of the attempt's events that has none. */
-  private repairDanglingToolUses(
+  /** Record a result for each tool call that has none, and the error that ends its Turn. */
+  private recordRepairs(
     journal: TurnJournal,
     pendingEventId: string,
     turnId: string,
-    attemptEvents: StoredEvent[],
+    repairs: readonly DanglingToolCall[],
+    error?: RecoveryError,
   ): void {
-    attemptEvents = attemptEvents.flatMap(event => presentEvent(event));
-    const results = new Set<string>();
-    for (const event of attemptEvents) {
-      if (event.type !== "agent.tool_result" && event.type !== "agent.mcp_tool_result") continue;
-      const data = event.data as { toolUseId?: unknown } | null;
-      if (typeof data?.toolUseId === "string") results.add(data.toolUseId);
-    }
-
-    for (const event of attemptEvents) {
-      if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") continue;
-      const data = event.data as { toolUseId?: unknown; serverName?: unknown } | null;
-      if (typeof data?.toolUseId !== "string" || results.has(data.toolUseId)) continue;
-      const isMcp = event.type === "agent.mcp_tool_use";
+    for (const call of repairs) {
+      const isMcp = call.type === "agent.mcp_tool_use";
       const repairedData = {
-        id: `recovery_${pendingEventId}_${data.toolUseId}`,
+        id: `recovery_${pendingEventId}_${call.toolUseId}`,
         timestamp: new Date().toISOString(),
         type: isMcp ? "agent.mcp_tool_result" : "agent.tool_result",
-        toolUseId: data.toolUseId,
-        ...(isMcp
-          ? { serverName: typeof data.serverName === "string" ? data.serverName : "unknown" }
-          : {}),
+        toolUseId: call.toolUseId,
+        ...(isMcp ? { serverName: call.serverName ?? "unknown" } : {}),
         content: [{
           type: "text",
           text: "The previous tool execution was interrupted before a result was committed.",
@@ -942,9 +923,14 @@ export class SessionRouter {
       };
       journal.record({ type: repairedData.type, data: repairedData }, this.turnKey(
         pendingEventId,
-        `recovery_tool_result:${encodeURIComponent(data.toolUseId)}`,
+        `recovery_tool_result:${encodeURIComponent(call.toolUseId)}`,
       ));
-      results.add(data.toolUseId);
+    }
+    if (error) {
+      journal.record({ type: "session.error", data: {
+        ...(error.turnId === undefined ? {} : { turnId: error.turnId }),
+        error: { code: error.code, message: error.message },
+      } }, this.turnKey(pendingEventId, error.phase));
     }
   }
 
@@ -1131,17 +1117,20 @@ export class SessionRouter {
       await journal.flush();
       const promotedEvent = journal.written(promotionKey)!;
 
-      // Read the complete log once after idempotent promotion. On restart, a
-      // completion marker means the durable Turn output already committed. The
-      // acknowledgement must still settle Session idle if the queue empties.
-      // Never rerun the Adapter in that case.
+      // Read the complete log once after idempotent promotion: what earlier
+      // attempts made durable decides how this one proceeds.
       let priorEvents = await this.readAllEvents(sessionId);
-      turnId = `turn_${promotedEvent.seq}_a${claim.generation}`;
-      const waits = await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [];
-      const resumableWaits = waits.filter((wait) => wait.status !== "cancelled");
-      if (resumableWaits.length) turnId = resumableWaits[0].callerTurnId;
+      const facts: ResumeFacts = {
+        pendingEventId: pendingEvent.id, promotedSeq: promotedEvent.seq, claim: { generation: claim.generation },
+        events: priorEvents.filter((event) => event.seq > promotedEvent.seq),
+        waits: await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [],
+      };
+      const plan = planResume(facts);
+      turnId = plan.turnId;
       journal.bindTurn(turnId);
-      if (this.turnCompleted(priorEvents, pendingEvent.id)) {
+      // A completed Turn is never run again. Its acknowledgement must still
+      // settle Session idle if the queue empties.
+      if (plan.kind === "acknowledge") {
         await this.reclaimEarlierAttempts(
           sessionId,
           promotedEvent.seq,
@@ -1166,8 +1155,8 @@ export class SessionRouter {
       // Child restrictions belong to the Session, including later direct user
       // input that has no DelegationExecution record for this pending event.
       if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };
-      const waitingConfig = resumableWaits[0]?.config;
-      if (waitingConfig?.model) currentAgent = { ...currentAgent, model: waitingConfig.model };
+      const resume = plan.kind === "run" ? plan.resume : undefined;
+      if (resume?.config.model) currentAgent = { ...currentAgent, model: resume.config.model };
       let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
       if (delegationExecution && this.delegationStore) {
         currentAgent = { ...currentAgent, mcpServers: undefined,
@@ -1184,38 +1173,19 @@ export class SessionRouter {
           return;
         }
         delegationExecution = started;
-        if (isTerminalExecution(started)) {
-          if (started.status === "recovery_required") {
-            this.repairDanglingToolUses(journal, pendingEvent.id, started.turnId ?? turnId,
-              priorEvents.filter((event) => event.seq > promotedEvent.seq));
-            journal.record({ type: "session.error", data: { turnId: started.turnId ?? turnId,
-              error: { code: "recovery_required", message: started.result?.reason } } },
-            `pending:${pendingEvent.id}:recovery_required`);
-          }
-          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, started.turnId ?? turnId, pendingFence)) return;
+        // Starting the execution is how this claim learns its state. One that
+        // has not ended changes no plan; one that has ends the Turn now.
+        const executionPlan = planResume({ ...facts, execution: started });
+        if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
+          this.recordRepairs(journal, pendingEvent.id, executionPlan.turnId, executionPlan.repairs, executionPlan.error);
+          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, executionPlan.turnId, pendingFence)) return;
           continue;
         }
       }
 
-      const attemptEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq && event.type !== "subagent.result");
-      const alreadyIdle = attemptEvents.some((event) => event.type === "session.status_idle");
-      const alreadyTerminal = alreadyIdle || attemptEvents.some((event) =>
-        event.type === "session.error" || event.type === "session.turn_aborted");
-      const partialDurableOutput = attemptEvents.some(
-        (event) => event.type !== "session.status_running",
-      );
-      if (alreadyTerminal || (partialDurableOutput && resumableWaits.length === 0)) {
-        if (alreadyTerminal) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
-        this.repairDanglingToolUses(journal, pendingEvent.id, turnId, attemptEvents);
-        if (!alreadyTerminal) {
-          const recoveryError = {
-            message:
-              "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
-            code: "recovery_partial_turn_aborted",
-          };
-          journal.record({ type: "session.error", data: { error: recoveryError } },
-            this.turnKey(pendingEvent.id, "recovery_partial_turn_aborted"));
-        }
+      if (plan.kind === "complete") {
+        if (plan.interruptChildren) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
+        this.recordRepairs(journal, pendingEvent.id, turnId, plan.repairs, plan.error);
         await this.reclaimEarlierAttempts(
           sessionId,
           promotedEvent.seq,
@@ -1414,24 +1384,19 @@ export class SessionRouter {
 
       let adapterInput: AdapterInput;
       try {
-        if (resumableWaits.length && this.delegations) {
-          await this.delegations.recoverWaits(delegationRun, resumableWaits);
+        if (resume && this.delegations) {
+          await this.delegations.recoverWaits(delegationRun, resume.waits);
           // Consuming the last result records the running transition, written
           // by the next flush: the history handed to the Adapter includes it.
           await journal.flush();
-          priorEvents = await this.readAllEvents(sessionId);
-          const turnEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq).flatMap(event => presentEvent(event));
-          const completedTools = new Set(turnEvents.filter((event) => event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result")
-            .map((event) => (event.data as { toolUseId?: string }).toolUseId));
-          if (turnEvents.some((event) => (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
-            !completedTools.has((event.data as { toolUseId?: string }).toolUseId))) {
-            this.repairDanglingToolUses(journal, pendingEvent.id, turnId, priorEvents.filter(event => event.seq > promotedEvent.seq));
-            journal.record({ type: "session.error", data: { turnId, error: { code: "recovery_required",
-              message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } } },
-            `pending:${pendingEvent.id}:unsafe_continuation`);
+          // A call outside the waits left an uncertain outcome: the Turn ends
+          // once the waits have their results.
+          if (resume.end) {
+            this.recordRepairs(journal, pendingEvent.id, turnId, resume.end.repairs, resume.end.error);
             if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
             continue;
           }
+          priorEvents = await this.readAllEvents(sessionId);
         }
         adapterInput = this.buildAdapterInput(
           sessionId,
@@ -1462,17 +1427,12 @@ export class SessionRouter {
               : {}),
           };
         }
-        if (resumableWaits.length) {
+        if (resume) {
           // The resumed wait's Turn continues after what it already committed:
           // its model steps and its output blocks.
-          const turnEvents = priorEvents.filter((event) => (event.data as { turnId?: string } | null)?.turnId === turnId);
           adapterInput.history = this.adapterHistory(priorEvents);
-          adapterInput.resume = {
-            completedModelSteps: turnEvents.filter((event) => event.type === "span.model_request_start").length,
-            blockBase: 1 + Math.max(-1, ...turnEvents.flatMap(event => presentEvent(event))
-              .map((event) => (event.data as { blockIndex?: number } | null)?.blockIndex ?? -1)),
-          };
-          if (waitingConfig?.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: waitingConfig.thinking };
+          adapterInput.resume = { completedModelSteps: resume.completedModelSteps, blockBase: resume.blockBase };
+          if (resume.config.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: resume.config.thinking };
         }
         if (this.delegations) adapterInput.execution = { ...adapterInput.execution,
           onResolved: async (config) => {
@@ -1486,8 +1446,8 @@ export class SessionRouter {
           await this.delegations.interruptChildren(session, turnId, pendingFence);
           await journal.flush();
           const interruptedEvents = await this.readAllEvents(sessionId);
-          this.repairDanglingToolUses(journal, pendingEvent.id, turnId,
-            interruptedEvents.filter((event) => event.seq > promotedEvent.seq));
+          this.recordRepairs(journal, pendingEvent.id, turnId,
+            danglingToolCalls(interruptedEvents.filter((event) => event.seq > promotedEvent.seq)));
           journal.record({ type: "session.turn_aborted", data: { turnId } },
             this.turnKey(pendingEvent.id, "turn_aborted"));
           if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
@@ -1611,8 +1571,8 @@ export class SessionRouter {
         // The repair reads this attempt's output from the log, including what
         // the Adapter recorded before it lost its write entry.
         await this.delegations?.interruptChildren(session, turnId, pendingFence);
-        this.repairDanglingToolUses(journal, pendingEvent.id, turnId,
-          (await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq));
+        this.recordRepairs(journal, pendingEvent.id, turnId,
+          danglingToolCalls((await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq)));
         journal.record({ type: "session.turn_aborted", data: { turnId } },
           this.turnKey(pendingEvent.id, "turn_aborted"));
         await journal.flush();

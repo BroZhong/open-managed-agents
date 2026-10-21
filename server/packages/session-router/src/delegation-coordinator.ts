@@ -30,7 +30,7 @@ interface CoordinatorDeps {
   pollMs?: number;
 }
 
-export const isTerminalExecution = (execution: DelegationExecution): boolean =>
+export const isTerminalExecution = (execution: Pick<DelegationExecution, "status">): boolean =>
   execution.status !== "queued" && execution.status !== "running";
 
 /** Coordination only; every child is executed by the ordinary Session Router. */

@@ -523,7 +523,8 @@ describe("Host-owned delegation through the Session Router", () => {
     // The lost Runner reports its lost claim as it stops; nothing else failed.
     expect(h.errors).toEqual([expect.any(PendingEventClaimLostError)]);
   });
-  it.each(["idle", "recovery_required", "adapter_error", "turn_aborted"])("does not restart a consumed-wait parent after durable %s but before its completion marker", async (boundary) => {
+  // Which durable boundaries end such a Turn is planResume's table; this is its wiring.
+  it("does not restart a consumed-wait parent after a durable turn_aborted but before its completion marker", async () => {
     let parentRuns = 0;
     const h = await harness({ async run(input: AdapterInput) { const write = journalWriter(input); parentRuns++; await write(text("unexpected extra model execution")); return "finished"; } });
     const pending = await h.enqueue();
@@ -546,18 +547,9 @@ describe("Host-owned delegation through the Session Router", () => {
     await h.stores.delegationStore.consumeResult(child.id, caller, fence, { type: "agent.tool_result",
       data: { ...result("finished-call", "done"), turnId: originalTurn }, sessionThreadId: "sthr_primary" });
     await h.stores.eventLogStore.append(h.parent.id, { type: "agent.message", data: { ...text("parent already finished"), turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
-    if (boundary === "idle") {
-      await h.stores.eventLogStore.append(h.parent.id, { type: "session.status_idle", data: {}, sessionThreadId: "sthr_primary",
-        idempotencyKey: `pending:${pending.id}:status_idle`, pendingFence: fence });
-    } else {
-      await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_use", data: { ...event("agent.tool_use", { toolUseId: "ordinary-tool", name: "bash", input: {} }), turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
-      await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_result", data: { ...result("ordinary-tool", "Execution interrupted; external effects are uncertain"), isError: true, turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
-      if (boundary === "turn_aborted") {
-        await h.stores.eventLogStore.append(h.parent.id, { type: "session.turn_aborted", data: { turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
-      } else {
-        await h.stores.eventLogStore.append(h.parent.id, { type: "session.error", data: { turnId: originalTurn, error: { code: boundary, message: "The original execution ended before its completion marker" } }, sessionThreadId: "sthr_primary", pendingFence: fence });
-      }
-    }
+    await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_use", data: { ...event("agent.tool_use", { toolUseId: "ordinary-tool", name: "bash", input: {} }), turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
+    await h.stores.eventLogStore.append(h.parent.id, { type: "agent.tool_result", data: { ...result("ordinary-tool", "Execution interrupted; external effects are uncertain"), isError: true, turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
+    await h.stores.eventLogStore.append(h.parent.id, { type: "session.turn_aborted", data: { turnId: originalTurn }, sessionThreadId: "sthr_primary", pendingFence: fence });
     await h.stores.pendingEventStore.releaseClaim(h.parent.id, pending.id, claim);
     await h.router.recoverPendingEvents();
     expect(await h.router.waitForIdle(4000)).toBe(true);
