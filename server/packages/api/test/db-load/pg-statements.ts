@@ -104,7 +104,9 @@ export const PG_COSTS: Record<string, Cost> = {
     if (!result.idleEvent) return tx(...gate, ...removal);
     return tx(...gate, ...removal, pk("UPDATE", "sessions"), ...appendCore(true, true));
   },
-  "pendingEventStore.listPendingSessionIds": fixed([st("SELECT DISTINCT", "pending_events", "full")]),
+  // Every Session's head by pending_events_session_idx, then the claim predicate.
+  "pendingEventStore.listClaimableSessionIds": fixed([st("SELECT DISTINCT ON", "pending_events", "full")]),
+  "pendingEventStore.headClaimable": fixed([ix("SELECT", "pending_events")]),
   "pendingEventStore.clear": fixed([ix("DELETE", "pending_events")]),
   "pendingEventStore.count": fixed([ix("SELECT", "pending_events")]),
   "pendingEventStore.listUnclaimed": fixed([ix("SELECT", "pending_events")]),

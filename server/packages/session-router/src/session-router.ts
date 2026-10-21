@@ -193,7 +193,11 @@ export interface SessionRouterDeps {
    * its hint is lost. Must be shorter than pendingClaimLeaseMs.
    */
   pendingClaimRenewIntervalMs?: number;
-  /** Bounded retry window when another Host currently owns the FIFO head. */
+  /**
+   * Bounded retry window after a drain failed or left a claimable head (a
+   * released claim, input queued behind an Interrupt). A head another Host
+   * owns is not retried.
+   */
   pendingClaimRetryMinMs?: number;
   pendingClaimRetryMaxMs?: number;
   /**
@@ -551,8 +555,12 @@ export class SessionRouter {
     const activeRun: ActiveSessionRun = { controller: new AbortController() };
     this.activeSessions.set(sessionId, activeRun);
 
+    let failed = false;
     try {
       await this.drainLoop(sessionId, agentConfig, activeRun);
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
@@ -562,8 +570,10 @@ export class SessionRouter {
       // Always inspect the durable queue at handoff. This covers the original
       // empty→unlock lost wake, a preloaded tail after user interrupt, and a
       // claim/PG failure that must retry without waiting for a new request.
+      // A head under a live claim is not retried: its owner drains the queue,
+      // and the pending scan finds it once a lost owner's lease expires.
       try {
-        if (await this.pendingEventStore.peek(sessionId)) {
+        if (failed || await this.pendingEventStore.headClaimable(sessionId)) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
           this.resetClaimRetry(sessionId);
@@ -596,7 +606,8 @@ export class SessionRouter {
     // Session termination revokes its pending lease first. Reconcile durable
     // child results even when a Host died before the local cleanup callback.
     this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions() ?? []);
-    const sessionIds = new Set(await this.pendingEventStore.listPendingSessionIds());
+    // Only heads no live claim holds: a Runner never contends with an owner.
+    const sessionIds = new Set(await this.pendingEventStore.listClaimableSessionIds());
 
     for (const sessionId of sessionIds) {
       try {
@@ -1053,12 +1064,9 @@ export class SessionRouter {
     let lastOwnedTurn: ActiveTurnWriter | undefined;
     while (!signal.aborted) {
       const claim = await this.claimPendingHead(sessionId);
-      if (!claim) {
-        if (await this.pendingEventStore.peek(sessionId)) {
-          this.scheduleClaimRetry(sessionId, agentConfig);
-        }
-        break;
-      }
+      // An empty or owned head ends the drain; handleNewEvent decides at
+      // handoff whether to retry.
+      if (!claim) break;
       this.resetClaimRetry(sessionId);
       const pendingEvent = claim.event;
       const pendingFence = this.fenceFor(claim);

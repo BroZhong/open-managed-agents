@@ -6,7 +6,8 @@ Accepted for #197–#203. Implementation and local verification only; production
 cutover is a separate operation. Extends ADR-0007, ADR-0010 and ADR-0016.
 ADR-0019 supersedes the original ADR-0017-based Sandbox lifetime portion.
 #234 amends how a running Turn's owner learns of an Interrupt: from its claim
-renewal every renew interval, and at once on a `check` hint (below).
+renewal every renew interval, and at once on a `check` hint (below). It also
+stops Runners from contending for input another Runner owns.
 
 ## Decision
 
@@ -48,9 +49,16 @@ that API's sockets; it is never a cross-process fallback.
 Runner subscribes to wake hints and independently scans PG every five seconds
 (`PENDING_SCAN_INTERVAL_MS`). Loop dispatch retains its own fifteen-second timer
 (`LOOP_POLL_INTERVAL_MS`). A Session's existing drainer immediately consumes its
-next input. Delegation wakes use the same signals; synchronous waits also poll
-the durable execution record. Both modes retain ADR-0010's ownership, model,
-budget and result-consumption rules.
+next input. The scan lists only Sessions whose head no live claim holds, and a
+Runner schedules a claim retry only after a failed drain or for a head it can
+take (a released claim, input queued behind an Interrupt), never for a head
+another Runner's live claim holds. A wake still makes every Runner try once. A
+lost owner's input is listed again when its lease expires, so another Runner
+takes it over within the lease plus one scan (35 s).
+
+Delegation wakes use the same signals; synchronous waits also poll the durable
+execution record. Both modes retain ADR-0010's ownership, model, budget and
+result-consumption rules.
 
 An API subscribes before replay, then follows the durable sequence cursor.
 Catch-up queries are shared per watched Session, bounded to ten pages of 1,000

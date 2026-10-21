@@ -161,7 +161,7 @@ describe("cancelling a running Sandbox tool through the fenced executor", () => 
     const h = await harness(tool.adapter, { leaseMs: 300 });
     const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
     let leaseHeld = true;
-    h.stores.pendingEventStore.renewClaim = async (...args) => leaseHeld && renew(...args);
+    h.stores.pendingEventStore.renewClaim = async (...args) => leaseHeld ? renew(...args) : { renewed: false, interruptRequested: false };
     const running = h.router.handleNewEvent(h.session.id, h.agent);
     await tool.ready;
 

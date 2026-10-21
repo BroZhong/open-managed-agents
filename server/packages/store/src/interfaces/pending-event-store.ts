@@ -103,8 +103,15 @@ export interface PendingEventStore {
     eventId: string,
     claim: PendingEventClaimRef,
   ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }>;
-  /** Session ids whose FIFO queues currently contain at least one event. */
-  listPendingSessionIds(): Promise<string[]>;
+  /**
+   * Session ids whose FIFO head {@link claim} would take now: no live claim
+   * holds it (never claimed, released, or its lease expired). A head under a
+   * live claim is not listed: its owner drains the rest of its queue, and the
+   * head is listed again once the owner's lease expires.
+   */
+  listClaimableSessionIds(): Promise<string[]>;
+  /** Whether the Session has a FIFO head that {@link claim} would take now. */
+  headClaimable(sessionId: string): Promise<boolean>;
   /** Discard every pending event for one Session (missing/terminated cleanup). */
   clear(sessionId: string): Promise<void>;
   count(sessionId: string): Promise<number>;

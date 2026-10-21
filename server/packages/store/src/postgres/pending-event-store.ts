@@ -388,11 +388,32 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     }
   }
 
-  async listPendingSessionIds(): Promise<string[]> {
+  async listClaimableSessionIds(): Promise<string[]> {
+    // Each Session's head by pending_events_session_idx, then the claim
+    // predicate of `claim`. A Runner's scan thus never contends for a head
+    // whose owner holds a live lease.
     const { rows } = await this.pool.query<{ session_id: string }>(
-      `SELECT DISTINCT session_id FROM pending_events ORDER BY session_id ASC`,
+      `SELECT session_id FROM (
+         SELECT DISTINCT ON (session_id) session_id, claim_owner, claim_expires_at
+         FROM pending_events
+         ORDER BY session_id, seq
+       ) head
+       WHERE claim_owner IS NULL OR claim_expires_at <= clock_timestamp()
+       ORDER BY session_id ASC`,
     );
     return rows.map((row) => row.session_id);
+  }
+
+  async headClaimable(sessionId: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ claimable: boolean }>(
+      `SELECT (claim_owner IS NULL OR claim_expires_at <= clock_timestamp()) AS claimable
+       FROM pending_events
+       WHERE session_id = $1
+       ORDER BY seq ASC
+       LIMIT 1`,
+      [sessionId],
+    );
+    return rows[0]?.claimable === true;
   }
 
   async clear(sessionId: string): Promise<void> {

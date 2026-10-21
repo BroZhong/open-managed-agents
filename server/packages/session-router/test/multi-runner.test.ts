@@ -139,4 +139,79 @@ describe("Runners sharing one store", () => {
     expect(await f.completedTurns()).toBe(1);
     expect(f.errors).toEqual([]);
   });
+
+  it("makes no claim attempt from another Runner while the owner's lease is live", async () => {
+    const f = await fleet();
+    const owner = f.makeRouter("runner-a");
+    const other = f.makeRouter("runner-b");
+    await f.send();
+    void owner.handleNewEvent(f.session.id, f.agent);
+    await advance(100);
+    // The other Runner scans PostgreSQL every 5 s, as RunnerDispatch does.
+    const scan = setInterval(() => void other.recoverPendingEvents(), 5_000);
+    // Input queued behind the running Turn wakes every Runner once.
+    await f.send("queued behind the Turn");
+    void other.handleNewEvent(f.session.id, f.agent);
+    await advance(60_000);
+    clearInterval(scan);
+
+    // The wake's one attempt; no retry timer and no scan claims the owned head.
+    expect(f.claims.filter((claim) => claim.owner === "runner-b")).toHaveLength(1);
+    expect(await other.waitForIdle(0)).toBe(true);
+
+    // The owner drains its own queue.
+    f.turn.release();
+    await advance(100);
+    expect(await f.completedTurns()).toBe(2);
+    expect(f.claims.filter((claim) => claim.claimed).map((claim) => claim.owner)).toEqual(["runner-a", "runner-a"]);
+    expect(f.errors).toEqual([]);
+  });
+
+  it("takes a crashed owner's Turn over within the lease plus one scan", async () => {
+    const f = await fleet();
+    const owner = f.makeRouter("runner-a");
+    const other = f.makeRouter("runner-b");
+    await f.send();
+    void owner.handleNewEvent(f.session.id, f.agent);
+    await advance(100);
+    const scan = setInterval(() => void other.recoverPendingEvents(), 5_000);
+    await advance(2_000);
+
+    // The owner's process stops: its lease is never renewed or released.
+    f.crashed.add("runner-a");
+    const crashedAt = Date.now();
+    await advance(40_000);
+    clearInterval(scan);
+
+    const takeover = f.claims.find((claim) => claim.owner === "runner-b" && claim.claimed);
+    expect(takeover).toBeDefined();
+    expect(takeover!.at - crashedAt).toBeLessThanOrEqual(30_000 + 5_000);
+    // Before the lease expired the other Runner did not try at all.
+    expect(f.claims.filter((claim) => claim.owner === "runner-b")).toHaveLength(1);
+    expect(f.turn.runs()).toBe(2);
+  });
+
+  it("E8 two Runners race for an expired claim: exactly one wins and the loser stays quiet", async () => {
+    const f = await fleet();
+    const owner = f.makeRouter("runner-a");
+    const others = [f.makeRouter("runner-b"), f.makeRouter("runner-c")];
+    await f.send();
+    void owner.handleNewEvent(f.session.id, f.agent);
+    await advance(100);
+    f.crashed.add("runner-a");
+    await advance(30_000);
+
+    // Both reach the expired head at once, as a wake or simultaneous scans do.
+    for (const other of others) void other.handleNewEvent(f.session.id, f.agent);
+    const scan = setInterval(() => { for (const other of others) void other.recoverPendingEvents(); }, 5_000);
+    await advance(30_000);
+    clearInterval(scan);
+
+    const takeovers = f.claims.filter((claim) => claim.owner !== "runner-a" && claim.claimed);
+    expect(takeovers).toHaveLength(1);
+    const loser = takeovers[0].owner === "runner-b" ? "runner-c" : "runner-b";
+    // One contended attempt in the race; no retry and no scan of the winner's live head after it.
+    expect(f.claims.filter((claim) => claim.owner === loser)).toEqual([expect.objectContaining({ claimed: false })]);
+    expect(f.turn.runs()).toBe(2);
+  });
 });

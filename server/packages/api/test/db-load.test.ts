@@ -156,7 +156,10 @@ describe("database load of N Runners", () => {
 
       // Tripwires: the heartbeat renews every 10 s (≈0.4/s per Turn; a 1 s tick costs 6/s).
       expect(row["heartbeat /s per active Turn"]).toBeLessThan(1);
-      expect(row["non-owner attempts /s per active Turn"]).toBeLessThan(4 * runners);
+      // Another Runner claims an owned head only on a wake (≈0.01/s per Turn);
+      // retrying it, or listing it in every 5 s scan, costs ≥1.2/s per Runner.
+      expect(row["non-owner attempts /s per active Turn"]).toBeLessThan(0.1 * runners);
+      expect(row["scan getById /s per active Turn per Runner"]).toBeLessThan(0.05);
       await fleet.stop();
     }
     table("Concurrent Turns: per-unit costs", summary);

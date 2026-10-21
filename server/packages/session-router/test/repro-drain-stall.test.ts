@@ -49,6 +49,12 @@ const RESTART_LEASE = {
   pendingClaimRetryMaxMs: 10,
 } satisfies Partial<SessionRouterDeps>;
 
+/**
+ * A restarted Runner's pending scan finds a crashed attempt's input once its
+ * lease expires; a head under a live claim is its owner's (#234).
+ */
+const leaseExpiry = () => new Promise<void>((resolve) => setTimeout(resolve, RESTART_LEASE.pendingClaimLeaseMs + 10));
+
 /** Fresh store-memory stores plus a factory for Routers that model process restarts. */
 function makeRestartableDeps(adapter: Adapter) {
   const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
@@ -269,6 +275,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     // must still be pending even though its canonical Event already committed.
     expect(await pendingEventStore.count(session.id)).toBe(1);
 
+    await leaseExpiry();
     const recovery = await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -315,9 +322,9 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     await enqueueUser(pendingEventStore, valid.id, "valid");
     await enqueueUser(pendingEventStore, terminated.id, "discard terminated");
     await enqueueUser(pendingEventStore, "sess_missing", "discard missing");
-    const listPendingSessionIds = pendingEventStore.listPendingSessionIds.bind(pendingEventStore);
-    vi.spyOn(pendingEventStore, "listPendingSessionIds").mockImplementation(async () => {
-      const ids = await listPendingSessionIds();
+    const listClaimableSessionIds = pendingEventStore.listClaimableSessionIds.bind(pendingEventStore);
+    vi.spyOn(pendingEventStore, "listClaimableSessionIds").mockImplementation(async () => {
+      const ids = await listClaimableSessionIds();
       return [...ids, ...ids];
     });
 
@@ -374,6 +381,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     );
     expect(await pendingEventStore.count(session.id)).toBe(1);
 
+    await leaseExpiry();
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -415,6 +423,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     const beforeRecovery = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(beforeRecovery.some((event) => event.type === "session.turn_completed")).toBe(true);
 
+    await leaseExpiry();
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -467,6 +476,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     expect(partial.filter((event) => event.type === "agent.message")).toHaveLength(1);
     expect(partial.some((event) => event.type === "session.turn_completed")).toBe(false);
 
+    await leaseExpiry();
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -598,7 +608,8 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await didStart;
     await hostB.handleNewEvent(session.id, testAgent);
     expect(adapterRuns).toBe(1);
-    expect(await hostB.waitForIdle(1)).toBe(false);
+    // B leaves the head to its owner: no claim retry while A's lease is live.
+    expect(await hostB.waitForIdle(0)).toBe(true);
 
     release();
     await first;
@@ -609,7 +620,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await expect(hostB.waitForIdle(100)).resolves.toBe(true);
   });
 
-  it("retries a conflicting live claim after expiry without requiring a new message", async () => {
+  it("leaves another Host's live claim to it, then takes the input over from the pending scan after expiry", async () => {
     const stores = createMemoryStores();
     const session = await stores.sessionStore.create({
       tenantId: "tenant_1",
@@ -650,11 +661,14 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
 
     await router.handleNewEvent(session.id, testAgent);
     expect(adapterRuns).toBe(0);
-    expect(await router.waitForIdle(1)).toBe(false);
-    // An interrupt on this Host has no local active turn; it must not cancel
-    // the recovery timer for the remote, live-but-doomed claim.
-    router.interrupt(session.id);
+    // No retry timer polls the live claim of another Host.
+    expect(await router.waitForIdle(0)).toBe(true);
+    expect(await router.recoverPendingEvents()).toEqual({ recovered: [], discarded: [], failed: [] });
 
+    // Once the old Host's lease expires, the pending scan lists the input
+    // again, without a new message.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect((await router.recoverPendingEvents()).recovered).toEqual([session.id]);
     await vi.waitFor(async () => {
       expect(adapterRuns).toBe(1);
       expect(await stores.pendingEventStore.count(session.id)).toBe(0);
@@ -674,7 +688,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     const realRenew = stores.pendingEventStore.renewClaim.bind(stores.pendingEventStore);
     let rejectHeartbeat = true;
     stores.pendingEventStore.renewClaim = async (...args) =>
-      rejectHeartbeat ? false : realRenew(...args);
+      rejectHeartbeat ? { renewed: false, interruptRequested: false } : realRenew(...args);
     const attemptTurnIds: string[] = [];
     let adapterRuns = 0;
     let firstStarted!: () => void;
@@ -744,7 +758,9 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
 
     rejectHeartbeat = false;
+    // The pending scan claims the input again once the lost lease expires.
     await vi.waitFor(async () => {
+      await router.recoverPendingEvents();
       expect(await stores.pendingEventStore.count(session.id)).toBe(0);
     });
     expect(adapterRuns).toBe(2);
@@ -817,7 +833,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
         markLateRenew();
         await lateRenewGate;
       }
-      return false;
+      return { renewed: false, interruptRequested: false };
     };
 
     let markGen2Running!: () => void;

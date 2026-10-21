@@ -172,7 +172,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     h.stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) => {
       if (claim.generation !== 1) return renew(sessionId, eventId, claim, leaseMs);
       firstRenewals.push(Date.now());
-      return writeFails ? renew(sessionId, eventId, claim, leaseMs) : false;
+      return writeFails ? renew(sessionId, eventId, claim, leaseMs) : { renewed: false, interruptRequested: false };
     };
     const router = h.makeRouter({ pendingClaimLeaseMs: 60, pendingClaimRenewIntervalMs: 20 });
     await h.enqueue();
@@ -185,8 +185,12 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     const renewals = firstRenewals.length;
     await sleep(60);
     expect(firstRenewals).toHaveLength(renewals);
-    // The next claim ends the Turn by the recovery rules, never rerunning it.
-    await until(async () => await h.stores.pendingEventStore.count(h.session.id) === 0);
+    // The pending scan claims it once the lease expires and ends the Turn by
+    // the recovery rules, never rerunning it.
+    await until(async () => {
+      await router.recoverPendingEvents();
+      return await h.stores.pendingEventStore.count(h.session.id) === 0;
+    });
     const recovered = await h.log();
     expect(recovered.filter(stored => stored.type === "agent.message")).toHaveLength(1);
     expect(recovered.find(stored => stored.type === "session.error")?.data).toMatchObject({ error: { code: "recovery_partial_turn_aborted" } });
@@ -285,8 +289,8 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     let lostOwner: string | undefined;
     const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
     h.stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) =>
-      claim.ownerId === lostOwner ? false : renew(sessionId, eventId, claim, leaseMs);
-    // A lost Runner never claims again, even though its retry timer is still armed here.
+      claim.ownerId === lostOwner ? { renewed: false, interruptRequested: false } : renew(sessionId, eventId, claim, leaseMs);
+    // A lost Runner never claims again.
     const claim = h.stores.pendingEventStore.claim.bind(h.stores.pendingEventStore);
     h.stores.pendingEventStore.claim = async (sessionId, ownerId, leaseMs) =>
       ownerId === lostOwner ? null : claim(sessionId, ownerId, leaseMs);
@@ -576,7 +580,7 @@ describe("Deltas of a Turn attempt", () => {
     let lostOwner: string | undefined;
     const renew = h.stores.pendingEventStore.renewClaim.bind(h.stores.pendingEventStore);
     h.stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) =>
-      claim.ownerId === lostOwner ? false : renew(sessionId, eventId, claim, leaseMs);
+      claim.ownerId === lostOwner ? { renewed: false, interruptRequested: false } : renew(sessionId, eventId, claim, leaseMs);
     const claim = h.stores.pendingEventStore.claim.bind(h.stores.pendingEventStore);
     h.stores.pendingEventStore.claim = async (sessionId, ownerId, leaseMs) =>
       ownerId === lostOwner ? null : claim(sessionId, ownerId, leaseMs);

@@ -337,10 +337,28 @@ describe("PgPendingEventStore", () => {
     await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
 
-    expect(await store.listPendingSessionIds()).toEqual(["sess_1", "sess_2"]);
+    expect(await store.listClaimableSessionIds()).toEqual(["sess_1", "sess_2"]);
     await store.clear("sess_1");
     expect(await store.count("sess_1")).toBe(0);
-    expect(await store.listPendingSessionIds()).toEqual(["sess_2"]);
+    expect(await store.listClaimableSessionIds()).toEqual(["sess_2"]);
+  });
+
+  it("lists only Sessions whose head no live claim holds: the owner drains the rest of its queue", async () => {
+    for (const id of ["live", "released", "expired", "unclaimed"]) {
+      await store.enqueue(id, { type: "m", data: {}, sessionThreadId: "t" });
+      await store.enqueue(id, { type: "m", data: {}, sessionThreadId: "t" });
+    }
+    await store.claim("live", "host_a", 60_000);
+    const released = (await store.claim("released", "host_a", 60_000))!;
+    await store.releaseClaim("released", released.event.id, released);
+    const expired = (await store.claim("expired", "host_a", 60_000))!;
+    await harness.pool.query(`UPDATE pending_events SET claim_expires_at = $2 WHERE id = $1`,
+      [expired.event.id, new Date(Date.now() - 1_000)]);
+
+    expect(await store.listClaimableSessionIds()).toEqual(["expired", "released", "unclaimed"]);
+    expect(await store.headClaimable("live")).toBe(false);
+    for (const id of ["released", "expired", "unclaimed"]) expect(await store.headClaimable(id)).toBe(true);
+    expect(await store.headClaimable("empty")).toBe(false);
   });
   async function completedInput(sessionId = "sess_1") {
     const input = await store.enqueue(sessionId, { type: "user.message", data: {}, sessionThreadId: "t" });

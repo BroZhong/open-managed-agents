@@ -198,11 +198,19 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       current.generation === claim.generation && current.expiresAtMs > Date.now());
   }
 
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId)
-      .sort();
+  async listClaimableSessionIds(): Promise<string[]> {
+    return [...this.queues.keys()].filter((sessionId) => this.isHeadClaimable(sessionId)).sort();
+  }
+
+  async headClaimable(sessionId: string): Promise<boolean> {
+    return this.isHeadClaimable(sessionId);
+  }
+
+  private isHeadClaimable(sessionId: string): boolean {
+    const head = this.queues.get(sessionId)?.[0];
+    if (!head) return false;
+    const claim = this.claims.get(head.id);
+    return !claim?.ownerId || claim.expiresAtMs <= Date.now();
   }
 
   async clear(sessionId: string): Promise<void> {
