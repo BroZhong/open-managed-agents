@@ -1,0 +1,467 @@
+{
+  "idle/1": {
+    "perRunnerPerSecond": 1.2166666666666666,
+    "bySource": {
+      "cleanup-sweep": 13,
+      "dispatch-scan": 36,
+      "loop-scan": 24
+    }
+  },
+  "idle/2": {
+    "perRunnerPerSecond": 1.2166666666666666,
+    "bySource": {
+      "cleanup-sweep": 26,
+      "dispatch-scan": 72,
+      "loop-scan": 48
+    }
+  },
+  "idle/4": {
+    "perRunnerPerSecond": 1.2166666666666666,
+    "bySource": {
+      "cleanup-sweep": 52,
+      "dispatch-scan": 144,
+      "loop-scan": 96
+    }
+  },
+  "turns/1": {
+    "runners": 1,
+    "Turn-seconds": 2712,
+    "all statements/s": 65.7,
+    "heartbeat /s per active Turn": 6,
+    "fence per sandbox op": 4,
+    "sandbox creation per Session": 21,
+    "Turn lifecycle per Turn": 660,
+    "of which event appends": 550,
+    "non-owner attempts /s per active Turn": 0,
+    "contended claims per Turn per other Runner": 0,
+    "wake handling /s per active Turn": 0.003,
+    "scan getById /s per active Turn per Runner": 0.263,
+    "scans /s per Runner": 3.18,
+    "bySource": {
+      "cleanup-sweep": {
+        "statements": 73,
+        "methods": {
+          "sessionCleanup.discover": 73
+        }
+      },
+      "wake <- api": {
+        "statements": 8,
+        "methods": {
+          "sessionStore.getById": 8
+        }
+      },
+      "turn": {
+        "statements": 5280,
+        "methods": {
+          "pendingEventStore.claim": 56,
+          "sessionStore.getById": 32,
+          "eventLogStore.append": 4400,
+          "eventLogStore.getEvents": 8,
+          "delegationStore.listWaits": 112,
+          "agentStore.getById": 8,
+          "delegationStore.getByPendingEventId": 16,
+          "sessionStore.updateStatusIfClaimed": 48,
+          "delegationStore.acquireResourceUse": 72,
+          "sandboxLifecycle.begin": 64,
+          "delegationStore.withEnvironmentLock": 72,
+          "agentFileStore.get": 32,
+          "pendingEventStore.ownsClaim": 32,
+          "pendingEventStore.renewClaim": 64,
+          "pendingEventStore.peek": 24,
+          "delegationStore.releaseResourceUse": 80,
+          "pendingEventStore.ackCompletedTurn": 104,
+          "sandboxLifecycle.finish": 56
+        }
+      },
+      "heartbeat": {
+        "statements": 16272,
+        "methods": {
+          "pendingEventStore.renewClaim": 10848,
+          "pendingEventStore.interruptRequested": 2712,
+          "delegationStore.getByPendingEventId": 2712
+        }
+      },
+      "tool-op": {
+        "statements": 936,
+        "methods": {
+          "pendingEventStore.ownsClaim": 768,
+          "sessionStore.getById": 24,
+          "delegationStore.withEnvironmentLock": 144
+        }
+      },
+      "dispatch-scan": {
+        "statements": 752,
+        "methods": {
+          "delegationStore.reconcileTerminatedExecutions": 144,
+          "pendingEventStore.listPendingSessionIds": 72,
+          "sessionStore.getById": 536
+        }
+      },
+      "loop-scan": {
+        "statements": 320,
+        "methods": {
+          "loopStore.dispatchDue": 72,
+          "delegationStore.reconcileTerminatedExecutions": 48,
+          "pendingEventStore.listPendingSessionIds": 24,
+          "sessionStore.getById": 176
+        }
+      }
+    },
+    "seqScans": {
+      "delegation_waits": 208,
+      "delegation_resource_uses": 32,
+      "delegation_executions": 96,
+      "pending_events (full by design)": 96
+    }
+  },
+  "turns/2": {
+    "runners": 2,
+    "Turn-seconds": 2712,
+    "all statements/s": 90.5,
+    "heartbeat /s per active Turn": 6,
+    "fence per sandbox op": 4,
+    "sandbox creation per Session": 21,
+    "Turn lifecycle per Turn": 660,
+    "of which event appends": 550,
+    "non-owner attempts /s per active Turn": 2.87,
+    "contended claims per Turn per other Runner": 161.1,
+    "wake handling /s per active Turn": 0.006,
+    "scan getById /s per active Turn per Runner": 0.263,
+    "scans /s per Runner": 3.18,
+    "bySource": {
+      "cleanup-sweep": {
+        "statements": 146,
+        "methods": {
+          "sessionCleanup.discover": 146
+        }
+      },
+      "wake <- api": {
+        "statements": 16,
+        "methods": {
+          "sessionStore.getById": 16
+        }
+      },
+      "turn": {
+        "statements": 5280,
+        "methods": {
+          "pendingEventStore.claim": 56,
+          "sessionStore.getById": 32,
+          "eventLogStore.append": 4400,
+          "eventLogStore.getEvents": 8,
+          "delegationStore.listWaits": 112,
+          "agentStore.getById": 8,
+          "delegationStore.getByPendingEventId": 16,
+          "sessionStore.updateStatusIfClaimed": 48,
+          "delegationStore.acquireResourceUse": 72,
+          "sandboxLifecycle.begin": 64,
+          "delegationStore.withEnvironmentLock": 72,
+          "agentFileStore.get": 32,
+          "pendingEventStore.ownsClaim": 32,
+          "pendingEventStore.renewClaim": 64,
+          "pendingEventStore.peek": 24,
+          "delegationStore.releaseResourceUse": 80,
+          "pendingEventStore.ackCompletedTurn": 104,
+          "sandboxLifecycle.finish": 56
+        }
+      },
+      "attempt <- wake <- api": {
+        "statements": 48,
+        "methods": {
+          "pendingEventStore.claim": 32,
+          "pendingEventStore.peek": 16
+        }
+      },
+      "attempt <- startup": {
+        "statements": 6,
+        "methods": {
+          "pendingEventStore.claim": 4,
+          "pendingEventStore.peek": 2
+        }
+      },
+      "attempt <- claim-retry": {
+        "statements": 3448,
+        "methods": {
+          "pendingEventStore.claim": 2296,
+          "pendingEventStore.peek": 1152
+        }
+      },
+      "heartbeat": {
+        "statements": 16272,
+        "methods": {
+          "pendingEventStore.renewClaim": 10848,
+          "pendingEventStore.interruptRequested": 2712,
+          "delegationStore.getByPendingEventId": 2712
+        }
+      },
+      "tool-op": {
+        "statements": 936,
+        "methods": {
+          "pendingEventStore.ownsClaim": 768,
+          "sessionStore.getById": 24,
+          "delegationStore.withEnvironmentLock": 144
+        }
+      },
+      "dispatch-scan": {
+        "statements": 1504,
+        "methods": {
+          "delegationStore.reconcileTerminatedExecutions": 288,
+          "pendingEventStore.listPendingSessionIds": 144,
+          "sessionStore.getById": 1072
+        }
+      },
+      "attempt <- dispatch-scan": {
+        "statements": 3216,
+        "methods": {
+          "pendingEventStore.claim": 2144,
+          "pendingEventStore.peek": 1072
+        }
+      },
+      "loop-scan": {
+        "statements": 640,
+        "methods": {
+          "loopStore.dispatchDue": 144,
+          "delegationStore.reconcileTerminatedExecutions": 96,
+          "pendingEventStore.listPendingSessionIds": 48,
+          "sessionStore.getById": 352
+        }
+      },
+      "attempt <- loop-scan": {
+        "statements": 1056,
+        "methods": {
+          "pendingEventStore.claim": 704,
+          "pendingEventStore.peek": 352
+        }
+      }
+    },
+    "seqScans": {
+      "delegation_waits": 304,
+      "delegation_resource_uses": 32,
+      "delegation_executions": 192,
+      "pending_events (full by design)": 192
+    }
+  },
+  "turns/4": {
+    "runners": 4,
+    "Turn-seconds": 2712,
+    "all statements/s": 140,
+    "heartbeat /s per active Turn": 6,
+    "fence per sandbox op": 4,
+    "sandbox creation per Session": 21,
+    "Turn lifecycle per Turn": 660,
+    "of which event appends": 550,
+    "non-owner attempts /s per active Turn": 8.59,
+    "contended claims per Turn per other Runner": 161,
+    "wake handling /s per active Turn": 0.012,
+    "scan getById /s per active Turn per Runner": 0.263,
+    "scans /s per Runner": 3.18,
+    "bySource": {
+      "cleanup-sweep": {
+        "statements": 292,
+        "methods": {
+          "sessionCleanup.discover": 292
+        }
+      },
+      "wake <- api": {
+        "statements": 32,
+        "methods": {
+          "sessionStore.getById": 32
+        }
+      },
+      "turn": {
+        "statements": 5280,
+        "methods": {
+          "pendingEventStore.claim": 56,
+          "sessionStore.getById": 32,
+          "eventLogStore.append": 4400,
+          "eventLogStore.getEvents": 8,
+          "delegationStore.listWaits": 112,
+          "agentStore.getById": 8,
+          "delegationStore.getByPendingEventId": 16,
+          "sessionStore.updateStatusIfClaimed": 48,
+          "delegationStore.acquireResourceUse": 72,
+          "sandboxLifecycle.begin": 64,
+          "delegationStore.withEnvironmentLock": 72,
+          "agentFileStore.get": 32,
+          "pendingEventStore.ownsClaim": 32,
+          "pendingEventStore.renewClaim": 64,
+          "pendingEventStore.peek": 24,
+          "delegationStore.releaseResourceUse": 80,
+          "pendingEventStore.ackCompletedTurn": 104,
+          "sandboxLifecycle.finish": 56
+        }
+      },
+      "attempt <- wake <- api": {
+        "statements": 144,
+        "methods": {
+          "pendingEventStore.claim": 96,
+          "pendingEventStore.peek": 48
+        }
+      },
+      "attempt <- startup": {
+        "statements": 6,
+        "methods": {
+          "pendingEventStore.claim": 4,
+          "pendingEventStore.peek": 2
+        }
+      },
+      "attempt <- claim-retry": {
+        "statements": 10344,
+        "methods": {
+          "pendingEventStore.claim": 6888,
+          "pendingEventStore.peek": 3456
+        }
+      },
+      "heartbeat": {
+        "statements": 16272,
+        "methods": {
+          "pendingEventStore.renewClaim": 10848,
+          "pendingEventStore.interruptRequested": 2712,
+          "delegationStore.getByPendingEventId": 2712
+        }
+      },
+      "tool-op": {
+        "statements": 936,
+        "methods": {
+          "pendingEventStore.ownsClaim": 768,
+          "sessionStore.getById": 24,
+          "delegationStore.withEnvironmentLock": 144
+        }
+      },
+      "dispatch-scan": {
+        "statements": 3008,
+        "methods": {
+          "delegationStore.reconcileTerminatedExecutions": 576,
+          "pendingEventStore.listPendingSessionIds": 288,
+          "sessionStore.getById": 2144
+        }
+      },
+      "attempt <- dispatch-scan": {
+        "statements": 9648,
+        "methods": {
+          "pendingEventStore.claim": 6432,
+          "pendingEventStore.peek": 3216
+        }
+      },
+      "loop-scan": {
+        "statements": 1280,
+        "methods": {
+          "loopStore.dispatchDue": 288,
+          "delegationStore.reconcileTerminatedExecutions": 192,
+          "pendingEventStore.listPendingSessionIds": 96,
+          "sessionStore.getById": 704
+        }
+      },
+      "attempt <- loop-scan": {
+        "statements": 3168,
+        "methods": {
+          "pendingEventStore.claim": 2112,
+          "pendingEventStore.peek": 1056
+        }
+      }
+    },
+    "seqScans": {
+      "delegation_waits": 496,
+      "delegation_resource_uses": 32,
+      "delegation_executions": 384,
+      "pending_events (full by design)": 384
+    }
+  },
+  "delegation/1": {
+    "runners": 1,
+    "waiting parent-seconds": 348,
+    "poll /s per waiting parent": 30.8,
+    "wake fan-out /s per waiting parent": 0,
+    "global delegation_lock transactions per delegation": 12,
+    "heartbeat listCommands (seq scan) /s per active child": 1,
+    "bySource": {
+      "cleanup-sweep": 37,
+      "wake <- api": 4,
+      "turn": 2556,
+      "heartbeat": 5340,
+      "delegation-wait": 10712,
+      "wake <- delegation-wait": 4,
+      "dispatch-scan": 276,
+      "tool-op": 256,
+      "loop-scan": 128
+    }
+  },
+  "delegation/2": {
+    "runners": 2,
+    "waiting parent-seconds": 348,
+    "poll /s per waiting parent": 30.8,
+    "wake fan-out /s per waiting parent": 35.2,
+    "global delegation_lock transactions per delegation": 12,
+    "heartbeat listCommands (seq scan) /s per active child": 1,
+    "bySource": {
+      "cleanup-sweep": 74,
+      "wake <- api": 8,
+      "turn": 2556,
+      "attempt <- wake <- api": 24,
+      "attempt <- startup": 18,
+      "attempt <- claim-retry": 730,
+      "heartbeat": 5340,
+      "delegation-wait": 10712,
+      "wake <- delegation-wait": 1752,
+      "attempt <- wake <- delegation-wait": 10488,
+      "dispatch-scan": 552,
+      "attempt <- dispatch-scan": 1008,
+      "tool-op": 256,
+      "loop-scan": 256,
+      "attempt <- loop-scan": 336
+    }
+  },
+  "delegation/4": {
+    "runners": 4,
+    "waiting parent-seconds": 348,
+    "poll /s per waiting parent": 30.8,
+    "wake fan-out /s per waiting parent": 105.5,
+    "global delegation_lock transactions per delegation": 12,
+    "heartbeat listCommands (seq scan) /s per active child": 1,
+    "bySource": {
+      "cleanup-sweep": 148,
+      "wake <- api": 16,
+      "turn": 2556,
+      "attempt <- wake <- api": 72,
+      "attempt <- startup": 18,
+      "attempt <- claim-retry": 2202,
+      "heartbeat": 5340,
+      "delegation-wait": 10712,
+      "wake <- delegation-wait": 5248,
+      "attempt <- wake <- delegation-wait": 31464,
+      "dispatch-scan": 1104,
+      "attempt <- dispatch-scan": 3024,
+      "tool-op": 256,
+      "loop-scan": 512,
+      "attempt <- loop-scan": 1008
+    }
+  },
+  "history": [
+    {
+      "events before the Turn": 0,
+      "getEvents statements per Turn": 1,
+      "rows returned per Turn": 1
+    },
+    {
+      "events before the Turn": 500,
+      "getEvents statements per Turn": 11,
+      "rows returned per Turn": 501
+    },
+    {
+      "events before the Turn": 2000,
+      "getEvents statements per Turn": 41,
+      "rows returned per Turn": 2001
+    },
+    {
+      "events before the Turn": 5000,
+      "getEvents statements per Turn": 101,
+      "rows returned per Turn": 5001
+    }
+  ],
+  "stuckCleanup": {
+    "cleanup attempts /min": 12,
+    "SKIP LOCKED misses /min": 12,
+    "statements/s per stuck row": 7.23,
+    "delegation_environments statements/s": 2.6,
+    "sessions statements/s": 0.2
+  }
+}
