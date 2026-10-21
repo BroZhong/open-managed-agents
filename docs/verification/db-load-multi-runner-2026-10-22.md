@@ -144,30 +144,21 @@ outside the database:
 | loops idx_scan | +503 | 0.20 /s | 0.133 + 0.067 | `dispatchDue` every 15 s per Runner, plus the console's `GET /v1/agents/:id/loops` every 15 s |
 | pending_events idx_scan | +167 | 0.066 /s | 0.067 | the console's queued-input poll (`listUnclaimed`) every 15 s |
 | events idx_scan | +1,259 | 0.50 /s | 0.5 | the API's `EventCatchup` for one open SSE stream, every 2 s |
-| sessions idx_scan | +6,873 | 2.72 /s | 2.67 + 0.067 | reconcile joins (below), plus the queued-input route's `getById` every 15 s |
+| sessions idx_scan | +6,873 | 2.72 /s | not modelled | unattributed, most likely the open console on the API (below) |
 | delegation_environments | +0 | 0 | 0 | idle Runners never touch a binding row |
 | pending_events n_tup_upd | +0 | 0 | 0 | there is no heartbeat without a running Turn |
 
 The two idle Runners issue 2.44 statements/s, which is the model's 1.22 per Runner. The open
 console page adds ≈0.8 statements/s on the API.
 
-**sessions 2.72 /s.** This is not the API: the console's only Session lookup is the
-queued-input route, 0.067 /s. It is not the pending scan either, which has no pending Sessions
-to look up. It is the reconcile query's joins:
-
-- `terminatedExecutionIds` joins every open execution (status queued or running) to
-  `sessions` twice, for the child and the parent.
-- `terminatedParentWaits` joins every `waiting` wait to `sessions` once.
-
-On tables this small PostgreSQL runs these joins as nested loops over `sessions_pkey`, so every
-lookup counts as one idx_scan. The rate works out to (6,873 − 169) ÷ 1,339 = **5.0 lookups per
-scan**, for example 2 open executions and 1 waiting wait. These delegation records stay open
-while no Turn runs. Reconcile closes a record only when one of its Sessions is terminated, so it
-never closes these.
-
-The round-trip count does not change: the scan is still one statement. But the open records are
-a correctness smell. An orphaned `running` execution holds a quota slot until a sibling's
-`startExecution` marks it `recovery_required`, which #252 changes. Verify (read-only):
+**sessions 2.72 /s: unattributed.** The verification query below returned **no** open
+executions and **no** waiting waits on oma_test (checked 2026-10-22 ≈03:20 +08:00), so the
+reconcile-join explanation is refuted. The idle Runners' own statements match the model
+(2.44 /s for two Runners), and `sessions` index scans do not add round trips the model misses
+from the Runner side; the most likely source is the open console (Session list and sidebar
+reads on the API), which this audit does not model. EXPLAIN is not available through the
+Supabase RPC path used here, so the plan could not be inspected. At ≈2.7 index lookups/s this is
+negligible either way.
 
 ```sql
 SELECT 'execution' AS kind, record->>'status' AS status, count(*) FROM oma_test.delegation_executions
@@ -175,9 +166,8 @@ SELECT 'execution' AS kind, record->>'status' AS status, count(*) FROM oma_test.
 UNION ALL
 SELECT 'wait', record->>'status', count(*) FROM oma_test.delegation_waits
  WHERE record->>'status' = 'waiting' GROUP BY 2;
+-- result on 2026-10-22: no rows
 ```
-
-We expect 2 × executions + waits ≈ 5, with none of their Sessions terminated.
 
 ### Cumulative counters
 
