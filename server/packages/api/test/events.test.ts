@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createApp } from "../src/app.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
+import { InMemoryPendingEventStore, InMemorySessionStore as MemorySessionStore } from "@oma-server/store-memory";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { ApiKeyStore, TenantContext } from "../src/types.js";
 import type {
@@ -11,17 +12,9 @@ import type {
   AgentStoreCreateInput,
   AgentStoreUpdateInput,
   AgentStoreListOpts,
-  SessionStore,
-  Session,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  SessionStatus,
   EventLogIngressStore,
   EventLogStoreAppendInput,
   EventLogStoreGetEventsOpts,
-  PendingEventIngressStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
   StoredEvent,
   PaginatedResult,
 } from "@oma-server/store";
@@ -85,79 +78,13 @@ class InMemoryAgentStore implements AgentStore {
   }
 }
 
-// In-memory SessionStore for testing
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(
-    tenantId: string,
-    opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const cursor = opts?.cursor;
-    const agentId = opts?.agentId;
-    const status = opts?.status;
-
-    let filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    if (agentId) filtered = filtered.filter((s) => s.agentId === agentId);
-    if (status) filtered = filtered.filter((s) => s.status === status);
-
-    if (cursor) {
-      const idx = filtered.findIndex((s) => s.id === cursor);
-      if (idx >= 0) filtered = filtered.slice(idx + 1);
-    }
-
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    return { data, hasMore };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    return session;
-  }
-
+/** Records title writes so tests can assert the first-message snapshot rule. */
+class InMemorySessionStore extends MemorySessionStore {
   setTitleCalls: Array<{ id: string; title: string }> = [];
 
-  async setTitle(id: string, title: string): Promise<Session | null> {
+  override async setTitle(id: string, title: string) {
     this.setTitleCalls.push({ id, title });
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    session.updatedAt = new Date();
-    return session;
+    return super.setTitle(id, title);
   }
 }
 
@@ -214,91 +141,6 @@ class InMemoryEventLogStore implements EventLogIngressStore {
     return { data, hasMore };
   }
 
-}
-
-// In-memory PendingEventStore for testing
-class InMemoryPendingEventStore implements PendingEventIngressStore {
-  private queues: Map<string, PendingEvent[]> = new Map();
-  private nextId = 1;
-
-  constructor(
-    private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
-  ) {}
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async enqueueBatchIfSessionActive(
-    sessionId: string,
-    events: PendingEventEnqueueInput[],
-  ): Promise<PendingEvent[] | null> {
-    if (!await this.isSessionActive(sessionId)) return null;
-    const inserted: PendingEvent[] = [];
-    for (const event of events) inserted.push(await this.enqueue(sessionId, event));
-    return inserted;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue.length === 0) return null;
-    return queue.shift()!;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue[0] ?? null;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue.length;
-  }
-
-  /**
-   * This double has no claim bookkeeping, so every queued entry counts as
-   * waiting. `claimed` lets a test mark the head as executing, standing in for
-   * the live lease a real drainer holds.
-   */
-  claimed = new Set<string>();
-
-  async listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]> {
-    if (!Number.isInteger(limit) || limit <= 0) {
-      throw new RangeError("pending event listUnclaimed limit must be a positive integer");
-    }
-    return (this.queues.get(sessionId) ?? [])
-      .filter((event) => !this.claimed.has(event.id))
-      .slice(0, limit);
-  }
 }
 
 interface SSEFrame {
@@ -631,11 +473,17 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(handleNewEvent).not.toHaveBeenCalled();
   });
 
-  it("user.interrupt is not persisted and reports that a Turn was stopped", async () => {
+  it("user.interrupt is not persisted and is requested durably for the executing Turn", async () => {
     const interrupt = vi.fn(() => true);
     const sessionRouter = { interrupt, handleNewEvent: vi.fn(async () => {}) } as unknown as SessionRouter;
-    const { app, agentStore, sessionStore, eventLogStore } = createTestApp(sessionRouter);
+    const { app, agentStore, sessionStore, eventLogStore, pendingEventStore } = createTestApp(sessionRouter);
     const { session } = await createTestSession(agentStore, sessionStore);
+    const executing = await pendingEventStore.enqueue(session.id, {
+      type: "user.message",
+      data: { content: [{ type: "text", text: "running now" }] },
+      sessionThreadId: "sthr_primary",
+    });
+    await pendingEventStore.claim(session.id, "host", 60_000);
 
     const res = await app.request(`/v1/sessions/${session.id}/events`, {
       method: "POST",
@@ -646,20 +494,19 @@ describe("POST /v1/sessions/:id/events", () => {
     });
 
     expect(res.status).toBe(202);
-    const body = await res.json();
-    expect(body.accepted).toBe(true);
-    expect(body.interrupted).toBe(true);
-    expect(interrupt).toHaveBeenCalledWith(session.id);
+    // The claim owner stops its Turn on its heartbeat; this process stops nothing.
+    expect(await res.json()).toEqual({ accepted: true, requested: true, interrupted: false });
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(await pendingEventStore.interruptRequested(session.id, executing.id)).toBe(true);
 
     // Verify nothing was persisted
     const events = await eventLogStore.getEvents(session.id);
     expect(events.data).toHaveLength(0);
   });
 
-  it("reports interrupted:false when no Turn was actually stopped", async () => {
-    // The router's active-Turn map is per-process, so an interrupt aimed at a
-    // Turn on another replica (or at an idle Session) stops nothing. The request
-    // is still accepted, so this is a 202 with an honest body (issue #113).
+  it("reports requested:false when no Turn is executing", async () => {
+    // An idle Session has no claimed input to interrupt. The request is still
+    // accepted, so this is a 202 with an honest body (issue #113).
     const sessionRouter = {
       interrupt: vi.fn(() => false),
       handleNewEvent: vi.fn(async () => {}),
@@ -674,7 +521,7 @@ describe("POST /v1/sessions/:id/events", () => {
     });
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ accepted: true, interrupted: false });
+    expect(await res.json()).toEqual({ accepted: true, requested: false, interrupted: false });
   });
 
   it("reports interrupted:false when no router is wired at all", async () => {
@@ -815,7 +662,7 @@ describe("POST /v1/sessions/:id/events", () => {
     });
 
     expect(res.status).toBe(202);
-    const pending = await pendingEventStore.dequeue(session.id);
+    const pending = await pendingEventStore.peek(session.id);
     expect(pending).not.toBeNull();
     expect(pending!.type).toBe("user.tool_confirmation");
   });
@@ -833,7 +680,7 @@ describe("POST /v1/sessions/:id/events", () => {
     });
 
     expect(res.status).toBe(202);
-    const pending = await pendingEventStore.dequeue(session.id);
+    const pending = await pendingEventStore.peek(session.id);
     expect(pending).not.toBeNull();
     expect(pending!.type).toBe("user.custom_tool_result");
   });
@@ -1026,7 +873,7 @@ describe("GET /v1/sessions/:id/pending", () => {
       data: { content: [{ type: "text", text: "still waiting" }] },
       sessionThreadId: "sthr_primary",
     });
-    pendingEventStore.claimed.add(running.id);
+    expect((await pendingEventStore.claim(session.id, "host", 60_000))?.event.id).toBe(running.id);
 
     const body = await (await app.request(`/v1/sessions/${session.id}/pending`)).json();
     expect(body.count).toBe(1);
@@ -1059,27 +906,6 @@ describe("GET /v1/sessions/:id/pending", () => {
     const foreign = await app.request(`/v1/sessions/${session.id}/pending`);
     expect(foreign.status).toBe(404);
     expect((await foreign.json()).error).toBe("Session not found");
-  });
-
-  it("reports an unlistable queue in the same shape, without failing", async () => {
-    // A narrow store double predates listUnclaimed. Saying "there is input, none
-    // previewable" keeps the indicator honest and spares clients a second shape.
-    const { app, agentStore, sessionStore, pendingEventStore } = createTestApp();
-    const { session } = await createTestSession(agentStore, sessionStore);
-    (pendingEventStore as { listUnclaimed?: unknown }).listUnclaimed = undefined;
-
-    const empty = await app.request(`/v1/sessions/${session.id}/pending`);
-    expect(empty.status).toBe(200);
-    expect(await empty.json()).toEqual({ count: 0, has_more: false, data: [] });
-
-    await pendingEventStore.enqueue(session.id, {
-      type: "user.message",
-      data: { content: [{ type: "text", text: "queued" }] },
-      sessionThreadId: "sthr_primary",
-    });
-    const res = await app.request(`/v1/sessions/${session.id}/pending`);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ count: 0, has_more: true, data: [] });
   });
 });
 
