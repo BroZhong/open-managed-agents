@@ -101,9 +101,12 @@ describe("crash injection: dangling Agent calls (#251)", () => {
   ])("C4/A17 the takeover is lost too, %s: the call is answered once from its record, no second child", async (_when, lostAt) => {
     const outcome = await execute(background, [recorded("accept", "call_agent"), lostAt]);
     expectResumed(background, outcome, { recorded: ["call_agent"] });
-    expect(outcome.losses).toHaveLength(2);
+    // Each Runner was lost holding the parent's claim; the second may have held the child's too.
+    expect(outcome.losses.filter((loss) => loss.sessionId === outcome.sessionId)).toHaveLength(2);
     const [execution, ...others] = await executionsOf(outcome);
     expect(others).toEqual([]);
+    // A child its lost owner left running is resumed, not ended (#252).
+    expect(execution.status).toBe("completed");
     expect(await childrenOf(outcome)).toHaveLength(1);
     const answeredAt = outcome.requests.find((request) => !child(request) && request.results.has("call_agent"))!;
     expect(resultOf(answeredAt, "call_agent")).toMatchObject({ childId: execution.childId, executionId: execution.id });
