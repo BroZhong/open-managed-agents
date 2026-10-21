@@ -1581,7 +1581,11 @@ export class SessionRouter {
           onResolved: async (config) => {
             await this.delegations!.assertOwner(delegationRun);
             delegationRun.effectiveConfig = { ...config };
-            if (delegationExecution) await this.delegationStore!.updateEffectiveConfig(delegationExecution.id, pendingFence, config);
+            // The attempt that started the Turn recorded its configuration on
+            // the execution before it named the Turn's model and thinking. A
+            // later attempt runs with those (#253): recording them again would
+            // relabel the pinned thinking as an override.
+            if (delegationExecution && !plan.config) await this.delegationStore!.updateEffectiveConfig(delegationExecution.id, pendingFence, config);
           },
         };
       } catch (error) {
