@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-query";
 import type { PropsWithChildren } from "react";
 import { useSessionEvents } from "@/lib/hooks/use-session-events";
+import { processEventsToMessages } from "@/lib/conversation-projection";
 import { summarizeTokenUsage } from "@/lib/token-usage";
 import type { SessionEvent } from "@/lib/types";
 import type { Session } from "@/lib/hooks/use-sessions";
@@ -298,6 +299,50 @@ describe("useSessionEvents history replay", () => {
       totalTokens: 250,
       cacheHitRate: 0.4,
     });
+  });
+
+  it("shows only the highest attempt's output when a reconnect replays two attempts of the running Turn", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const chunk = (text: string, deltaId: string, attempt: number) =>
+      `event: agent.message_chunk\ndata: ${JSON.stringify({ type: "agent.message_chunk", text, turnId: "turn_4", blockIndex: 1, attempt, deltaId })}\n\n`;
+    let connections = 0;
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (headers?.Accept === "application/json") {
+        return Promise.resolve({ ok: true, json: async () => ({ data: [historicalEvent(4)], has_more: false }) } as Response);
+      }
+      const connection = ++connections;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (connection === 1) {
+            // Attempt 1 streams live, then the stream drops as its Runner is lost.
+            controller.enqueue(new TextEncoder().encode(chunk("Hel", "4-0", 1)));
+            controller.close();
+            return;
+          }
+          // The backfill replays the Turn's whole Delta stream: both attempts.
+          controller.enqueue(new TextEncoder().encode(
+            chunk("Hel", "4-0", 1) + chunk("lo wor", "4-1", 1) + chunk("Hi", "4-2", 2) + chunk(" there", "4-3", 2),
+          ));
+          init?.signal?.addEventListener("abort", () => controller.close(), { once: true });
+        },
+      });
+      return Promise.resolve({ ok: true, body } as Response);
+    }));
+
+    const { result } = renderHook(() => useSessionEvents("session_resumed"), {
+      wrapper: queryWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(connections).toBe(2), { timeout: 2500 });
+    await waitFor(() => expect(result.current.activeDeltas.map((delta) => delta.deltaId)).toEqual(["4-2", "4-3"]));
+    const { messages } = processEventsToMessages(result.current.events, result.current.activeDeltas);
+    expect(messages.map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: "user", text: "message 4" },
+      { role: "assistant_streaming", text: "Hi there" },
+    ]);
   });
 
   it("loads every history page then merges replay without gaps or duplicates", async () => {
