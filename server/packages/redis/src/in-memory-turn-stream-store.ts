@@ -1,5 +1,6 @@
 import type {
   ActiveTurn,
+  ActiveTurnWriter,
   StoredTurnDelta,
   TurnDelta,
   TurnStreamStore,
@@ -54,11 +55,11 @@ export class InMemoryTurnStreamStore implements TurnStreamStore {
 
   async compareAndSetActiveTurn(
     sessionId: string,
-    expectedTurnId: string | null,
+    expected: ActiveTurnWriter | null,
     next: ActiveTurn | null,
   ): Promise<boolean> {
-    const current = this.activeTurns.get(sessionId)?.turnId ?? null;
-    if (current !== expectedTurnId) return false;
+    const current = this.activeTurns.get(sessionId);
+    if (current?.turnId !== expected?.turnId || current?.generation !== expected?.generation) return false;
     if (next) this.activeTurns.set(sessionId, next);
     else this.activeTurns.delete(sessionId);
     return true;

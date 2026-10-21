@@ -895,6 +895,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await turns.getActiveTurn(session.id)).toEqual({
       turnId: "turn_1_a2",
       status: "running",
+      generation: 2,
     });
     expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
 
@@ -903,6 +904,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await turns.getActiveTurn(session.id)).toEqual({
       turnId: "turn_1_a2",
       status: "running",
+      generation: 2,
     });
     expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
 
@@ -1011,7 +1013,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     ]);
   });
 
-  it("uses a new generation turnId and reclaims stale deltas before a safe retry", async () => {
+  it("A3 reruns an input its lost attempt left without output as the rerun's own Turn, leaving the lost Deltas to expire", async () => {
     const stores = createMemoryStores();
     const turns = new InMemoryTurnStreamStore();
     const session = await stores.sessionStore.create({
@@ -1046,10 +1048,11 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
       pendingFence: firstFence,
     });
     const oldTurnId = `turn_${promoted.seq}_a1`;
-    await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running" });
+    await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running", generation: 1 });
     await turns.appendDelta(session.id, {
       turnId: oldTurnId,
       blockIndex: 0,
+      attempt: 1,
       type: "agent.message_chunk",
       data: { text: "Hel" },
     });
@@ -1080,12 +1083,16 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
 
     await router.handleNewEvent(session.id, testAgent);
+    // The lost attempt committed nothing naming its Turn, so the rerun's Turn
+    // is the input's, and the projection moved to it before it ended.
     expect(retryTurnId).toBe(`turn_${promoted.seq}_a2`);
-    expect(retryTurnId).not.toBe(oldTurnId);
-    expect(await turns.deltaCount(session.id, oldTurnId)).toBe(0);
     const output = (await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data
       .find((event) => event.type === "agent.message");
     expect(output?.data).toMatchObject({ turnId: retryTurnId });
+    expect(await turns.getActiveTurn(session.id)).toBeNull();
+    // Only a completing Turn deletes its stream. Nothing reads the lost
+    // attempt's any more; its expiry frees it.
+    expect(await turns.deltaCount(session.id, oldTurnId)).toBe(1);
   });
 });
 

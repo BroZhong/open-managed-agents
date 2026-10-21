@@ -17,6 +17,7 @@ export type {
   StoredTurnDelta,
   ActiveTurn,
   ActiveTurnStatus,
+  ActiveTurnWriter,
 } from "./turn-stream-store.js";
 
 export interface RedisConnectionConfig {

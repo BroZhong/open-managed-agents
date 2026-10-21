@@ -17,6 +17,11 @@ async function until(check: () => Promise<boolean> | boolean, timeout = 4000) {
   const start = Date.now();
   while (!await check()) { if (Date.now() - start > timeout) throw new Error("Timed out"); await sleep(5); }
 }
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => { open = resolve; });
+  return { open, opened };
+}
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const turnIdOf = (stored: StoredEvent) => (stored.data as { turnId?: unknown } | null)?.turnId;
 
@@ -163,3 +168,104 @@ describe("every attempt of an input continues the Turn its first attempt started
     expect(await h.ofType("session.error")).toEqual([]);
   });
 });
+
+describe("the Turn's Delta stream and active-Turn projection across attempts", () => {
+  it("a lost attempt leaves the Turn's Delta stream to the attempt that completes the Turn", async () => {
+    const h = await harness(lostMidTool);
+    await h.enqueue("A");
+    const first = h.runner("runner-a");
+    const draining = first.handleNewEvent(h.session.id, h.agent);
+    await until(async () => await h.turns.deltaCount(h.session.id, "turn_1_a1") === 2);
+    await h.lose("runner-a", draining);
+
+    // The lost Runner stopped without deleting the stream every attempt of the Turn shares.
+    expect(await h.turns.deltaCount(h.session.id, "turn_1_a1")).toBe(2);
+
+    await h.takeOver("runner-b");
+
+    // The Turn completed, so its stream is gone and nothing is active.
+    expect(await h.turns.deltaCount(h.session.id, "turn_1_a1")).toBe(0);
+    expect(await h.turns.getActiveTurn(h.session.id)).toBeNull();
+  });
+
+  it("an attempt that stops for a handoff leaves the Turn's Delta stream to the attempt that continues it", async () => {
+    const h = await harness(async (_input, write) => {
+      await write(event("agent.tool_use", { toolUseId: "call_1", name: "bash", input: {} }));
+      await write(event("agent.message_stream_start"));
+      await write(event("agent.message_chunk", { text: "Hel" }));
+      await until(async () => await h.turns.deltaCount(h.session.id, "turn_1_a1") === 2);
+      return "stopped";
+    });
+    await h.enqueue("A");
+    await h.runner("runner-a").handleNewEvent(h.session.id, h.agent);
+    // The Runner shuts down; the Turn is left to the next claim.
+    h.lost.add("runner-a");
+
+    expect(await h.ofType("session.turn_completed")).toEqual([]);
+    expect(await h.turns.deltaCount(h.session.id, "turn_1_a1")).toBe(2);
+  });
+
+  it("E7 a stale generation cannot overwrite the projection a newer generation of its Turn wrote", async () => {
+    const h = await harness(lostMidTool);
+    await h.enqueue("A");
+    // Generation 1 starts the Turn and is lost mid-tool.
+    const first = h.runner("runner-a");
+    const draining = first.handleNewEvent(h.session.id, h.agent);
+    await until(async () => (await h.ofType("agent.tool_use")).length === 1);
+    await h.lose("runner-a", draining);
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "running", generation: 1 });
+
+    // Generation 2 reads the projection, then stalls before writing it, and
+    // its lease runs out meanwhile, as in a long GC pause.
+    const staleWrite = gate();
+    const staleWriting = gate();
+    const stale = h.runner("runner-b", held(h.turns, (next) => next !== null, staleWrite.opened, staleWriting.open));
+    const staleDrain = stale.handleNewEvent(h.session.id, h.agent);
+    await staleWriting.opened;
+    await h.lose("runner-b", sleep(0));
+
+    // Generation 3 completes the Turn; it is held before it clears the projection.
+    const clear = gate();
+    const clearing = gate();
+    const current = h.runner("runner-c", held(h.turns, (next) => next === null, clear.opened, clearing.open));
+    const currentDrain = current.handleNewEvent(h.session.id, h.agent);
+    await clearing.opened;
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "idle", generation: 3 });
+
+    // The stale generation's write lands now and is refused.
+    staleWrite.open();
+    await staleDrain;
+    expect(await h.turns.getActiveTurn(h.session.id)).toEqual({ turnId: "turn_1_a1", status: "idle", generation: 3 });
+
+    clear.open();
+    await currentDrain;
+    expect(await current.waitForIdle(4000)).toBe(true);
+    expect(await h.turns.getActiveTurn(h.session.id)).toBeNull();
+    expect(await h.ofType("session.turn_completed")).toHaveLength(1);
+  });
+});
+
+/**
+ * The shared projection as one Runner sees it: its first compare-and-set that
+ * `holds` waits for `release`, after telling `reached` it got there.
+ */
+function held(turns: TurnStreamStore, holds: (next: unknown) => boolean, release: Promise<void>, reached: () => void): TurnStreamStore {
+  let waited = false;
+  return {
+    appendDelta: (sessionId, delta) => turns.appendDelta(sessionId, delta),
+    readDeltas: (sessionId, turnId, afterId) => turns.readDeltas(sessionId, turnId, afterId),
+    deltaCount: (sessionId, turnId) => turns.deltaCount(sessionId, turnId),
+    reclaim: (sessionId, turnId) => turns.reclaim(sessionId, turnId),
+    setActiveTurn: (sessionId, turn) => turns.setActiveTurn(sessionId, turn),
+    getActiveTurn: (sessionId) => turns.getActiveTurn(sessionId),
+    clearActiveTurn: (sessionId) => turns.clearActiveTurn(sessionId),
+    async compareAndSetActiveTurn(sessionId, expected, next) {
+      if (!waited && holds(next)) {
+        waited = true;
+        reached();
+        await release;
+      }
+      return turns.compareAndSetActiveTurn(sessionId, expected, next);
+    },
+  };
+}

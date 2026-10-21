@@ -149,7 +149,7 @@ describe("authenticated Host file management backed by OSS", () => {
       expect((await write(base, path)).status).toBe(400);
     }
     expect((await h.app.request(`${base}/files?prefix=%2e%2e%2fshared_other`, { headers })).status).toBe(400);
-    await h.turnStreamStore.setActiveTurn(owner.id, { turnId: "running", status: "running" });
+    await h.turnStreamStore.setActiveTurn(owner.id, { turnId: "running", status: "running", generation: 1 });
     expect((await write(base, "during-turn.txt")).status).toBe(200);
     // Shared Workspace access is independent of either Session's Turn status.
     const concurrent = await h.session(alice, "shared");

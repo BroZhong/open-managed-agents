@@ -19,7 +19,7 @@ import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
-import type { TurnStreamStore } from "@oma-server/redis";
+import type { ActiveTurn, ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
 import type {
   EnvSpec,
   SandboxManager,
@@ -333,55 +333,38 @@ export class SessionRouter {
     );
   }
 
-  private turnIdentity(turnId: string): { seq: number; generation: number } | null {
-    const generated = /^turn_(\d+)_a(\d+)$/.exec(turnId);
-    if (generated) {
-      return { seq: Number(generated[1]), generation: Number(generated[2]) };
-    }
-    const legacy = /^turn_(\d+)$/.exec(turnId);
-    return legacy ? { seq: Number(legacy[1]), generation: 0 } : null;
-  }
-
   private async updateActiveTurnProjection(
     sessionId: string,
-    next: { turnId: string; status: "running" | "idle" },
+    next: ActiveTurn,
   ): Promise<void> {
     if (!this.turnStreamStore) return;
-    const nextIdentity = this.turnIdentity(next.turnId);
     for (let attempt = 0; attempt < 4; attempt++) {
       const current = await this.turnStreamStore.getActiveTurn(sessionId);
-      const currentIdentity = current ? this.turnIdentity(current.turnId) : null;
-      if (
-        current &&
-        currentIdentity &&
-        nextIdentity &&
-        (
-          currentIdentity.seq > nextIdentity.seq ||
-          (currentIdentity.seq === nextIdentity.seq &&
-            currentIdentity.generation > nextIdentity.generation)
-        )
-      ) {
-        return;
-      }
-      if (await this.turnStreamStore.compareAndSetActiveTurn(
-        sessionId,
-        current?.turnId ?? null,
-        next,
-      )) return;
+      // Every attempt of an input runs the same Turn: a later generation
+      // recording it has taken the Turn over from this one.
+      if (current?.turnId === next.turnId && current.generation > next.generation) return;
+      if (await this.turnStreamStore.compareAndSetActiveTurn(sessionId, current, next)) return;
     }
     // Redis is a projection: only the PostgreSQL claim can revoke execution.
   }
 
   private async clearActiveTurnFenced(
     sessionId: string,
-    expectedTurnId: string,
+    owned: ActiveTurnWriter,
   ): Promise<boolean> {
     if (!this.turnStreamStore) return true;
-    return this.turnStreamStore.compareAndSetActiveTurn(
-      sessionId,
-      expectedTurnId,
-      null,
-    );
+    return this.turnStreamStore.compareAndSetActiveTurn(sessionId, owned, null);
+  }
+
+  /**
+   * The Turn's output is durable and it is completing: its Delta stream, which
+   * every attempt of the Turn shares, goes, and the projection shows it idle.
+   * Nothing else deletes the stream; one a lost Runner leaves expires.
+   */
+  private async endTurnStream(sessionId: string, turnId: string, generation: number): Promise<void> {
+    if (!this.turnStreamStore) return;
+    await this.turnStreamStore.reclaim(sessionId, turnId);
+    await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle", generation });
   }
 
   private reportDrainError(sessionId: string, error: unknown): void {
@@ -865,39 +848,6 @@ export class SessionRouter {
     return `pending:${pendingEventId}:${phase}`;
   }
 
-  private async reclaimEarlierAttempts(
-    sessionId: string,
-    promotedSeq: number,
-    claimGeneration: number,
-    currentTurnId: string,
-  ): Promise<void> {
-    if (!this.turnStreamStore) return;
-    const staleTurnIds = new Set<string>([`turn_${promotedSeq}`]);
-    if (claimGeneration > 1) staleTurnIds.add(`turn_${promotedSeq}_a${claimGeneration - 1}`);
-    const active = await this.turnStreamStore.getActiveTurn(sessionId);
-    if (active && active.turnId !== currentTurnId) {
-      const activeIdentity = this.turnIdentity(active.turnId);
-      const currentIdentity = this.turnIdentity(currentTurnId);
-      const isExplicitlyOlder = Boolean(
-        activeIdentity &&
-        currentIdentity &&
-        (
-          activeIdentity.seq < currentIdentity.seq ||
-          (activeIdentity.seq === currentIdentity.seq &&
-            activeIdentity.generation < currentIdentity.generation)
-        ),
-      );
-      if (isExplicitlyOlder) {
-        staleTurnIds.add(active.turnId);
-        await this.clearActiveTurnFenced(sessionId, active.turnId);
-      }
-    }
-    staleTurnIds.delete(currentTurnId);
-    for (const staleTurnId of staleTurnIds) {
-      await this.turnStreamStore.reclaim(sessionId, staleTurnId);
-    }
-  }
-
   /** Record a result for each tool call that has none, and the error that ends its Turn. */
   private recordRepairs(
     journal: TurnJournal,
@@ -1039,7 +989,7 @@ export class SessionRouter {
     activeRun: ActiveSessionRun,
   ): Promise<void> {
     const signal = activeRun.controller.signal;
-    let lastOwnedTurnId: string | undefined;
+    let lastOwnedTurn: ActiveTurnWriter | undefined;
     while (!signal.aborted) {
       const claim = await this.claimPendingHead(sessionId);
       if (!claim) {
@@ -1131,12 +1081,6 @@ export class SessionRouter {
       // A completed Turn is never run again. Its acknowledgement must still
       // settle Session idle if the queue empties.
       if (plan.kind === "acknowledge") {
-        await this.reclaimEarlierAttempts(
-          sessionId,
-          promotedEvent.seq,
-          claim.generation,
-          turnId,
-        );
         const acknowledged = await this.acknowledgeCompletedTurn(
           sessionId,
           pendingEvent.id,
@@ -1178,6 +1122,8 @@ export class SessionRouter {
         const executionPlan = planResume({ ...facts, execution: started });
         if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
           this.recordRepairs(journal, pendingEvent.id, executionPlan.turnId, executionPlan.repairs, executionPlan.error);
+          await this.endTurnStream(sessionId, executionPlan.turnId, claim.generation);
+          lastOwnedTurn = { turnId: executionPlan.turnId, generation: claim.generation };
           if (!await this.completeTurn(journal, sessionId, pendingEvent.id, executionPlan.turnId, pendingFence)) return;
           continue;
         }
@@ -1190,16 +1136,8 @@ export class SessionRouter {
         if (plan.cause === "interrupted") {
           journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEvent.id, "turn_aborted"));
         }
-        await this.reclaimEarlierAttempts(
-          sessionId,
-          promotedEvent.seq,
-          claim.generation,
-          turnId,
-        );
-        if (this.turnStreamStore) {
-          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-          lastOwnedTurnId = turnId;
-        }
+        await this.endTurnStream(sessionId, turnId, claim.generation);
+        lastOwnedTurn = { turnId, generation: claim.generation };
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1210,21 +1148,14 @@ export class SessionRouter {
         continue;
       }
 
-      // A retry with no durable output is safe. Remove prior transient deltas
-      // first; generation in turnId also prevents browser-side concatenation.
-      await this.reclaimEarlierAttempts(
-        sessionId,
-        promotedEvent.seq,
-        claim.generation,
-        turnId,
-      );
-
       // Record the active turn in Redis (not process memory) so a reconnecting
       // client — possibly on another Host instance — can find and backfill the
-      // in-flight turn's deltas.
+      // in-flight turn's deltas. Earlier attempts of the Turn streamed into the
+      // same stream; each Delta carries its attempt, and consoles keep only the
+      // highest one's.
       if (this.turnStreamStore) {
-        await this.updateActiveTurnProjection(sessionId, { turnId, status: "running" });
-        lastOwnedTurnId = turnId;
+        await this.updateActiveTurnProjection(sessionId, { turnId, status: "running", generation: claim.generation });
+        lastOwnedTurn = { turnId, generation: claim.generation };
       }
 
       // Set session status to running
@@ -1258,10 +1189,7 @@ export class SessionRouter {
           code: "unsupported_runtime",
           message: `Agent runtime "${currentAgent.runtime}" is not supported`,
         } } }, this.turnKey(pendingEvent.id, "unsupported_runtime"));
-        if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(sessionId, turnId);
-          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-        }
+        await this.endTurnStream(sessionId, turnId, claim.generation);
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1287,10 +1215,7 @@ export class SessionRouter {
         // Mirror the normal turn-end housekeeping so the transient stream/active
         // turn record don't leak, then move on to the next pending event (the
         // drain loop falls through to the idle transition when the queue empties).
-        if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(sessionId, turnId);
-          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-        }
+        await this.endTurnStream(sessionId, turnId, claim.generation);
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1359,13 +1284,7 @@ export class SessionRouter {
           };
           journal.record({ type: "session.error", data: { error: refreshError } },
             this.turnKey(pendingEvent.id, "sandbox_prepare_failed"));
-          if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-            await this.updateActiveTurnProjection(sessionId, {
-              turnId,
-              status: "idle",
-            });
-          }
+          await this.endTurnStream(sessionId, turnId, claim.generation);
           if (!await this.completeTurn(
             journal,
             sessionId,
@@ -1467,13 +1386,7 @@ export class SessionRouter {
         };
         journal.record({ type: "session.error", data: { error: managedMcpError } },
           this.turnKey(pendingEvent.id, "managed_mcp_unavailable"));
-        if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(sessionId, turnId);
-          await this.updateActiveTurnProjection(sessionId, {
-            turnId,
-            status: "idle",
-          });
-        }
+        await this.endTurnStream(sessionId, turnId, claim.generation);
         if (!await this.completeTurn(
           journal,
           sessionId,
@@ -1534,17 +1447,13 @@ export class SessionRouter {
           if (activitySandbox?.executionSettled?.() !== false) await this.finishSettledActivity(activity);
         }).catch((error) => this.reportDrainError(sessionId, error));
       }
-      if (stopped) {
-        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
-        return;
-      }
+      // A stopped attempt leaves the Turn, and the Delta stream all its
+      // attempts share, to the attempt that continues it.
+      if (stopped) return;
       await journal.flush();
       // An Adapter stops before the Turn finishes only at the Host's request
       // (#254). The Turn is left to a later attempt, as on a lost lease.
-      if (outcome && "result" in outcome && outcome.result === "stopped") {
-        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
-        return;
-      }
+      if (outcome && "result" in outcome && outcome.result === "stopped") return;
       const interrupted = turnController.signal.aborted;
       // A rejection after an abort is how the abort ended the run, not a failure.
       const failure = outcome && "error" in outcome && !interrupted ? outcome : undefined;
@@ -1586,7 +1495,6 @@ export class SessionRouter {
       const storageCheckLease = await this.renewPendingClaim(sessionId, claim);
       if (!storageCheckLease) {
         stopAttempt(new PendingLeaseLostError());
-        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
         return;
       }
 
@@ -1605,10 +1513,7 @@ export class SessionRouter {
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
       // the turn idle. This runs on normal completion and after an Interrupt.
-      if (this.turnStreamStore) {
-        await this.turnStreamStore.reclaim(sessionId, turnId);
-        await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-      }
+      await this.endTurnStream(sessionId, turnId, claim.generation);
 
       if (!await this.completeTurn(
         journal,
@@ -1618,12 +1523,7 @@ export class SessionRouter {
         pendingFence,
       )) return;
       } catch (error) {
-        if (stopped || error instanceof PendingEventClaimLostError) {
-          if (turnId && this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-          }
-          return;
-        }
+        if (stopped || error instanceof PendingEventClaimLostError) return;
         throw error;
       } finally {
         // A completed history marker, expired lease or bounded Interrupt wait
@@ -1646,8 +1546,8 @@ export class SessionRouter {
     // Every handled Turn persisted its completion before acknowledgement. The
     // last acknowledgement committed Session idle atomically with queue removal.
     // A failed claim alone is never evidence of idle: another Host may own it.
-    if (this.turnStreamStore && lastOwnedTurnId) {
-      await this.clearActiveTurnFenced(sessionId, lastOwnedTurnId);
+    if (this.turnStreamStore && lastOwnedTurn) {
+      await this.clearActiveTurnFenced(sessionId, lastOwnedTurn);
     }
 
     // The session's sandbox (if any was created) is intentionally kept across

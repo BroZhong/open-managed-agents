@@ -12,24 +12,35 @@ describe("RedisTurnStreamStore", () => {
     store = new RedisTurnStreamStore(redis);
   });
 
-  it("CAS does not let a stale turn overwrite or clear a newer active turn", async () => {
-    await store.setActiveTurn("s", { turnId: "turn_1_a2", status: "running" });
+  it("E7 CAS refuses an attempt that observed an earlier generation of the Turn", async () => {
+    // Generation 2 took the Turn over after generation 1 last read the projection.
+    await store.setActiveTurn("s", { turnId: "turn_1_a1", status: "running", generation: 2 });
 
-    expect(await store.compareAndSetActiveTurn(
-      "s",
-      "turn_1_a1",
-      { turnId: "turn_1_a1", status: "idle" },
-    )).toBe(false);
-    expect(await store.compareAndSetActiveTurn("s", "turn_1_a1", null)).toBe(false);
-    expect(await store.getActiveTurn("s")).toEqual({
-      turnId: "turn_1_a2",
-      status: "running",
-    });
-    expect(await store.compareAndSetActiveTurn(
-      "s",
-      "turn_1_a2",
-      { turnId: "turn_1_a2", status: "idle" },
-    )).toBe(true);
+    const stale = { turnId: "turn_1_a1", generation: 1 };
+    expect(await store.compareAndSetActiveTurn("s", stale, { turnId: "turn_1_a1", status: "idle", generation: 1 })).toBe(false);
+    expect(await store.compareAndSetActiveTurn("s", stale, null)).toBe(false);
+    expect(await store.getActiveTurn("s")).toEqual({ turnId: "turn_1_a1", status: "running", generation: 2 });
+
+    const current = { turnId: "turn_1_a1", generation: 2 };
+    expect(await store.compareAndSetActiveTurn("s", current, { turnId: "turn_1_a1", status: "idle", generation: 2 })).toBe(true);
+    expect(await store.getActiveTurn("s")).toEqual({ turnId: "turn_1_a1", status: "idle", generation: 2 });
+    expect(await store.compareAndSetActiveTurn("s", current, null)).toBe(true);
+    expect(await store.getActiveTurn("s")).toBeNull();
+  });
+
+  it("CAS from no projection succeeds only while there is none", async () => {
+    const next = { turnId: "turn_1_a1", status: "running", generation: 1 } as const;
+    expect(await store.compareAndSetActiveTurn("s", null, next)).toBe(true);
+    expect(await store.compareAndSetActiveTurn("s", null, { ...next, generation: 2 })).toBe(false);
+    expect(await store.getActiveTurn("s")).toEqual(next);
+  });
+
+  it("reads a projection recorded without a generation as generation 0, and replaces it", async () => {
+    await redis.hset("session:active-turn:s", "turnId", "turn_1", "status", "idle");
+    const projection = await store.getActiveTurn("s");
+    expect(projection).toEqual({ turnId: "turn_1", status: "idle", generation: 0 });
+    expect(await store.compareAndSetActiveTurn("s", projection, { turnId: "turn_2_a1", status: "running", generation: 1 })).toBe(true);
+    expect(await store.getActiveTurn("s")).toEqual({ turnId: "turn_2_a1", status: "running", generation: 1 });
   });
 
   describe("delta streams", () => {
@@ -180,8 +191,8 @@ describe("RedisTurnStreamStore", () => {
 
   describe("active-turn map", () => {
     it("stores and reads the active turn for a session", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });
-      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "running" });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running", generation: 1 });
+      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "running", generation: 1 });
     });
 
     it("returns null when no active turn is recorded", async () => {
@@ -189,22 +200,22 @@ describe("RedisTurnStreamStore", () => {
     });
 
     it("overwrites status on the same turn", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "idle" });
-      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "idle" });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running", generation: 1 });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "idle", generation: 1 });
+      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "idle", generation: 1 });
     });
 
     it("clearActiveTurn removes the record", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running", generation: 1 });
       await store.clearActiveTurn("sess_1");
       expect(await store.getActiveTurn("sess_1")).toBeNull();
     });
 
     it("keeps active-turn records independent per session", async () => {
-      await store.setActiveTurn("sess_a", { turnId: "turn_a", status: "running" });
-      await store.setActiveTurn("sess_b", { turnId: "turn_b", status: "idle" });
-      expect(await store.getActiveTurn("sess_a")).toEqual({ turnId: "turn_a", status: "running" });
-      expect(await store.getActiveTurn("sess_b")).toEqual({ turnId: "turn_b", status: "idle" });
+      await store.setActiveTurn("sess_a", { turnId: "turn_a", status: "running", generation: 1 });
+      await store.setActiveTurn("sess_b", { turnId: "turn_b", status: "idle", generation: 3 });
+      expect(await store.getActiveTurn("sess_a")).toEqual({ turnId: "turn_a", status: "running", generation: 1 });
+      expect(await store.getActiveTurn("sess_b")).toEqual({ turnId: "turn_b", status: "idle", generation: 3 });
     });
   });
 });

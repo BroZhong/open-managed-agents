@@ -39,7 +39,16 @@ export type ActiveTurnStatus = "running" | "idle";
 export interface ActiveTurn {
   turnId: string;
   status: ActiveTurnStatus;
+  /**
+   * The claim generation of the attempt that recorded it. Every attempt of one
+   * input executes the same Turn, so this, not the Turn, tells a later attempt
+   * from the one it took the Turn over from.
+   */
+  generation: number;
 }
+
+/** The attempt whose projection a compare-and-set expects to replace. */
+export type ActiveTurnWriter = Pick<ActiveTurn, "turnId" | "generation">;
 
 /**
  * Transient per-turn delta streams + the active-turn map, backed by Redis so
@@ -48,7 +57,7 @@ export interface ActiveTurn {
  *
  * - Deltas: `stream:session:{sessionId}:turn:{turnId}` (XADD append, XRANGE replay, DEL reclaim);
  *   each append slides a 30-minute expiry, so streams nobody reclaims still disappear.
- * - Active turn: hash `session:active-turn:{sessionId}` → { turnId, status }.
+ * - Active turn: hash `session:active-turn:{sessionId}` → { turnId, status, generation }.
  */
 export interface TurnStreamStore {
   /** Session ownership is mandatory: Turn IDs are only unique within a Session.
@@ -67,10 +76,14 @@ export interface TurnStreamStore {
   getActiveTurn(sessionId: string): Promise<ActiveTurn | null>;
   /** Clear the active-turn record for a session. */
   clearActiveTurn(sessionId: string): Promise<void>;
-  /** Atomically replace/delete only the exact active turn observed by caller. */
+  /**
+   * Atomically replace/delete the active turn only while it is still the one
+   * the caller observed: the same Turn recorded by the same generation, or
+   * none.
+   */
   compareAndSetActiveTurn(
     sessionId: string,
-    expectedTurnId: string | null,
+    expected: ActiveTurnWriter | null,
     next: ActiveTurn | null,
   ): Promise<boolean>;
 }
@@ -83,13 +96,16 @@ function activeTurnKey(sessionId: string): string {
   return `session:active-turn:${sessionId}`;
 }
 
+// A projection recorded before projections carried a generation counts as
+// generation 0, the generation before the first claim.
 const ACTIVE_TURN_CAS_SCRIPT = `-- oma:active-turn-cas
 local current = redis.call('HGET', KEYS[1], 'turnId') or ''
 if current ~= ARGV[1] then return 0 end
-if ARGV[2] == '' then
+if current ~= '' and (redis.call('HGET', KEYS[1], 'generation') or '0') ~= ARGV[2] then return 0 end
+if ARGV[3] == '' then
   redis.call('DEL', KEYS[1])
 else
-  redis.call('HSET', KEYS[1], 'turnId', ARGV[2], 'status', ARGV[3])
+  redis.call('HSET', KEYS[1], 'turnId', ARGV[3], 'status', ARGV[4], 'generation', ARGV[5])
 end
 return 1`;
 
@@ -167,6 +183,8 @@ export class RedisTurnStreamStore implements TurnStreamStore {
       turn.turnId,
       "status",
       turn.status,
+      "generation",
+      String(turn.generation),
     );
   }
 
@@ -176,6 +194,8 @@ export class RedisTurnStreamStore implements TurnStreamStore {
     return {
       turnId: map.turnId,
       status: (map.status as ActiveTurnStatus) ?? "idle",
+      // Claim generations start at 1, so a projection without one is the earliest.
+      generation: Number(map.generation ?? "0"),
     };
   }
 
@@ -185,16 +205,18 @@ export class RedisTurnStreamStore implements TurnStreamStore {
 
   async compareAndSetActiveTurn(
     sessionId: string,
-    expectedTurnId: string | null,
+    expected: ActiveTurnWriter | null,
     next: ActiveTurn | null,
   ): Promise<boolean> {
     const result = await this.redis.eval(
       ACTIVE_TURN_CAS_SCRIPT,
       1,
       activeTurnKey(sessionId),
-      expectedTurnId ?? "",
+      expected?.turnId ?? "",
+      expected ? String(expected.generation) : "",
       next?.turnId ?? "",
       next?.status ?? "",
+      next ? String(next.generation) : "",
     );
     return Number(result) === 1;
   }

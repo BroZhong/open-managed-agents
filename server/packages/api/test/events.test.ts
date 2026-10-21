@@ -1087,7 +1087,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     const { app, agentStore, sessionStore, turnStreamStore } = createMergeApp();
     const sessions = await Promise.all([createTestSession(agentStore, sessionStore), createTestSession(agentStore, sessionStore)]);
     await Promise.all(sessions.map(async ({ session }, index) => {
-      await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1_a1", status: "running" });
+      await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1_a1", status: "running", generation: 1 });
       await turnStreamStore.appendDelta(session.id, { turnId: "turn_1_a1", blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: index === 0 ? "parent-private" : "child-private" } });
     }));
     const frames = await Promise.all(sessions.map(async ({ session }) => {
@@ -1116,7 +1116,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     });
 
     // The turn is still running: Redis holds half-emitted deltas + active turn.
-    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running", generation: 1 });
     await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
@@ -1174,7 +1174,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     const { session } = await createTestSession(agentStore, sessionStore);
 
     // A lost attempt and its successor stream into the same Turn and block.
-    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running", generation: 1 });
     const lost = await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1", blockIndex: 0, attempt: 1, type: "agent.message_chunk", data: { type: "agent.message_chunk", text: "Hel" },
     });
@@ -1207,7 +1207,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
     const { app, agentStore, sessionStore, eventStreamHub, turnStreamStore } = createMergeApp();
     const { session } = await createTestSession(agentStore, sessionStore);
 
-    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running" });
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "running", generation: 1 });
     // Two deltas buffered in Redis: ids 0-0, 0-1.
     const id0 = await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
@@ -1365,7 +1365,7 @@ describe("GET /v1/sessions/:id/events (SSE server-side reconnect merge)", () => 
       sessionThreadId: "sthr_primary",
     });
     // Active turn marked idle (turn ended); any lingering deltas must be ignored.
-    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "idle" });
+    await turnStreamStore.setActiveTurn(session.id, { turnId: "turn_1", status: "idle", generation: 1 });
     await turnStreamStore.appendDelta(session.id, {
       turnId: "turn_1",
       blockIndex: 0,
