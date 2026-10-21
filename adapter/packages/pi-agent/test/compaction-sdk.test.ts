@@ -162,7 +162,11 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     await session.dispose();
     control.requests = [];
     const committed: SessionEvent[] = [];
-    const events = await run(input(history, async batch => { committed.push(...batch); }));
+    let atCompaction = 0;
+    const events = await run(input(history, async batch => {
+      committed.push(...batch);
+      if (batch.some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")) atCompaction = committed.length;
+    }));
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(control.requests.map(r => r.summary)).toEqual([true, false]);
     // Resource-loader prompts contain per-Host paths; compare summary request in
@@ -173,7 +177,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const serialized = JSON.stringify([...history, ...events]);
     const fresh = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
       'import {restorePiSession} from "./src/pi-context.ts"; let data=""; for await (const chunk of process.stdin) data+=chunk; process.stdout.write(JSON.stringify(restorePiSession(JSON.parse(data)).buildSessionContext().messages));'],
-      { cwd: fileURLToPath(new URL("../", import.meta.url)), input: JSON.stringify([...history, { id: "input1", type: "user.message", content: [{type: "text", text: "continue"}] }, ...committed]), encoding: "utf8", timeout: 10000 });
+      { cwd: fileURLToPath(new URL("../", import.meta.url)), input: JSON.stringify([...history, { id: "input1", type: "user.message", content: [{type: "text", text: "continue"}] }, ...committed.slice(0, atCompaction)]), encoding: "utf8", timeout: 10000 });
     expect(fresh.status, fresh.stderr).toBe(0);
     expect(normalize(JSON.parse(fresh.stdout))).toEqual(normalize(nativeAtCommit));
     const restored = restorePiSession(JSON.parse(serialized));
@@ -219,7 +223,9 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
 
   it.each([false, true])("stops before any request using an uncommitted summary (overflow=%s)", async overflow => {
     if (overflow) control.overflow = 1;
-    const events = await run(input(records(seed(!overflow)), async () => { throw new Error("context storage unavailable"); }));
+    const events = await run(input(records(seed(!overflow)), async batch => {
+      if (batch.some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")) throw new Error("context storage unavailable");
+    }));
     expect(events.find(e => e.type === "session.error")).toMatchObject({ error: { message: expect.stringContaining("context storage unavailable") } });
     expect(events.some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")).toBe(false);
     expect(control.requests.map(r => r.summary)).toEqual(overflow ? [false, true] : [true]);
@@ -342,10 +348,10 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const controller = new AbortController();
     control.pauseSummary = true;
     control.onSummary = () => controller.abort();
-    const persist = vi.fn(async () => {});
+    const persist = vi.fn(async (_batch: SessionEvent[]) => {});
     const history = records(seed());
     const events = await run({ ...input(history, persist), signal: controller.signal });
-    expect(persist).not.toHaveBeenCalled();
+    expect(persist.mock.calls.flatMap(([batch]) => batch).some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")).toBe(false);
     expect(control.requests.map(r => r.summary)).toEqual([true]);
     expect(events.some(e => e.type === "agent.compaction" && e.status === "cancelled")).toBe(true);
     expect(restorePiSession([...history, ...events]).getEntries().some(e => e.type === "compaction")).toBe(false);

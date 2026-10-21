@@ -1587,7 +1587,7 @@ export class SessionRouter {
           : { ...event, turnId: turnId! };
       };
 
-      const persistCompleteEvent = async (event: SessionEvent): Promise<void> => {
+      const appendAndPublish = async (event: SessionEvent): Promise<void> => {
         // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
         if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
         let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
@@ -1634,9 +1634,18 @@ export class SessionRouter {
           data: stored.data,
         });
       };
+      // The Adapter's commit barrier and this loop both persist. One chain keeps
+      // publication in seq order, which SSE cursors rely on to drop duplicates.
+      let persistence: Promise<void> = Promise.resolve();
+      const persistCompleteEvent = (event: SessionEvent): Promise<void> => {
+        const write = persistence.then(() => appendAndPublish(event));
+        persistence = write.catch(() => {});
+        return write;
+      };
 
-      // The SDK must await this before using a newly compacted context. Writes
-      // use the same fence and event IDs as ordinary iteration and checkpoints.
+      // The Adapter awaits this at every native message boundary and before
+      // using a newly compacted context. Writes use the same fence and event IDs
+      // as ordinary iteration and checkpoints.
       adapterInput.persistContext = async (contextEvents) => {
         for (const event of contextEvents) {
           if (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type === "compaction") {

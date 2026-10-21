@@ -9,8 +9,13 @@ interface JournalOptions {
   input: AdapterInput;
   emit(event: SessionEvent): void;
   checkpoint(): SessionEvent[];
+  takeUncommitted(): SessionEvent[];
   compactionInfo(): { compactionId: string; reason: "manual" | "threshold" | "overflow" } | undefined;
 }
+
+const CONTEXT_TYPES = new Set(["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"]);
+/** Matches neither Pi's provider retry nor context-overflow patterns. */
+export const COMMIT_BARRIER_FAILED = "OMA commit barrier failed";
 
 /** Platform durability through public SDK events and a request gate. */
 export class PiContextJournal {
@@ -61,6 +66,26 @@ export class PiContextJournal {
     this.capture();
   }
 
+  /**
+   * Commit barrier at each native message boundary. Pi converts the rejection
+   * into an error message and applies provider retry to its text, so failure
+   * stays sticky and every later boundary rejects with a fixed message.
+   */
+  async flush(): Promise<void> {
+    const persist = this.options.input.persistContext;
+    if (!this.failure) {
+      this.capture();
+      const events = this.options.takeUncommitted().filter(event => CONTEXT_TYPES.has(event.type));
+      if (persist && events.length) {
+        this.pending = this.pending.then(() => persist(structuredClone(events))).catch(error => {
+          this.failure = error instanceof Error ? error : new Error(String(error));
+        });
+      }
+    }
+    await this.pending;
+    if (this.failure) throw new Error(COMMIT_BARRIER_FAILED);
+  }
+
   private async commit(): Promise<void> {
     if (this.failure) throw this.failure;
     const { input, manager, emit, checkpoint, compactionInfo } = this.options;
@@ -82,6 +107,8 @@ export class PiContextJournal {
     const preceding = checkpoint().filter(event => ["agent.context_start", "agent.context_entry", "agent.context_usage", "agent.compaction"].includes(event.type));
     await input.persistContext([...preceding, event]);
     emit(event);
+    // The batch above holds every context event emitted so far.
+    this.options.takeUncommitted();
     this.cursor++;
   }
 }

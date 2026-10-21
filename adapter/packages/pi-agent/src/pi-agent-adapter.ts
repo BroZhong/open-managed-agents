@@ -123,6 +123,8 @@ export interface SessionFactoryArgs {
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
   checkpoint(): SessionEvent[];
+  /** Complete events emitted since the previous call, in order; each is returned once. */
+  takeUncommitted(): SessionEvent[];
   emitContext(event: SessionEvent): void;
   compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
@@ -330,6 +332,7 @@ export class PiAgentAdapter implements Adapter {
       const queue = new EventQueue<SessionEvent>();
       const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
       const checkpointEvents: SessionEvent[] = [];
+      let committedEvents = 0;
       const streamAlignment = new PiStreamAlignment();
       const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 500 : undefined);
       if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
@@ -339,6 +342,11 @@ export class PiAgentAdapter implements Adapter {
       session = await this.createSession({
         input, prompt, historyMessages, model, thinkingLevel, modelRuntime, hasToolExecutor, resourceLoaderOptions,
         checkpoint: () => structuredClone(checkpointEvents),
+        takeUncommitted() {
+          const events = checkpointEvents.slice(committedEvents);
+          committedEvents = checkpointEvents.length;
+          return events;
+        },
         emitContext(event) {
           event = streamAlignment.attach(event);
           checkpointEvents.push(event);
@@ -505,7 +513,7 @@ export class PiAgentAdapter implements Adapter {
       args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
         sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
       const journal = new PiContextJournal({ manager: sessionManager, input: args.input,
-        emit: args.emitContext, checkpoint: args.checkpoint, compactionInfo: args.compactionInfo });
+        emit: args.emitContext, checkpoint: args.checkpoint, takeUncommitted: args.takeUncommitted, compactionInfo: args.compactionInfo });
 
       const resourceLoader = new DefaultResourceLoader({
         cwd,
@@ -569,6 +577,10 @@ export class PiAgentAdapter implements Adapter {
           turnId: args.input.turnId, ...snapshot });
       };
       const continueSession = installContinuation(session);
+      // Agent listeners are awaited in registration order, after AgentSession's
+      // own listener appended the native entry. Tools and the next model request
+      // therefore start only after this message is durable.
+      session.agent.subscribe(async event => { if (event.type === "message_end") await journal.flush(); });
       const streamFunction = withGatewayErrors(session.agent.streamFunction);
       session.agent.streamFunction = async (model, context, options) => {
         // Also gates native summary requests, which bypass transformContext.
@@ -627,10 +639,12 @@ export class PiAgentAdapter implements Adapter {
         },
         async prompt(text, options) {
           try { await active.prompt(text, options); await journal.ready(); }
+          catch (error) { throw journal.failure ?? error; }
           finally { journal.capture(); captureContextUsage(); }
         },
         async continue() {
           try { await continueSession(); await journal.ready(); }
+          catch (error) { throw journal.failure ?? error; }
           finally { journal.capture(); captureContextUsage(); }
         },
         abort() {
