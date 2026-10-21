@@ -214,6 +214,14 @@ export interface AgentContextStartEvent extends BaseEvent {
   sdk: "pi@0.83.0";
   turnId: string;
   inputEventId?: string;
+  /**
+   * The model and thinking level this attempt runs with, as the runtime
+   * resolved them (`provider/id`, a level the model supports). The Host runs
+   * every later attempt of the Turn with the first attempt's, so editing the
+   * Agent or the Session mid-Turn changes only later Turns.
+   */
+  model: string;
+  thinking: string;
 }
 
 export interface AgentContextEntryEvent extends BaseEvent {

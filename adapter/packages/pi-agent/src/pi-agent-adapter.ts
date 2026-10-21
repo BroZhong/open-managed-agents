@@ -28,7 +28,7 @@ import type {
   StreamEvent,
 } from "@open-managed-agents/adapter-core";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
   generateTimestamp,
@@ -496,8 +496,11 @@ export class PiAgentAdapter implements Adapter {
       // Pi appends the prompted user message. Display input is not native input.
       // A session that never started wrote no native entry of this Turn, so its
       // input stays a display message that later Turns replay.
+      // It also names what this attempt runs with: the Turn's later attempts run with the same.
+      const { provider, id } = args.model as Model<Api>;
       const claimInput = () => args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
-        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
+        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId,
+        model: `${provider}/${id}`, thinking: args.thinkingLevel });
       const journal = new PiContextJournal({ manager: sessionManager, input: args.input,
         emit: args.emitContext, compactionInfo: args.compactionInfo });
 

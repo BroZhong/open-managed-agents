@@ -118,6 +118,21 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
     expect(control.log.filter(item => item === "commit:instruction" || item === "request")).toEqual(["commit:instruction", "request"]);
   });
 
+  // A Resumed Turn runs with the model and thinking its first attempt ran with (#253).
+  it.each([
+    ["the model's default thinking", {}, "high"],
+    ["the Agent's thinking preference, adapted to the model", { agent: { model: `${model.provider}/${model.id}`, system: "", thinking: "max" as const } }, "high"],
+    ["an execution's thinking override", { execution: { thinking: "low" } }, "low"],
+  ])("claims the input with the Turn's effective model and %s, durable before the first request", async (_name, extra, thinking) => {
+    control.responses = [{ content: [{ type: "text", text: "listed" }], stopReason: "stop" }];
+    const journal = slowJournal();
+    await run(journal, extra);
+    const [start] = journal.committed.filter(event => event.type === "agent.context_start");
+    expect(start).toMatchObject({ turnId: "turn", inputEventId: "input", model: "anthropic/claude-sonnet-4-5", thinking });
+    expect(journal.committed.indexOf(start)).toBeLessThan(journal.committed.findIndex(event => role(event) === "user"));
+    expect(control.log.indexOf("commit:user")).toBeLessThan(control.log.indexOf("request"));
+  });
+
   it("runs no tool and sends no request after a failed flush, and ends with the original failure", async () => {
     control.responses = toolThenAnswer();
     const journal = slowJournal(batch => batch.some(event => role(event) === "assistant") ? new Error("pending claim lease lost") : undefined);
