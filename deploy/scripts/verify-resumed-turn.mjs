@@ -5,9 +5,12 @@
 //
 // The script never kills or restarts workloads itself. Between a `*-start` and its
 // `*-finish` phase the operator disrupts the Runner that owns the Turn:
-//   kill-start   → `kill -9` the owning Runner's node process   → kill-finish
-//   handoff-start → `kubectl rollout restart deploy/oma-runner`  → handoff-finish
-// `owner` prints which Runner Pod holds the Turn (from the Runner logs it is given).
+//   kill-start    → `kill -9` the owning Runner's node process (needs shareProcessNamespace) → kill-finish
+//   handoff-start → `kubectl rollout restart deploy/oma-runner` (a 12 s tool finishes first)  → handoff-finish
+//   detach-start  → `kubectl rollout restart deploy/oma-runner` (a 90 s tool outlives the 20 s
+//                   shutdown deadline and is detached, not cancelled)                          → detach-finish
+// `mark-disrupted <evidence> <name>` records the disruption time; `big` runs one Turn with a
+// ≈160 KB tool result for the journal flush statistics; `file <evidence> <name>` re-reads a marker.
 import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -32,7 +35,7 @@ const prompt=(marker,seconds)=>`Use bash exactly once with this exact command: $
 async function start(name,seconds){const s=await session(name);const marker=`${e.runId}-${name}`;e.sessions[name].marker=marker;await api(`/v1/sessions/${s.id}/events`,{events:[{type:'user.message',data:{content:[{type:'text',text:prompt(marker,seconds)}]}}]});
  const es=await wait('bash tool committed',()=>events(s.id),es=>presented(es).some(x=>x.type==='agent.tool_use'&&x.data.name==='bash'));e.sessions[name].toolCommittedAt=new Date().toISOString();await save();
  check(`${name}: long bash committed before disruption`,true,{sessionId:s.id,turnId:presented(es).find(x=>x.type==='agent.tool_use')?.data.turnId});console.log(`DISRUPT_NOW session=${s.id}`)}
-async function finish(name,expectReason,maxTakeoverMs){const s=e.sessions[name];const es=await wait('Turn completion',()=>events(s.id),es=>es.some(x=>x.type==='session.turn_completed'));const p=presented(es);
+async function finish(name,expectReason,maxTakeoverMs,expectUnknown){const s=e.sessions[name];const es=await wait('Turn completion',()=>events(s.id),es=>es.some(x=>x.type==='session.turn_completed'));const p=presented(es);
  const turnIds=new Set(p.map(x=>x.data?.turnId).filter(Boolean));const resumed=es.filter(x=>x.type==='session.turn_resumed');const errors=es.filter(x=>x.type==='session.error');
  check(`${name}: one Turn, one turnId`,turnIds.size===1&&es.filter(x=>x.type==='session.turn_completed').length===1,{turnIds:[...turnIds]});
  check(`${name}: takeover recorded`,resumed.length>=1&&resumed.every(x=>x.data?.reason===expectReason),{resumed:resumed.map(x=>({seq:x.seq,ts:x.ts,...x.data}))});
@@ -50,6 +53,7 @@ async function finish(name,expectReason,maxTakeoverMs){const s=e.sessions[name];
  const sleeps=uses.filter(u=>JSON.stringify(u.data.input).includes('sleep'));check(`${name}: the long command was not rerun`,sleeps.length===1,{sleeps:sleeps.length});
  const first=results.find(r=>r.data.toolUseId===sleeps[0]?.data.toolUseId);const unknown=JSON.stringify(first?.data.content??'').includes('outcome is unknown');
  e.sessions[name].outcome={unknown,isError:first?.data.isError};const after=uses.filter(u=>u.seq>first.seq);
+ if(expectUnknown!==undefined)check(`${name}: long call outcome ${expectUnknown?'unknown':'committed'}`,unknown===expectUnknown,{unknown,isError:first?.data.isError});
  if(unknown)check(`${name}: model inspected state after an unknown outcome`,after.some(u=>JSON.stringify(u.data.input).includes(s.marker)),{followUps:after.map(u=>u.data.input)});
  const final=p.filter(x=>x.type==='agent.message').at(-1)?.data.text??'';check(`${name}: final answer reports the file`,final.includes('RESULT:'),{final:final.slice(0,200)});
  if(resumed.length&&s.disruptedAt){const t=Date.parse(resumed[0].ts)-Date.parse(s.disruptedAt);e.sessions[name].takeoverMs=t;check(`${name}: takeover within ${maxTakeoverMs||'∞'} ms of the disruption`,!maxTakeoverMs||t<=maxTakeoverMs,{msFromDisruptionToTakeover:t,disruptedAt:s.disruptedAt,resumedAt:resumed[0].ts})}
@@ -58,9 +62,13 @@ const failures=[];
 try{
  if(phase==='init'){e.agent=(await api('/v1/agents',{name:`${e.runId}-agent`,model:process.env.VERIFY_MODEL||'openai-codex/gpt-5.6-sol',runtime:'pi-agent',sandbox:{enabled:true},mcpServers:[],skills:[],system:'Follow the verification instructions exactly. Use only bash. Never repeat a command whose outcome is unknown without first inspecting the current state.'})).id;check('verification agent created',true,{tenant:e.runId})}
  else if(phase==='kill-start')await start('kill',120);
- else if(phase==='kill-finish')await finish('kill','expired',35000);
+ else if(phase==='kill-finish')await finish('kill','expired',35000,true);
  else if(phase==='handoff-start')await start('handoff',12);
- else if(phase==='handoff-finish')await finish('handoff','released',0);
+ else if(phase==='handoff-finish')await finish('handoff','released',30000,false);
+ else if(phase==='detach-start')await start('detach',90);
+ else if(phase==='detach-finish')await finish('detach','released',35000,true);
+ else if(phase==='big'){const s=await session('big');await api(`/v1/sessions/${s.id}/events`,{events:[{type:'user.message',data:{content:[{type:'text',text:'Use bash exactly once with this exact command: "head -c 120000 /dev/urandom | base64 -w 0 | head -c 160000". Then reply with exactly BIG_DONE.'}]}}]});
+  const es=await wait('Turn completion',()=>events(s.id),es=>es.some(x=>x.type==='session.turn_completed'));check('big: Turn with a large tool result completed',es.some(x=>x.type==='agent.context_entry'&&x.data?.entry?.message?.role==='toolResult'),{sessionId:s.id})}
  else if(phase==='mark-disrupted'){const name=process.argv[4];e.sessions[name].disruptedAt=new Date().toISOString();check(`${name}: disruption marked`,true)}
  else if(phase==='file'){const s=e.sessions[process.argv[4]];const access=await api(`/v1/workspaces/${s.workspaceId}/files/${s.marker}.txt`);const bytes=await (await fetch(access.url)).text();e.sessions[process.argv[4]].fileLater=bytes;check(`${process.argv[4]}: marker file now`,true,{bytes,at:new Date().toISOString()})}
  else if(phase==='cleanup'){for(const s of Object.values(e.sessions)){try{await api(`/v1/sessions/${s.id}`,undefined,'DELETE')}catch(error){failures.push(error)}}check('verification Sessions terminated',true,{count:Object.keys(e.sessions).length})}
