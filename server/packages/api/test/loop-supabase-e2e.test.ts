@@ -8,6 +8,7 @@ import type {
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { createApp } from "../src/app.js";
 import { LoopScheduler } from "../src/lib/loop-scheduler.js";
 
@@ -24,8 +25,9 @@ describe("Loop + managed Supabase MCP end to end", () => {
     const adapterInputs: AdapterInput[] = [];
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterInputs.push(input);
-        yield {
+        await write({
           id: "evt_supabase_query",
           timestamp: clock.toISOString(),
           type: "agent.mcp_tool_use",
@@ -37,16 +39,16 @@ describe("Loop + managed Supabase MCP end to end", () => {
             session_limit: 25,
             event_limit_per_session: 50,
           },
-        };
-        yield {
+        });
+        await write({
           id: "evt_supabase_result",
           timestamp: clock.toISOString(),
           type: "agent.mcp_tool_result",
           toolUseId: "tool_supabase_query",
           serverName: "session-data",
           content: [{ type: "text", text: "17 sessions; 3 repeated tool retries" }],
-        };
-        yield {
+        });
+        await write({
           id: "evt_improvements",
           timestamp: clock.toISOString(),
           type: "agent.message",
@@ -54,7 +56,7 @@ describe("Loop + managed Supabase MCP end to end", () => {
             type: "text",
             text: "Agent 优化点：为重复工具失败增加一次有界重试，并在失败后给出可执行诊断。",
           }],
-        };
+        });
       },
     };
     const sessionRouter = new SessionRouter({

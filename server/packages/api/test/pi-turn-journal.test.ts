@@ -52,7 +52,7 @@ it("writes each Pi event once through the Turn journal and keeps Deltas aligned 
   const streamed: SessionEvent[] = [];
   const adapter: Adapter = { async *run(input) {
     inputs.push(input);
-    for await (const event of pi.run(input)) { streamed.push(event); yield event; }
+    for await (const event of pi.run(input)) streamed.push(event);
   } };
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${provider.id}/scripted-model`, system: "", runtime: "pi-agent", sandbox: { enabled: true } });

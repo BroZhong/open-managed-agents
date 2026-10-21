@@ -5,6 +5,7 @@ import { RedisEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { startExecution } from "../../src/execution.js";
 import { InMemoryArtifactStore, InMemorySkillArtifactStore } from "@oma-server/store-memory";
 
@@ -18,13 +19,14 @@ const turnStreamStore = new BestEffortTurnStreamStore(new RedisTurnStreamStore(r
 const event = (type: string, data: object): SessionEvent => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (value: string) => event("agent.message", { content: [{ type: "text", text: value }] });
 const adapter: Adapter = { async *run(input) {
-  if (input.execution?.isChild) { yield text(`child PID ${process.pid}; model ${input.agent.model}; budget ${input.execution.maxModelSteps}`); return; }
-  if (input.message.source === "subagent_result") { yield text(`async result handled PID ${process.pid}`); return; }
+  const write = journalWriter(input);
+  if (input.execution?.isChild) { await write(text(`child PID ${process.pid}; model ${input.agent.model}; budget ${input.execution.maxModelSteps}`)); return; }
+  if (input.message.source === "subagent_result") { await write(text(`async result handled PID ${process.pid}`)); return; }
   const call = event("agent.tool_use", { toolUseId: "cross-process", name: "Agent", input: { prompt: "child" } });
-  yield call;
+  await write(call);
   const output = await input.subagents!.delegate({ prompt: "child", runInBackground: process.env.DELEGATION_MODE === "async" }, { toolUseId: "cross-process" });
-  yield event("agent.tool_result", { toolUseId: "cross-process", content: [{ type: "text", text: JSON.stringify(output) }], isError: false });
-  yield text(`parent PID ${process.pid}`);
+  await write(event("agent.tool_result", { toolUseId: "cross-process", content: [{ type: "text", text: JSON.stringify(output) }], isError: false }));
+  await write(text(`parent PID ${process.pid}`));
 } };
 const activities = new PgSandboxLifecycleStore(pool);
 const client = new FakeSandboxClient();
