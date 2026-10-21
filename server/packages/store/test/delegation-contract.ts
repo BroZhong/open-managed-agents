@@ -146,15 +146,53 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect((await stores.pendingEventStore.peek(child.childId))?.id).toBe(resumed.pendingEventId);
       expect((await stores.delegationStore.listCommands(child.id)).find((c) => c.id === command.id)?.status).toBe("not_applied");
     });
-    it("turns lost-owner running execution into recovery_required instead of replaying output", async () => {
+    it("C7 hands a running execution its lost owner left to the claim that takes its input over", async () => {
       const child = await stores.delegationStore.accept(input, parentFence);
       const oldFence = await fenceFor(child);
-      await stores.delegationStore.startExecution(child.id, oldFence, "child-turn", {}, 4);
+      await stores.delegationStore.startExecution(child.id, oldFence, "child-turn", { model: "requested" }, 4);
+      await stores.delegationStore.updateEffectiveConfig(child.id, oldFence, { model: "provider/resolved", thinking: "high" });
       await stores.pendingEventStore.releaseClaim!(child.childId, oldFence.eventId, oldFence);
       const newFence = await fenceFor(child, "replacement");
+      // The Turn the takeover continues keeps its configuration and its slot; the owner is the new claim's.
+      const resumed = await stores.delegationStore.startExecution(child.id, newFence, "child-turn", { model: "other" }, 1);
+      expect(resumed).toMatchObject({ status: "running", turnId: "child-turn", ownerId: "replacement", generation: newFence.generation,
+        effectiveConfig: { model: "provider/resolved", thinking: "high", maxSteps: 30 } });
+      expect(resumed?.result).toBeUndefined();
+      expect(await stores.delegationStore.startExecution(child.id, newFence, "child-turn", {}, 1)).toEqual(resumed);
+      // The lost owner is fenced out; the new one finishes the execution and its commands apply under its generation.
       await expect(finish(child, oldFence)).rejects.toThrow();
-      const recovered = await stores.delegationStore.startExecution(child.id, newFence, "new-turn-must-not-run", {}, 4);
-      expect(recovered).toMatchObject({ status: "recovery_required", turnId: "child-turn", result: { output: "" } });
+      await expect(stores.delegationStore.updateEffectiveConfig(child.id, oldFence, { model: "stale" })).rejects.toThrow();
+      const steer = await stores.delegationStore.command({ ...input, callerToolUseId: "steer-after-takeover", childId: child.childId, kind: "steer", message: "Check first" });
+      expect(steer).toMatchObject({ status: "accepted", targetGeneration: newFence.generation });
+      expect((await stores.delegationStore.applyCommand(steer.id, newFence, { type: "subagent.instruction", data: {}, sessionThreadId: "sthr_primary" })).status).toBe("applied");
+      expect((await finish(child, newFence)).status).toBe("completed");
+      expect(await stores.pendingEventStore.listUnclaimed(input.callerSessionId, 10)).toEqual([expect.objectContaining({ type: "subagent.result" })]);
+    });
+    it("C7 names the execution's Turn after the takeover's when no attempt named it in the log", async () => {
+      const child = await stores.delegationStore.accept(input, parentFence);
+      const oldFence = await fenceFor(child);
+      await stores.delegationStore.startExecution(child.id, oldFence, "turn_3_a1", {}, 4);
+      await stores.pendingEventStore.releaseClaim!(child.childId, oldFence.eventId, oldFence);
+      const newFence = await fenceFor(child, "replacement");
+      expect(await stores.delegationStore.startExecution(child.id, newFence, "turn_3_a2", {}, 4)).toMatchObject({ status: "running", turnId: "turn_3_a2" });
+    });
+    it("C10 counts a sibling whose owner was lost against the parent's limit until its takeover ends it", async () => {
+      const lost = await stores.delegationStore.accept(input, parentFence);
+      const lostFence = await fenceFor(lost, "lost-owner");
+      await stores.delegationStore.startExecution(lost.id, lostFence, "lost-turn", {}, 1);
+      await stores.pendingEventStore.releaseClaim!(lost.childId, lostFence.eventId, lostFence);
+      const queued = await stores.delegationStore.accept({ ...input, callerToolUseId: "tool-2" }, parentFence);
+      const queuedFence = await fenceFor(queued);
+      // The lost owner's execution is not ended: it still runs, and occupies the only slot.
+      expect(await stores.delegationStore.startExecution(queued.id, queuedFence, "queued-turn", {}, 1)).toBeNull();
+      expect((await stores.delegationStore.getExecution(input.tenantId, lost.id))?.status).toBe("running");
+      expect((await stores.eventLogStore.getEvents(input.callerSessionId)).data).toEqual([]);
+      // Its takeover continues it in the slot it holds and ends it; then the queued sibling starts.
+      const takeoverFence = await fenceFor(lost, "takeover");
+      expect((await stores.delegationStore.startExecution(lost.id, takeoverFence, "lost-turn", {}, 1))?.status).toBe("running");
+      expect(await stores.delegationStore.startExecution(queued.id, queuedFence, "queued-turn", {}, 1)).toBeNull();
+      await finish(lost, takeoverFence);
+      expect((await stores.delegationStore.startExecution(queued.id, queuedFence, "queued-turn", {}, 1))?.status).toBe("running");
     });
     it("reconciles terminated child executions after their pending inputs have been deleted", async () => {
       const child = await stores.delegationStore.accept({ ...input, mode: "sync" }, parentFence);

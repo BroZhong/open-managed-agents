@@ -76,13 +76,25 @@ describe.skipIf(!process.env.PG_TEST_URL)("Delegation transactions on real Postg
     expect((await stores.eventLogStore.getEvents(caller.callerSessionId)).data.filter((event) => event.type === "subagent.result")).toHaveLength(1);
     expect(await stores.pendingEventStore.count(caller.callerSessionId)).toBe(0);
   });
-  it("rejects an expired owner at commit and resolves the abandoned running execution without replay", async () => {
+  it("C7 rejects an expired owner at commit and hands its running execution to the claim that takes over", async () => {
     const child = await stores.delegationStore.accept(caller, parentFence); const oldFence = await start(child);
     await harness.pool.query("UPDATE pending_events SET claim_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1", [child.pendingEventId]);
     const claim = (await stores.pendingEventStore.claim(child.childId, "new-owner", 60000))!;
     const newFence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
     await expect(stores.delegationStore.finishExecution(child.id, oldFence, outcome(child))).rejects.toThrow();
-    expect((await stores.delegationStore.startExecution(child.id, newFence, "unused", {}, 4))?.status).toBe("recovery_required");
+    expect(await stores.delegationStore.startExecution(child.id, newFence, "child-turn", {}, 4))
+      .toMatchObject({ status: "running", turnId: "child-turn", ownerId: "new-owner", generation: newFence.generation });
+    expect((await stores.pendingEventStore.listUnclaimed(caller.callerSessionId, 10)).filter((event) => event.type === "subagent.result")).toEqual([]);
+    expect((await stores.delegationStore.finishExecution(child.id, newFence, outcome(child))).status).toBe("completed");
     expect((await stores.pendingEventStore.listUnclaimed(caller.callerSessionId, 10)).filter((event) => event.type === "subagent.result")).toHaveLength(1);
+  });
+  it("C10 keeps a sibling with an expired owner in its slot, without ending it", async () => {
+    const lost = await stores.delegationStore.accept(caller, parentFence); await start(lost);
+    await harness.pool.query("UPDATE pending_events SET claim_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1", [lost.pendingEventId]);
+    const queued = await stores.delegationStore.accept({ ...caller, callerToolUseId: "second" }, parentFence);
+    const claim = (await stores.pendingEventStore.claim(queued.childId, "child", 60000))!;
+    expect(await stores.delegationStore.startExecution(queued.id, { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation }, "turn", {}, 1)).toBeNull();
+    expect((await stores.delegationStore.getExecution("tenant", lost.id))?.status).toBe("running");
+    expect((await stores.eventLogStore.getEvents(caller.callerSessionId)).data).toEqual([]);
   });
 });

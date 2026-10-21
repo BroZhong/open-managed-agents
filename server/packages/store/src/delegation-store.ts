@@ -169,27 +169,33 @@ export abstract class TransactionalDelegationStore implements DelegationStore {
       if (terminal(execution)) return execution;
       if (execution.status === "running") {
         if (execution.ownerId === fence.ownerId && execution.generation === fence.generation) return execution;
-        // An expired owner may have performed external effects. Never replay its prompt.
-        return this.finish(tx, execution, { status: "recovery_required", reason: "Execution lease expired; external tool effects may be uncertain. Inspect history and resume explicitly.", output: "", trace: { sessionId: execution.childId, turnId: execution.turnId } });
+        // The fence holds, so the owner recorded here is gone: lost (its lease
+        // expired) or handed over (it released the claim). This claim
+        // continues its Turn in the slot it already occupies (ADR-0021).
+        // Committed work is not run again; the log says where it stopped.
+        await this.putResourceUse(tx, execution, fence);
+        Object.assign(execution, { turnId, ownerId: fence.ownerId, generation: fence.generation, updatedAt: new Date().toISOString() });
+        await tx.put("executions", execution.id, execution);
+        return execution;
       }
-      const siblings = await tx.read<DelegationExecution>("executions", { tenantId: execution.tenantId, callerSessionId: execution.callerSessionId, status: "running" });
-      let active = 0;
-      for (const sibling of siblings) {
-        const owns = sibling.ownerId && sibling.generation !== undefined && await tx.pending.ownsClaim(sibling.childId, sibling.pendingEventId, { ownerId: sibling.ownerId, generation: sibling.generation });
-        if (owns) active++;
-        else await this.finish(tx, sibling, { status: "recovery_required", reason: "Execution owner lease expired; inspect uncertain effects before resume.", output: "", trace: { sessionId: sibling.childId, turnId: sibling.turnId } });
-      }
-      if (active >= maxConcurrent) return null;
-      const child = await tx.sessions.getById(execution.childId);
-      if (!child?.delegation) throw new Error("Child Session environment binding missing");
-      await tx.put("resource_uses", fence.eventId, { sessionId: execution.childId,
-        sandboxSessionId: child.delegation.sandboxSessionId, pendingEventId: fence.eventId,
-        ownerId: fence.ownerId, generation: fence.generation });
+      // A running sibling holds its slot until it ends, also while its owner
+      // is lost: its own Session's takeover continues it.
+      const running = await tx.read<DelegationExecution>("executions", { tenantId: execution.tenantId, callerSessionId: execution.callerSessionId, status: "running" });
+      if (running.length >= maxConcurrent) return null;
+      await this.putResourceUse(tx, execution, fence);
       const { maxModelSteps: _legacySteps, ...configuration } = effectiveConfig;
       Object.assign(execution, { status: "running", turnId, effectiveConfig: { ...configuration, maxSteps: execution.maxSteps }, ownerId: fence.ownerId, generation: fence.generation, updatedAt: new Date().toISOString() });
       await tx.put("executions", execution.id, execution);
       return execution;
     });
+  }
+  /** The execution's claim uses its Child Session's environment from its start until the Router acquires it. */
+  private async putResourceUse(tx: DelegationTransaction, execution: DelegationExecution, fence: PendingEventFence) {
+    const child = await tx.sessions.getById(execution.childId);
+    if (!child?.delegation) throw new Error("Child Session environment binding missing");
+    await tx.put("resource_uses", fence.eventId, { sessionId: execution.childId,
+      sandboxSessionId: child.delegation.sandboxSessionId, pendingEventId: fence.eventId,
+      ownerId: fence.ownerId, generation: fence.generation });
   }
   updateEffectiveConfig(executionId: string, fence: PendingEventFence, config: Record<string, unknown>) {
     return this.transaction(async (tx) => {
