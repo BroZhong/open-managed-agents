@@ -107,33 +107,25 @@ describe("crash injection: the takeover limit", { timeout: 30_000 }, () => {
   });
 
   it("E3 handoffs are not counted: three losses, then two handoffs without progress, and the Turn completes", async () => {
-    // Requests 0-2 lose their Runner; requests 3-4 find their Runner shutting
-    // down, which hands the Turn over; request 5 answers.
+    // Requests 0-2 lose their Runner; Runners 3 and 4 are shut down as they
+    // take the Turn over, so they hand it on before asking the model; request 3 answers.
     const scenario: Scenario = {
       inputs: [POISON],
-      model: (request, run) => {
-        if (request.index < 3) return { blocks: [text("here is the archive")], stop: "end_turn", lostMidStream: true };
-        if (request.index < 5) run.handOff();
-        return { blocks: [text("the archive")], stop: "end_turn" };
-      },
+      model: (request) => request.index < 3
+        ? { blocks: [text("here is the archive")], stop: "end_turn", lostMidStream: true }
+        : { blocks: [text("the archive")], stop: "end_turn" },
     };
-    const outcome = await execute(scenario);
+    const outcome = await execute(scenario, [], [undefined, undefined, undefined, 1, 1]);
     expectResumed(scenario, outcome);
     expect(markersOf(outcome.log).map((marker) => marker.reason)).toEqual(["expired", "expired", "expired", "released", "released"]);
     expect(answers(outcome, 0, scenario)).toEqual([expect.stringContaining("the archive")]);
   });
 
   it("E3/F7 a handoff neither counts nor resets the count: the loss after it is the fourth, and ends the Turn", async () => {
-    // Requests 0-2 lose their Runner, request 3 is handed over, request 4 loses its Runner again.
-    const scenario: Scenario = {
-      ...poison,
-      model: (request, run) => {
-        if (request.lastUser !== POISON) return { blocks: [text("hi")], stop: "end_turn" };
-        if (request.index === 3) run.handOff();
-        return { blocks: [text("here is the archive")], stop: "end_turn", lostMidStream: true };
-      },
-    };
-    const outcome = await execute(scenario);
+    // Requests 0-2 lose their Runner, Runner 3 is shut down as it takes the
+    // Turn over, and request 3, Runner 4's, loses its Runner again.
+    const scenario = poison;
+    const outcome = await execute(scenario, [], [undefined, undefined, undefined, 1]);
     expectResumed(scenario, outcome);
     const turn = eventsOfInput(outcome.log, scenario, 0);
     expect(markersOf(turn).map((marker) => marker.reason)).toEqual(["expired", "expired", "expired", "released", "expired"]);

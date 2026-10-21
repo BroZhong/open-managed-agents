@@ -19,9 +19,10 @@ import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition }
  * model request and tool command it makes from then on never settles, so
  * none of its cleanup runs) and its claim lapses. The next Runner takes over
  * as a Runner's pending scan does. A sweep loses the first Runner after each
- * write the scenario makes, one run per write. A scenario can also hand a
- * Turn over, as a shutting-down Runner releases its claim, or make the event
- * log refuse a write, which stops the attempt and lets its claim lapse.
+ * write the scenario makes, one run per write. A Runner can instead be shut
+ * down as SIGTERM shuts it down (#254): its Router hands its Turns over, then
+ * its process exits. A scenario can also make the event log refuse a write,
+ * which stops the attempt and lets its claim lapse.
  */
 
 /** How a takeover's result for a call of unknown outcome begins (#248). */
@@ -94,8 +95,13 @@ export interface Outcome {
   toolCalls: ToolCall[];
   /** Each Adapter run, with the log as it was when the run started. */
   attempts: Array<{ runner: number; input: AdapterInput; log: StoredEvent[] }>;
-  /** What each lost Runner left: the input it held and the calls without a result. */
+  /**
+   * What each Runner left as it stopped executing the Session, lost or shut
+   * down: the input it held or handed over and the calls without a result.
+   */
   losses: Loss[];
+  /** Every command a Runner sent the Sandbox, in order. */
+  commands: Array<{ runner: number; command: string[] }>;
   errors: Array<{ runner: number; error: unknown }>;
   /** Every Delta any Runner streamed, in order. */
   deltas: TurnDelta[];
@@ -115,16 +121,19 @@ export interface Loss {
   /** The input's Turn was already completed: the next claim only acknowledges it. */
   completed?: boolean;
   dangling: string[];
+  /** A handoff's grace period ran out while the Turn still ran, so it was detached. */
+  detached?: boolean;
 }
 
 export interface Run {
   /** Lose the Runner that is executing now, as if its process were killed. */
   crash(): void;
   /**
-   * Stop the Runner that is executing now as a graceful shutdown leaves its
-   * Turn (#254): it releases its claim, writes nothing more and exits.
+   * SIGTERM the Runner that is executing now (#254): its Router hands its
+   * Turns over within `graceMs` (the deployment's 20 s by default), then its
+   * process exits.
    */
-  handOff(): void;
+  shutDown(graceMs?: number): void;
   /** Accept an Interrupt for the Session's running Turn, as the API does. */
   requestInterrupt(): Promise<boolean>;
   /** The Session's durable log as it is now. */
@@ -159,8 +168,10 @@ export type LoseAfter = number | ((write: Write) => boolean);
 /** One Runner process: its writes, and its loss. */
 export class Runner {
   dead = false;
-  /** How its claim ended when it was lost. */
-  end: PendingEventClaimEnd = "expired";
+  /** Its Router's handoff, once the Runner is shut down. */
+  handingOff?: Promise<boolean>;
+  /** Shuts the Runner down; set once its Router exists. */
+  shutDown?: () => void;
   readonly writes: Write[] = [];
   readonly died: Promise<void>;
   private markDied!: () => void;
@@ -171,24 +182,31 @@ export class Runner {
     private readonly onLoss: (runner: Runner) => void,
     /** Whether the store refuses the call; the call then fails with {@link RefusedWrite}. */
     private readonly refuses: (store: string, method: string, args: unknown[]) => boolean = () => false,
+    /** Shut the Runner down right after its Nth durable write. */
+    private readonly shutDownAfter?: number,
   ) {
     this.died = new Promise((resolve) => { this.markDied = resolve; });
   }
 
   get ownerId(): string { return `runner-${this.index}`; }
 
-  lose(end: PendingEventClaimEnd = "expired"): void {
+  lose(): void {
     if (this.dead) return;
     this.dead = true;
-    this.end = end;
     this.onLoss(this);
     this.markDied();
   }
 
-  /** Called with each durable write once it is committed; the Runner may be lost right after it. */
+  /** The process exits once its shutdown is done: it holds no claim, and nothing it still awaits settles. */
+  exit(): void {
+    this.dead = true;
+  }
+
+  /** Called with each durable write once it is committed; the Runner may be lost or shut down right after it. */
   wrote(write: Write): boolean {
     this.writes.push(write);
     if (typeof this.loseAfter === "function" ? this.loseAfter(write) : this.writes.length === this.loseAfter) this.lose();
+    if (this.writes.length === this.shutDownAfter) this.shutDown?.();
     return this.dead;
   }
 
@@ -276,7 +294,7 @@ function request(body: { model: string; thinking?: unknown; system?: unknown; me
 }
 
 /** A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool` as every tool. */
-function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>): SandboxManager {
+function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void): SandboxManager {
   const files = new Map<string, Uint8Array>();
   let temporary = 0;
   const missing = (path: string) => Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
@@ -292,14 +310,16 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
     fileSystem,
     async *exec(command: string[], options?: ExecOptions) {
       if (runner.dead) await GONE;
+      sent(command);
       // Only the tool wrapper runs a scenario tool; cleanup commands just exit.
       if (command[1] === "--input-type=module") {
         const sent = JSON.parse(Buffer.from(files.get(command.at(-1)!) ?? new Uint8Array()).toString()) as { id: string; name: string; args: Json };
+        // The wrapper reports its pid as it starts, so Pi can ask it to abort (#240).
+        yield { stream: "stdout" as const, text: JSON.stringify({ type: "accepted", pid: 4242 }) + "\n" };
         const text = await run({ id: sent.id, name: sent.name, args: sent.args });
         // A command that outlives its Runner reports to nobody.
         if (runner.dead) await GONE;
-        const frames = [{ type: "accepted", pid: 4242 }, { type: "result", result: { content: [{ type: "text", text }], details: undefined } }];
-        yield { stream: "stdout" as const, text: frames.map((frame) => JSON.stringify(frame)).join("\n") + "\n" };
+        yield { stream: "stdout" as const, text: JSON.stringify({ type: "result", result: { content: [{ type: "text", text }], details: undefined } }) + "\n" };
       }
       options?.onExit?.({ exitCode: 0 });
     },
@@ -326,9 +346,11 @@ export async function piAgentDir(): Promise<{ dir: string; remove(): Promise<voi
 /**
  * Execute `scenario`, losing Runner i right after its `loseAfter[i]`th
  * durable write, or the first one `loseAfter[i]` picks (never, when
- * undefined), until a Runner drains the Session.
+ * undefined), or shutting it down right after its `shutDownAfter[i]`th, until
+ * a Runner drains the Session.
  */
-export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | undefined> = []): Promise<Outcome> {
+export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | undefined> = [],
+  shutDownAfter: Array<number | undefined> = []): Promise<Outcome> {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Pi", model: `${PROVIDER}/${MODELS[0]}`, system: "",
     runtime: "pi-agent", sandbox: { enabled: true } });
@@ -339,28 +361,26 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
   }
   const provider: CustomProviderDefinition = { id: PROVIDER, name: "Scripted", api: "anthropic-messages", baseUrl: "https://model.example.invalid",
     apiKey: "controlled-test-key", models: MODELS.map((id) => ({ id, name: id, contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] })) };
-  const outcome: Outcome = { log: [], sessionId: session.id, stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], errors: [], deltas: [] };
+  const outcome: Outcome = { log: [], sessionId: session.id, stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], commands: [], errors: [], deltas: [] };
   // The Redis stand-in all Runners share; it records every Delta as it is appended.
   const turnStreams = new InMemoryTurnStreamStore();
   const appendDelta = turnStreams.appendDelta.bind(turnStreams);
   turnStreams.appendDelta = async (sessionId, delta) => { outcome.deltas.push(delta); return appendDelta(sessionId, delta); };
   const readLog = async () => (await stores.eventLogStore.getEvents(session.id, { limit: 100_000 })).data;
 
-  // A lost Runner's claim lapses: the next claim takes the input over. One
-  // that hands its Turn over releases its claim instead.
+  // A lost Runner's claim lapses: the next claim takes the input over.
   const lapse = (runner: Runner) => {
     const state = stores.pendingEventStore.snapshotState();
-    for (const claim of state.claims.values()) {
-      if (claim.ownerId !== runner.ownerId) continue;
-      claim.expiresAtMs = 0;
-      if (runner.end === "released") claim.ownerId = undefined;
-    }
+    for (const claim of state.claims.values()) if (claim.ownerId === runner.ownerId) claim.expiresAtMs = 0;
     stores.pendingEventStore.restoreState(state);
   };
   const startRunner = (index: number) => {
     const runner: Runner = new Runner(index, loseAfter[index], lapse, (store, method, args) =>
-      store === "eventLogStore" && method === "append" && scenario.refuse?.(args[1] as { type: string; data: unknown }, run) === true);
-    const run: Run = { crash: () => runner.lose(), handOff: () => runner.lose("released"), runner: index, log: readLog,
+      store === "eventLogStore" && method === "append" && scenario.refuse?.(args[1] as { type: string; data: unknown }, run) === true,
+      shutDownAfter[index]);
+    let router!: SessionRouter;
+    const run: Run = { crash: () => runner.lose(), runner: index, log: readLog,
+      shutDown: (graceMs = 20_000) => { runner.handingOff ??= router.handOff(graceMs); },
       requestInterrupt: () => stores.pendingEventStore.requestInterrupt(session.id),
       stores, agentId: agent.id, sessionId: session.id };
     const fetchModel: typeof fetch = async (_url, init) => {
@@ -385,14 +405,15 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
       outcome.attempts.push({ runner: index, input, log: await readLog() });
       return pi.run(input);
     } };
-    const router = new SessionRouter({ ...runner.stores({ ...stores, turnStreamStore: turnStreams }), eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
+    router = new SessionRouter({ ...runner.stores({ ...stores, turnStreamStore: turnStreams }), eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
       sandboxManager: sandbox(runner, async (call) => {
         const toolCall = { ...call, runner: index };
         outcome.toolCalls.push(toolCall);
         return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
-      }),
+      }, (command) => outcome.commands.push({ runner: index, command })),
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       pendingClaimOwnerId: runner.ownerId, onDrainError: ({ error }) => outcome.errors.push({ runner: index, error }) });
+    runner.shutDown = () => run.shutDown();
     outcome.runners.push(runner);
     return { runner, router, run };
   };
@@ -406,6 +427,14 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     else await router.recoverPendingEvents();
     const settled = await Promise.race([runner.died.then(() => "lost" as const), router.waitForIdle(30_000).then((idle) => idle ? "idle" as const : "stuck" as const)]);
     if (settled === "stuck") throw new Error(`Runner ${index} neither drained the Session nor was lost`);
+    if (runner.handingOff && settled !== "lost") {
+      // Its drains settled as it handed its Turns over; the process exits once the handoff is done.
+      const detached = !await runner.handingOff;
+      runner.exit();
+      outcome.losses.push({ ...await lossOf(runner, session.id, await readLog(), scenario), detached });
+      await scenario.afterLoss?.(run);
+      continue;
+    }
     if (settled === "idle" && await stores.pendingEventStore.peek(session.id)) {
       // A refused write stops the attempt (ADR-0020). The Runner stays up, and
       // the claim it no longer renews lapses after its lease.
@@ -421,21 +450,27 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
 }
 
 /**
- * The input of the Session a lost Runner held, and its Turn's calls that had
- * no result then. The claims it held on Child Sessions are not the Session's.
+ * The input of the Session a lost Runner held, or a Runner shut down handed
+ * over, and its Turn's calls that had no result then. The claims it held on
+ * Child Sessions are not the Session's.
  */
 async function lossOf(runner: Runner, sessionId: string, log: StoredEvent[], scenario: Scenario): Promise<Loss> {
-  let held: { event: { data: { content: Array<{ text: string }> } }; generation: number } | undefined;
+  type Claim = { event: { data: { content: Array<{ text: string }> } }; generation: number };
+  let held: Claim | undefined;
+  let released: Claim | undefined;
   for (const write of runner.writes) {
     if (write.store === "pendingEventStore" && write.args[0] !== sessionId) continue;
-    if (write.method === "claim") held = write.result as typeof held;
+    if (write.method === "claim") { held = write.result as Claim; released = undefined; }
     else if (write.method === "ackCompletedTurn" && (write.result as { acknowledged: boolean }).acknowledged) held = undefined;
-    else if (write.method === "releaseClaim" && write.result === true) held = undefined;
+    else if (write.method === "releaseClaim" && write.result === true) { released = held; held = undefined; }
   }
-  if (!held) return { runner: runner.index, reason: runner.end, dangling: [] };
+  // A lost Runner's claim lapses; one shut down ends holding nothing, and the input it released is the one it handed over.
+  const reason: PendingEventClaimEnd = runner.handingOff ? "released" : "expired";
+  if (runner.handingOff) held = released;
+  if (!held) return { runner: runner.index, reason, dangling: [] };
   const input = scenario.inputs.indexOf(held.event.data.content[0].text);
   const events = eventsOfInput(log, scenario, input);
-  return { runner: runner.index, reason: runner.end, input, generation: held.generation,
+  return { runner: runner.index, reason, input, generation: held.generation,
     completed: events.some((event) => event.type === "session.turn_completed"), dangling: dangling(events) };
 }
 
@@ -515,6 +550,8 @@ export function expectResumed(scenario: Scenario, outcome: Outcome, expected: Ex
   const recorded = expected.recorded ?? [];
   for (const call of recorded) expect(dangling, `${call} was left dangling`).toContain(call);
   expect(new Set(unknown)).toEqual(new Set(dangling.filter((call) => !recorded.includes(call))));
+  // A handoff leaves a call without a result only when its deadline detached the Turn.
+  for (const loss of outcome.losses) if (loss.reason === "released" && !loss.detached) expect(loss.dangling).toEqual([]);
   // No tool runs twice; a Sandbox call with a real result ran once.
   const executions = outcome.toolCalls.map((call) => call.id);
   expect(executions).toEqual([...new Set(executions)]);
@@ -597,6 +634,24 @@ export async function sweep(scenario: Scenario, also: (outcome: Outcome, write: 
     const outcome = await execute(scenario, [n]);
     expectResumed(scenario, outcome);
     also(outcome, n);
+  });
+}
+
+/**
+ * Shut the first Runner down right after each durable write the scenario
+ * makes (#254), one execution per write, and check every execution hands the
+ * Turn over cleanly: its tools finish within the grace period, so no call's
+ * outcome is unknown.
+ */
+export async function handoffSweep(scenario: Scenario): Promise<void> {
+  const writes = await writesOf(scenario);
+  it.each(writes.map((write, index) => [`F@${rowOf(writes, index)}`, index + 1, describeWrite(write)] as const))("%s Runner shut down after write %i (%s): the Turn is handed over and completes", async (_row, n) => {
+    const outcome = await execute(scenario, [], [n]);
+    expectResumed(scenario, outcome);
+    expect(outcome.losses).toEqual([expect.objectContaining({ runner: 0, reason: "released", detached: false, dangling: [] })]);
+    // Whatever the takeover found, it was handed over, never lost.
+    expect(outcome.log.filter((event) => event.type === "session.turn_resumed").map((event) => (event.data as { reason: string }).reason)
+      .filter((reason) => reason !== "released")).toEqual([]);
   });
 }
 
