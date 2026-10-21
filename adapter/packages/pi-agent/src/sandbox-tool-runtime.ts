@@ -23,9 +23,9 @@ try {
   const modulePath = process.env.OMA_PI_TOOL_MODULE || "/opt/oma-pi-tools/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
   const pi = await import(pathToFileURL(modulePath).href);
   if (pi.VERSION !== request.sdkVersion) throw new Error("Sandbox Pi version mismatch: expected " + request.sdkVersion + ", got " + pi.VERSION);
-  // Pi 1.x resizes read images with the model's inputLimits; 0.83 only has
-  // fixed defaults. Skip Pi's pass so each image is encoded once.
-  const resize = request.name === "read" ? request.model?.inputLimits?.images?.resize : undefined;
+  // Pi 0.83's read cannot take resize options (1.x accepts resizeOptions).
+  // Skip its pass so each image is encoded once with the Host's options.
+  const resize = request.name === "read" ? request.imageResize : undefined;
   const factories = {
     bash: () => pi.createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
     read: () => pi.createReadToolDefinition(process.cwd(), { autoResizeImages: !resize }),

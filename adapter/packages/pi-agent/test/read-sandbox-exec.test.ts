@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { LocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
-import { buildCustomTools } from "../src/custom-tools.js";
+import { buildCustomTools, readImageResizeConfig } from "../src/custom-tools.js";
 
 // Real 2x2 RGB fixtures, encoded by Pillow as PNG and JPEG.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGN8YCDAwMDAxMDAwMDAAAAOegEkxs/ipgAAAABJRU5ErkJggg==", "base64");
@@ -66,28 +66,33 @@ describe("raw filesystem seam through Pi's native read tool", () => {
     expect(JSON.stringify(result)).not.toContain("\\u0000");
   });
 
-  it("encodes a read image once with the model's models.json inputLimits", async () => {
+  it("encodes read images once under a default budget that a model's models.json inputLimits replaces", async () => {
     const config = await mkdtemp(join(tmpdir(), "oma-models-"));
     try {
       const modelsPath = join(config, "models.json");
-      await writeFile(modelsPath, JSON.stringify({ providers: { deepseek: { models: [{ id: "deepseek-flash",
-        inputLimits: { images: { resize: { maxWidth: 300, maxHeight: 300, maxBytes: 200_000 } } } }] } } }));
-      const png = noisePng(600, 400);
+      const resize = (maxBytes: number, size?: number) => ({ inputLimits: { images: { resize: { maxBytes, ...(size ? { maxWidth: size, maxHeight: size } : {}) } } } });
+      await writeFile(modelsPath, JSON.stringify({ providers: { deepseek: { models: [{ id: "small", ...resize(200_000, 300) }, { id: "pi-default", ...resize(4.5 * 1024 * 1024) }] } } }));
+      const png = noisePng(900, 700);
+      expect(png.toString("base64").length).toBeGreaterThan(1024 * 1024);
       await writeFile(join(root, "frame.png"), png);
-      const tool = buildCustomTools(executor, modelsPath).find(({ name }) => name === "read")!;
-      const limited = await tool.execute("read-limited", { path: "frame.png" } as never, undefined, undefined,
-        { model: { provider: "deepseek", id: "deepseek-flash", input: ["text", "image"] } } as never);
-      const image = limited.content.find((block) => block.type === "image");
-      expect(image).toMatchObject({ type: "image", mimeType: "image/jpeg" });
-      expect(image?.type === "image" && image.data.length).toBeLessThan(200_000);
-      expect(limited.content.flatMap((block) => block.type === "text" ? [block.text] : [])).toEqual([
-        "Read image file [image/png]",
-        "[Image: original 600x400, displayed at 300x200. Multiply coordinates by 2.00 to map to original image.]",
-      ]);
-      // A model without inputLimits keeps Pi's default read.
-      const unlimited = await tool.execute("read-default", { path: "frame.png" } as never, undefined, undefined,
-        { model: { provider: "openai-codex", id: "gpt-5.6-sol", input: ["text", "image"] } } as never);
-      expect(unlimited.content).toContainEqual({ type: "image", mimeType: "image/png", data: png.toString("base64") });
+      const tool = buildCustomTools(executor, readImageResizeConfig(modelsPath)).find(({ name }) => name === "read")!;
+      const read = (provider: string, id: string) => tool.execute(`read-${id}`, { path: "frame.png" } as never, undefined, undefined,
+        { model: { provider, id, input: ["text", "image"] } } as never);
+      const imageOf = (result: Awaited<ReturnType<typeof read>>) => result.content.find((block) => block.type === "image");
+      const textsOf = (result: Awaited<ReturnType<typeof read>>) => result.content.flatMap((block) => block.type === "text" ? [block.text] : []);
+
+      // Models absent from models.json, such as tenant providers, get the default.
+      const defaulted = imageOf(await read("tenant-provider", "custom-model"));
+      expect(defaulted).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+      expect(defaulted?.type === "image" && defaulted.data.length).toBeLessThan(1024 * 1024);
+
+      const small = await read("deepseek", "small");
+      expect(imageOf(small)).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+      expect(textsOf(small)).toEqual(["Read image file [image/png]",
+        "[Image: original 900x700, displayed at 300x233. Multiply coordinates by 3.00 to map to original image.]"]);
+
+      // Pi's own limits restore its pass-through behavior for one model.
+      expect(imageOf(await read("deepseek", "pi-default"))).toEqual({ type: "image", mimeType: "image/png", data: png.toString("base64") });
     } finally {
       await rm(config, { recursive: true, force: true });
     }
