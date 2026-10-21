@@ -6,6 +6,7 @@ import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { presentEvent, type StoredEvent } from "@oma-server/store";
 import type { Adapter, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
@@ -92,11 +93,12 @@ function expectPublishedInOrder(frames: Frame[], log: StoredEvent[], afterSeq = 
 }
 
 describe("SessionRouter writes each Turn attempt through one TurnJournal", () => {
-  it("writes and publishes an event that the commit barrier and the event stream both deliver once", async () => {
+  it("writes and publishes an event that the Adapter records twice once", async () => {
     const entry = contextEntry("assistant1");
     const h = await harness({ async *run(input) {
-      await input.persistContext!([entry]);
-      yield entry;
+      const write = journalWriter(input);
+      await write(entry);
+      await write(entry);
     } });
     await h.enqueue();
     await h.router.handleNewEvent(h.session.id, h.agent);
@@ -107,15 +109,17 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     expect(h.frames.filter(frame => frame.type === "agent.context_entry")).toHaveLength(1);
   });
 
-  it("publishes every durable event of an attempt once and in seq order, whichever path recorded it", async () => {
+  it("publishes every durable event of an attempt once and in seq order, whichever flush wrote it", async () => {
     const entry = contextEntry("assistant1");
     const h = await harness({ async *run(input) {
-      const barrier = input.persistContext!([entry]);
-      // The stream moves on while the barrier commit is still in flight.
-      yield usage();
+      const write = journalWriter(input);
+      input.journal!.record(entry as DurableEvent);
+      const barrier = input.journal!.flush();
+      // The Adapter moves on while that commit is still in flight.
+      await write(usage());
       await barrier;
-      yield entry;
-      yield text("done");
+      await write(entry);
+      await write(text("done"));
     } });
     // A slow commit returns after its seq is allocated, as PG would.
     h.appends.mockImplementation(async (sessionId, input) => {
@@ -135,10 +139,11 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
 
   it("stops without terminal events when a write fails, leaving the input to the next claim", async () => {
     const h = await harness({ async *run(input) {
-      yield text("committed");
+      const write = journalWriter(input);
+      await write(text("committed"));
       // Pi reports a failed barrier with its own sticky error.
-      await input.persistContext!([contextEntry("lost")]).catch(() => { throw new Error("OMA commit barrier failed"); });
-      yield text("never written");
+      await write(contextEntry("lost")).catch(() => { throw new Error("OMA commit barrier failed"); });
+      await write(text("never written"));
     } });
     let failures = 1;
     h.appends.mockImplementation(async (sessionId, input) => {
@@ -238,9 +243,10 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
   it("records a wait's waiting transition once when a replacement Runner resumes the wait", async () => {
     let parentRuns = 0;
     const h = await harness({ async *run(input) {
-      if (input.execution?.isChild) { yield text("child done"); return; }
-      if (++parentRuns > 1) { yield text("continued"); return; }
-      yield event("agent.tool_use", { toolUseId: "sync-call", name: "Agent", input: { prompt: "child" } });
+      const write = journalWriter(input);
+      if (input.execution?.isChild) { await write(text("child done")); return; }
+      if (++parentRuns > 1) { await write(text("continued")); return; }
+      await write(event("agent.tool_use", { toolUseId: "sync-call", name: "Agent", input: { prompt: "child" } }));
       await input.execution?.onResolved?.({ model: "test", thinking: "low", thinkingSource: "agent" });
       await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "sync-call" });
     } }, { sandboxed: true });

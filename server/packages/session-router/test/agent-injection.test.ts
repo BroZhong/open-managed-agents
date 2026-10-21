@@ -9,6 +9,7 @@ import {
 } from "@oma-server/store-memory";
 import type { Agent } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 
 const AGENT: Agent = {
   id: "agent_1",
@@ -30,13 +31,14 @@ function capturingAdapter(): { adapter: Adapter; last: () => AdapterInput | unde
   let captured: AdapterInput | undefined;
   const adapter: Adapter = {
     async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      const write = journalWriter(input);
       captured = input;
-      yield {
+      await write({
         id: "evt_1",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: "ok" }],
-      } as SessionEvent;
+      } as SessionEvent);
     },
   };
   return { adapter, last: () => captured };

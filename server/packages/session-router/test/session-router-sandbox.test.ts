@@ -26,6 +26,7 @@ import type {
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 
 beforeEach(() => {
   process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
@@ -140,13 +141,14 @@ class TinySkillArtifactStore implements SkillArtifactStore {
 
 /** Pure-chat adapter: never touches input.toolExecutor. */
 const chatAdapter: Adapter = {
-  async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
-    yield {
+  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+    const write = journalWriter(input);
+    await write({
       id: "evt_chat",
       timestamp: "2024-01-01T00:00:00.000Z",
       type: "agent.message",
       content: [{ type: "text", text: "just chatting" }],
-    };
+    });
   },
 };
 
@@ -157,17 +159,18 @@ const chatAdapter: Adapter = {
 function toolReadingAdapter(path: string): Adapter {
   return {
     async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      const write = journalWriter(input);
       const executor = input.toolExecutor;
       let body = "<no-executor>";
       if (executor) {
         body = await executor.readFile(path);
       }
-      yield {
+      await write({
         id: "evt_tool",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: body }],
-      };
+      });
     },
   };
 }
@@ -295,6 +298,7 @@ async function enqueue(
 describe("SessionRouter — SandboxManager-backed session injection", () => {
   it('observes settlement when termination races with a durable event write', async () => {
     let aborted = false;
+    // The Router stops on a failed write only for a streamed Adapter (until #244).
     const deps = createDeps({ adapter: { async *run(input) {
       yield { id: 'racing-write', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked' }] };
       if (!input.signal!.aborted) await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
@@ -326,10 +330,12 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     let settle!: () => void;
     const settled = new Promise<void>(resolve => { settle = resolve; });
     const deps = createDeps({ adapter: { async *run(input) {
+      const write = journalWriter(input);
       await input.toolExecutor!.writeFile('saved.txt', 'preserved');
       started();
       await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
-      yield { id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'must not persist' }] };
+      // Termination revoked the entry; the runtime still runs until it settles.
+      await write({ id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'must not persist' }] }).catch(() => {});
       await settled;
     } } });
     vi.spyOn(deps.sandboxClient, 'hasUncertainExecution').mockReturnValue(unknown);
@@ -763,13 +769,14 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     let sawExecutor = true;
     const probeAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         sawExecutor = input.toolExecutor != null;
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "ok" }],
-        };
+        });
       },
     };
     // Manager present, but the agent explicitly opts out of the sandbox.
@@ -797,14 +804,15 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   it("emits session.error(sandbox_unavailable) and does NOT run the adapter when sandboxed but no manager", async () => {
     let adapterInvoked = false;
     const probeAdapter: Adapter = {
-      async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterInvoked = true;
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "should not run" }],
-        };
+        });
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
@@ -843,14 +851,15 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   it("treats a legacy agent with NO sandbox field as sandboxed (fail-loud without a manager)", async () => {
     let adapterInvoked = false;
     const probeAdapter: Adapter = {
-      async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterInvoked = true;
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "x" }],
-        };
+        });
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
@@ -979,13 +988,14 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     let adapterRuns = 0;
     const adapter: Adapter = {
       async *run(input): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
         await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`);
         if (adapterRuns === 1) sandboxClient.setMountFailure(sandboxClient.created[0], "storage offline");
-        yield {
+        await write({
           id: `answer-${adapterRuns}`, timestamp: "2026-09-14T00:00:00.000Z", type: "agent.message",
           content: [{ type: "text", text: `answer-${adapterRuns}` }],
-        };
+        });
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, eventStreamHub } = createDeps({ adapter, sandboxClient });
@@ -1070,6 +1080,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     const workspaceClient = new FakeSandboxClient();
     const readOrWrite: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         const ex = input.toolExecutor!;
         const isWrite = input.message.content.some(
           (b) => b.type === "text" && b.text === "write",
@@ -1081,12 +1092,12 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         } else {
           text = await ex.readFile("carry.txt");
         }
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text }],
-        };
+        });
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
@@ -1125,6 +1136,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     workspaceClient.seedWorkspace("tenant_1/ws_1/", "deleted.txt", "remove me");
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         const executor = input.toolExecutor!;
         const prompt = input.message.content
           .filter((block) => block.type === "text")
@@ -1140,12 +1152,12 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
             text += "|deleted";
           }
         }
-        yield {
+        await write({
           id: "workspace-refresh",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text }],
-        };
+        });
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
@@ -1202,6 +1214,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     let descriptors: AdapterInput["agent"]["skillDescriptors"];
     const skillReadingAdapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         descriptors = input.agent.skillDescriptors;
         // The adapter is pointed at the in-sandbox /skills/<skill-name> root and reads
         // SKILL.md from there, exactly as Pi's sandbox-mapped read would.
@@ -1211,12 +1224,12 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         for await (const chunk of input.toolExecutor!.exec(["cat", `${root}/SKILL.md`])) {
           if (chunk.stream === "stdout") readBody = chunk.text;
         }
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: readBody }],
-        };
+        });
       },
     };
 
@@ -1339,6 +1352,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     }> = [];
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         const root = input.agent.skillPaths?.[0];
         let body: string | undefined;
         if (root) body = await input.toolExecutor!.readFile(`${root}/SKILL.md`);
@@ -1357,12 +1371,12 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
               : {}),
           })) ?? [],
         });
-        yield {
+        await write({
           id: "live-agent-config",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: body ?? "warm" }],
-        };
+        });
       },
     };
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
@@ -1418,13 +1432,14 @@ describe('SessionRouter — recoverable environment faults', () => {
     const errors: string[] = [];
     let runs = 0;
     const adapter: Adapter = { async *run(input) {
+      const write = journalWriter(input);
       runs++;
       await input.toolExecutor!.writeFile('effect.txt', 'once');
       sandboxClient.pause(sandboxClient.created[0]);
       try { await input.toolExecutor!.writeFile('effect.txt', 'twice'); }
       catch (error) { errors.push(String(error)); }
       const saved = await input.toolExecutor!.readFile('effect.txt');
-      yield { id: 'continued', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: saved }] };
+      await write({ id: 'continued', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: saved }] });
     } };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({ adapter, sandboxClient });
     const session = await sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });

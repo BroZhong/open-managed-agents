@@ -3,6 +3,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnStreamStore } from "@oma-server/redis";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
@@ -31,7 +32,7 @@ describe("Session idle at queue boundaries", () => {
     const redis = new InMemoryTurnStreamStore();
     vi.spyOn(redis, "getActiveTurn").mockRejectedValue(new Error("Redis read unavailable"));
     vi.spyOn(redis, "compareAndSetActiveTurn").mockResolvedValue(false);
-    const f = await fixture(async function* () { yield reply("durable answer"); },
+    const f = await fixture(async function* (input: AdapterInput) { const write = journalWriter(input); await write(reply("durable answer")); },
       new BestEffortTurnStreamStore(redis, () => true));
     const router = f.makeRouter();
     try {
@@ -50,10 +51,11 @@ describe("Session idle at queue boundaries", () => {
 
   it("completes each Turn while staying running until both queued inputs finish", async () => {
     let runs = 0;
-    const f = await fixture(async function* () {
+    const f = await fixture(async function* (input: AdapterInput) {
+      const write = journalWriter(input);
       expect(f.session.status).toBe("running");
       expect(f.publish.mock.calls.filter(([, e]) => e.type === "session.status_idle")).toHaveLength(0);
-      yield reply(`reply-${++runs}`);
+      await write(reply(`reply-${++runs}`));
     });
     await f.enqueue("A"); await f.enqueue("B");
     await f.makeRouter().handleNewEvent(f.session.id, f.agent);
@@ -68,7 +70,7 @@ describe("Session idle at queue boundaries", () => {
 
   it("picks up input arriving after completion is persisted but before acknowledgement", async () => {
     let runs = 0;
-    const f = await fixture(async function* () { yield reply(`reply-${++runs}`); });
+    const f = await fixture(async function* (input: AdapterInput) { const write = journalWriter(input); await write(reply(`reply-${++runs}`)); });
     const router = f.makeRouter();
     const append = f.eventLogStore.append.bind(f.eventLogStore);
     let acceptedTail = false;
@@ -92,7 +94,7 @@ describe("Session idle at queue boundaries", () => {
   it.each([false, true])("recovers completion before acknowledgement without rerunning it (tail: %s)", async (tail) => {
     vi.useFakeTimers();
     let runs = 0;
-    const f = await fixture(async function* () { yield reply(`reply-${++runs}`); });
+    const f = await fixture(async function* (input: AdapterInput) { const write = journalWriter(input); await write(reply(`reply-${++runs}`)); });
     await f.enqueue("A");
     if (tail) await f.enqueue("B");
     vi.spyOn(f.pendingEventStore, "ackCompletedTurn").mockImplementationOnce(async (sessionId, eventId, claim) => {
@@ -117,6 +119,7 @@ describe("Session idle at queue boundaries", () => {
     let started!: () => void;
     const firstStarted = new Promise<void>(resolve => { started = resolve; });
     const f = await fixture(async function* (input) {
+      const write = journalWriter(input);
       runs++;
       if (runs === 1) {
         started();
@@ -124,7 +127,7 @@ describe("Session idle at queue boundaries", () => {
         return;
       }
       expect(f.publish.mock.calls.filter(([, e]) => e.type === "session.status_idle")).toHaveLength(0);
-      yield reply("B");
+      await write(reply("B"));
     });
     await f.enqueue("A"); await f.enqueue("B");
     const router = f.makeRouter();

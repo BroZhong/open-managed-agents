@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Runtime } from "@oma-server/store";
-import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
+import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
 
 // Agents created before claude-code and codex were removed keep that runtime;
@@ -14,10 +15,11 @@ describe("Agents with an unsupported runtime", () => {
     const stores = createMemoryStores();
     let mockRuns = 0;
     const mock: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         mockRuns += 1;
-        yield { id: "evt_reply", timestamp: new Date().toISOString(), type: "agent.message",
-          content: [{ type: "text", text: "still running" }] };
+        await write({ id: "evt_reply", timestamp: new Date().toISOString(), type: "agent.message",
+          content: [{ type: "text", text: "still running" }] });
       },
     };
     const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(),

@@ -9,6 +9,7 @@ import type {
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 
 const testAgent: Agent = {
   id: "agent_1",
@@ -94,6 +95,7 @@ function hangUntilAbortedAdapter(): {
   let settled: "resolved" | "pending" = "pending";
   const adapter: Adapter = {
     async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      const write = journalWriter(input);
       turn++;
       if (turn === 1) {
         // The hung turn: block until the router's signal aborts. A real adapter
@@ -107,12 +109,12 @@ function hangUntilAbortedAdapter(): {
         return; // turn 1 settles once aborted — no terminal event needed
       }
       // Turn 2: a normal, quick reply that produces a new event.
-      yield {
+      await write({
         id: `evt_turn${turn}`,
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: `Reply ${turn}` }],
-      };
+      });
     },
   };
   return { adapter, turn1Settled: () => settled };
@@ -170,14 +172,15 @@ describe("REPRO 3c — drain handoff does not lose a wakeup", () => {
   it("drains a message accepted after the queue looked empty but before the active drain unlocked", async () => {
     let replies = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         replies++;
-        yield {
+        await write({
           id: `reply_${replies}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: `reply ${replies}` }],
-        };
+        });
       },
     };
     const { pendingEventStore, sessionStore, eventLogStore, router } = makeDeps(adapter);
@@ -225,14 +228,15 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   it("retries after a crash that committed the user Event but happened before pending acknowledgement", async () => {
     let replies = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         replies++;
-        yield {
+        await write({
           id: `reply_${replies}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "recovered" }],
-        };
+        });
       },
     };
     const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
@@ -279,13 +283,14 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
 
   it("deduplicates Session ids and clears pending input for missing or terminated Sessions", async () => {
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
-        yield {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "ok" }],
-        };
+        });
       },
     };
     const { pendingEventStore, sessionStore, router } = makeDeps(adapter);
@@ -328,14 +333,15 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   it("keeps input pending when the process dies before the Adapter starts, then executes it on restart", async () => {
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "recovered" }],
-        };
+        });
       },
     };
     const { pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
@@ -372,14 +378,15 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   it("does not rerun or duplicate durable Events when completion committed before the ack crash", async () => {
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "complete once" }],
-        };
+        });
       },
     };
     const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
@@ -417,14 +424,15 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   it("abandons a partial durable attempt without mixing output from a rerun", async () => {
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: `reply_${adapterRuns}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "durable once" }],
-        };
+        });
       },
     };
     const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
@@ -481,16 +489,17 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     const adapterStarted = new Promise<void>((resolve) => { markStarted = resolve; });
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
         markStarted();
         await adapterGate;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "slow done" }],
-        };
+        });
       },
     };
     const { pendingEventStore, sessionStore, router } = makeDeps(adapter);
@@ -535,16 +544,17 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     const didStart = new Promise<void>((resolve) => { started = resolve; });
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
         started();
         await gate;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "once" }],
-        };
+        });
       },
     };
     const session = await stores.sessionStore.create({
@@ -606,14 +616,15 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await stores.pendingEventStore.claim!(session.id, "old_host", 30);
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "recovered after expiry" }],
-        };
+        });
       },
     };
     const router = new SessionRouter({
@@ -660,6 +671,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     const firstDidStart = new Promise<void>((resolve) => { firstStarted = resolve; });
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
         attemptTurnIds.push(input.turnId);
         if (adapterRuns === 1) {
@@ -671,7 +683,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
           // A stale generation may still flush provider accounting while its
           // native abort settles. Lease loss is not a user interrupt, so this
           // old attempt must not be allowed to charge the Session.
-          yield {
+          await write({
             id: "stale_usage",
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "span.model_request_end",
@@ -681,15 +693,15 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
               cacheReadTokens: 50,
               cacheWriteTokens: 0,
             },
-          };
+          });
           return;
         }
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "fresh attempt" }],
-        };
+        });
       },
     };
     const router = new SessionRouter({
@@ -802,38 +814,39 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     const gen2Gate = new Promise<void>((resolve) => { releaseGen2 = resolve; });
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-        yield {
+        const write = journalWriter(input);
+        await write({
           id: `start_${input.turnId}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message_stream_start",
-        };
-        yield {
+        });
+        await write({
           id: `chunk_${input.turnId}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message_chunk",
           text: input.turnId.endsWith("a1") ? "old" : "new",
-        };
+        });
         if (input.turnId.endsWith("a1")) {
-          yield {
+          await write({
             id: `end_${input.turnId}`,
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.message_stream_end",
-          };
+          });
           return;
         }
         markGen2Running();
         await gen2Gate;
-        yield {
+        await write({
           id: `end_${input.turnId}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message_stream_end",
-        };
-        yield {
+        });
+        await write({
           id: "new_reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "new" }],
-        };
+        });
       },
     };
     const shared = {
@@ -941,14 +954,15 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     let nextHistory: SessionEvent[] = [];
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         adapterRuns++;
         nextHistory = input.history;
-        yield {
+        await write({
           id: "next_reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "history accepted" }],
-        };
+        });
       },
     };
     const router = new SessionRouter({
@@ -1030,13 +1044,14 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     let retryTurnId = "";
     const adapter: Adapter = {
       async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        const write = journalWriter(input);
         retryTurnId = input.turnId;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "Hello" }],
-        };
+        });
       },
     };
     const router = new SessionRouter({
@@ -1076,13 +1091,14 @@ function historyCapturingAdapter(): {
   let captured: SessionEvent[] = [];
   const adapter: Adapter = {
     async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      const write = journalWriter(input);
       captured = input.history;
-      yield {
+      await write({
         id: "evt_reply",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: "ok" }],
-      };
+      });
     },
   };
   return { adapter, seenHistory: () => captured };

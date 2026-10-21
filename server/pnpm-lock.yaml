@@ -198,6 +198,9 @@ importers:
       '@oma-server/store-memory':
         specifier: workspace:*
         version: link:../store-memory
+      '@open-managed-agents/adapter-mock':
+        specifier: file:../../../adapter/packages/mock
+        version: file:../adapter/packages/mock
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19

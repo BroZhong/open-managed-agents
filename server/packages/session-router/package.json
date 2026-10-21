@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@oma-server/store-memory": "workspace:*",
+    "@open-managed-agents/adapter-mock": "file:../../../adapter/packages/mock",
     "@types/node": "^22.10.0",
     "nanoid": "^5.1.11",
     "typescript": "^5.7.0",
