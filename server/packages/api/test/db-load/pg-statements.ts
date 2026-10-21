@@ -1,6 +1,7 @@
 /**
  * The SQL statements each store method issues in its PostgreSQL implementation
- * (server/packages/store/src/postgres/*.ts at 85f2a69), so a call counted on
+ * (server/packages/store/src/postgres/*.ts at 85f2a69 plus migration 0021's
+ * indexes and id-column lookups), so a call counted on
  * the in-memory stores converts into the statements, round trips and scans the
  * shared RDS would see. Every round trip counts, BEGIN and COMMIT included:
  * each one occupies a pooled connection and an RDS backend.
@@ -68,8 +69,8 @@ function delegationTx(fences: number, ...body: Statement[]): Statement[] {
 const ASSERT_FENCE = [pk("SELECT FOR UPDATE", "sessions"), pk("SELECT FOR UPDATE", "pending_events"), pk("SELECT", "sessions"), pk("SELECT", "pending_events")];
 /** DelegationTransaction.sessions.getById. */
 const TX_SESSION = [pk("SELECT FOR UPDATE", "sessions"), pk("SELECT", "sessions")];
-/** `this.execution(tx, id)` filters `record->>'id'`, not the id column. */
-const EXECUTION_BY_ID = seq("SELECT", "delegation_executions");
+/** `this.execution(tx, id)`: the id column since migration 0021's change. */
+const EXECUTION_BY_ID = pk("SELECT", "delegation_executions");
 /** PgDelegationStore.append inside a delegation transaction (always keyed). */
 const TX_APPEND = appendCore(true, true);
 /** PgDelegationStore.withEnvironmentLock: snapshot transaction, then compare-and-set transaction. */
@@ -143,10 +144,10 @@ export const PG_COSTS: Record<string, Cost> = {
   "delegationStore.list": fixed([ix("SELECT", "delegation_executions")]),
   "delegationStore.getChild": fixed([pk("SELECT", "sessions")]),
   "delegationStore.get": fixed([pk("SELECT", "sessions"), ix("SELECT", "delegation_executions")]),
-  "delegationStore.listCommands": fixed([seq("SELECT", "delegation_commands")]),
-  "delegationStore.listWaits": fixed([seq("SELECT", "delegation_waits")]),
-  // Two status scans joined to sessions; a transaction only when something is found.
-  "delegationStore.reconcileTerminatedExecutions": (facts) => [seq("SELECT", "delegation_executions"), seq("SELECT", "delegation_waits"),
+  "delegationStore.listCommands": fixed([ix("SELECT", "delegation_commands")]),
+  "delegationStore.listWaits": fixed([ix("SELECT", "delegation_waits")]),
+  // Two open-state scans (partial indexes, 0021) joined to sessions; a transaction only when something is found.
+  "delegationStore.reconcileTerminatedExecutions": (facts) => [ix("SELECT", "delegation_executions"), ix("SELECT", "delegation_waits"),
     ...(((facts.result as unknown[]) ?? []).length ? delegationTx(0, EXECUTION_BY_ID, ...TX_SESSION, ...TX_SESSION) : [])],
   "delegationStore.withEnvironmentLock": fixed([...tx(...ENVIRONMENT_ROW), ...tx(...ENVIRONMENT_ROW, pk("UPDATE", "delegation_environments"))]),
 
@@ -154,23 +155,23 @@ export const PG_COSTS: Record<string, Cost> = {
   "delegationStore.acquireResourceUse": fixed(delegationTx(1, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_resource_uses"))),
   "delegationStore.releaseResourceUse": fixed(delegationTx(0, seq("SELECT", "delegation_resource_uses"), pk("DELETE", "delegation_resource_uses"))),
   // + per resource use and per queued execution of the binding
-  "delegationStore.hasResourceUsers": fixed(delegationTx(0, seq("SELECT", "delegation_resource_uses"), seq("SELECT", "delegation_executions"))),
+  "delegationStore.hasResourceUsers": fixed(delegationTx(0, seq("SELECT", "delegation_resource_uses"), ix("SELECT", "delegation_executions"))),
   // + one ownsClaim per running sibling
   "delegationStore.startExecution": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, ix("SELECT", "delegation_executions"),
     ...TX_SESSION, st("INSERT ON CONFLICT", "delegation_resource_uses"), st("INSERT ON CONFLICT", "delegation_executions"))),
   "delegationStore.updateEffectiveConfig": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_executions"))),
   "delegationStore.finishExecution": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, ...TX_SESSION, ...TX_APPEND,
-    seq("SELECT", "delegation_commands"), seq("SELECT", "delegation_resource_uses"), pk("DELETE", "delegation_resource_uses"),
+    ix("SELECT", "delegation_commands"), seq("SELECT", "delegation_resource_uses"), pk("DELETE", "delegation_resource_uses"),
     st("INSERT ON CONFLICT", "delegation_executions"))),
-  "delegationStore.saveWait": fixed(delegationTx(1, ...ASSERT_FENCE, EXECUTION_BY_ID, ...TX_SESSION, seq("SELECT", "delegation_waits"),
+  "delegationStore.saveWait": fixed(delegationTx(1, ...ASSERT_FENCE, EXECUTION_BY_ID, ...TX_SESSION, ix("SELECT", "delegation_waits"),
     st("INSERT ON CONFLICT", "delegation_waits"))),
   "delegationStore.consumeResult": fixed(delegationTx(1, ...ASSERT_FENCE, EXECUTION_BY_ID, ...TX_SESSION, ...TX_APPEND,
-    st("INSERT ON CONFLICT", "delegation_executions"), seq("SELECT", "delegation_waits"), st("INSERT ON CONFLICT", "delegation_waits"))),
+    st("INSERT ON CONFLICT", "delegation_executions"), ix("SELECT", "delegation_waits"), st("INSERT ON CONFLICT", "delegation_waits"))),
   "delegationStore.markNotificationProcessed": fixed(delegationTx(1, EXECUTION_BY_ID, ...ASSERT_FENCE, st("INSERT ON CONFLICT", "delegation_executions"))),
-  "delegationStore.cancelWaits": (facts) => delegationTx(facts.args[2] ? 1 : 0, ...(facts.args[2] ? ASSERT_FENCE : []), seq("SELECT", "delegation_waits")),
+  "delegationStore.cancelWaits": (facts) => delegationTx(facts.args[2] ? 1 : 0, ...(facts.args[2] ? ASSERT_FENCE : []), ix("SELECT", "delegation_waits")),
   "delegationStore.command": (facts) => delegationTx(facts.args[1] ? 1 : 0, ...(facts.args[1] ? ASSERT_FENCE : []), ...TX_SESSION,
     seq("SELECT", "delegation_commands"), ix("SELECT", "delegation_executions"), st("INSERT ON CONFLICT", "delegation_commands")),
-  "delegationStore.applyCommand": fixed(delegationTx(1, seq("SELECT", "delegation_commands"), EXECUTION_BY_ID, ...ASSERT_FENCE, ...TX_APPEND,
+  "delegationStore.applyCommand": fixed(delegationTx(1, pk("SELECT", "delegation_commands"), EXECUTION_BY_ID, ...ASSERT_FENCE, ...TX_APPEND,
     st("INSERT ON CONFLICT", "delegation_commands"))),
   // The child's sequence read filters childId alone; its index leads with tenantId.
   "delegationStore.accept": fixed(delegationTx(1, ...ASSERT_FENCE, ...TX_SESSION, ix("SELECT", "delegation_executions"),
