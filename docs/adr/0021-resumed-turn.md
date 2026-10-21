@@ -51,8 +51,10 @@ The first row that applies decides:
    `session.turn_aborted`): repair the dangling calls and complete it.
 4. An earlier generation accepted an Interrupt that never took effect: end the
    Turn as an **Interrupted Turn** (#249).
-5. Three consecutive expired takeovers committed no new native message: end
-   the Turn with `recovery_limit_exceeded` (#250).
+5. This claim is the fourth expired takeover since the Turn last committed
+   progress: repair the dangling calls, record `recovery_limit_exceeded`, stop
+   the synchronous children and complete the Turn (#250, "The takeover limit"
+   below).
 6. The Turn waits on synchronous delegations: resume the waits, give every
    other dangling call an outcome-unknown result, continue.
 7. The input is not in the Turn's native history yet (Pi claims it with
@@ -66,7 +68,8 @@ The first row that applies decides:
    continue.
 
 There are no other rows: an ordinary Turn is never ended because it was taken
-over. A compaction boundary is not a message. Pi compacts after a final answer
+over, unless it keeps losing its Runner without progress (row 5). A
+compaction boundary is not a message. Pi compacts after a final answer
 (threshold) and after a failed request (overflow), and the message before the
 boundary says which: the first completes, the second continues on the
 compacted context. A runtime without a native chain (the mock) commits display
@@ -125,8 +128,42 @@ generation; a lost takeover's marker stays and the next takeover adds its own.
 claim reports: PostgreSQL reads the previous owner from the row the claim
 already locks, so it costs no statement. `danglingToolUseIds` lists every call
 of the Turn that had no result when it moved, delegation waits included. The
-conversation view leaves the marker out; the trace lists it. #250 counts the
-`expired` markers since the last committed native message.
+conversation view leaves the marker out; the trace lists it. The takeover
+limit counts the `expired` markers.
+
+### The takeover limit
+
+A Turn that loses its Runner at the same point every time, a request whose
+answer exhausts the Runner's memory say, would take the Runners down one after
+another. The plan therefore counts the Turn's expired takeovers since it last
+made progress, this claim's included, from the markers and the claim; when
+this claim is the fourth, the Turn ends instead of being continued once more.
+
+- Progress is a native message that moves the Turn on: a tool result, or an
+  assistant message whose request did not fail. A failed or aborted request, a
+  compaction boundary, steering and the results a takeover writes for dangling
+  calls are none: a Turn whose every attempt fails its request and loses its
+  Runner is the case the limit exists for. Progress resets the count, so a
+  long Turn survives any number of losses that each let it commit something.
+- Only `expired` takeovers count. A released claim (a handoff, a Turn left
+  waiting for a delegation or a slot) proves its Runner was not lost to the
+  Turn: it neither counts nor resets the count.
+- A stop after a failed write counts. The stop path (ADR-0020) does not
+  release the attempt's claim, whose lease then lapses, so the next claim
+  reports it `expired`. A write the event log refuses every time, a row
+  PostgreSQL cannot store, thus ends the Turn like a Runner lost every time.
+- A takeover lost before it recorded its marker is not counted: the count is
+  the log's.
+
+The Turn ends like a Turn whose log ends it: every dangling call gets its
+result (delegation tools from their records), `session.error` records
+`recovery_limit_exceeded`, the synchronous children it waits on are
+interrupted, and the input is acknowledged, so queued input runs next. A
+takeover lost while it writes these leaves the rest to the next claim: by row
+3 once the error is written, by this row before. A Child execution that ends
+this way gives its parent a `recovery_required` result, whose reason is the
+error's message. The limit outranks a resumed wait: a parent whose Runner is
+lost four times while it waits on a child ends its Turn.
 
 ### Continuing in Pi
 
@@ -181,21 +218,27 @@ right after its Nth durable write, everything it awaits from then on never
 settles and its claim lapses; the next Runner takes over from its pending scan.
 A sweep loses the Runner after each write of a scenario and checks the
 assertions of every resumed Turn: each input completes once, in its original
-Turn and in order; no recovery error; one result per call; outcome unknown
-exactly for the calls a lost Runner left dangling; no tool runs twice; model
-steps continue from the log; one marker per takeover with its reason and
-dangling calls; no row written by a lost Runner. Later tickets add their
-scenarios to the same harness.
+Turn and in order; no recovery error but the takeover limit's, where a
+scenario expects it; one result per call; outcome unknown exactly for the
+calls a lost Runner left dangling; no tool runs twice; model steps continue
+from the log; one marker per takeover with its reason and dangling calls; no
+row written by a lost Runner. A scenario can also hand a Turn over, releasing
+its claim, or make the event log refuse a write. The takeover limit is tested
+on a Turn that loses its Runner at the same point every time, and on losses
+between which the Turn makes progress, handoffs and refused writes. Later
+tickets add their scenarios to the same harness.
 
 ## Consequences
 
 `recovery_partial_turn_aborted` and the `recovery_required` of a resumed wait
 beside an uncertain call no longer exist. A rollout, a liveness restart or an
 OOM costs a Turn at most a repeated request and the results it had not
-committed, not the Turn. An Agent may repeat a call whose effect already
-happened. Each takeover that writes results reads the log once more. The mock
-runtime has no history to continue: a taken-over mock Turn runs its script
-again.
+committed, not the Turn, unless the Turn itself keeps losing its Runner: four
+losses without progress end it with `recovery_limit_exceeded`. An Agent may
+repeat a call whose effect already happened. Each takeover that writes results
+reads the log once more. The mock runtime has no history to continue: a
+taken-over mock Turn runs its script again, and since it commits no native
+message, four losses of one mock Turn end it.
 
 ## Revised decisions
 
