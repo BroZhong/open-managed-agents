@@ -23,16 +23,22 @@ function log(...events: Logged[]): StoredEvent[] {
 }
 
 function facts(overrides: Partial<ResumeFacts> = {}): ResumeFacts {
-  return { pendingEventId: INPUT, promotedSeq: PROMOTED_SEQ, claim: { generation: 2, priorInterrupt: false }, events: [], waits: [], ...overrides };
+  return { pendingEventId: INPUT, promotedSeq: PROMOTED_SEQ, claim: { generation: 2, priorInterrupt: false, previous: "expired" }, events: [], waits: [], ...overrides };
 }
 
 /** The facts of a claim whose predecessor accepted an Interrupt and stopped before it took effect. */
 const afterInterrupt = (overrides: Partial<ResumeFacts> = {}): ResumeFacts =>
-  facts({ claim: { generation: 2, priorInterrupt: true }, ...overrides });
+  facts({ claim: { generation: 2, priorInterrupt: true, previous: "expired" }, ...overrides });
 
 const running: Logged = ["session.status_running", {}];
 const completed: Logged = ["session.turn_completed", { pendingEventId: INPUT, turnId: "turn_10_a1" }];
 const contextStart: Logged = ["agent.context_start", { sdk: "pi@0.83.0", inputEventId: "sess:10", turnId: "turn_10_a1" }];
+/** Pi's native user message: the input, committed into the Turn's native chain. */
+const userEntry: Logged = ["agent.context_entry", { id: "evt_user", sdk: "pi@0.83.0", turnId: "turn_10_a1", inputEventId: "sess:10",
+  entry: { id: "entry_user", type: "message", parentId: null, message: { role: "user", content: [{ type: "text", text: "go" }] } },
+  presentation: { version: 1, blocks: [] } }];
+/** The start of a Turn whose input Pi committed. */
+const started: Logged[] = [running, contextStart, userEntry];
 
 type NativeBlock = { type: "text"; text: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
 const text = (value: string): NativeBlock => ({ type: "text", text: value });
@@ -66,23 +72,41 @@ function nativeResult(toolCallId: string, serverName?: string): Logged {
     presentation: { version: 1, blocks: [serverName ? { type: "agent.mcp_tool_result", serverName } : { type: "agent.tool_result" }] } }];
 }
 
-/** Display events, as older histories and the Router's own repairs record them. */
+/** Native entries that are not messages of the conversation, and steering. */
+const compaction: Logged = ["agent.context_entry", { id: "evt_compaction", sdk: "pi@0.83.0", turnId: "turn_10_a1",
+  entry: { id: "entry_compaction", type: "compaction", parentId: "entry_assistant", summary: "earlier work", firstKeptEntryId: "entry_user" } }];
+const steering: Logged = ["agent.context_entry", { id: "evt_instruction", sdk: "pi@0.83.0", turnId: "turn_10_a1",
+  entry: { id: "entry_instruction", type: "custom_message", parentId: "entry_result_call_1", customType: "subagent.instruction",
+    content: [{ type: "text", text: "verify first" }], display: true, details: { instructionId: "cmd_1" } } }];
+
+/** Display events, as older histories, the mock runtime and the Router's own repairs record them. */
 const toolUse = (toolUseId: string, name = "bash"): Logged => ["agent.tool_use", { toolUseId, name, input: {}, turnId: "turn_10_a1" }];
 const mcpToolUse = (toolUseId: string, name: string, serverName?: string): Logged =>
   ["agent.mcp_tool_use", { toolUseId, name, ...(serverName ? { serverName } : {}), input: {}, turnId: "turn_10_a1" }];
-const toolResult = (toolUseId: string): Logged => ["agent.tool_result", { toolUseId, content: [], isError: false, turnId: "turn_10_a1" }];
+const toolResult = (toolUseId: string): Logged => ["agent.tool_result", { toolUseId, content: [], isError: true, turnId: "turn_10_a1" }];
+const message = (value: string, stopReason?: string): Logged => ["agent.message", { content: [{ type: "text", text: value }], ...(stopReason ? { stopReason } : {}), turnId: "turn_10_a1" }];
 const sessionError = (code: string): Logged => ["session.error", { error: { code, message: code } }];
 
-const PARTIAL = {
-  phase: "recovery_partial_turn_aborted", code: "recovery_partial_turn_aborted",
-  message: "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
-};
-const ended = (repairs: DanglingToolCall[] = [], turnId = TURN): ResumePlan => ({ kind: "complete", cause: "turn_ended", turnId, repairs, interruptChildren: true });
-const interrupted = (repairs: DanglingToolCall[] = [], turnId = TURN): ResumePlan => ({ kind: "complete", cause: "interrupted", turnId, repairs, interruptChildren: true });
-const partial = (repairs: DanglingToolCall[] = []): ResumePlan => ({ kind: "complete", cause: "partial_output", turnId: TURN, repairs, error: PARTIAL, interruptChildren: false });
 /** A Turn that committed no model step and no output block starts at the first of each. */
 const FIRST_STEP = { completedModelSteps: 0, blockBase: 0 };
 const bash = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "bash" });
+const agentCall = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "Agent" });
+/** The takeover an expired claim makes: every call without a result, as the Turn moved. */
+const expired = (...danglingToolUseIds: string[]) => ({ reason: "expired" as const, danglingToolUseIds });
+
+const ended = (repairs: DanglingToolCall[] = [], options: { turnId?: string; repairOutcome?: "unknown" | "interrupted" } = {}): ResumePlan => ({
+  kind: "complete", cause: "turn_ended", turnId: options.turnId ?? TURN, repairs, repairOutcome: options.repairOutcome ?? "unknown",
+  interruptChildren: true, takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
+const interrupted = (repairs: DanglingToolCall[] = [], turnId = TURN): ResumePlan => ({ kind: "complete", cause: "interrupted", turnId, repairs,
+  repairOutcome: "interrupted", interruptChildren: true, takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
+const answered = (repairs: DanglingToolCall[] = []): ResumePlan => ({ kind: "complete", cause: "answered", turnId: TURN, repairs,
+  repairOutcome: "unknown", interruptChildren: false, takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
+/** Prompt the input in the Turn its first attempt named, or in this attempt's own when none did. */
+const prompt = (turnId = TURN): ResumePlan => ({ kind: "run", start: "prompt", turnId, progress: FIRST_STEP, repairs: [], waits: [],
+  takeover: expired() });
+/** Continue the committed native history, after an "outcome unknown" result for each call that has none. */
+const resumed = (repairs: DanglingToolCall[] = [], progress = FIRST_STEP): ResumePlan => ({ kind: "run", start: "continue", turnId: TURN, progress,
+  repairs, waits: [], takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
 
 /** The Turn an earlier attempt started and left waiting on a synchronous delegation. */
 const WAITING_TURN = "turn_10_a1";
@@ -90,12 +114,9 @@ function wait(callerToolUseId: string, status: DelegationWait["status"] = "waiti
   return { tenantId: "tenant", callerSessionId: "sess", callerTurnId, callerToolUseId, executionId: `exec_${callerToolUseId}`,
     parentPendingEventId: INPUT, config: { model: "provider/model", thinking: "low" }, status };
 }
+const CONFIG = { model: "provider/model", thinking: "low" };
 const modelRequest: Logged = ["span.model_request_start", { turnId: WAITING_TURN }];
 const delegationResult = (toolUseId: string): Logged => ["agent.tool_result", { toolUseId, content: [], isError: false, turnId: WAITING_TURN }];
-const UNSAFE = {
-  phase: "unsafe_continuation", code: "recovery_required",
-  message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn.",
-};
 
 /** Every row plans an input that runs no Child execution, or one that has not ended. */
 const rows: Array<[string, ResumeFacts, ResumePlan]> = [
@@ -103,105 +124,144 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
     facts({ events: log(running, ["agent.message", { content: [] }], completed) }),
     { kind: "acknowledge", turnId: TURN }],
   // No earlier attempt named the Turn, so this attempt's id names it.
-  ["A1/A2 nothing after the promoted input: run a new Turn",
+  ["A1/A2 nothing after the promoted input: prompt the input in a Turn of its own",
     facts(),
-    { kind: "run", turnId: NEW_TURN, progress: FIRST_STEP }],
-  ["A3 only the running status: run a new Turn",
+    prompt(NEW_TURN)],
+  ["A3 only the running status: prompt the input",
     facts({ events: log(running) }),
-    { kind: "run", turnId: NEW_TURN, progress: FIRST_STEP }],
-  ["a Delegation Result notification is no output of the Turn: run a new Turn",
+    prompt(NEW_TURN)],
+  ["a Delegation Result notification is no output of the Turn: prompt the input",
     facts({ events: log(running, ["subagent.result", { executionId: "exec_async", callerTurnId: "turn_4_a1" }]) }),
-    { kind: "run", turnId: NEW_TURN, progress: FIRST_STEP }],
+    prompt(NEW_TURN)],
+  // A lost takeover's marker names the Turn the next takeover continues.
+  ["a lost takeover that committed only its marker: prompt the input in the Turn the marker names",
+    facts({ events: log(running, ["session.turn_resumed", { turnId: TURN, generation: 1, reason: "expired", danglingToolUseIds: [] }]) }),
+    prompt()],
 
-  ["A12 session.error committed: repair the dangling call and complete",
+  ["A12 session.error committed: repair the dangling call as unknown and complete",
     facts({ events: log(running, toolUse("call_1"), sessionError("adapter_error")) }),
     ended([bash("call_1")])],
   ["A12/D3 turn_aborted committed: complete, nothing dangles",
-    facts({ events: log(running, assistant([call("call_1")]), nativeResult("call_1"), ["session.turn_aborted", { turnId: "turn_10_a1" }]) }),
-    ended()],
+    facts({ events: log(...started, assistant([call("call_1")]), nativeResult("call_1"), ["session.turn_aborted", { turnId: "turn_10_a1" }]) }),
+    ended([], { repairOutcome: "interrupted" })],
+  ["A12 an Interrupted Turn's last repair is missing after turn_aborted: repair it as interrupted",
+    facts({ events: log(running, toolUse("call_1"), ["session.turn_aborted", { turnId: "turn_10_a1" }]) }),
+    ended([bash("call_1")], { repairOutcome: "interrupted" })],
   ["A12 status_idle committed without a completion marker: complete",
     facts({ events: log(running, ["agent.message", { content: [], turnId: TURN }], ["session.status_idle", {}]) }),
     ended()],
   ["A12 turn_aborted committed before any output: complete the Turn it names",
     facts({ events: log(running, ["session.turn_aborted", { turnId: TURN }]) }),
-    ended()],
+    ended([], { repairOutcome: "interrupted" })],
 
-  // Until #248 resumes these in the same Turn, any output but the running
-  // status ends the Turn with recovery_partial_turn_aborted.
-  ["A4 context_start committed, native user message not: recovery_partial_turn_aborted",
+  ["A4 context_start committed, native user message not: prompt the input again in the same Turn",
     facts({ events: log(running, contextStart) }),
-    partial()],
-  ["A5 native user message committed, model request in flight: recovery_partial_turn_aborted",
-    facts({ events: log(running, contextStart, ["agent.context_entry", { id: "evt_user", sdk: "pi@0.83.0", turnId: "turn_10_a1",
-      entry: { id: "entry_user", type: "message", parentId: null, message: { role: "user", content: [{ type: "text", text: "go" }] } },
-      presentation: { version: 1, blocks: [] } }]) }),
-    partial()],
-  ["A6/A7 native tool call committed, its result not: repair it, recovery_partial_turn_aborted",
-    facts({ events: log(running, contextStart, assistant([text("running it"), call("call_1")])) }),
-    partial([bash("call_1")])],
-  ["A8 parallel native tool calls, one result committed: repair only the other",
-    facts({ events: log(running, contextStart, assistant([call("call_1"), call("call_2")]), nativeResult("call_2")) }),
-    partial([bash("call_1")])],
-  ["A9 every native tool result committed: nothing to repair",
-    facts({ events: log(running, contextStart, assistant([call("call_1"), call("call_2")]), nativeResult("call_1"), nativeResult("call_2")) }),
-    partial()],
-  ["A10 final answer committed without a completion marker: recovery_partial_turn_aborted",
-    facts({ events: log(running, contextStart, assistant([text("done")])) }),
-    partial()],
-  ["A11 aborted assistant whose call never got its arguments: the call is answered by its own entry",
-    facts({ events: log(running, contextStart, assistant([text("half"), call("call_1")], { stopReason: "aborted" })) }),
-    partial()],
-  ["A15 MCP tool calls dangling: repaired with the server they name",
-    facts({ events: log(running, contextStart,
+    prompt()],
+  ["B1 compaction summary in flight before the input was committed: prompt again in the same Turn",
+    facts({ events: log(running, contextStart, ["agent.context_usage", { turnId: TURN, tokens: 900 }], ["agent.compaction", { turnId: TURN, status: "started" }]) }),
+    prompt()],
+  ["B2 compaction boundary committed before the input: prompt again on top of it",
+    facts({ events: log(running, contextStart, compaction) }),
+    prompt()],
+  ["A5 native user message committed, model request in flight: continue",
+    facts({ events: log(...started) }),
+    resumed()],
+  ["A6/A7 native tool call committed, its result not: unknown result, continue",
+    facts({ events: log(...started, modelRequest, assistant([text("running it"), call("call_1")], { blockIndex: 0 })) }),
+    resumed([bash("call_1")], { completedModelSteps: 1, blockBase: 2 })],
+  ["A8 parallel native tool calls, one result committed: unknown result only for the other",
+    facts({ events: log(...started, assistant([call("call_1"), call("call_2"), call("call_3")]), nativeResult("call_2")) }),
+    resumed([bash("call_1"), bash("call_3")])],
+  ["A9 every native tool result committed: continue, nothing to repair",
+    facts({ events: log(...started, assistant([call("call_1"), call("call_2")]), nativeResult("call_1"), nativeResult("call_2")) }),
+    resumed()],
+  ["A10 final answer committed without a completion marker: complete without a model request",
+    facts({ events: log(...started, assistant([call("call_1")]), nativeResult("call_1"), assistant([text("done")])) }),
+    answered()],
+  ["A10/B1 threshold compaction after the final answer, summary uncommitted: complete as answered",
+    facts({ events: log(...started, assistant([text("done")]), ["agent.compaction", { turnId: TURN, status: "started" }]) }),
+    answered()],
+  ["A10/B2 compaction boundary committed after the final answer: complete as answered",
+    facts({ events: log(...started, assistant([text("done")]), compaction) }),
+    answered()],
+  ["A10 a final answer cut short by the length limit is final",
+    facts({ events: log(...started, assistant([text("long")], { stopReason: "length" })) }),
+    answered()],
+  ["A11 aborted assistant whose call never got its arguments: answered by its own entry, continue",
+    facts({ events: log(...started, assistant([text("half"), call("call_1")], { stopReason: "aborted" })) }),
+    resumed()],
+  ["A11 failed model request is last: continue",
+    facts({ events: log(...started, assistant([text("")], { stopReason: "error" })) }),
+    resumed()],
+  ["B3 overflow compaction committed after the failed request: continue from the compacted context",
+    facts({ events: log(...started, assistant([text("")], { stopReason: "error" }), compaction) }),
+    resumed()],
+  ["C9 steering committed at the request gate: continue",
+    facts({ events: log(...started, assistant([call("call_1")]), nativeResult("call_1"), steering) }),
+    resumed()],
+  ["A15 MCP tool calls dangling: unknown results with the server they name",
+    facts({ events: log(...started,
       assistant([call("call_native", "mcp")], { mcp: { call_native: { name: "search", serverName: "docs" } } }),
       mcpToolUse("call_display", "lookup")) }),
-    partial([
+    resumed([
       { type: "agent.mcp_tool_use", toolUseId: "call_native", name: "search", serverName: "docs" },
       { type: "agent.mcp_tool_use", toolUseId: "call_display", name: "lookup" },
     ])],
-  ["A17 a lost attempt wrote some repairs: repair only the rest",
-    facts({ events: log(running, toolUse("call_1"), toolUse("call_2"), toolResult("call_1")) }),
-    partial([bash("call_2")])],
+  ["A17 a lost takeover wrote some repairs: repair only the rest, continue",
+    facts({ events: log(...started, assistant([call("call_1"), call("call_2")]),
+      ["session.turn_resumed", { turnId: TURN, generation: 1, reason: "expired", danglingToolUseIds: ["call_1", "call_2"] }], toolResult("call_1")) }),
+    resumed([bash("call_2")])],
+  ["A17 a lost takeover wrote every repair: continue from the repaired results",
+    facts({ events: log(...started, assistant([call("call_1")]), toolResult("call_1")) }),
+    resumed()],
   ["a call recorded twice is repaired once",
     facts({ events: log(running, toolUse("call_1"), toolUse("call_1")) }),
-    partial([bash("call_1")])],
-  ["B2 compaction boundary committed: recovery_partial_turn_aborted",
-    facts({ events: log(running, contextStart, ["agent.compaction", { summary: "earlier work" }]) }),
-    partial()],
-  ["C1/C5 synchronous wait accepted, child still running: resume the wait in its Turn",
-    facts({ waits: [wait("call_agent")], events: log(running, contextStart, modelRequest,
+    resumed([bash("call_1")])],
+  // A runtime without a native chain (the mock, older histories) commits display output only.
+  ["display output with a dangling call: unknown result, continue",
+    facts({ events: log(running, message("running it"), toolUse("call_1")) }),
+    resumed([bash("call_1")])],
+  ["display output ending in a final message: complete as answered",
+    facts({ events: log(running, toolUse("call_1"), toolResult("call_1"), message("done")) }),
+    answered()],
+  ["display output ending in a message cut short: continue",
+    facts({ events: log(running, message("half", "aborted")) }),
+    resumed()],
+
+  ["C1/C5 synchronous wait accepted, child still running: resume the wait in its Turn, then continue",
+    facts({ waits: [wait("call_agent")], events: log(...started, modelRequest,
       assistant([text("delegating"), call("call_agent", "Agent")], { blockIndex: 0 }), ["session.status_waiting", { turnId: WAITING_TURN }]) }),
-    { kind: "run", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 2 },
-      resume: { waits: [wait("call_agent")], config: { model: "provider/model", thinking: "low" } } }],
+    { kind: "run", start: "continue", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 2 }, repairs: [],
+      waits: [wait("call_agent")], config: CONFIG, takeover: expired("call_agent") }],
   ["a wait whose Turn committed no model step yet: resume it from the first step",
-    facts({ waits: [wait("call_agent")], events: log(running, contextStart) }),
-    { kind: "run", turnId: WAITING_TURN, progress: FIRST_STEP,
-      resume: { waits: [wait("call_agent")], config: { model: "provider/model", thinking: "low" } } }],
+    facts({ waits: [wait("call_agent")], events: log(...started) }),
+    { kind: "run", start: "continue", turnId: WAITING_TURN, progress: FIRST_STEP, repairs: [],
+      waits: [wait("call_agent")], config: CONFIG, takeover: expired() }],
   ["C2 the wait's result was consumed, the Turn not continued: resume it",
-    facts({ waits: [wait("call_agent", "consumed")], events: log(running, contextStart, modelRequest,
+    facts({ waits: [wait("call_agent", "consumed")], events: log(...started, modelRequest,
       assistant([call("call_agent", "Agent")], { blockIndex: 0 }), delegationResult("call_agent")) }),
-    { kind: "run", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 1 },
-      resume: { waits: [wait("call_agent", "consumed")], config: { model: "provider/model", thinking: "low" } } }],
-  ["a resumed wait whose sibling call has no result: resume the wait, then end with recovery_required",
-    facts({ waits: [wait("call_agent")], events: log(running, contextStart, modelRequest,
+    { kind: "run", start: "continue", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 1 }, repairs: [],
+      waits: [wait("call_agent", "consumed")], config: CONFIG, takeover: expired() }],
+  ["a resumed wait whose sibling call has no result: resume the wait, unknown result for the sibling, continue",
+    facts({ waits: [wait("call_agent")], events: log(...started, modelRequest,
       assistant([call("call_agent", "Agent"), call("call_bash")], { blockIndex: 0 })) }),
-    { kind: "run", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 2 },
-      resume: { waits: [wait("call_agent")], config: { model: "provider/model", thinking: "low" }, end: { repairs: [bash("call_bash")], error: UNSAFE } } }],
+    { kind: "run", start: "continue", turnId: WAITING_TURN, progress: { completedModelSteps: 1, blockBase: 2 }, repairs: [bash("call_bash")],
+      waits: [wait("call_agent")], config: CONFIG, takeover: expired("call_agent", "call_bash") }],
   ["a cancelled wait is not resumed",
-    facts({ waits: [wait("call_old", "cancelled", "turn_10_a0"), wait("call_agent")], events: log(running, contextStart) }),
-    { kind: "run", turnId: WAITING_TURN, progress: FIRST_STEP,
-      resume: { waits: [wait("call_agent")], config: { model: "provider/model", thinking: "low" } } }],
-  ["only cancelled waits: the Turn has nothing to resume",
-    facts({ waits: [wait("call_agent", "cancelled")], events: log(running, contextStart, assistant([call("call_agent", "Agent")])) }),
-    partial([{ type: "agent.tool_use", toolUseId: "call_agent", name: "Agent" }])],
+    facts({ waits: [wait("call_old", "cancelled", "turn_10_a0"), wait("call_agent")], events: log(...started) }),
+    { kind: "run", start: "continue", turnId: WAITING_TURN, progress: FIRST_STEP, repairs: [],
+      waits: [wait("call_agent")], config: CONFIG, takeover: expired() }],
+  ["only cancelled waits: the Turn has nothing to resume, its call gets an unknown result",
+    facts({ waits: [wait("call_agent", "cancelled")], events: log(...started, assistant([call("call_agent", "Agent")])) }),
+    resumed([agentCall("call_agent")])],
   ...["session.status_idle", "session.error", "session.turn_aborted"].map((type): [string, ResumeFacts, ResumePlan] => [
     `A12 ${type} committed after a consumed wait: complete the waiting Turn, do not resume it`,
-    facts({ waits: [wait("call_agent", "consumed")], events: log(running, contextStart, assistant([call("call_agent", "Agent")]),
+    facts({ waits: [wait("call_agent", "consumed")], events: log(...started, assistant([call("call_agent", "Agent")]),
       delegationResult("call_agent"), toolUse("call_bash"), [type, { turnId: WAITING_TURN, error: { code: "adapter_error" } }]) }),
-    { kind: "complete", cause: "turn_ended", turnId: WAITING_TURN, repairs: [bash("call_bash")], interruptChildren: true }]),
-  ["C3 Agent tool call committed, delegation not accepted: no wait, repair the call",
-    facts({ events: log(running, contextStart, assistant([call("call_agent", "Agent")])) }),
-    partial([{ type: "agent.tool_use", toolUseId: "call_agent", name: "Agent" }])],
+    ended([bash("call_bash")], { turnId: WAITING_TURN, repairOutcome: type === "session.turn_aborted" ? "interrupted" : "unknown" })]),
+  ["C3 Agent tool call committed, delegation not accepted: no wait, unknown result, continue",
+    facts({ events: log(...started, assistant([call("call_agent", "Agent")])) }),
+    resumed([agentCall("call_agent")])],
 
   // An Interrupt an earlier generation accepted ends the Turn as an Interrupted
   // Turn once the log neither completes nor ends it, before any other row. It
@@ -213,31 +273,31 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
     afterInterrupt(),
     interrupted([], NEW_TURN)],
   ["D1 Interrupt accepted while a native tool call ran: repair it, Interrupted Turn",
-    afterInterrupt({ events: log(running, contextStart, assistant([text("running it"), call("call_1")])) }),
+    afterInterrupt({ events: log(...started, assistant([text("running it"), call("call_1")])) }),
     interrupted([bash("call_1")])],
   ["D1 Interrupt accepted during parallel tools: repair only the call without a result",
-    afterInterrupt({ events: log(running, contextStart, assistant([call("call_1"), call("call_2")]), nativeResult("call_2")) }),
+    afterInterrupt({ events: log(...started, assistant([call("call_1"), call("call_2")]), nativeResult("call_2")) }),
     interrupted([bash("call_1")])],
   ["D1 Interrupt accepted after the final answer was committed: Interrupted Turn, not completed as answered",
-    afterInterrupt({ events: log(running, contextStart, assistant([text("done")])) }),
+    afterInterrupt({ events: log(...started, assistant([text("done")])) }),
     interrupted()],
   ["D1 Interrupt accepted after a compaction boundary: Interrupted Turn",
-    afterInterrupt({ events: log(running, contextStart, ["agent.compaction", { summary: "earlier work" }]) }),
+    afterInterrupt({ events: log(running, contextStart, compaction) }),
     interrupted()],
   ["D1/C12 Interrupt accepted while the Turn waits on a delegation: the waiting Turn ends interrupted, not resumed",
-    afterInterrupt({ waits: [wait("call_agent")], events: log(running, contextStart, modelRequest,
+    afterInterrupt({ waits: [wait("call_agent")], events: log(...started, modelRequest,
       assistant([text("delegating"), call("call_agent", "Agent")], { blockIndex: 0 }), ["session.status_waiting", { turnId: WAITING_TURN }]) }),
-    interrupted([{ type: "agent.tool_use", toolUseId: "call_agent", name: "Agent" }], WAITING_TURN)],
+    interrupted([agentCall("call_agent")], WAITING_TURN)],
   ["D3 Interrupt accepted, lost while writing its repairs: repair only the rest, Interrupted Turn",
     afterInterrupt({ events: log(running, toolUse("call_1"), toolUse("call_2"), toolResult("call_1")) }),
     interrupted([bash("call_2")])],
   ["D3 Interrupt accepted, lost after turn_aborted: the log ends the Turn, complete it",
     afterInterrupt({ events: log(running, assistant([call("call_1")]), toolUse("call_2"), toolResult("call_1"),
       ["session.turn_aborted", { turnId: "turn_10_a1" }]) }),
-    ended([bash("call_2")])],
+    ended([bash("call_2")], { repairOutcome: "interrupted" })],
   ["D1 a session.error committed before the Interrupt took effect: the log ends the Turn, complete it",
     afterInterrupt({ events: log(running, sessionError("adapter_error")) }),
-    ended([], NEW_TURN)],
+    ended([], { turnId: NEW_TURN })],
   ["A13 Interrupt accepted after turn_completed was committed: acknowledge only",
     afterInterrupt({ events: log(running, ["agent.message", { content: [] }], completed) }),
     { kind: "acknowledge", turnId: TURN }],
@@ -248,27 +308,29 @@ const CHILD_TURN = "turn_3_a1";
 const lostOwner = { status: "recovery_required", turnId: CHILD_TURN, result: { status: "recovery_required",
   reason: "Execution lease expired; external tool effects may be uncertain. Inspect history and resume explicitly.",
   output: "", trace: { sessionId: "sess", turnId: CHILD_TURN } } } as const;
+const RECOVERY_REQUIRED = { phase: "recovery_required", code: "recovery_required", message: lostOwner.result.reason };
+const executionEnded = (turnId: string, repairs: DanglingToolCall[] = [], error?: typeof RECOVERY_REQUIRED): ResumePlan => ({
+  kind: "complete", cause: "execution_ended", turnId, repairs, repairOutcome: "unknown", interruptChildren: false,
+  ...(error ? { error } : {}), takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
 const executionRows: Array<[string, ResumeFacts, ResumePlan]> = [
   ["C7 the Child execution's lost owner left it running: recovery_required in its Turn, repair its call",
     facts({ execution: lostOwner, events: log(running, toolUse("call_1")) }),
-    { kind: "complete", cause: "execution_ended", turnId: CHILD_TURN, repairs: [bash("call_1")], interruptChildren: false,
-      error: { phase: "recovery_required", code: "recovery_required", message: lostOwner.result.reason } }],
-  ["C7 a lost owner's execution outranks the partial output it left",
-    facts({ execution: lostOwner, events: log(running, contextStart, assistant([text("half done")])) }),
-    { kind: "complete", cause: "execution_ended", turnId: CHILD_TURN, repairs: [], interruptChildren: false,
-      error: { phase: "recovery_required", code: "recovery_required", message: lostOwner.result.reason } }],
+    executionEnded(CHILD_TURN, [bash("call_1")], RECOVERY_REQUIRED)],
+  ["C7 a lost owner's execution outranks the output it left",
+    facts({ execution: lostOwner, events: log(...started, assistant([text("half done")])) }),
+    executionEnded(CHILD_TURN, [], RECOVERY_REQUIRED)],
   ["the Child execution ended before its Turn's completion marker: complete, nothing to add",
-    facts({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(running, contextStart, assistant([text("done")])) }),
-    { kind: "complete", cause: "execution_ended", turnId: CHILD_TURN, repairs: [], interruptChildren: false }],
+    facts({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(...started, assistant([text("done")])) }),
+    executionEnded(CHILD_TURN)],
   ["a Child execution that ended without running completes this attempt's Turn",
     facts({ execution: { status: "interrupted" } }),
-    { kind: "complete", cause: "execution_ended", turnId: NEW_TURN, repairs: [], interruptChildren: false }],
+    executionEnded(NEW_TURN)],
   ["A13 a completed Turn is only acknowledged, whatever its Child execution",
     facts({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(running, completed) }),
     { kind: "acknowledge", turnId: TURN }],
   ["D1 a Child execution that has ended outranks the Interrupt its lost owner accepted",
-    afterInterrupt({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(running, contextStart, assistant([text("done")])) }),
-    { kind: "complete", cause: "execution_ended", turnId: CHILD_TURN, repairs: [], interruptChildren: false }],
+    afterInterrupt({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(...started, assistant([text("done")])) }),
+    executionEnded(CHILD_TURN)],
 ];
 
 describe("planResume", () => {
@@ -288,28 +350,52 @@ describe("the Turn an attempt continues", () => {
   // Every attempt of the input names the Turn its first attempt started, so
   // its repairs, errors and completion join that Turn's output.
   it.each([1, 2, 5])("generation %i of the input names the Turn the first attempt's events name", (generation) => {
-    const given = facts({ claim: { generation, priorInterrupt: false }, events: log(running, contextStart, assistant([call("call_1")]), sessionError("adapter_error")) });
+    const given = facts({ claim: { generation, priorInterrupt: false, previous: "expired" }, events: log(running, contextStart, assistant([call("call_1")]), sessionError("adapter_error")) });
     expect(planResume(given)).toMatchObject({ kind: "complete", turnId: TURN });
   });
 
   it("an input no earlier attempt named is this attempt's Turn", () => {
-    expect(planResume(facts({ claim: { generation: 3, priorInterrupt: false }, events: log(running, running) })))
-      .toEqual({ kind: "run", turnId: "turn_10_a3", progress: FIRST_STEP });
+    expect(planResume(facts({ claim: { generation: 3, priorInterrupt: false, previous: "expired" }, events: log(running, running) })))
+      .toMatchObject({ kind: "run", start: "prompt", turnId: "turn_10_a3" });
   });
 
   // A Delegation Result notification names the Turns of the delegation, not this one.
   it("a Delegation Result notification never names the Turn", () => {
     const notification: Logged = ["subagent.result", { executionId: "exec_1", turnId: "turn_4_a1", callerTurnId: "turn_4_a1" }];
-    expect(planResume(facts({ events: log(running, notification, contextStart, assistant([text("half")])) })))
-      .toMatchObject({ kind: "complete", turnId: TURN });
+    expect(planResume(facts({ events: log(...started.slice(0, 1), notification, ...started.slice(1), assistant([text("half")])) })))
+      .toMatchObject({ kind: "complete", cause: "answered", turnId: TURN });
+  });
+});
+
+describe("the takeover a plan records", () => {
+  const halfway = log(...started, assistant([call("call_1"), call("call_2")]), nativeResult("call_2"));
+
+  it("the input's first claim takes nothing over", () => {
+    expect(planResume(facts({ claim: { generation: 1, priorInterrupt: false, previous: null } })))
+      .toEqual({ kind: "run", start: "prompt", turnId: "turn_10_a1", progress: FIRST_STEP, repairs: [], waits: [] });
+  });
+
+  it("a Turn whose claim was released moves for a handoff, not a loss", () => {
+    expect(planResume(facts({ claim: { generation: 2, priorInterrupt: false, previous: "released" }, events: halfway })))
+      .toMatchObject({ kind: "run", start: "continue", takeover: { reason: "released", danglingToolUseIds: ["call_1"] } });
+  });
+
+  it("a Turn whose claim expired moves for a loss, with every call it left without a result", () => {
+    expect(planResume(facts({ events: halfway })))
+      .toMatchObject({ kind: "run", start: "continue", takeover: { reason: "expired", danglingToolUseIds: ["call_1"] } });
+  });
+
+  it("an acknowledgement takes no Turn over", () => {
+    expect(planResume(facts({ events: log(running, completed) }))).not.toHaveProperty("takeover");
   });
 });
 
 describe("turnProgress", () => {
   // Two model steps and blocks 0..2 committed: a delegation call, its result, a final answer cut short.
-  const committed = log(running, contextStart, modelRequest,
+  const steps: Logged[] = [modelRequest,
     assistant([text("delegating"), call("call_agent", "Agent")], { blockIndex: 0 }), ["session.status_waiting", { turnId: TURN }],
-    delegationResult("call_agent"), modelRequest, assistant([text("half")], { blockIndex: 2, stopReason: "error" }));
+    delegationResult("call_agent"), modelRequest, assistant([text("half")], { blockIndex: 2, stopReason: "error" })];
+  const committed = log(running, contextStart, ...steps);
   const EXPECTED = { completedModelSteps: 2, blockBase: 3 };
 
   it("A18 counts the model steps and output blocks the Turn committed", () => {
@@ -325,6 +411,11 @@ describe("turnProgress", () => {
   it("A18 a resumed wait continues from the same count", () => {
     expect(planResume(facts({ waits: [wait("call_agent", "consumed")], events: committed })))
       .toMatchObject({ kind: "run", turnId: TURN, progress: EXPECTED });
+  });
+
+  it("A18 a resumed ordinary Turn continues from the same count", () => {
+    expect(planResume(facts({ events: log(...started, ...steps) })))
+      .toMatchObject({ kind: "run", start: "continue", turnId: TURN, progress: EXPECTED });
   });
 
   it("output of another Turn does not count", () => {

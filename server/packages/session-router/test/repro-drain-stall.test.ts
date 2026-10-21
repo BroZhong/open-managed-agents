@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
+import { OUTCOME_UNKNOWN } from "../src/dangling-call-results.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
@@ -437,7 +438,7 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       .toEqual(["session.status_idle"]);
   });
 
-  it("abandons a partial durable attempt without mixing output from a rerun", async () => {
+  it("A10 completes a Turn whose final answer is durable without running it again", async () => {
     let adapterRuns = 0;
     const adapter: Adapter = {
       async run(input: AdapterInput) {
@@ -487,16 +488,13 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       "user.message",
       "session.status_running",
       "agent.message",
+      "session.turn_resumed",
       "session.turn_completed",
       "session.status_idle",
     ]) {
       expect(recovered.filter((event) => event.type === type), type).toHaveLength(1);
     }
-    expect(recovered.filter((event) =>
-      event.type === "session.error" &&
-      (event.data as { error?: { code?: string } }).error?.code ===
-        "recovery_partial_turn_aborted"
-    )).toHaveLength(1);
+    expect(recovered.filter((event) => event.type === "session.error")).toEqual([]);
   });
 
   it("schedules slow recovered Sessions without blocking startup and never starts two local drainers", async () => {
@@ -931,7 +929,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
   });
 
-  it("repairs a durable tool_use without rerunning that attempt, then supplies a valid pair to the next turn", async () => {
+  it("A6 answers a durable tool_use as of unknown outcome and continues its Turn with a valid pair, and so does the next Turn", async () => {
     const stores = createMemoryStores();
     const session = await stores.sessionStore.create({
       tenantId: "tenant_1",
@@ -982,14 +980,14 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await stores.pendingEventStore.releaseClaim!(session.id, pending.id, firstClaim!);
 
     let adapterRuns = 0;
-    let nextHistory: SessionEvent[] = [];
+    const runs: AdapterInput[] = [];
     const adapter: Adapter = {
       async run(input: AdapterInput) {
         const write = journalWriter(input);
         adapterRuns++;
-        nextHistory = input.history;
+        runs.push(input);
         await write({
-          id: "next_reply",
+          id: `reply_${adapterRuns}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "history accepted" }],
@@ -1007,26 +1005,29 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
 
     await router.handleNewEvent(session.id, testAgent);
-    expect(adapterRuns).toBe(0);
     const repaired = (await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data;
     const result = repaired.find((event) =>
       event.type === "agent.tool_result" &&
       (event.data as { toolUseId?: string }).toolUseId === "call_crashed"
     );
-    expect(result?.data).toMatchObject({ toolUseId: "call_crashed", isError: true });
+    expect(result?.data).toMatchObject({ toolUseId: "call_crashed", isError: true, turnId: "turn_1_a1",
+      content: [{ type: "text", text: OUTCOME_UNKNOWN }] });
     expect(repaired.filter((event) => event.type === "agent.tool_use")).toHaveLength(1);
+    expect(repaired.filter((event) => event.type === "session.error")).toEqual([]);
+    // The tool is not run again: the Turn continues from the call and its repair.
+    expect(adapterRuns).toBe(1);
+    expect(runs[0]).toMatchObject({ turnId: "turn_1_a1", resume: { completedModelSteps: 0, blockBase: 0 } });
+    const pairIn = (history: SessionEvent[]) => history.filter((event) =>
+      (event.type === "agent.tool_use" || event.type === "agent.tool_result") &&
+      (event as unknown as { toolUseId?: string }).toolUseId === "call_crashed"
+    ).map((event) => event.type);
+    expect(pairIn(runs[0].history)).toEqual(["agent.tool_use", "agent.tool_result"]);
 
     await enqueueUser(stores.pendingEventStore, session.id, "continue safely");
     await router.handleNewEvent(session.id, testAgent);
-    expect(adapterRuns).toBe(1);
-    const pair = nextHistory.filter((event) =>
-      (event.type === "agent.tool_use" || event.type === "agent.tool_result") &&
-      (event as unknown as { toolUseId?: string }).toolUseId === "call_crashed"
-    );
-    expect(pair.map((event) => event.type)).toEqual([
-      "agent.tool_use",
-      "agent.tool_result",
-    ]);
+    expect(adapterRuns).toBe(2);
+    expect(runs[1].resume).toBeUndefined();
+    expect(pairIn(runs[1].history)).toEqual(["agent.tool_use", "agent.tool_result"]);
   });
 
   it("A3 reruns an input its lost attempt left without output as the rerun's own Turn, leaving the lost Deltas to expire", async () => {

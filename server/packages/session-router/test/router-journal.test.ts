@@ -149,7 +149,9 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     "the lease is lost",
   ] as const)("stops without terminal events when %s, leaving the input to the next claim", async (cause) => {
     const writeFails = cause !== "the lease is lost";
+    let runs = 0;
     const h = await harness({ async run(input) {
+      if (runs++ > 0) throw new Error("A committed final answer is not run again");
       const write = journalWriter(input);
       await write(text("committed"));
       if (cause === "a journal write fails and run() rejects") await write(contextEntry("lost"));
@@ -185,15 +187,17 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     const renewals = firstRenewals.length;
     await sleep(60);
     expect(firstRenewals).toHaveLength(renewals);
-    // The pending scan claims it once the lease expires and ends the Turn by
-    // the recovery rules, never rerunning it.
+    // The pending scan claims it once the lease expires and resumes the Turn:
+    // its committed final answer completes it without running it again.
     await until(async () => {
       await router.recoverPendingEvents();
       return await h.stores.pendingEventStore.count(h.session.id) === 0;
     });
     const recovered = await h.log();
     expect(recovered.filter(stored => stored.type === "agent.message")).toHaveLength(1);
-    expect(recovered.find(stored => stored.type === "session.error")?.data).toMatchObject({ error: { code: "recovery_partial_turn_aborted" } });
+    expect(recovered.filter(stored => stored.type === "session.error")).toEqual([]);
+    expect(recovered.filter(stored => stored.type === "session.turn_resumed").map(stored => stored.data))
+      .toEqual([expect.objectContaining({ generation: 2, reason: "expired", danglingToolUseIds: [] })]);
     expect(recovered.filter(stored => stored.type === "session.turn_completed")).toHaveLength(1);
     expect(recovered.some(stored => JSON.stringify(stored.data).includes("never written"))).toBe(false);
   });
@@ -216,13 +220,17 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       await sleep(0);
 
       const log = await h.log(child.id);
-      expect(log.map(stored => stored.type)).toEqual(["delegation.input", "session.error", "session.turn_completed", "session.status_idle"]);
-      expect(log[1].data).toMatchObject({ error: { code: "recovery_required" } });
+      expect(log.map(stored => stored.type)).toEqual(["delegation.input", "session.turn_resumed", "session.error", "session.turn_completed", "session.status_idle"]);
+      expect(log[2].data).toMatchObject({ error: { code: "recovery_required" } });
       expectPublishedInOrder(childFrames, log);
     });
 
-    it("publishes the error that ends a resumed wait whose sibling tool has an uncertain outcome", async () => {
-      const h = await harness({ async run() { throw new Error("must not run"); } }, { sandboxed: true });
+    it("publishes the results a resumed wait and its dangling sibling get before the Turn continues", async () => {
+      const h = await harness({ async run(input) {
+        if (!input.resume) throw new Error("A resumed wait continues its Turn");
+        await journalWriter(input)(text("continued"));
+        return "finished";
+      } }, { sandboxed: true });
       const parent = await h.deadClaim();
       await h.append(h.session.id, { type: "agent.tool_use", data: { ...event("agent.tool_use", { toolUseId: "ordinary", name: "bash", input: {} }), turnId: parent.turnId },
         sessionThreadId: "sthr_primary", pendingFence: parent.fence });
@@ -241,9 +249,11 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
       await sleep(0);
 
       const log = await h.log();
-      const errors = log.filter(stored => stored.type === "session.error");
-      expect(errors).toEqual([expect.objectContaining({ data: expect.objectContaining({ error: expect.objectContaining({ code: "recovery_required" }) }) })]);
-      expect(h.frames.map(frame => frame.seq)).toContain(errors[0].seq);
+      expect(log.filter(stored => stored.type === "session.error")).toEqual([]);
+      const results = log.filter(stored => stored.type === "agent.tool_result");
+      expect(results.map(stored => (stored.data as { toolUseId: string }).toolUseId).sort()).toEqual(["ordinary", "wait"]);
+      for (const result of results) expect(h.frames.map(frame => frame.seq)).toContain(result.seq);
+      expect(log.filter(stored => stored.type === "agent.message")).toHaveLength(1);
       expectPublishedInOrder(h.frames, log, before);
     });
 

@@ -1,4 +1,4 @@
-import type { DelegationExecution, DelegationWait, DelegationWaitConfig, StoredEvent } from "@oma-server/store";
+import type { DelegationExecution, DelegationWait, DelegationWaitConfig, PendingEventClaimEnd, StoredEvent } from "@oma-server/store";
 import { presentEvent } from "@oma-server/store";
 import type { AdapterResume } from "@open-managed-agents/adapter-core";
 import { isTerminalExecution } from "./delegation-coordinator.js";
@@ -16,6 +16,8 @@ export interface ResumeFacts {
     generation: number;
     /** An earlier generation accepted an Interrupt for the input, and the Runner holding it stopped first. */
     priorInterrupt: boolean;
+    /** How the claim before this one ended; null for the input's first claim. */
+    previous: PendingEventClaimEnd | null;
   };
   /** Every event after the promoted input, in seq order. */
   events: readonly StoredEvent[];
@@ -38,6 +40,24 @@ export interface AcknowledgePlan {
   turnId: string;
 }
 
+/**
+ * This claim continues a Turn another claim held: the Runner holding it was
+ * lost (its lease expired) or handed it over (it released the claim). The
+ * Router records it as `session.turn_resumed`.
+ */
+export interface Takeover {
+  reason: PendingEventClaimEnd;
+  /** The Turn's tool calls that had no result when it moved, in call order. */
+  danglingToolUseIds: string[];
+}
+
+/** What a repair tells the Agent about a call that has no result. */
+export type RepairOutcome =
+  /** The Turn ends as an Interrupted Turn: the Interrupt stopped the call. */
+  | "interrupted"
+  /** The Runner executing the call stopped first: it may not have run, or have run partly or fully. */
+  | "unknown";
+
 /** End the Turn without running the Adapter: answer its dangling calls, record the error, complete it. */
 export interface CompletePlan {
   kind: "complete";
@@ -46,18 +66,20 @@ export interface CompletePlan {
   cause:
     /** The log already ends the Turn (idle, an error, turn_aborted) but has no completion marker. */
     | "turn_ended"
-    /** An earlier attempt committed output and no wait resumes the Turn; it is not run again. */
-    | "partial_output"
+    /** The Agent's final answer is committed: the Turn is done, no model request is made. */
+    | "answered"
     /** The Child execution the input runs has ended, or its lost owner left its outcome uncertain. */
     | "execution_ended"
     /** An earlier attempt accepted an Interrupt it did not live to apply: the Turn ends as an Interrupted Turn. */
     | "interrupted";
   /** Tool calls of the Turn without a result; each gets one before the Turn completes. */
   repairs: DanglingToolCall[];
+  repairOutcome: RepairOutcome;
   /** The session.error that ends the Turn, when its log does not end it yet. */
   error?: RecoveryError;
   /** Stop the synchronous children the Turn still waits on. */
   interruptChildren: boolean;
+  takeover?: Takeover;
 }
 
 /** A tool call that has no result in the event log, as its call recorded it. */
@@ -81,24 +103,21 @@ export interface RecoveryError {
 export interface RunPlan {
   kind: "run";
   turnId: string;
+  /**
+   * `prompt` hands the runtime the input: no attempt committed it into the
+   * Turn's native history yet. `continue` resumes that history, which then
+   * holds a result for every tool call, from the step it reached.
+   */
+  start: "prompt" | "continue";
   /** Where this attempt starts in the Turn, counted from what earlier attempts committed. */
   progress: AdapterResume;
-  /** Continue the Turn an earlier attempt left waiting; absent for a new Turn, prompted with its input. */
-  resume?: TurnResume;
-}
-
-/** How a run continues a Turn after what its earlier attempts committed. */
-export interface TurnResume {
+  /** Calls without a result outside the waits; each gets an outcome-unknown result before the run. */
+  repairs: DanglingToolCall[];
   /** The Turn's delegation waits; each still waiting is resumed for its result before the Turn goes on. */
   waits: DelegationWait[];
-  /** The configuration the Turn started with. */
-  config: DelegationWaitConfig;
-  /**
-   * Set when a call outside the waits has no result, so its outcome is
-   * uncertain: once the waits have their results, the Turn ends with these
-   * repairs and this error instead of continuing.
-   */
-  end?: { repairs: DanglingToolCall[]; error: RecoveryError };
+  /** The configuration the Turn started with, as its waits recorded it. */
+  config?: DelegationWaitConfig;
+  takeover?: Takeover;
 }
 
 /**
@@ -108,13 +127,19 @@ export interface TurnResume {
  *   2. the Child execution it runs has ended: complete the Turn;
  *   3. the log ends the Turn: repair the dangling calls, complete it;
  *   4. an earlier generation accepted an Interrupt: repair, end as an Interrupted Turn;
- *   5. the Turn waits on delegations: resume the waits;
- *   6. an earlier attempt committed output: repair, complete with an error;
- *   7. otherwise: run a new Turn.
+ *   5. the Turn waits on delegations: resume the waits, give every other
+ *      dangling call an outcome-unknown result, continue;
+ *   6. the input is not in the Turn's native history yet: prompt it;
+ *   7. the last message is the Agent's final answer: complete the Turn without a model request;
+ *   8. otherwise (a tool call, a tool result, steering, the input itself, a
+ *      failed or aborted request): give each dangling call an outcome-unknown
+ *      result, continue.
+ * No row reruns a tool or ends a Turn because it was taken over.
+ *
  * Every attempt of the input executes one Turn, the one its first attempt
  * started: the plan names it after the first event of the input that names a
- * Turn (Pi's agent.context_start, recorded when Pi is prompted). An input no
- * attempt named yet is this attempt's Turn.
+ * Turn (Pi's agent.context_start, recorded when Pi is prompted, or an earlier
+ * takeover's marker). An input no attempt named yet is this attempt's Turn.
  */
 export function planResume(facts: ResumeFacts): ResumePlan {
   const waits = facts.waits.filter((wait) => wait.status !== "cancelled");
@@ -126,45 +151,90 @@ export function planResume(facts: ResumeFacts): ResumePlan {
     (event.data as { pendingEventId?: unknown } | null)?.pendingEventId === facts.pendingEventId)) {
     return { kind: "acknowledge", turnId };
   }
+  const dangling = danglingToolCalls(output);
+  const takeover: { takeover?: Takeover } = facts.claim.previous === null ? {}
+    : { takeover: { reason: facts.claim.previous, danglingToolUseIds: dangling.map((call) => call.toolUseId) } };
+  const complete = (cause: CompletePlan["cause"], plan: Partial<CompletePlan> = {}): CompletePlan => ({
+    kind: "complete", cause, turnId, repairs: dangling, repairOutcome: "unknown", interruptChildren: false, ...plan, ...takeover,
+  });
   const execution = facts.execution;
   if (execution && isTerminalExecution(execution)) {
     const executionTurnId = execution.turnId ?? turnId;
     return execution.status === "recovery_required"
-      ? { kind: "complete", cause: "execution_ended", turnId: executionTurnId, repairs: danglingToolCalls(facts.events), interruptChildren: false,
-        error: { phase: "recovery_required", code: "recovery_required", message: execution.result?.reason } }
-      : { kind: "complete", cause: "execution_ended", turnId: executionTurnId, repairs: [], interruptChildren: false };
+      ? complete("execution_ended", { turnId: executionTurnId,
+        error: { phase: "recovery_required", code: "recovery_required", message: execution.result?.reason } })
+      : complete("execution_ended", { turnId: executionTurnId, repairs: [] });
   }
   if (output.some((event) => event.type === "session.status_idle" || event.type === "session.error" || event.type === "session.turn_aborted")) {
-    return { kind: "complete", cause: "turn_ended", turnId, repairs: danglingToolCalls(output), interruptChildren: true };
+    return complete("turn_ended", { interruptChildren: true,
+      repairOutcome: output.some((event) => event.type === "session.turn_aborted") ? "interrupted" : "unknown" });
   }
   // The user stopped this Turn and the log shows the stop never took effect.
   // Continuing it would ignore the stop, so it ends as the Interrupt would have ended it.
-  if (facts.claim.priorInterrupt) {
-    return { kind: "complete", cause: "interrupted", turnId, repairs: danglingToolCalls(output), interruptChildren: true };
+  if (facts.claim.priorInterrupt) return complete("interrupted", { repairOutcome: "interrupted", interruptChildren: true });
+  const run = (start: RunPlan["start"], plan: Partial<RunPlan> = {}): RunPlan => ({
+    kind: "run", start, turnId, progress: turnProgress(output, turnId), repairs: dangling, waits: [], ...plan, ...takeover,
+  });
+  if (waits.length) {
+    const waitCalls = new Set(waits.map((wait) => wait.callerToolUseId));
+    // A wait saved before waits recorded configuration has none.
+    return run("continue", { repairs: dangling.filter((call) => !waitCalls.has(call.toolUseId)), waits, config: waits[0].config ?? {} });
   }
-  const progress = turnProgress(output, turnId);
-  if (waits.length) return { kind: "run", turnId, progress, resume: resumeWaits(facts.events, waits) };
-  if (output.some((event) => event.type !== "session.status_running")) {
-    return { kind: "complete", cause: "partial_output", turnId, repairs: danglingToolCalls(output), interruptChildren: false,
-      error: { phase: "recovery_partial_turn_aborted", code: "recovery_partial_turn_aborted",
-        message: "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts." } };
+  const last = lastMessage(output);
+  if (!inputCommitted(output, last)) return run("prompt");
+  if (last && isFinalAnswer(last)) return complete("answered");
+  return run("continue");
+}
+
+/** A message of the Turn's conversation, native or display, as the runtime would rebuild it. */
+type ConversationMessage =
+  | { native: true; role: string; stopReason?: string; toolCalls: number }
+  | { native: false; type: string; stopReason?: string };
+
+const DISPLAY_MESSAGES = new Set(["agent.message", "agent.thinking", "agent.tool_use", "agent.mcp_tool_use",
+  "agent.tool_result", "agent.mcp_tool_result", "subagent.instruction"]);
+
+/**
+ * The Turn's last conversation message. A compaction boundary and other native
+ * entries are not messages: Pi compacts after a final answer as well as after
+ * a failed request, and the message before the boundary says which it was.
+ */
+function lastMessage(output: readonly StoredEvent[]): ConversationMessage | undefined {
+  let last: ConversationMessage | undefined;
+  for (const event of output) {
+    const data = event.data as { entry?: { type?: string; message?: { role?: string; stopReason?: string; content?: unknown } }; stopReason?: unknown } | null;
+    if (event.type === "agent.context_entry") {
+      const entry = data?.entry;
+      if (entry?.type === "custom_message") last = { native: true, role: "custom", toolCalls: 0 };
+      else if (entry?.type === "message" && entry.message?.role) {
+        const content = Array.isArray(entry.message.content) ? entry.message.content as Array<{ type?: unknown }> : [];
+        last = { native: true, role: entry.message.role, stopReason: entry.message.stopReason,
+          toolCalls: content.filter((block) => block.type === "toolCall").length };
+      }
+    } else if (DISPLAY_MESSAGES.has(event.type)) {
+      last = { native: false, type: event.type, ...(typeof data?.stopReason === "string" ? { stopReason: data.stopReason } : {}) };
+    }
   }
-  return { kind: "run", turnId, progress };
+  return last;
 }
 
 /**
- * Resuming the waits gives each waiting call its result, and nothing else:
- * whatever else dangles now still dangles after them.
+ * Whether the Turn's history holds its input. Pi claims the input with
+ * agent.context_start right before it prompts and commits it as its native
+ * user message; until then, only prompting the input again starts the Turn.
+ * A runtime without a native chain records only display output, which follows
+ * the input it answers.
  */
-function resumeWaits(events: readonly StoredEvent[], waits: DelegationWait[]): TurnResume {
-  const waitCalls = new Set(waits.map((wait) => wait.callerToolUseId));
-  const uncertain = danglingToolCalls(events).filter((call) => !waitCalls.has(call.toolUseId));
-  return {
-    // A wait saved before waits recorded configuration has none.
-    waits, config: waits[0].config ?? {},
-    ...(uncertain.length ? { end: { repairs: uncertain, error: { phase: "unsafe_continuation", code: "recovery_required",
-      message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } } } : {}),
-  };
+function inputCommitted(output: readonly StoredEvent[], last: ConversationMessage | undefined): boolean {
+  if (output.some((event) => event.type === "agent.context_entry" &&
+    (event.data as { entry?: { type?: string; message?: { role?: string } } } | null)?.entry?.message?.role === "user")) return true;
+  return last !== undefined && !output.some((event) => event.type === "agent.context_start");
+}
+
+/** The Agent's last word: an assistant message that requests no tool and whose request did not fail. */
+function isFinalAnswer(message: ConversationMessage): boolean {
+  if (message.stopReason === "error" || message.stopReason === "aborted") return false;
+  return message.native ? message.role === "assistant" && message.toolCalls === 0 : message.type === "agent.message";
 }
 
 /**

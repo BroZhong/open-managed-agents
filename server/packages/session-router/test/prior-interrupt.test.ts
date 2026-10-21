@@ -125,10 +125,13 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     expect(interrupted.turnId).toBe(started);
     expect(repairs.map((stored) => (stored.data as { turnId: string }).turnId)).toEqual([started]);
     expect((await h.ofType("session.turn_aborted")).map((stored) => stored.data)).toEqual([{ turnId: started }]);
-    // The repair, then the Interrupt, then the completion close A's Turn, before B runs.
+    // The takeover's marker, the repair, then the Interrupt, then the
+    // completion close A's Turn, before B runs.
     const types = log.map((stored) => stored.type);
-    expect(types.slice(types.indexOf("agent.tool_use"))).toEqual(["agent.tool_use", "agent.tool_result", "session.turn_aborted",
+    expect(types.slice(types.indexOf("agent.tool_use"))).toEqual(["agent.tool_use", "session.turn_resumed", "agent.tool_result", "session.turn_aborted",
       "session.turn_completed", "user.message", "session.status_running", "agent.message", "session.turn_completed", "session.status_idle"]);
+    expect((await h.ofType("session.turn_resumed")).map((stored) => stored.data))
+      .toEqual([{ turnId: started, generation: 2, reason: "expired", danglingToolUseIds: ["call_1"] }]);
     expect(log.filter((stored) => stored.type === "session.error")).toEqual([]);
     expect((await h.stores.sessionStore.getById(h.session.id))?.status).toBe("idle");
     expect(await h.stores.pendingEventStore.count(h.session.id)).toBe(0);
@@ -150,7 +153,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
 
     expect(h.requests).toEqual(["A"]);
     expect((await h.log()).map((stored) => stored.type)).toEqual(["user.message", "session.status_running",
-      "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
+      "session.turn_resumed", "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
   });
 
   it("D2 an Interrupt accepted under the current generation still stops the running attempt itself", async () => {

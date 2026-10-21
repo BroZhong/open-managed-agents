@@ -43,7 +43,8 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
-import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts } from "./plan-resume.js";
+import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type RepairOutcome, type ResumeFacts, type Takeover } from "./plan-resume.js";
+import { repairResult, type DanglingCallResolver } from "./dangling-call-results.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -280,6 +281,12 @@ export class SessionRouter {
   private readonly sessions = new Map<string, SandboxSession>();
   private readonly delegationStore?: DelegationStore;
   private readonly delegations?: DelegationCoordinator;
+  /**
+   * Results, by tool name, for calls a takeover finds without one, from the
+   * durable state the tool keeps (the delegation tools, #251). A call no
+   * resolver answers is reported as of unknown outcome.
+   */
+  private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>> = {};
   private readonly maxConcurrentSubagents: number;
   private readonly checkSession: (sessionId: string) => void;
 
@@ -932,28 +939,31 @@ export class SessionRouter {
     return `pending:${pendingEventId}:${phase}`;
   }
 
-  /** Record a result for each tool call that has none, and the error that ends its Turn. */
-  private recordRepairs(
+  /**
+   * Record a result for each tool call that has none, and the error that ends
+   * its Turn. Each result is keyed by its call, so a repair a lost attempt
+   * already wrote is not written twice.
+   */
+  private async recordRepairs(
     journal: TurnJournal,
+    sessionId: string,
     pendingEventId: string,
     turnId: string,
     repairs: readonly DanglingToolCall[],
+    outcome: RepairOutcome,
     error?: RecoveryError,
-  ): void {
+  ): Promise<void> {
     for (const call of repairs) {
       const isMcp = call.type === "agent.mcp_tool_use";
+      const result = await repairResult(call, outcome, this.danglingCallResolvers, { sessionId, turnId, pendingEventId });
       const repairedData = {
         id: `recovery_${pendingEventId}_${call.toolUseId}`,
         timestamp: new Date().toISOString(),
         type: isMcp ? "agent.mcp_tool_result" : "agent.tool_result",
         toolUseId: call.toolUseId,
         ...(isMcp ? { serverName: call.serverName ?? "unknown" } : {}),
-        content: [{
-          type: "text",
-          text: "The previous tool execution was interrupted before a result was committed. " +
-            "Before retrying it, check whether it already took effect.",
-        }],
-        isError: true,
+        content: result.content,
+        isError: result.isError,
         turnId,
       };
       journal.record({ type: repairedData.type, data: repairedData }, this.turnKey(
@@ -965,6 +975,17 @@ export class SessionRouter {
       journal.record({ type: "session.error", data: { turnId, error: { code: error.code, message: error.message } } },
         this.turnKey(pendingEventId, error.phase));
     }
+  }
+
+  /**
+   * Mark that this attempt continues a Turn another claim held, before it
+   * writes anything else of the Turn. One marker per takeover: a lost
+   * takeover's marker stays, and the next claim writes its own.
+   */
+  private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number, takeover: Takeover | undefined): void {
+    if (!takeover) return;
+    journal.record({ type: "session.turn_resumed", data: { turnId, generation, ...takeover } },
+      this.turnKey(pendingEventId, `turn_resumed:${generation}`));
   }
 
   /**
@@ -1158,7 +1179,7 @@ export class SessionRouter {
       let priorEvents = await this.readAllEvents(sessionId);
       const facts: ResumeFacts = {
         pendingEventId: pendingEvent.id, promotedSeq: promotedEvent.seq,
-        claim: { generation: claim.generation, priorInterrupt: claim.priorInterrupt },
+        claim: { generation: claim.generation, priorInterrupt: claim.priorInterrupt, previous: claim.previous },
         events: priorEvents.filter((event) => event.seq > promotedEvent.seq),
         waits: await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [],
       };
@@ -1186,8 +1207,7 @@ export class SessionRouter {
       // Child restrictions belong to the Session, including later direct user
       // input that has no DelegationExecution record for this pending event.
       if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };
-      const resume = plan.kind === "run" ? plan.resume : undefined;
-      if (resume?.config.model) currentAgent = { ...currentAgent, model: resume.config.model };
+      if (plan.kind === "run" && plan.config?.model) currentAgent = { ...currentAgent, model: plan.config.model };
       let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
       if (delegationExecution && this.delegationStore) {
         currentAgent = { ...currentAgent, mcpServers: undefined,
@@ -1210,7 +1230,9 @@ export class SessionRouter {
         // has not ended changes no plan; one that has ends the Turn now.
         const executionPlan = planResume({ ...facts, execution: started });
         if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
-          this.recordRepairs(journal, pendingEvent.id, executionPlan.turnId, executionPlan.repairs, executionPlan.error);
+          this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
+          await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
+            executionPlan.repairOutcome, executionPlan.error);
           await this.endTurnStream(sessionId, executionPlan.turnId, claim.generation);
           lastOwnedTurn = { turnId: executionPlan.turnId, generation: claim.generation };
           if (!await this.completeTurn(journal, sessionId, pendingEvent.id, executionPlan.turnId, pendingFence)) return;
@@ -1218,9 +1240,10 @@ export class SessionRouter {
         }
       }
 
+      this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover);
       if (plan.kind === "complete") {
         if (plan.interruptChildren) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
-        this.recordRepairs(journal, pendingEvent.id, turnId, plan.repairs, plan.error);
+        await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId, plan.repairs, plan.repairOutcome, plan.error);
         // Under the key of the attempt that accepted the Interrupt: whichever writes it, it is written once.
         if (plan.cause === "interrupted") {
           journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEvent.id, "turn_aborted"));
@@ -1254,6 +1277,9 @@ export class SessionRouter {
         break;
       }
 
+      // A takeover answers the calls the lost attempt left without a result
+      // before anything runs; nothing is executed again (ADR-0021).
+      await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId, plan.repairs, "unknown");
       // Persist + publish session.status_running now: Sandbox preparation
       // can take seconds, and the Session shows running meanwhile.
       journal.record({ type: "session.status_running", data: {} },
@@ -1396,20 +1422,15 @@ export class SessionRouter {
 
       let adapterInput: AdapterInput;
       try {
-        if (resume && this.delegations) {
-          await this.delegations.recoverWaits(delegationRun, resume.waits);
+        if (plan.waits.length && this.delegations) {
+          await this.delegations.recoverWaits(delegationRun, plan.waits);
           // Consuming the last result records the running transition, written
           // by the next flush: the history handed to the Adapter includes it.
           await journal.flush();
-          // A call outside the waits left an uncertain outcome: the Turn ends
-          // once the waits have their results.
-          if (resume.end) {
-            this.recordRepairs(journal, pendingEvent.id, turnId, resume.end.repairs, resume.end.error);
-            if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
-            continue;
-          }
-          priorEvents = await this.readAllEvents(sessionId);
         }
+        // The Adapter continues from the history as it is now, with the
+        // results this attempt wrote for the calls it found dangling.
+        if (plan.waits.length || plan.repairs.length) priorEvents = await this.readAllEvents(sessionId);
         adapterInput = this.buildAdapterInput(
           sessionId,
           turnId,
@@ -1439,13 +1460,10 @@ export class SessionRouter {
               : {}),
           };
         }
-        if (resume) {
-          // The resumed wait's Turn continues after what it already committed:
-          // its model steps and its output blocks.
-          adapterInput.history = this.adapterHistory(priorEvents);
-          adapterInput.resume = plan.progress;
-          if (resume.config.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: resume.config.thinking };
-        }
+        // A continued Turn picks up after what it already committed: its
+        // model steps and its output blocks.
+        if (plan.start === "continue") adapterInput.resume = plan.progress;
+        if (plan.config?.thinking) adapterInput.execution = { ...adapterInput.execution, thinking: plan.config.thinking };
         if (this.delegations) adapterInput.execution = { ...adapterInput.execution,
           onResolved: async (config) => {
             await this.delegations!.assertOwner(delegationRun);
@@ -1458,8 +1476,8 @@ export class SessionRouter {
           await this.delegations.interruptChildren(session, turnId, pendingFence);
           await journal.flush();
           const interruptedEvents = await this.readAllEvents(sessionId);
-          this.recordRepairs(journal, pendingEvent.id, turnId,
-            danglingToolCalls(interruptedEvents.filter((event) => event.seq > promotedEvent.seq)));
+          await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId,
+            danglingToolCalls(interruptedEvents.filter((event) => event.seq > promotedEvent.seq)), "interrupted");
           journal.record({ type: "session.turn_aborted", data: { turnId } },
             this.turnKey(pendingEvent.id, "turn_aborted"));
           if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
@@ -1573,8 +1591,8 @@ export class SessionRouter {
         // The repair reads this attempt's output from the log, including what
         // the Adapter recorded before it lost its write entry.
         await this.delegations?.interruptChildren(session, turnId, pendingFence);
-        this.recordRepairs(journal, pendingEvent.id, turnId,
-          danglingToolCalls((await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq)));
+        await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId,
+          danglingToolCalls((await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq)), "interrupted");
         journal.record({ type: "session.turn_aborted", data: { turnId } },
           this.turnKey(pendingEvent.id, "turn_aborted"));
         await journal.flush();
@@ -1705,8 +1723,11 @@ export class SessionRouter {
       message.content = [{ type: "text", text: JSON.stringify(eventData) }];
     } else if (promotedEvent.type === "delegation.input") message.source = "delegation";
 
-    // History: all events before the current promoted event
-    const history = this.adapterHistory(priorEvents.filter((e) => e.seq < promotedEvent.seq));
+    // History: everything committed but the input itself, which the Adapter
+    // is handed as `message`. A Turn earlier attempts started keeps what they
+    // committed after the input: its native chain, and the results written
+    // for calls they left without one.
+    const history = this.adapterHistory(priorEvents.filter((e) => e.seq !== promotedEvent.seq));
 
     return {
       sessionId,

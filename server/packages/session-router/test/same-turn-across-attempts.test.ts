@@ -7,6 +7,7 @@ import type { StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, AdapterRunResult, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
+import { OUTCOME_UNKNOWN } from "../src/dangling-call-results.js";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const aborted = (signal: AbortSignal) => new Promise<void>((resolve) => {
@@ -39,10 +40,12 @@ async function harness(script: Script) {
     runtime: "pi-agent", sandbox: { enabled: false } });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
-  /** The Turn each attempt was handed, in attempt order. */
+  /** The Turn each attempt was handed, in attempt order, and the input it was run with. */
   const attempts: string[] = [];
+  const inputs: AdapterInput[] = [];
   const adapter: Adapter = { async run(input) {
     attempts.push(input.turnId);
+    inputs.push(input);
     return await script(input, journalWriter(input), attempts.length) ?? "finished";
   } };
   const lost = new Set<string>();
@@ -80,12 +83,19 @@ async function harness(script: Script) {
   };
   /** Every Turn the log's events name. */
   const namedTurns = async () => [...new Set((await log()).map(turnIdOf).filter((turnId) => turnId !== undefined))];
-  return { stores, agent, session, attempts, turns, errors, lost, runner, enqueue, log, ofType, lose, takeOver, namedTurns };
+  return { stores, agent, session, attempts, inputs, turns, errors, lost, runner, enqueue, log, ofType, lose, takeOver, namedTurns };
 }
 
-/** The first attempt commits a tool call and streams the start of a message, then runs until it is stopped. */
+/**
+ * The first attempt commits a tool call and streams the start of a message,
+ * then runs until it is stopped; the attempt that continues the Turn answers.
+ */
 const lostMidTool: Script = async (input, write, attempt) => {
-  if (attempt > 1) throw new Error("A Turn with committed output is not run again");
+  if (attempt > 1) {
+    if (!input.resume) throw new Error("A Turn with committed output is continued, not prompted again");
+    await write(event("agent.message", { content: [{ type: "text", text: "checked" }] }));
+    return;
+  }
   await write(event("agent.tool_use", { toolUseId: "call_1", name: "bash", input: { command: "sleep 600" } }));
   await write(event("agent.message_stream_start"));
   await write(event("agent.message_chunk", { text: "Hel" }));
@@ -93,7 +103,7 @@ const lostMidTool: Script = async (input, write, attempt) => {
 };
 
 describe("every attempt of an input continues the Turn its first attempt started", () => {
-  it("A6 partial output: the repair, the recovery error and the completion name the lost attempt's Turn", async () => {
+  it("A7 lost mid-tool: the takeover reports the call's outcome as unknown and continues the same Turn", async () => {
     const h = await harness(lostMidTool);
     await h.enqueue("A");
     const first = h.runner("runner-a");
@@ -103,19 +113,76 @@ describe("every attempt of an input continues the Turn its first attempt started
 
     await h.takeOver("runner-b");
 
-    expect(h.attempts).toEqual(["turn_1_a1"]);
+    // The second attempt continues the first one's Turn; it is not prompted again.
+    expect(h.attempts).toEqual(["turn_1_a1", "turn_1_a1"]);
+    expect(h.inputs[1].resume).toEqual({ completedModelSteps: 0, blockBase: 0 });
     const log = await h.log();
     // One Turn: every event of the input names the Turn its first attempt started.
     expect(await h.namedTurns()).toEqual(["turn_1_a1"]);
     const [call] = await h.ofType("agent.tool_use");
     const [repair] = await h.ofType("agent.tool_result");
-    // The repair pairs with the call it answers, in the same Turn.
-    expect(repair.data).toMatchObject({ toolUseId: "call_1", isError: true, turnId: turnIdOf(call) });
-    expect((await h.ofType("session.error")).map((stored) => stored.data)).toEqual([
-      { turnId: "turn_1_a1", error: expect.objectContaining({ code: "recovery_partial_turn_aborted" }) }]);
+    // The repair pairs with the call it answers, in the same Turn, and the
+    // continued attempt sees it in its history.
+    expect(repair.data).toMatchObject({ toolUseId: "call_1", isError: true, turnId: turnIdOf(call),
+      content: [{ type: "text", text: OUTCOME_UNKNOWN }] });
+    expect(h.inputs[1].history).toContainEqual(expect.objectContaining({ type: "agent.tool_result", toolUseId: "call_1" }));
+    expect((await h.ofType("session.turn_resumed")).map((stored) => stored.data))
+      .toEqual([{ turnId: "turn_1_a1", generation: 2, reason: "expired", danglingToolUseIds: ["call_1"] }]);
+    expect(await h.ofType("session.error")).toEqual([]);
+    expect((await h.ofType("agent.message")).map((stored) => stored.data)).toEqual([expect.objectContaining({ turnId: "turn_1_a1" })]);
     expect((await h.ofType("session.turn_completed")).map((stored) => stored.data))
       .toEqual([expect.objectContaining({ turnId: "turn_1_a1" })]);
     expect(log.at(-1)?.type).toBe("session.status_idle");
+  });
+
+  it("A15 lost during an MCP call: its unknown result names the server the call named", async () => {
+    const mcpCall = event("agent.context_entry", { sdk: "pi@0.83.0",
+      entry: { id: "entry_assistant", type: "message", parentId: null, message: { role: "assistant", stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "call_mcp", name: "mcp", arguments: { tool: "docs_search", server: "docs", args: "{}" } }] } },
+      presentation: { version: 1, blocks: [{ type: "agent.mcp_tool_use", index: 0, name: "search", serverName: "docs" }] } });
+    const h = await harness(async (input, write, attempt) => {
+      if (attempt > 1) { await write(event("agent.message", { content: [{ type: "text", text: "checked" }] })); return; }
+      await write(mcpCall);
+      await aborted(input.signal!);
+    });
+    await h.enqueue("A");
+    const first = h.runner("runner-a");
+    const draining = first.handleNewEvent(h.session.id, h.agent);
+    await until(async () => (await h.ofType("agent.context_entry")).length === 1);
+    await h.lose("runner-a", draining);
+
+    await h.takeOver("runner-b");
+
+    expect((await h.ofType("agent.mcp_tool_result")).map((stored) => stored.data)).toEqual([expect.objectContaining({
+      toolUseId: "call_mcp", serverName: "docs", isError: true, turnId: "turn_1_a1", content: [{ type: "text", text: OUTCOME_UNKNOWN }] })]);
+    expect((await h.ofType("session.turn_resumed")).map((stored) => stored.data))
+      .toEqual([{ turnId: "turn_1_a1", generation: 2, reason: "expired", danglingToolUseIds: ["call_mcp"] }]);
+    expect(h.attempts).toEqual(["turn_1_a1", "turn_1_a1"]);
+    expect(await h.ofType("session.error")).toEqual([]);
+    expect(await h.ofType("session.turn_completed")).toHaveLength(1);
+  });
+
+  it("a Turn handed over by a released claim resumes for a handoff, not a loss", async () => {
+    const h = await harness(lostMidTool);
+    await h.enqueue("A");
+    // The Runner holding it releases its claim after committing the call, as a
+    // handoff does, instead of being lost.
+    const append = h.stores.eventLogStore.append.bind(h.stores.eventLogStore);
+    vi.spyOn(h.stores.eventLogStore, "append").mockImplementation(async (sessionId, input) => {
+      const stored = await append(sessionId, input);
+      if (input.type === "agent.tool_use" && input.pendingFence?.generation === 1) {
+        await h.stores.pendingEventStore.releaseClaim(sessionId, input.pendingFence.eventId, input.pendingFence);
+        h.lost.add("runner-a");
+      }
+      return stored;
+    });
+    await h.lose("runner-a", h.runner("runner-a").handleNewEvent(h.session.id, h.agent));
+
+    await h.takeOver("runner-b");
+
+    expect((await h.ofType("session.turn_resumed")).map((stored) => stored.data))
+      .toEqual([{ turnId: "turn_1_a1", generation: 2, reason: "released", danglingToolUseIds: ["call_1"] }]);
+    expect(await h.ofType("session.turn_completed")).toHaveLength(1);
   });
 
   it("A12 a terminal event the lost attempt committed: the repair and the completion name its Turn", async () => {
