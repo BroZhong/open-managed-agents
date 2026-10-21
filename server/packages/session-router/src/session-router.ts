@@ -32,6 +32,7 @@ import type {
   Adapter,
   AdapterInput,
   SessionEvent,
+  StreamEvent,
   ContentBlock,
   ToolExecutor,
   UserMessage,
@@ -39,6 +40,7 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { isStreamEvent } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
+import { TurnJournal, type JournalEvent } from "./turn-journal.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -74,6 +76,14 @@ interface PendingStreamBlock {
 interface EquippedSkill {
   id: string;
   descriptor: SkillDescriptor;
+}
+
+/** What the ports of a Turn attempt's journal learn while the attempt is prepared. */
+interface AttemptWrites {
+  /** The prepared Turn's delegation run; tool results consume its waits. */
+  delegationRun?: DelegationRun;
+  /** Durable form and idempotency key of an Adapter event, set before the Adapter runs. */
+  fromAdapter?(event: Exclude<SessionEvent, StreamEvent>): { event: JournalEvent; key: string };
 }
 
 interface ActiveSessionRun {
@@ -271,14 +281,13 @@ export class SessionRouter {
     if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000) throw new RangeError("maxSubagentModelSteps must be between 1 and 1000");
     if (deps.delegationStore) this.delegations = new DelegationCoordinator({
       store: deps.delegationStore, pending: deps.pendingEventStore,
-      sessions: deps.sessionStore, events: deps.eventLogStore, maxSteps,
+      sessions: deps.sessionStore, maxSteps,
       wake: (sessionId) => {
         if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
         void deps.sessionStore.getById(sessionId).then((session) => {
           if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent);
         }).catch((error) => this.reportDrainError(sessionId, error));
       },
-      publish: (event) => deps.eventStreamHub.publish(event.sessionId, { type: event.type, seq: event.seq, data: event.data }),
     });
     this.eventLogStore = deps.eventLogStore;
     this.pendingEventStore = deps.pendingEventStore;
@@ -822,10 +831,9 @@ export class SessionRouter {
 
   /** Check availability without changing the completed answer or claiming all handles are saved. */
   private async checkWorkspace(
-    sessionId: string,
+    journal: TurnJournal,
     sandbox: SandboxSession,
-    idempotencyPrefix?: string,
-    pendingFence?: PendingEventFence,
+    idempotencyKey: string,
   ): Promise<void> {
     try {
       await sandbox.checkWorkspace();
@@ -834,15 +842,52 @@ export class SessionRouter {
         message: "Workspace storage could not be checked. The answer is retained; file save status is unconfirmed. Retry the file operation or check the Workspace before continuing.",
         code: "workspace_storage_error",
       };
-      const stored = await this.eventLogStore.append(sessionId, {
-        type: "session.error",
-        data: { error },
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: idempotencyPrefix,
-        pendingFence,
-      });
-      this.eventStreamHub.publish(sessionId, { type: stored.type, seq: stored.seq, data: stored.data });
+      journal.record({ type: "session.error", data: { error } }, idempotencyKey);
+      await journal.flush();
     }
+  }
+
+  /**
+   * The one write entry of a Turn attempt (ADR-0020), composed of the
+   * attempt's fenced append, live publication and Delta output. A tool result
+   * answering a delegation wait is appended by consuming that wait, once the
+   * prepared Turn's delegation run exists.
+   */
+  private createJournal(
+    sessionId: string,
+    pendingFence: PendingEventFence,
+    attempt: AttemptWrites,
+  ): TurnJournal {
+    return new TurnJournal({
+      sessionId,
+      append: async (event, key) => {
+        const consumed = attempt.delegationRun &&
+          await this.delegations?.consumeResult(attempt.delegationRun, event);
+        return consumed ?? this.eventLogStore.append(sessionId, {
+          type: event.type,
+          data: event.data,
+          sessionThreadId: event.sessionThreadId ?? "sthr_primary",
+          ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
+          idempotencyKey: key,
+          pendingFence,
+        });
+      },
+      publish: (stored) => this.eventStreamHub.publish(sessionId, {
+        type: stored.type,
+        seq: stored.seq,
+        data: stored.data,
+      }),
+      // Transient: Deltas go to the per-turn Redis stream for reconnect
+      // backfill (never to PostgreSQL), then live to in-process subscribers
+      // with the Redis entry id, so live and backfilled frames are identical
+      // and a reconnecting client can de-overlap them exactly.
+      outputDelta: async (delta) => {
+        const deltaId = await this.turnStreamStore?.appendDelta(sessionId, delta);
+        this.eventStreamHub.publishChunk(sessionId, { ...delta, deltaId });
+      },
+      // The Adapter is handed its port only once the mapping is set.
+      fromAdapter: (event) => attempt.fromAdapter!(event),
+    });
   }
 
   private turnKey(pendingEventId: string, phase: string): string {
@@ -890,13 +935,13 @@ export class SessionRouter {
     }
   }
 
-  private async repairDanglingToolUses(
-    sessionId: string,
+  /** Record a result for each tool call of the attempt's events that has none. */
+  private repairDanglingToolUses(
+    journal: TurnJournal,
     pendingEventId: string,
     turnId: string,
     attemptEvents: StoredEvent[],
-    pendingFence: PendingEventFence,
-  ): Promise<void> {
+  ): void {
     attemptEvents = attemptEvents.flatMap(event => presentEvent(event));
     const results = new Set<string>();
     for (const event of attemptEvents) {
@@ -925,21 +970,10 @@ export class SessionRouter {
         isError: true,
         turnId,
       };
-      const stored = await this.eventLogStore.append(sessionId, {
-        type: repairedData.type,
-        data: repairedData,
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: this.turnKey(
-          pendingEventId,
-          `recovery_tool_result:${encodeURIComponent(data.toolUseId)}`,
-        ),
-        pendingFence,
-      });
-      this.eventStreamHub.publish(sessionId, {
-        type: stored.type,
-        seq: stored.seq,
-        data: stored.data,
-      });
+      journal.record({ type: repairedData.type, data: repairedData }, this.turnKey(
+        pendingEventId,
+        `recovery_tool_result:${encodeURIComponent(data.toolUseId)}`,
+      ));
       results.add(data.toolUseId);
     }
   }
@@ -952,11 +986,16 @@ export class SessionRouter {
    * crash after the marker only re-acks and never reruns the Adapter.
    */
   private async completeTurn(
+    journal: TurnJournal,
     sessionId: string,
     pendingEventId: string,
     turnId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
+    // Write what the attempt recorded first: the Child outcome below is read
+    // from the log, and a failed journal must stop the attempt before it
+    // finishes the execution or marks the Turn complete.
+    await journal.flush();
     const execution = await this.delegationStore?.getByPendingEventId(pendingEventId);
     if (execution && !isTerminalExecution(execution) && this.delegationStore) {
       const log = await this.readAllEvents(sessionId);
@@ -991,19 +1030,9 @@ export class SessionRouter {
       if (data.executionId) await this.delegationStore.markNotificationProcessed(data.executionId, pendingFence);
     }
     await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
-    const completionData = { pendingEventId, turnId };
-    const completionEvent = await this.eventLogStore.append(sessionId, {
-      type: "session.turn_completed",
-      data: completionData,
-      sessionThreadId: "sthr_primary",
-      idempotencyKey: this.turnKey(pendingEventId, "completed"),
-      pendingFence,
-    });
-    this.eventStreamHub.publish(sessionId, {
-      type: completionEvent.type,
-      seq: completionEvent.seq,
-      data: completionEvent.data,
-    });
+    journal.record({ type: "session.turn_completed", data: { pendingEventId, turnId } },
+      this.turnKey(pendingEventId, "completed"));
+    await journal.flush();
 
     return this.acknowledgeCompletedTurn(sessionId, pendingEventId, pendingFence);
   }
@@ -1069,18 +1098,25 @@ export class SessionRouter {
           this.reportDrainError(sessionId, error);
         },
       );
+      // Every durable write of this attempt goes through its one journal.
+      const attemptWrites: AttemptWrites = {};
+      const journal = this.createJournal(sessionId, pendingFence, attemptWrites);
 
       try {
 
-      // Promote: insert user message into canonical event log (correct seq position)
-      const promotedEvent = await this.eventLogStore.append(sessionId, {
+      // Promote: insert user message into canonical event log (correct seq
+      // position). The Turn is named after the seq this assigns, so promotion
+      // is the attempt's first journal write, flushed alone, and the journal
+      // is bound to the Turn once its name is known below.
+      const promotionKey = `pending:${pendingEvent.id}`;
+      journal.record({
         type: pendingEvent.type === "subagent.result" ? "subagent.result_claimed" : pendingEvent.type,
         data: pendingEvent.data,
         sessionThreadId: pendingEvent.sessionThreadId,
-        ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
-        idempotencyKey: `pending:${pendingEvent.id}`,
-        pendingFence,
-      });
+        apiKeyId: pendingEvent.apiKeyId,
+      }, promotionKey);
+      await journal.flush();
+      const promotedEvent = journal.written(promotionKey)!;
 
       // Read the complete log once after idempotent promotion. On restart, a
       // completion marker means the durable Turn output already committed. The
@@ -1091,6 +1127,7 @@ export class SessionRouter {
       const waits = await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [];
       const resumableWaits = waits.filter((wait) => wait.status !== "cancelled");
       if (resumableWaits.length) turnId = resumableWaits[0].callerTurnId;
+      journal.bindTurn(turnId);
       if (this.turnCompleted(priorEvents, pendingEvent.id)) {
         await this.reclaimEarlierAttempts(
           sessionId,
@@ -1136,15 +1173,13 @@ export class SessionRouter {
         delegationExecution = started;
         if (isTerminalExecution(started)) {
           if (started.status === "recovery_required") {
-            await this.repairDanglingToolUses(sessionId, pendingEvent.id, started.turnId ?? turnId,
-              priorEvents.filter((event) => event.seq > promotedEvent.seq), pendingFence);
-            await this.eventLogStore.append(sessionId, {
-              type: "session.error", data: { turnId: started.turnId ?? turnId,
-                error: { code: "recovery_required", message: started.result?.reason } },
-              sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pendingEvent.id}:recovery_required`, pendingFence,
-            });
+            this.repairDanglingToolUses(journal, pendingEvent.id, started.turnId ?? turnId,
+              priorEvents.filter((event) => event.seq > promotedEvent.seq));
+            journal.record({ type: "session.error", data: { turnId: started.turnId ?? turnId,
+              error: { code: "recovery_required", message: started.result?.reason } } },
+            `pending:${pendingEvent.id}:recovery_required`);
           }
-          if (!await this.completeTurn(sessionId, pendingEvent.id, started.turnId ?? turnId, pendingFence)) return;
+          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, started.turnId ?? turnId, pendingFence)) return;
           continue;
         }
       }
@@ -1158,31 +1193,15 @@ export class SessionRouter {
       );
       if (alreadyTerminal || (partialDurableOutput && resumableWaits.length === 0)) {
         if (alreadyTerminal) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
-        await this.repairDanglingToolUses(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          attemptEvents,
-          pendingFence,
-        );
+        this.repairDanglingToolUses(journal, pendingEvent.id, turnId, attemptEvents);
         if (!alreadyTerminal) {
           const recoveryError = {
             message:
               "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
             code: "recovery_partial_turn_aborted",
           };
-          const errorEvent = await this.eventLogStore.append(sessionId, {
-            type: "session.error",
-            data: { error: recoveryError },
-            sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "recovery_partial_turn_aborted"),
-            pendingFence,
-          });
-          this.eventStreamHub.publish(sessionId, {
-            type: errorEvent.type,
-            seq: errorEvent.seq,
-            data: errorEvent.data,
-          });
+          journal.record({ type: "session.error", data: { error: recoveryError } },
+            this.turnKey(pendingEvent.id, "recovery_partial_turn_aborted"));
         }
         await this.reclaimEarlierAttempts(
           sessionId,
@@ -1195,6 +1214,7 @@ export class SessionRouter {
           lastOwnedTurnId = turnId;
         }
         if (!await this.completeTurn(
+          journal,
           sessionId,
           pendingEvent.id,
           turnId,
@@ -1212,12 +1232,6 @@ export class SessionRouter {
         turnId,
       );
 
-      this.eventStreamHub.publish(sessionId, {
-        type: promotedEvent.type,
-        seq: promotedEvent.seq,
-        data: promotedEvent.data,
-      });
-
       // Record the active turn in Redis (not process memory) so a reconnecting
       // client — possibly on another Host instance — can find and backfill the
       // in-flight turn's deltas.
@@ -1233,19 +1247,11 @@ export class SessionRouter {
         break;
       }
 
-      // Persist + publish session.status_running
-      const runningEvent = await this.eventLogStore.append(sessionId, {
-        type: "session.status_running",
-        data: {},
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: this.turnKey(pendingEvent.id, "status_running"),
-        pendingFence,
-      });
-      this.eventStreamHub.publish(sessionId, {
-        type: runningEvent.type,
-        seq: runningEvent.seq,
-        data: runningEvent.data,
-      });
+      // Persist + publish session.status_running now: Sandbox preparation
+      // can take seconds, and the Session shows running meanwhile.
+      journal.record({ type: "session.status_running", data: {} },
+        this.turnKey(pendingEvent.id, "status_running"));
+      await journal.flush();
 
       // Ordinary conversations resolve mutable Agent configuration per Turn.
       // A Loop occurrence is different: ADR-0007 makes the Agent snapshot
@@ -1261,26 +1267,16 @@ export class SessionRouter {
       // run it again.
       const adapter = this.resolveAdapter(currentAgent.runtime);
       if (!adapter) {
-        const errorEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error: {
-            code: "unsupported_runtime",
-            message: `Agent runtime "${currentAgent.runtime}" is not supported`,
-          } },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEvent.id, "unsupported_runtime"),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: errorEvent.type,
-          seq: errorEvent.seq,
-          data: errorEvent.data,
-        });
+        journal.record({ type: "session.error", data: { error: {
+          code: "unsupported_runtime",
+          message: `Agent runtime "${currentAgent.runtime}" is not supported`,
+        } } }, this.turnKey(pendingEvent.id, "unsupported_runtime"));
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(sessionId, turnId);
           await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
         }
         if (!await this.completeTurn(
+          journal,
           sessionId,
           pendingEvent.id,
           turnId,
@@ -1299,18 +1295,8 @@ export class SessionRouter {
             "Agent is sandboxed but no sandbox manager is available (SANDBOX_ENABLED / E2B config missing)",
           code: "sandbox_unavailable",
         };
-        const errorEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_unavailable"),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: errorEvent.type,
-          seq: errorEvent.seq,
-          data: errorEvent.data,
-        });
+        journal.record({ type: "session.error", data: { error } },
+          this.turnKey(pendingEvent.id, "sandbox_unavailable"));
         // Mirror the normal turn-end housekeeping so the transient stream/active
         // turn record don't leak, then move on to the next pending event (the
         // drain loop falls through to the idle transition when the queue empties).
@@ -1319,6 +1305,7 @@ export class SessionRouter {
           await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
         }
         if (!await this.completeTurn(
+          journal,
           sessionId,
           pendingEvent.id,
           turnId,
@@ -1349,7 +1336,8 @@ export class SessionRouter {
       }
       const delegationRun: DelegationRun = { session, turnId, fence: pendingFence,
         signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId,
-        effectiveConfig: { model: currentAgent.model } };
+        effectiveConfig: { model: currentAgent.model }, journal };
+      attemptWrites.delegationRun = delegationRun;
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
       executionSettled = true; // No runtime has started, including preparation failures.
@@ -1371,18 +1359,8 @@ export class SessionRouter {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
             code: "sandbox_prepare_failed",
           };
-          const stored = await this.eventLogStore.append(sessionId, {
-            type: "session.error",
-            data: { error: refreshError },
-            sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_prepare_failed"),
-            pendingFence,
-          });
-          this.eventStreamHub.publish(sessionId, {
-            type: stored.type,
-            seq: stored.seq,
-            data: stored.data,
-          });
+          journal.record({ type: "session.error", data: { error: refreshError } },
+            this.turnKey(pendingEvent.id, "sandbox_prepare_failed"));
           if (this.turnStreamStore) {
             await this.turnStreamStore.reclaim(sessionId, turnId);
             await this.updateActiveTurnProjection(sessionId, {
@@ -1391,6 +1369,7 @@ export class SessionRouter {
             });
           }
           if (!await this.completeTurn(
+            journal,
             sessionId,
             pendingEvent.id,
             turnId,
@@ -1413,19 +1392,20 @@ export class SessionRouter {
       try {
         if (resumableWaits.length && this.delegations) {
           await this.delegations.recoverWaits(delegationRun, resumableWaits);
+          // Consuming the last result records the running transition, written
+          // by the next flush: the history handed to the Adapter includes it.
+          await journal.flush();
           priorEvents = await this.readAllEvents(sessionId);
           const turnEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq).flatMap(event => presentEvent(event));
           const completedTools = new Set(turnEvents.filter((event) => event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result")
             .map((event) => (event.data as { toolUseId?: string }).toolUseId));
           if (turnEvents.some((event) => (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
             !completedTools.has((event.data as { toolUseId?: string }).toolUseId))) {
-            await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId, priorEvents.filter(event => event.seq > promotedEvent.seq), pendingFence);
-            await this.eventLogStore.append(sessionId, {
-              type: "session.error", data: { turnId, error: { code: "recovery_required",
-                message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } },
-              sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pendingEvent.id}:unsafe_continuation`, pendingFence,
-            });
-            if (!await this.completeTurn(sessionId, pendingEvent.id, turnId, pendingFence)) return;
+            this.repairDanglingToolUses(journal, pendingEvent.id, turnId, priorEvents.filter(event => event.seq > promotedEvent.seq));
+            journal.record({ type: "session.error", data: { turnId, error: { code: "recovery_required",
+              message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } } },
+            `pending:${pendingEvent.id}:unsafe_continuation`);
+            if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
             continue;
           }
         }
@@ -1476,12 +1456,13 @@ export class SessionRouter {
       } catch (error) {
         if (turnController.signal.aborted && !leaseLost && this.delegations) {
           await this.delegations.interruptChildren(session, turnId, pendingFence);
+          await journal.flush();
           const interruptedEvents = await this.readAllEvents(sessionId);
-          await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId,
-            interruptedEvents.filter((event) => event.seq > promotedEvent.seq), pendingFence);
-          await this.eventLogStore.append(sessionId, { type: "session.turn_aborted", data: { turnId },
-            sessionThreadId: "sthr_primary", idempotencyKey: this.turnKey(pendingEvent.id, "turn_aborted"), pendingFence });
-          if (!await this.completeTurn(sessionId, pendingEvent.id, turnId, pendingFence)) return;
+          this.repairDanglingToolUses(journal, pendingEvent.id, turnId,
+            interruptedEvents.filter((event) => event.seq > promotedEvent.seq));
+          journal.record({ type: "session.turn_aborted", data: { turnId } },
+            this.turnKey(pendingEvent.id, "turn_aborted"));
+          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, turnId, pendingFence)) return;
           continue;
         }
         if (!(error instanceof ManagedMcpResolutionError)) throw error;
@@ -1492,21 +1473,8 @@ export class SessionRouter {
           message: "A managed MCP connection is unavailable for this Tenant",
           code: "managed_mcp_unavailable",
         };
-        const stored = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error: managedMcpError },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(
-            pendingEvent.id,
-            "managed_mcp_unavailable",
-          ),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: stored.type,
-          seq: stored.seq,
-          data: stored.data,
-        });
+        journal.record({ type: "session.error", data: { error: managedMcpError } },
+          this.turnKey(pendingEvent.id, "managed_mcp_unavailable"));
         if (this.turnStreamStore) {
           await this.turnStreamStore.reclaim(sessionId, turnId);
           await this.updateActiveTurnProjection(sessionId, {
@@ -1515,6 +1483,7 @@ export class SessionRouter {
           });
         }
         if (!await this.completeTurn(
+          journal,
           sessionId,
           pendingEvent.id,
           turnId,
@@ -1539,10 +1508,6 @@ export class SessionRouter {
       let durableEventIndex = 0;
       const streamBlockBase = blockIndex + 1;
       const pendingStreamBlocks: PendingStreamBlock[] = [];
-      // The Complete Events this attempt persisted, in order. Only the Adapter
-      // knows what it produced, so an Interrupt's cleanup (dangling tool_use
-      // repair) reads this instead of re-querying the log.
-      const attemptStoredEvents: StoredEvent[] = [];
 
       const alignCompleteEvent = (event: { type: string; toolUseId?: unknown }): { type: string; toolUseId?: unknown; turnId: string; blockIndex?: number } => {
         const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
@@ -1571,9 +1536,12 @@ export class SessionRouter {
           : { ...event, turnId: turnId! };
       };
 
-      const appendAndPublish = async (event: SessionEvent): Promise<void> => {
-        // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
-        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
+      // The commit barrier and the event stream deliver the same event. It is
+      // aligned and keyed once, so the journal writes and publishes it once.
+      const durableForms = new Map<string, { event: JournalEvent; key: string }>();
+      attemptWrites.fromAdapter = (event) => {
+        const known = durableForms.get(event.id);
+        if (known) return known;
         let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
         if (event.type === "agent.context_entry" && event.presentation) {
           const displays = presentContextData(event.type, event);
@@ -1598,45 +1566,36 @@ export class SessionRouter {
           callerToolUseId: delegationExecution.callerToolUseId,
           executionId: delegationExecution.id,
         } : alignedEvent;
-        const consumed = await this.delegations?.persistToolResult(delegationRun, completeEvent);
-        const stored = consumed ?? await this.eventLogStore.append(sessionId, {
-          type: completeEvent.type,
-          data: completeEvent,
-          sessionThreadId: "sthr_primary",
-          ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
-          idempotencyKey: this.turnKey(
+        const durable = {
+          event: { type: completeEvent.type, data: completeEvent, apiKeyId: pendingEvent.apiKeyId },
+          key: this.turnKey(
             pendingEvent.id,
             this.delegations || event.type === "agent.context_start" || event.type === "agent.context_entry" || event.type === "agent.context_usage" || event.type === "agent.compaction"
               ? `event:${event.id}` : `event:${durableEventIndex++}`,
           ),
-          pendingFence,
-        });
-        attemptStoredEvents.push(stored);
-        this.eventStreamHub.publish(sessionId, {
-          type: stored.type,
-          seq: stored.seq,
-          data: stored.data,
-        });
+        };
+        durableForms.set(event.id, durable);
+        return durable;
       };
-      // The Adapter's commit barrier and this loop both persist. One chain keeps
-      // publication in seq order, which SSE cursors rely on to drop duplicates.
-      let persistence: Promise<void> = Promise.resolve();
-      const persistCompleteEvent = (event: SessionEvent): Promise<void> => {
-        const write = persistence.then(() => appendAndPublish(event));
-        persistence = write.catch(() => {});
-        return write;
+      // The Adapter's events reach the journal through its revocable port.
+      const recordAdapterEvent = (event: SessionEvent): void => {
+        // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
+        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
+        journal.adapter.record(event as Exclude<SessionEvent, StreamEvent>);
       };
 
       // The Adapter awaits this at every native message boundary and before
-      // using a newly compacted context. Writes use the same fence and event IDs
-      // as ordinary iteration.
+      // using a newly compacted context. It records through the same port and
+      // mapping as the event stream, so an event delivered both ways is
+      // written and published once.
       adapterInput.persistContext = async (contextEvents) => {
         for (const event of contextEvents) {
           if (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type === "compaction") {
             turnController.signal.throwIfAborted();
           }
-          await persistCompleteEvent(event);
+          recordAdapterEvent(event);
         }
+        await journal.adapter.flush();
       };
 
       try {
@@ -1783,7 +1742,8 @@ export class SessionRouter {
                   abandonIterator = true;
                   break;
                 }
-                await persistCompleteEvent(event);
+                recordAdapterEvent(event);
+                await journal.adapter.flush();
               }
               if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
                 abandonIterator = true;
@@ -1805,34 +1765,11 @@ export class SessionRouter {
                 });
               }
               const currentBlock = blockIndex < 0 ? 0 : blockIndex;
-
-              // Transient: token-level deltas go to the per-turn Redis stream for
-              // reconnect backfill (never to PostgreSQL), tagged with turnId +
-              // blockIndex. The returned Redis entry id lets a reconnecting client
-              // dedup live vs. backfilled deltas exactly.
-              let deltaId: string | undefined;
-              if (this.turnStreamStore) {
-                deltaId = await this.turnStreamStore.appendDelta(sessionId, {
-                  turnId,
-                  blockIndex: currentBlock,
-                  type: event.type,
-                  data: event,
-                });
-              }
-
-              // Live: publish to in-process subscribers, carrying the same
-              // turnId + blockIndex (and the Redis entry id) so live and
-              // backfilled frames are identical and can be de-overlapped on
-              // reconnect.
-              this.eventStreamHub.publishChunk(sessionId, {
-                type: event.type,
-                data: event,
-                turnId,
-                blockIndex: currentBlock,
-                deltaId,
-              });
+              journal.adapter.delta(event as StreamEvent, currentBlock);
             } else {
-              await persistCompleteEvent(event);
+              // Each Complete Event is durable before the next one is read.
+              recordAdapterEvent(event);
+              await journal.adapter.flush();
             }
           }
         } catch (error) {
@@ -1845,6 +1782,10 @@ export class SessionRouter {
           }
           throw error;
         } finally {
+          // However the attempt ends, the Adapter loses its write entry before
+          // any closing event: what it recorded so far is written at the next
+          // flush, anything later is dropped (ADR-0020).
+          journal.revokeAdapter();
           if (abandonIterator) {
             // AsyncIterator.return() is advisory: a non-compliant Adapter may
             // leave it queued behind the same hung next(). Never await it, and
@@ -1896,18 +1837,12 @@ export class SessionRouter {
             await this.turnStreamStore.reclaim(sessionId, turnId);
           }
         } else {
-          const errorEvent = await this.eventLogStore.append(sessionId, {
-            type: "session.error",
-            data: { error: { message: String(err), code: "adapter_error" } },
-            sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "adapter_error"),
-            pendingFence,
-          });
-          this.eventStreamHub.publish(sessionId, {
-            type: errorEvent.type,
-            seq: errorEvent.seq,
-            data: errorEvent.data,
-          });
+          // If the journal has failed, this flush rejects with the original
+          // failure and the attempt stops without a terminal event, as on a
+          // lost lease.
+          journal.record({ type: "session.error", data: { error: { message: String(err), code: "adapter_error" } } },
+            this.turnKey(pendingEvent.id, "adapter_error"));
+          await journal.flush();
         }
       }
 
@@ -1917,6 +1852,7 @@ export class SessionRouter {
       // durable wait. Reclaim the same input and continue from the event log.
       if (!turnController.signal.aborted && this.delegationStore &&
         (await this.delegationStore.listWaits(sessionId, pendingEvent.id)).some((wait) => wait.status === "waiting")) {
+        await journal.flush();
         await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
         return;
       }
@@ -1928,26 +1864,15 @@ export class SessionRouter {
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
       if (turnController.signal.aborted && !iterationFailed) {
+        // The repair reads this attempt's output from the log, including what
+        // the Adapter recorded before it lost its write entry.
+        await journal.flush();
         await this.delegations?.interruptChildren(session, turnId, pendingFence);
-        await this.repairDanglingToolUses(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          attemptStoredEvents,
-          pendingFence,
-        );
-        const abortedEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.turn_aborted",
-          data: { turnId },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEvent.id, "turn_aborted"),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: abortedEvent.type,
-          seq: abortedEvent.seq,
-          data: abortedEvent.data,
-        });
+        this.repairDanglingToolUses(journal, pendingEvent.id, turnId,
+          (await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq));
+        journal.record({ type: "session.turn_aborted", data: { turnId } },
+          this.turnKey(pendingEvent.id, "turn_aborted"));
+        await journal.flush();
       }
 
       // Fence the availability check and its optional durable diagnostic.
@@ -1960,8 +1885,8 @@ export class SessionRouter {
       }
 
       if (sandbox) {
-        await this.checkWorkspace(sessionId, sandbox,
-          this.turnKey(pendingEvent.id, "workspace_storage_check"), pendingFence);
+        await this.checkWorkspace(journal, sandbox,
+          this.turnKey(pendingEvent.id, "workspace_storage_check"));
       }
 
       // Fence again before changing global Turn state after the storage check.
@@ -1982,6 +1907,7 @@ export class SessionRouter {
       }
 
       if (!await this.completeTurn(
+        journal,
         sessionId,
         pendingEvent.id,
         turnId,

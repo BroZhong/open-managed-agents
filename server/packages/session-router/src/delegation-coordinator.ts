@@ -1,13 +1,14 @@
 import type {
   DelegationCaller, DelegationExecution, DelegationOutcome, DelegationStore,
-  DelegationWait, DelegationWaitConfig, EventLogStore, PendingEventFence, PendingEventStore, Session,
+  DelegationWait, DelegationWaitConfig, PendingEventFence, PendingEventStore, Session,
   SessionStore, StoredEvent,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, presentContextData, presentEvent } from "@oma-server/store";
 import type {
-  AdapterExecution, AgentToolResultEvent, HostSubagentCapability, SessionEvent,
+  AdapterExecution, AgentToolResultEvent, HostSubagentCapability,
   SubagentCallContext, ToolExecutor, ToolFileSystem,
 } from "@open-managed-agents/adapter-core";
+import type { JournalEvent, TurnJournal } from "./turn-journal.js";
 
 export interface DelegationRun {
   session: Session;
@@ -16,15 +17,15 @@ export interface DelegationRun {
   signal: AbortSignal;
   apiKeyId?: string;
   effectiveConfig?: Record<string, unknown>;
+  /** The attempt's write entry; wait transitions and recovered results are recorded there. */
+  journal: TurnJournal;
 }
 
 interface CoordinatorDeps {
   store: DelegationStore;
   pending: PendingEventStore;
   sessions: SessionStore;
-  events: EventLogStore;
   wake(sessionId: string): void;
-  publish(event: StoredEvent): void;
   maxSteps: number;
   pollMs?: number;
 }
@@ -82,7 +83,7 @@ export class DelegationCoordinator {
         if (execution.mode === "sync") await this.saveWait(run, execution, context);
         this.deps.wake(execution.childId);
         return execution.mode === "sync"
-          ? this.waitForResult(run, execution)
+          ? this.waitForResult(run, execution, context.toolUseId)
           : this.readResult(execution);
       },
       getResult: async (input, context) => {
@@ -96,7 +97,7 @@ export class DelegationCoordinator {
         // A terminal query also records its consumption intent. Only the
         // eventual durable tool result consumes/suppresses its async delivery.
         if (input.wait || isTerminalExecution(execution)) await this.saveWait(run, execution, context);
-        return input.wait ? this.waitForResult(run, execution) : this.readResult(execution);
+        return input.wait ? this.waitForResult(run, execution, context.toolUseId) : this.readResult(execution);
       },
       steer: async (input, context) => {
         await this.assertOwner(run);
@@ -116,8 +117,9 @@ export class DelegationCoordinator {
     }, run.fence);
   }
 
-  async waitForResult(run: DelegationRun, execution: DelegationExecution): Promise<Record<string, unknown>> {
-    await this.setWaiting(run, true);
+  async waitForResult(run: DelegationRun, execution: DelegationExecution, toolUseId: string): Promise<Record<string, unknown>> {
+    await this.recordStatus(run, "waiting", toolUseId);
+    await run.journal.flush();
     try {
       for (;;) {
         await this.assertOwner(run);
@@ -131,7 +133,10 @@ export class DelegationCoordinator {
       }
     } finally {
       if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
-        .some((wait) => wait.status === "waiting")) await this.setWaiting(run, false);
+        .some((wait) => wait.status === "waiting")) {
+        await this.recordStatus(run, "running", toolUseId);
+        await run.journal.flush();
+      }
     }
   }
 
@@ -143,14 +148,18 @@ export class DelegationCoordinator {
     return { ...executionResult(execution), commands };
   }
 
-  private async setWaiting(run: DelegationRun, waiting: boolean): Promise<void> {
+  /**
+   * Record that the Turn starts or stops waiting on the wait of one tool call.
+   * A wait belongs to exactly one tool call of one pending input, so that
+   * pair and the direction name each transition: an attempt that resumes the
+   * same wait after a Runner loss records it again, and the event log returns
+   * the original row instead of a second one.
+   */
+  private async recordStatus(run: DelegationRun, status: "waiting" | "running", toolUseId: string): Promise<void> {
     await this.assertOwner(run);
-    await this.deps.sessions.updateStatusIfClaimed(run.session.id, waiting ? "waiting" : "running", run.fence);
-    const event = await this.deps.events.append(run.session.id, {
-      type: waiting ? "session.status_waiting" : "session.status_running",
-      data: { turnId: run.turnId }, sessionThreadId: "sthr_primary", pendingFence: run.fence,
-    });
-    this.deps.publish(event);
+    await this.deps.sessions.updateStatusIfClaimed(run.session.id, status, run.fence);
+    run.journal.record({ type: `session.status_${status}`, data: { turnId: run.turnId } },
+      `pending:${run.fence.eventId}:status_${status}:${encodeURIComponent(toolUseId)}`);
   }
 
   /**
@@ -163,20 +172,30 @@ export class DelegationCoordinator {
       if (wait.status !== "waiting") continue;
       const execution = await this.deps.store.getExecution(run.session.tenantId, wait.executionId);
       if (!execution) throw new Error("Waiting execution not found");
-      const result = await this.waitForResult(run, execution);
+      const result = await this.waitForResult(run, execution, wait.callerToolUseId);
       const event: AgentToolResultEvent = {
         id: `delegation_result_${wait.executionId}_${wait.callerToolUseId}`,
         timestamp: new Date().toISOString(), type: "agent.tool_result", toolUseId: wait.callerToolUseId,
         content: [{ type: "text", text: JSON.stringify(result) }],
         isError: executionResultIsError(result),
       };
-      await this.persistToolResult(run, event);
+      // The journal's append consumes the wait (consumeResult) as it writes.
+      run.journal.record({ type: event.type, data: { ...event, turnId: run.turnId }, apiKeyId: run.apiKeyId },
+        `pending:${run.fence.eventId}:delegation_result:${wait.callerToolUseId}`);
+      await run.journal.flush();
     }
   }
 
-  async persistToolResult(run: DelegationRun, event: SessionEvent): Promise<StoredEvent | null> {
-    const result = event.type === "agent.tool_result" ? event
-      : presentContextData(event.type, event).find(item => item.type === "agent.tool_result")?.data;
+  /**
+   * Append a tool result that answers one of the Turn's waits by consuming the
+   * wait's delegation result, which suppresses its asynchronous delivery. Null
+   * when the event answers no consumable wait. Runs inside the journal's
+   * append, so the running transition it records is written by the next flush,
+   * ahead of anything recorded after it.
+   */
+  async consumeResult(run: DelegationRun, event: JournalEvent): Promise<StoredEvent | null> {
+    const result = event.type === "agent.tool_result" ? event.data as Record<string, unknown>
+      : presentContextData(event.type, event.data).find(item => item.type === "agent.tool_result")?.data;
     if (!result) return null;
     const toolUseId = result.toolUseId as string;
     const wait = (await this.deps.store.listWaits(run.session.id, run.fence.eventId))
@@ -186,13 +205,12 @@ export class DelegationCoordinator {
     if (!execution || !isTerminalExecution(execution)) return null;
     const stored = await this.deps.store.consumeResult(wait.executionId,
       this.caller(run, toolUseId), run.fence, {
-        type: event.type, data: { ...event, turnId: run.turnId },
+        type: event.type, data: { ...event.data as object, turnId: run.turnId },
         sessionThreadId: "sthr_primary", apiKeyId: run.apiKeyId,
         idempotencyKey: `pending:${run.fence.eventId}:delegation_result:${toolUseId}`,
       });
-    this.deps.publish(stored);
     if (!run.signal.aborted && !(await this.deps.store.listWaits(run.session.id, run.fence.eventId))
-      .some((item) => item.status === "waiting")) await this.setWaiting(run, false);
+      .some((item) => item.status === "waiting")) await this.recordStatus(run, "running", toolUseId);
     return stored;
   }
 

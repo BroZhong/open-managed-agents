@@ -12,8 +12,8 @@ describe("Host delegation budget", () => {
     const claim = await stores.pendingEventStore.claim(parent.id, "host", 30_000);
     const coordinator = new DelegationCoordinator({
       store: stores.delegationStore, pending: stores.pendingEventStore,
-      sessions: stores.sessionStore, events: stores.eventLogStore,
-      wake() {}, publish() {}, maxSteps: maximum,
+      sessions: stores.sessionStore,
+      wake() {}, maxSteps: maximum,
     });
     const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal, effectiveConfig: { model: "provider/parent" } });
     expect(capability.maxModelSteps).toBe(maximum);

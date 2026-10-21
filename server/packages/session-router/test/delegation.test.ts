@@ -216,7 +216,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const child = (await h.stores.sessionStore.getById(childId))!;
     const coordinator = new DelegationCoordinator({ store: h.stores.delegationStore,
       pending: h.stores.pendingEventStore, sessions: h.stores.sessionStore,
-      events: h.stores.eventLogStore, wake() {}, publish() {}, maxSteps: 30 });
+      wake() {}, maxSteps: 30 });
     expect(() => coordinator.capability({ session: child, turnId: "direct-child-turn",
       fence: { eventId: "not-issued", ownerId: "host", generation: 1 }, signal: new AbortController().signal,
     })).toThrow("Child Sessions cannot receive delegation capabilities");
