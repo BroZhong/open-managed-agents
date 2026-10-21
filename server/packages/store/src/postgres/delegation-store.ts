@@ -99,7 +99,11 @@ export class PgDelegationStore extends TransactionalDelegationStore {
         pending,
         read: async <R extends DelegationRecord>(table: DelegationTable, filters: Record<string, string> = {}) => {
           const params: unknown[] = [];
-          const predicates = Object.entries(filters).map(([key, value]) => { params.push(key, value); return `record ->> $${params.length - 1} = $${params.length}`; });
+          const predicates = Object.entries(filters).map(([key, value]) => {
+            // Executions and commands are stored under their own id: use the key, not a record scan.
+            if (key === "id" && (table === "executions" || table === "commands")) { params.push(value); return `id = $${params.length}`; }
+            params.push(key, value); return `record ->> $${params.length - 1} = $${params.length}`;
+          });
           const rows = await client.query<{ record: R }>(`SELECT record FROM ${tables[table]}${predicates.length ? ` WHERE ${predicates.join(" AND ")}` : ""}`, params);
           return rows.rows.map((row) => row.record);
         },
