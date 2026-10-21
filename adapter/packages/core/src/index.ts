@@ -55,7 +55,7 @@ export type {
   SessionEvent,
 } from "./types.js";
 
-export type { Adapter } from "./interface.js";
+export type { Adapter, TurnJournalPort } from "./interface.js";
 
 export type {
   ToolExecutor,
