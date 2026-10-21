@@ -1102,7 +1102,9 @@ export class SessionRouter {
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
       const stopHeartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
       // The one stop path of a lost lease, a failed write and termination: the
-      // Adapter loses its write entry and its Turn signal at once.
+      // Adapter loses its write entry and its Turn signal at once. `stopped`
+      // is set before the signal aborts: the fenced executor reads it, so the
+      // cancellation that abort makes Pi send is refused, not delivered.
       const stopAttempt = (reason: unknown): void => {
         if (stopped) return;
         stopped = true;
@@ -1349,6 +1351,17 @@ export class SessionRouter {
         signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId,
         effectiveConfig: { model: currentAgent.model }, journal };
       attemptWrites.delegationRun = delegationRun;
+      // Sandbox commands are fenced by ownership of this Turn, not by its
+      // signal. An Interrupt aborts the Turn while this attempt still owns it,
+      // and the Adapter must still be able to stop its own running tool (Pi
+      // sends SIGTERM to the tool wrapper through this executor). A stopped
+      // attempt owns nothing: it sends the Sandbox no command for the Turn, not
+      // even a cancellation. Checked again after the claim read, so a stop that
+      // lands during it still wins.
+      const assertExecutionOwner = async () => {
+        if (!stopped) await this.delegations!.assertClaim(delegationRun);
+        if (stopped) throw new PendingEventClaimLostError(sessionId, pendingFence.eventId, pendingFence.ownerId, pendingFence.generation);
+      };
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
       executionSettled = true; // No runtime has started, including preparation failures.
@@ -1427,8 +1440,7 @@ export class SessionRouter {
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox && this.delegations ? fencedExecutor(sandbox,
-            () => this.delegations!.assertOwner(delegationRun), turnController.signal) : sandbox,
+          sandbox && this.delegations ? fencedExecutor(sandbox, assertExecutionOwner) : sandbox,
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,

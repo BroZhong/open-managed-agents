@@ -48,6 +48,11 @@ export class DelegationCoordinator {
 
   async assertOwner(run: DelegationRun): Promise<void> {
     run.signal.throwIfAborted();
+    await this.assertClaim(run);
+  }
+
+  /** The durable claim alone; an Interrupted Turn still holds it until acknowledged. */
+  async assertClaim(run: DelegationRun): Promise<void> {
     if (!await this.deps.pending.ownsClaim(
       run.session.id, run.fence.eventId, run.fence,
     )) throw new PendingEventClaimLostError(run.session.id, run.fence.eventId, run.fence.ownerId, run.fence.generation);
@@ -296,8 +301,14 @@ export function outcomeFromEvents(execution: DelegationExecution, events: Stored
   };
 }
 
-/** A fresh capability per Turn; stale owners cannot start new Sandbox work. */
-export function fencedExecutor(executor: ToolExecutor, assertOwner: () => Promise<void>, signal: AbortSignal): ToolExecutor {
+/**
+ * A fresh capability per Turn; stale owners cannot start new Sandbox work.
+ * The fence only refuses to start commands, it never cancels a running one:
+ * stopping a tool is its owner's decision, sent through the tool's own
+ * protocol (Pi asks its wrapper to abort with SIGTERM). Killing the command
+ * would stop only the wrapper and leave Pi's bash process group running.
+ */
+export function fencedExecutor(executor: ToolExecutor, assertOwner: () => Promise<void>): ToolExecutor {
   const fs = executor.fileSystem;
   const guardedFs = fs && Object.fromEntries(Object.keys(fs).map((key) => [key, async (...args: unknown[]) => {
     await assertOwner();
@@ -307,7 +318,7 @@ export function fencedExecutor(executor: ToolExecutor, assertOwner: () => Promis
     fileSystem: guardedFs,
     async *exec(command, options) {
       await assertOwner();
-      yield* executor.exec(command, { ...options, signal: options?.signal ? AbortSignal.any([signal, options.signal]) : signal });
+      yield* executor.exec(command, options);
     },
     readFile: async (path) => { await assertOwner(); return executor.readFile(path); },
     writeFile: async (path, content) => { await assertOwner(); return executor.writeFile(path, content); },
