@@ -1543,12 +1543,7 @@ export class SessionRouter {
           : { ...event, turnId: turnId! };
       };
 
-      // The commit barrier and the event stream deliver the same event. It is
-      // aligned once, so a second delivery cannot claim another stream block.
-      const streamedForms = new Map<string, SessionEvent>();
       const alignStreamed = (event: SessionEvent): SessionEvent => {
-        const known = streamedForms.get(event.id);
-        if (known) return known;
         let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
         if (event.type === "agent.context_entry" && event.presentation) {
           const displays = presentContextData(event.type, event);
@@ -1567,7 +1562,6 @@ export class SessionRouter {
           }
           alignedEvent = { ...event, turnId: turnId!, presentation: { version: 1, blocks } };
         }
-        streamedForms.set(event.id, alignedEvent);
         return alignedEvent;
       };
       // Every Adapter event is stamped with its Turn and Child Session caller
@@ -1599,20 +1593,6 @@ export class SessionRouter {
         // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
         if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
         journal.adapter.record(alignStreamed(event) as Exclude<SessionEvent, StreamEvent>);
-      };
-
-      // The Adapter awaits this at every native message boundary and before
-      // using a newly compacted context. It records through the same port and
-      // mapping as the event stream, so an event delivered both ways is
-      // written and published once.
-      adapterInput.persistContext = async (contextEvents) => {
-        for (const event of contextEvents) {
-          if (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type === "compaction") {
-            turnController.signal.throwIfAborted();
-          }
-          recordAdapterEvent(event);
-        }
-        await journal.adapter.flush();
       };
 
       const activeRunOwnsSignal = () => {
