@@ -1,4 +1,10 @@
-export type Runtime = "claude-code" | "codex" | "pi-agent" | "mock";
+/**
+ * Runtimes an Agent can be created or updated with. Existing Agents may still
+ * carry the retired claude-code or codex runtime; they are not migrated, and
+ * their Turns end with an `unsupported_runtime` error.
+ */
+export const RUNTIMES = ["pi-agent", "mock"] as const;
+export type Runtime = (typeof RUNTIMES)[number];
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface AgentToolConfig {

@@ -28,7 +28,7 @@ existing production Agents and must be migrated before removal.
 ## Language
 
 **Agent**:
-A configured AI coding worker that can be used to create **Sessions**. An Agent has one runtime and may be configured to run as a **Sandboxed Agent**.
+A configured AI coding worker that can be used to create **Sessions**. An Agent has one runtime (`pi-agent`, or `mock` for tests) and may be configured to run as a **Sandboxed Agent**. Agents created with the retired `claude-code` or `codex` runtime are kept, but each of their Turns ends with an `unsupported_runtime` error.
 _Avoid_: bot, assistant, worker
 
 **Agent Fork**:

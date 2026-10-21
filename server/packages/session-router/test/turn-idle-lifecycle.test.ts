@@ -10,7 +10,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 async function fixture(run: (input: AdapterInput) => AsyncIterable<SessionEvent>, turnStreamStore?: TurnStreamStore) {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "t", name: "test", model: "test", system: "test",
-    runtime: "claude-code", sandbox: { enabled: false } });
+    runtime: "mock", sandbox: { enabled: false } });
   const session = await stores.sessionStore.create({ tenantId: "t", agentId: agent.id, agent, workspaceId: "ws" });
   const eventStreamHub = new InProcessEventStreamHub();
   const publish = vi.spyOn(eventStreamHub, "publish");

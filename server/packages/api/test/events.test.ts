@@ -431,7 +431,7 @@ async function createTestSession(
     name: "Test Agent",
     model: "claude-3",
     system: "You are helpful",
-    runtime: "claude-code",
+    runtime: "mock",
   });
   const session = await sessionStore.create({
     tenantId,

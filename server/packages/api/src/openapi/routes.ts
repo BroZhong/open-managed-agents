@@ -288,7 +288,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     request: { params: idParams, body: jsonBody(z.object({ name: z.string().trim().min(1) })) },
     responses: {
       201: jsonResponse(AgentSchema, "Agent fork created"),
-      400: errorResponse("Invalid fork name"),
+      400: errorResponse("Invalid fork name, or the source Agent has an unsupported runtime"),
       404: errorResponse("Agent not found"),
       500: errorResponse("Fork failed; cleanup of newly created resources was attempted"),
     },

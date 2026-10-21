@@ -268,8 +268,6 @@
       "Runtime": {
         "type": "string",
         "enum": [
-          "claude-code",
-          "codex",
           "pi-agent",
           "mock"
         ]
@@ -4609,7 +4607,7 @@
             }
           },
           "400": {
-            "description": "Invalid fork name",
+            "description": "Invalid fork name, or the source Agent has an unsupported runtime",
             "content": {
               "application/json": {
                 "schema": {

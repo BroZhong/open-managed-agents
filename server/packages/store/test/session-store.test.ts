@@ -14,7 +14,7 @@ const mockAgent: Agent = {
   name: "Test Agent",
   model: "claude-3",
   system: "You are helpful",
-  runtime: "claude-code",
+  runtime: "mock",
   createdAt: new Date("2024-01-01"),
   updatedAt: new Date("2024-01-01"),
 };

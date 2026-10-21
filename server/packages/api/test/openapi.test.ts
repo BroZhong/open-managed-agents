@@ -227,12 +227,7 @@ describe("OpenAPI contract", () => {
       any
     >;
 
-    expect(schemas.Runtime.enum).toEqual([
-      "claude-code",
-      "codex",
-      "pi-agent",
-      "mock",
-    ]);
+    expect(schemas.Runtime.enum).toEqual(["pi-agent", "mock"]);
     expect(schemas.Agent.properties).toHaveProperty("description");
     for (const name of ["Skill", "SkillSummary", "EquippedSkill"]) {
       expect(schemas[name].required).toContain("createdAt");

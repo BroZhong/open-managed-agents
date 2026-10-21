@@ -15,7 +15,7 @@ describe("createMemoryStores", () => {
         name: "Test Agent",
         model: "gpt-4",
         system: "You are helpful.",
-        runtime: "claude-code",
+        runtime: "mock",
       });
       expect(agent.id).toBeDefined();
       expect(agent.name).toBe("Test Agent");
@@ -25,8 +25,8 @@ describe("createMemoryStores", () => {
     });
 
     it("lists agents by tenant", async () => {
-      await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
-      await stores.agentStore.create({ tenantId: "t2", name: "B", model: "m", system: "s", runtime: "codex" });
+      await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
+      await stores.agentStore.create({ tenantId: "t2", name: "B", model: "m", system: "s", runtime: "pi-agent" });
 
       const result = await stores.agentStore.list("t1");
       expect(result.data).toHaveLength(1);
@@ -34,13 +34,13 @@ describe("createMemoryStores", () => {
     });
 
     it("updates an agent", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const updated = await stores.agentStore.update(agent.id, { name: "B" });
       expect(updated?.name).toBe("B");
     });
 
     it("deletes an agent", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const deleted = await stores.agentStore.delete(agent.id);
       expect(deleted).toBe(true);
       expect(await stores.agentStore.getById(agent.id)).toBeNull();
@@ -49,7 +49,7 @@ describe("createMemoryStores", () => {
 
   describe("SessionStore", () => {
     it("creates and retrieves a session bound to a workspace", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
       expect(session.status).toBe("idle");
@@ -60,7 +60,7 @@ describe("createMemoryStores", () => {
     });
 
     it("excludes delegated children before pagination only when requested", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const input = { tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id };
       await stores.sessionStore.create({ ...input, delegation: {
@@ -78,7 +78,7 @@ describe("createMemoryStores", () => {
     });
 
     it("updates status without touching the workspace binding", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1", id: "bound" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
 
@@ -88,7 +88,7 @@ describe("createMemoryStores", () => {
     });
 
     it("terminates a session", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
 
@@ -99,7 +99,7 @@ describe("createMemoryStores", () => {
     });
 
     it("has no title until one is set, then setTitle persists it", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
       expect(session.title).toBeUndefined();

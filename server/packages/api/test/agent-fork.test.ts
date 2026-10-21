@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
+import type { Runtime } from "@oma-server/store";
 import { InMemoryAgentStore, InMemoryAgentFileStore, InMemorySkillStore, InMemorySkillArtifactStore } from "@oma-server/store-memory";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
@@ -68,6 +69,17 @@ describe("Agent fork", () => {
     expect(await agentFileStore.list("dev", "agent_2")).toEqual([]);
     expect(await skillArtifactStore.list("dev", "skill_2")).toEqual([]);
     expect(await skillArtifactStore.list("dev", skill.id)).toHaveLength(2);
+  });
+
+  it("refuses to copy a retired runtime into a new Agent", async () => {
+    const { fork, agentStore } = await setup();
+    // Existing Agents keep a retired runtime; they are not migrated.
+    const retiredRuntime: string = "codex";
+    const retired = await agentStore.create({ tenantId: "dev", name: "Retired", model: "m", system: "s", runtime: retiredRuntime as Runtime });
+    const response = await fork(retired.id);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Agent runtime "codex" is not supported; runtime must be one of: pi-agent, mock' });
+    expect((await agentStore.list("dev")).data).toHaveLength(2);
   });
 
   it("forks an Agent with no Skills or Agent Files", async () => {

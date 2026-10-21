@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { RUNTIMES } from "@oma-server/store";
 
 export const DateTimeSchema = z.iso.datetime().openapi({
   description: "ISO 8601 timestamp",
@@ -13,11 +14,11 @@ export const ErrorSchema = z
   .openapi("Error");
 
 export const RuntimeSchema = z
-  .enum(["claude-code", "codex", "pi-agent", "mock"], {
+  .enum(RUNTIMES, {
     error: (issue) =>
       issue.input === undefined
         ? "runtime is required"
-        : "runtime must be one of: claude-code, codex, pi-agent, mock",
+        : `runtime must be one of: ${RUNTIMES.join(", ")}`,
   })
   .openapi("Runtime");
 

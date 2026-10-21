@@ -197,7 +197,7 @@ const testAgent: Agent = {
   name: "Test Agent",
   model: "claude-3",
   system: "You are helpful",
-  runtime: "claude-code",
+  runtime: "mock",
   // Opt out of the mandatory sandbox: this repro exercises the drain/abort flow
   // with no sandbox manager configured (issue #54 fail-loud path is not the SUT).
   sandbox: { enabled: false },

@@ -154,7 +154,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -173,7 +173,7 @@ describe("POST /v1/sessions", () => {
     expect(body.agent.id).toBe(agent.id);
     expect(body.agent.name).toBe("My Agent");
     expect(body.agent.model).toBe("claude-3");
-    expect(body.agent.runtime).toBe("claude-code");
+    expect(body.agent.runtime).toBe("mock");
   });
 
   it("auto-creates and binds a Workspace when none is supplied", async () => {
@@ -183,7 +183,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -210,7 +210,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -232,7 +232,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const mk = () =>
@@ -260,7 +260,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -283,7 +283,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -304,7 +304,7 @@ describe("POST /v1/sessions", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -325,7 +325,7 @@ describe("POST /v1/sessions", () => {
       name: "Original Name",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     // Create session
@@ -405,7 +405,7 @@ describe("POST /v1/sessions", () => {
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/sessions", {
@@ -442,7 +442,7 @@ describe("GET /v1/sessions", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
     await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
@@ -461,14 +461,14 @@ describe("GET /v1/sessions", () => {
       name: "Agent 1",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const agent2 = await agentStore.create({
       tenantId: "dev",
       name: "Agent 2",
       model: "claude-3",
       system: "sys",
-      runtime: "codex",
+      runtime: "pi-agent",
     });
     await sessionStore.create({ tenantId: "dev", agentId: agent1.id, agent: agent1, workspaceId: "ws_test" });
     await sessionStore.create({ tenantId: "dev", agentId: agent2.id, agent: agent2, workspaceId: "ws_test" });
@@ -482,7 +482,7 @@ describe("GET /v1/sessions", () => {
 
   it("paginates each Workspace independently within an Agent before filtering the page", async () => {
     const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
-    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" });
     await workspaceStore.create({ tenantId: "dev", id: "ws_project", name: "Project" });
     const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_project" };
     // A busy neighboring Workspace must not consume any of this project's five slots.
@@ -519,7 +519,7 @@ describe("GET /v1/sessions", () => {
 
   it("lists recently modified Workspace Sessions first across stable cursor pages", async () => {
     const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
-    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" });
     await workspaceStore.create({ tenantId: "dev", id: "ws_project", name: "Project" });
     const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_project" };
     const sessions = [];
@@ -571,7 +571,7 @@ describe("GET /v1/sessions", () => {
 
   it("paginates loose Sessions without named or deleted Workspaces crowding them out", async () => {
     const { app, agentStore, sessionStore, workspaceStore } = createTestApp();
-    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" });
     const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_named" };
     await workspaceStore.create({ tenantId: "dev", id: "ws_named", name: "Project" });
     for (let index = 0; index < 8; index++) await sessionStore.create(input);
@@ -616,7 +616,7 @@ describe("GET /v1/sessions", () => {
 
   it("excludes delegated children before pagination only when requested", async () => {
     const { app, agentStore, sessionStore } = createTestApp();
-    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const agent = await agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" });
     const input = { tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" };
     const child = await sessionStore.create({ ...input, delegation: {
       parentSessionId: "sess_parent", parentTurnId: "turn_parent", parentToolUseId: "tool_child", sandboxSessionId: "sess_parent",
@@ -644,7 +644,7 @@ describe("GET /v1/sessions", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     for (let index = 0; index < 3; index++) {
       await sessionStore.create({
@@ -676,7 +676,7 @@ describe("GET /v1/sessions", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
     const sess2 = await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
@@ -696,7 +696,7 @@ describe("GET /v1/sessions", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     for (let i = 0; i < 5; i++) {
       await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
@@ -717,7 +717,7 @@ describe("GET /v1/sessions", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     for (let i = 0; i < 5; i++) {
       await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
@@ -741,7 +741,7 @@ describe("GET /v1/sessions", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     await sessionStore.create({ tenantId: "dev", agentId: agent.id, agent, workspaceId: "ws_test" });
     await sessionStore.create({ tenantId: "other-tenant", agentId: agent.id, agent, workspaceId: "ws_test" });
@@ -858,7 +858,7 @@ describe("GET /v1/sessions/:id", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const session = await sessionStore.create({
       tenantId: "dev",
@@ -891,7 +891,7 @@ describe("GET /v1/sessions/:id", () => {
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const session = await sessionStore.create({
       tenantId: "other-tenant",
@@ -915,7 +915,7 @@ describe("public Session projection", () => {
       name: "Legacy MCP Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     agent.mcpServers = [{
       name: "rds-mcp",
@@ -962,7 +962,7 @@ describe("DELETE /v1/sessions/:id", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const session = await sessionStore.create({
       tenantId: "dev",
@@ -1005,7 +1005,7 @@ describe("DELETE /v1/sessions/:id", () => {
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const session = await sessionStore.create({
       tenantId: "other-tenant",
@@ -1030,7 +1030,7 @@ describe("DELETE /v1/sessions/:id", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const session = await sessionStore.create({
       tenantId: "dev",

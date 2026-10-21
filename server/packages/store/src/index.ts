@@ -20,6 +20,7 @@ export type {
   Loop,
   LoopDispatch,
 } from "./types.js";
+export { RUNTIMES } from "./types.js";
 
 export {
   summarizeTokenUsage,

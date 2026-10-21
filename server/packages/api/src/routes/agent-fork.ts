@@ -1,4 +1,4 @@
-import type { AgentFileStore, AgentStore, SkillArtifactStore, SkillStore } from "@oma-server/store";
+import { RUNTIMES, type AgentFileStore, type AgentStore, type SkillArtifactStore, type SkillStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { publicAgent } from "../lib/public-projection.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
@@ -17,6 +17,11 @@ export function agentForkRoutes(
     const tenantId = c.get("tenant").tenantId;
     const source = await agents.getById(c.req.param("id")!);
     if (!source || source.tenantId !== tenantId) return c.json({ error: "Not found" }, 404);
+    // Existing Agents keep a retired runtime (they are not migrated); a fork
+    // must not create another one.
+    if (!RUNTIMES.includes(source.runtime)) {
+      return c.json({ error: `Agent runtime "${source.runtime}" is not supported; runtime must be one of: ${RUNTIMES.join(", ")}` }, 400);
+    }
     const { name } = await c.req.json<{ name: string }>();
 
     // Snapshot the Agent's current private copies, including edits made since

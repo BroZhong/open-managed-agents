@@ -311,7 +311,7 @@ const testAgent: Agent = {
   name: "Test Agent",
   model: "claude-3",
   system: "You are helpful",
-  runtime: "claude-code",
+  runtime: "mock",
   // Explicitly opt out of the mandatory sandbox (issue #54): these tests
   // exercise the non-sandbox drain flow with no toolExecutorFactory, so the
   // agent must be opted-out to avoid the sandbox_unavailable fail-loud path.

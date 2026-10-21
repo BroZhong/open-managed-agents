@@ -36,7 +36,7 @@ describe("PgAgentStore", () => {
       name: "Test Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     expect(agent.id).toMatch(/^agent_/);
@@ -44,7 +44,7 @@ describe("PgAgentStore", () => {
     expect(agent.name).toBe("Test Agent");
     expect(agent.model).toBe("claude-3");
     expect(agent.system).toBe("You are helpful");
-    expect(agent.runtime).toBe("claude-code");
+    expect(agent.runtime).toBe("mock");
     expect(agent.createdAt).toBeInstanceOf(Date);
     expect(agent.updatedAt).toBeInstanceOf(Date);
   });
@@ -55,7 +55,7 @@ describe("PgAgentStore", () => {
       name: "Configured",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
       tools: [{ name: "grep", inputSchema: { type: "object" } }],
       mcpServers: [{ name: "srv", url: "https://example.com" }],
       skills: ["s1", "s2"],
@@ -75,7 +75,7 @@ describe("PgAgentStore", () => {
       name: "Test Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const found = await store.getById(created.id);
@@ -95,13 +95,13 @@ describe("PgAgentStore", () => {
       name: "Test Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
-    const updated = await store.update(created.id, { name: "Updated Agent", runtime: "codex" });
+    const updated = await store.update(created.id, { name: "Updated Agent", runtime: "pi-agent" });
     expect(updated).not.toBeNull();
     expect(updated!.name).toBe("Updated Agent");
-    expect(updated!.runtime).toBe("codex");
+    expect(updated!.runtime).toBe("pi-agent");
     expect(updated!.updatedAt.getTime()).toBeGreaterThanOrEqual(created.updatedAt.getTime());
   });
 
@@ -116,7 +116,7 @@ describe("PgAgentStore", () => {
       name: "Test Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const deleted = await store.delete(created.id);
@@ -138,7 +138,7 @@ describe("PgAgentStore", () => {
         name: `Agent ${i}`,
         model: "claude-3",
         system: "system",
-        runtime: "claude-code",
+        runtime: "mock",
       });
     }
 
@@ -157,14 +157,14 @@ describe("PgAgentStore", () => {
       name: "Agent A",
       model: "claude-3",
       system: "system",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     await store.create({
       tenantId: "tenant2",
       name: "Agent B",
       model: "claude-3",
       system: "system",
-      runtime: "codex",
+      runtime: "pi-agent",
     });
 
     const tenant1Agents = await store.list("tenant1");

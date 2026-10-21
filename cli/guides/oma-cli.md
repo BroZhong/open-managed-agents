@@ -55,8 +55,8 @@ oma-cli workspace file download --workspace-id workspace-example --path output.t
 ```
 
 Use the IDs returned by create, not the placeholder IDs above. Agent create
-requires name/runtime/model/system. Runtime is claude-code, codex, pi-agent or
-mock; model names are deployment-specific. Agent updates only send supplied
+requires name/runtime/model/system. Runtime is pi-agent or mock; model names
+are deployment-specific. Agent updates only send supplied
 fields. Agent fork copies configuration, Agent Files and private Skill trees,
 without Sessions, Loops or Workspaces. Existing Sessions have saved snapshots.
 No arbitrary MCP, Sandbox or tools configuration can be written through CLI.

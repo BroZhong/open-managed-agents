@@ -94,7 +94,7 @@ describe("GET /v1/workspaces", () => {
 
   it("discovers named Workspaces independently for each Agent and Tenant", async () => {
     const { app, stores } = createTestApp();
-    const input = { name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" as const };
+    const input = { name: "Agent", model: "claude-3", system: "sys", runtime: "mock" as const };
     const firstAgent = await stores.agentStore.create({ ...input, tenantId: "dev" });
     const secondAgent = await stores.agentStore.create({ ...input, tenantId: "dev" });
     const foreignAgent = await stores.agentStore.create({ ...input, tenantId: "other" });
@@ -114,7 +114,7 @@ describe("GET /v1/workspaces", () => {
 
   it("excludes unnamed, deleted, Loop-only and delegated-only Workspaces from Agent discovery", async () => {
     const { app, stores } = createTestApp();
-    const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" });
     for (const id of ["visible", "unnamed", "empty_name", "deleted_workspace", "deleted_session", "loop_only", "child_only"]) {
       await stores.workspaceStore.create({
         tenantId: "dev",
@@ -145,7 +145,7 @@ describe("GET /v1/workspaces", () => {
 
   it("summarizes activity beyond loaded pages and excludes other Agents, Loops, children and deleted Sessions", async () => {
     const { app, stores } = createTestApp();
-    const input = { tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" as const };
+    const input = { tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" as const };
     const agent = await stores.agentStore.create(input);
     const other = await stores.agentStore.create(input);
     await stores.workspaceStore.create({ tenantId: "dev", id: "project", name: "Project" });
@@ -174,7 +174,7 @@ describe("GET /v1/workspaces", () => {
 
   it("finds a Workspace whose Sessions are beyond the Agent's first page", async () => {
     const { app, stores } = createTestApp();
-    const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "claude-code" });
+    const agent = await stores.agentStore.create({ tenantId: "dev", name: "Agent", model: "claude-3", system: "sys", runtime: "mock" });
     await stores.workspaceStore.create({ tenantId: "dev", id: "early", name: "Early" });
     await stores.workspaceStore.create({ tenantId: "dev", id: "later", name: "Later" });
     for (let index = 0; index < 55; index++) {
@@ -302,7 +302,7 @@ describe("Session mounts a named Workspace", () => {
       name: "Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     // Create a named Workspace up front.

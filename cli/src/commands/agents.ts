@@ -31,7 +31,7 @@ const config: Record<string, Flag> = {
   name: string("Agent name"),
   description: string("Description"),
   runtime: string("Runtime", {
-    enum: ["claude-code", "codex", "pi-agent", "mock"],
+    enum: ["pi-agent", "mock"],
   }),
   model: string("Deployment model"),
   system: string("Complete system instructions"),
