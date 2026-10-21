@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import type { AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
+import type { AdapterInput, AdapterRunResult, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
@@ -15,7 +15,8 @@ type Content = AssistantMessage["content"];
  */
 interface Response { content: Content; stopReason: "stop" | "toolUse"; events?: (message: AssistantMessage) => AssistantMessageEvent[]; hold?: boolean }
 
-const control = vi.hoisted(() => ({ log: [] as string[], responses: [] as Response[], onRequest: undefined as (() => void) | undefined, failStartup: false }));
+const control = vi.hoisted(() => ({ log: [] as string[], responses: [] as Response[], onRequest: undefined as (() => void) | undefined,
+  onTool: undefined as (() => void) | undefined, failStartup: false }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -65,18 +66,18 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 let dispose: (() => Promise<void>) | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); await dispose?.(); dispose = undefined; });
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; control.failStartup = false; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; control.onTool = undefined; control.failStartup = false; });
 
-/** Run one attempt through `journal`; in PR-A every run that settles has finished. */
-async function run(journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}) {
+/** Run one attempt through `journal`; unless the Host asks it to stop, every run that settles has finished. */
+async function run(journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}, result: AdapterRunResult = "finished") {
   const local = await createLocalToolExecutor();
   dispose = local.dispose;
   const executor: ToolExecutor = Object.assign(Object.create(local.executor), {
-    exec(command: string[], options?: Parameters<ToolExecutor["exec"]>[1]) { control.log.push("tool"); return local.executor.exec(command, options); },
+    exec(command: string[], options?: Parameters<ToolExecutor["exec"]>[1]) { control.log.push("tool"); control.onTool?.(); return local.executor.exec(command, options); },
   });
   const value: InputWithoutJournal = { sessionId: "s", turnId: "turn", inputEventId: "input", history: [], toolExecutor: executor,
     message: { role: "user", content: [{ type: "text", text: "list" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, ...extra };
-  expect(await new PiAgentAdapter().run({ ...value, journal })).toBe("finished");
+  expect(await new PiAgentAdapter().run({ ...value, journal })).toBe(result);
   return journal.events;
 }
 
@@ -166,6 +167,53 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
     expect(assistant).toMatchObject({ entry: { message: { stopReason: "aborted", content: [{ type: "text", text: "half" }] } },
       presentation: { version: 1, blocks: [{ type: "agent.message", index: 0, blockIndex: 0 }] } });
     expect(journal.committed.some(event => event.type === "span.model_request_end")).toBe(true);
+    expect(journal.recorded.filter(event => event.type === "session.error")).toEqual([]);
+  });
+});
+
+const stopReasons = (journal: MemoryTurnJournal) => journal.recorded
+  .flatMap(event => role(event) === "assistant" ? [(event as { entry: { message: { stopReason: string } } }).entry.message.stopReason] : []);
+const uncommitted = (journal: MemoryTurnJournal) => journal.recorded.filter(event => !journal.committed.some(committed => committed.id === event.id));
+
+describe("a stop the Host requests (#254)", () => {
+  it("takes effect at the next model request: the running tool finishes, its result is committed and no request is sent", async () => {
+    control.responses = toolThenAnswer();
+    const stop = new AbortController();
+    // The Runner starts shutting down while the tool runs.
+    control.onTool = () => stop.abort();
+    const journal = slowJournal();
+    await run(journal, { stopRequest: stop.signal }, "stopped");
+    expect(control.log.filter(item => item === "request" || item === "tool")).toEqual(["request", "tool"]);
+    expect(control.log.filter(item => item.startsWith("commit:") && item !== "commit:")).toEqual(["commit:user", "commit:assistant", "commit:toolResult"]);
+    // Pi's stop leaves nothing behind: no aborted request, no error, nothing recorded and left unwritten.
+    expect(stopReasons(journal)).toEqual(["toolUse"]);
+    expect(journal.recorded.filter(event => event.type === "session.error")).toEqual([]);
+    expect(uncommitted(journal)).toEqual([]);
+  });
+
+  it("lets the request in flight finish and commits the results of all its parallel tools before stopping", async () => {
+    const other = { ...ls, id: "ls-2" };
+    control.responses = [{ content: [ls, other], stopReason: "toolUse" }, { content: [{ type: "text", text: "listed" }], stopReason: "stop" }];
+    const stop = new AbortController();
+    // The Runner starts shutting down while the model streams its answer.
+    control.onRequest = () => stop.abort();
+    const journal = new MemoryTurnJournal();
+    await run(journal, { stopRequest: stop.signal }, "stopped");
+    expect(control.log.filter(item => item === "request")).toHaveLength(1);
+    expect(control.log.filter(item => item === "tool").length).toBeGreaterThanOrEqual(2);
+    expect(journal.committed.filter(event => role(event) === "toolResult").map(event => (event as { entry: { message: { toolCallId: string } } }).entry.message.toolCallId))
+      .toEqual(["ls-1", "ls-2"]);
+    expect(stopReasons(journal)).toEqual(["toolUse"]);
+    expect(uncommitted(journal)).toEqual([]);
+  });
+
+  it("finishes a Turn whose answer needs no further request", async () => {
+    control.responses = [{ content: [{ type: "text", text: "answered" }], stopReason: "stop" }];
+    const stop = new AbortController();
+    control.onRequest = () => stop.abort();
+    const journal = new MemoryTurnJournal();
+    await run(journal, { stopRequest: stop.signal });
+    expect(stopReasons(journal)).toEqual(["stop"]);
     expect(journal.recorded.filter(event => event.type === "session.error")).toEqual([]);
   });
 });

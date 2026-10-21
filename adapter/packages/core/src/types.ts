@@ -199,6 +199,16 @@ export interface AdapterInput {
    * timeout/watchdog is introduced. Absent ⇒ no native cancel is wired.
    */
   signal?: AbortSignal;
+  /**
+   * The Host's request that the Adapter stop the Turn before its next model
+   * request, so that another Runner continues it (#254): a Runner shutting
+   * down hands its Turns over. Unlike `signal` it cancels nothing: running
+   * tools finish and their results are recorded and flushed as usual. At the
+   * next model request gate the Adapter flushes, sends no request, records
+   * nothing more and returns `"stopped"`. A Turn that finishes without another
+   * request returns `"finished"`.
+   */
+  stopRequest?: AbortSignal;
 }
 
 // ─── Base event ──────────────────────────────────────────────────────────────

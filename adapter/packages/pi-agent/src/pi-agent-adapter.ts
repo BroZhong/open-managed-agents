@@ -130,6 +130,12 @@ export interface SessionFactoryArgs {
   emitContext(event: Exclude<SessionEvent, StreamEvent>): void;
   compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
+  /**
+   * Asked at the model request gate, once everything recorded is durable:
+   * true when the Host has asked the Turn to stop (#254). The session then
+   * sends no request and settles; the run returns "stopped".
+   */
+  stopBeforeRequest(): boolean;
 }
 
 /**
@@ -294,7 +300,13 @@ export class PiAgentAdapter implements Adapter {
     // turn. Emitting them here too doubled every turn's lifecycle events. The
     // adapter records only real content/errors, all through the Turn journal.
     const { journal } = input;
+    // Set once Pi stopped at a model request gate at the Host's request.
+    let stopped = false;
     const record = (event: Exclude<SessionEvent, StreamEvent>) => {
+      // What Pi produces as it unwinds from the stop (the request it never
+      // sent, ending as aborted) is not the Agent's output: the Turn goes on
+      // from what is committed, on another Runner.
+      if (stopped) return;
       // The Host ends an Interrupted Turn with turn_aborted. The error the
       // interrupt causes in Pi is not the Agent's output.
       if (event.type === "session.error" && input.signal?.aborted) return;
@@ -362,6 +374,10 @@ export class PiAgentAdapter implements Adapter {
           steps++;
           return await input.execution?.steering?.takePending() ?? [];
         },
+        stopBeforeRequest() {
+          if (input.stopRequest?.aborted) stopped = true;
+          return stopped;
+        },
       });
       // Translate synchronously, so what the commit barrier flushes at a
       // native message boundary is current.
@@ -371,7 +387,7 @@ export class PiAgentAdapter implements Adapter {
         for (const translated of translator.processEvent(observed)) {
           const blockIndex = streamAlignment.observe(translated);
           if (session!.nativeContext && PI_DISPLAY_TYPES.has(translated.type)) continue;
-          if (isStreamEvent(translated)) journal.delta(translated, blockIndex!);
+          if (isStreamEvent(translated)) { if (!stopped) journal.delta(translated, blockIndex!); }
           else record(blockIndex === undefined ? translated : { ...translated, blockIndex } as typeof translated);
         }
       });
@@ -431,7 +447,7 @@ export class PiAgentAdapter implements Adapter {
       }
     }
     // The Host writes what was recorded last as it closes the attempt.
-    return "finished";
+    return stopped ? "stopped" : "finished";
   }
 
   private async createSession(args: SessionFactoryArgs): Promise<PiSessionLike> {
@@ -577,6 +593,15 @@ export class PiAgentAdapter implements Adapter {
         captureContextUsage();
         // What was recorded so far, this snapshot included, is durable first.
         await journal.flush();
+        // A stop the Host asked for takes effect here and nowhere else
+        // (#254): at message_end the results of parallel tools still running
+        // could not be committed. Pi aborts the request it was about to send,
+        // so it neither retries nor compacts, and the session settles.
+        if (args.stopBeforeRequest()) {
+          session.abortCompaction();
+          session.agent.abort();
+          throw new Error("Stopped at the Host's request before the next model request");
+        }
         return streamFunction(model, context, options);
       };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));

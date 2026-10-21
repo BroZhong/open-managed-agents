@@ -4,8 +4,8 @@ import type { AdapterInput, SessionEvent, StreamEvent } from "./types.js";
  * How a run ended (ADR-0020). `"finished"`: the Adapter is done with the Turn,
  * including when it ended in an error it recorded or because of an Interrupt.
  * `"stopped"`: the Adapter stopped before the Turn finished because the Host
- * asked it to (#254); the Host writes no terminal event and leaves the Turn to
- * a later attempt.
+ * asked it to (`AdapterInput.stopRequest`, #254); the Host writes no terminal
+ * event and hands the Turn to a later attempt.
  */
 export type AdapterRunResult = "finished" | "stopped";
 
