@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
 
-const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
+const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, overflowError: "prompt is too long: context window exceeded", summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -32,7 +32,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
           content: [{ type: "text", text: failed ? "" : summary ? "CONTROLLED SUMMARY" : "answer" }],
           usage: { input: 10, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 13, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
           stopReason: summary && control.cancelSummary ? "aborted" : failed ? "error" : "stop",
-          ...(failed ? { errorMessage: summary ? control.summaryError : "prompt is too long: context window exceeded" } : {}), timestamp: Date.now() };
+          ...(failed ? { errorMessage: summary ? control.summaryError : control.overflowError } : {}), timestamp: Date.now() };
         if (!summary && !failed && control.toolPending) {
           control.toolPending = false;
           message.content = [{ type: "toolCall", id: "tool-1", name: "ls", arguments: { path: "." } }];
@@ -87,7 +87,7 @@ async function run(input: AdapterInput) {
 }
 const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => key === "timestamp" ? undefined : v));
 afterEach(() => vi.unstubAllEnvs());
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.cancelSummary = false; control.toolPending = false; control.streamedResponse = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.overflowError = "prompt is too long: context window exceeded"; control.cancelSummary = false; control.toolPending = false; control.streamedResponse = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("attaches stable stream indices to native blocks before they enter the persistence queue", async () => {
@@ -184,6 +184,18 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     expect(control.requests.map(r => r.summary)).toEqual([false]);
     expect(JSON.stringify(control.requests)).toContain("CONTROLLED SUMMARY");
   }, 15000);
+
+  it.each([
+    ["413 Failed to buffer the request body: length limit exceeded", true],
+    ["413 Unsupported upload format", false],
+  ])("recovers a request-body limit through native overflow compaction: %s", async (error, recovered) => {
+    control.overflow = 1;
+    control.overflowError = error;
+    const events = await run(input(records(seed(false)), async () => {}));
+    expect(control.requests.map(r => r.summary)).toEqual(recovered ? [false, true, false] : [false]);
+    expect(events.some(e => e.type === "agent.compaction" && e.status === "completed" && e.reason === "overflow")).toBe(recovered);
+    expect(events.filter(e => e.type === "session.error").map(e => e.type === "session.error" && e.error.message)).toEqual(recovered ? [] : [error]);
+  });
 
   it.each([false, true])("stops before any request using an uncommitted summary (overflow=%s)", async overflow => {
     if (overflow) control.overflow = 1;

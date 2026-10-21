@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getModel, isContextOverflow } from "@earendil-works/pi-ai/compat";
 import { withGatewayErrors } from "../src/gateway-error-stream.js";
 
 const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -19,6 +19,10 @@ describe("gateway error stream", () => {
     ["stream_read_error", "Network error: stream_read_error"],
     ["upstream_error: Upstream service temporarily unavailable", "Service unavailable: upstream_error: Upstream service temporarily unavailable"],
     ["429 AccountQuotaExceeded stream_read_error", "Quota exceeded: 429 AccountQuotaExceeded stream_read_error"],
+    ["413 Failed to buffer the request body: length limit exceeded", "Request too large (request_too_large): 413 Failed to buffer the request body: length limit exceeded"],
+    ["413 Request Entity Too Large", "Request too large (request_too_large): 413 Request Entity Too Large"],
+    ['413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}', '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}'],
+    ["413 Unsupported upload format", "413 Unsupported upload format"],
     ["401 Invalid API key", "401 Invalid API key"],
     ["not_stream_read_error", "not_stream_read_error"],
   ])("preserves raw diagnostics and partial content: %s", async (raw, normalized) => {
@@ -41,6 +45,18 @@ describe("gateway error stream", () => {
     expect(events[1]).toEqual({ type: "error", reason: "error", error: { ...original, errorMessage: normalized } });
     expect(await stream.result()).toEqual({ ...original, errorMessage: normalized });
     expect(original.errorMessage).toBe(raw);
+  });
+
+  it.each([
+    ["413 Failed to buffer the request body: length limit exceeded", true],
+    ["413 Payload Too Large", true],
+    ["413 Unsupported upload format", false],
+  ])("lets Pi treat request-body limits as context overflow: %s", async (raw, overflow) => {
+    const source = createAssistantMessageEventStream();
+    source.push({ type: "error", reason: "error", error: message(raw) });
+    const stream = await withGatewayErrors(() => source)(model, { messages: [] });
+    expect(isContextOverflow(message(raw), model.contextWindow)).toBe(false);
+    expect(isContextOverflow(await stream.result(), model.contextWindow)).toBe(overflow);
   });
 
   it.each(["stop", "aborted"] as const)("passes %s through unchanged", async stopReason => {
