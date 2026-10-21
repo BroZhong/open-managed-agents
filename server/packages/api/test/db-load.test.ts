@@ -81,8 +81,8 @@ describe("database load of N Runners", () => {
       const perRunnerPerSecond = statementCount(calls) / 60 / runners;
       rows.push(...sourceRows(calls, 60, runners, "Runner").map((row) => ({ runners, ...row })));
       results[`idle/${runners}`] = { perRunnerPerSecond, bySource: Object.fromEntries([...bySource(calls)].map(([source, totals]) => [source, totals.statements])) };
-      // Today ≈1.2: a 5 s pending scan + cleanup discovery and a 15 s Loop scan.
-      expect(perRunnerPerSecond).toBeLessThan(3);
+      // ≈1.0: a 5 s pending scan + cleanup discovery and a 15 s Loop dispatch query.
+      expect(perRunnerPerSecond).toBeLessThan(2);
       await fleet.stop();
     }
     table("Idle Runners (60 s, no Sessions)", rows);

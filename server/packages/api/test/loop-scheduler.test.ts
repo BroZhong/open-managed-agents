@@ -51,7 +51,23 @@ describe("LoopScheduler", () => {
     expect(sessions.data).toHaveLength(2);
     expect(new Set(sessions.data.map((session) => session.id)).size).toBe(2);
     expect(sessions.data.every((session) => session.loopId === loop.id)).toBe(true);
-    expect(recoverPendingEvents).toHaveBeenCalledTimes(4);
+    // Only the ticks that dispatched an occurrence route it; the Runner's
+    // pending scan covers everything else (#234).
+    expect(recoverPendingEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves pending input to the Runner's pending scan on a tick that dispatches nothing", async () => {
+    const dispatchDue = vi.fn(async () => []);
+    const recoverPendingEvents = vi.fn(async () => ({ recovered: [], discarded: [], failed: [] }));
+    const scheduler = new LoopScheduler({
+      loopStore: { dispatchDue } as unknown as LoopStore,
+      sessionRouter: { recoverPendingEvents } as unknown as SessionRouter,
+    });
+
+    await expect(scheduler.runDue()).resolves.toBe(0);
+    await expect(scheduler.runDue()).resolves.toBe(0);
+    expect(dispatchDue).toHaveBeenCalledTimes(2);
+    expect(recoverPendingEvents).not.toHaveBeenCalled();
   });
 
   it("clears a failed tick so the next poll can retry", async () => {
@@ -74,7 +90,7 @@ describe("LoopScheduler", () => {
     expect(dispatchDue).toHaveBeenCalledTimes(2);
   });
 
-  it("rescans retained pending input after an ambiguous dispatch commit and on the next poll", async () => {
+  it("rescans retained pending input after an ambiguous dispatch commit, not on the next idle poll", async () => {
     const dispatchDue = vi.fn()
       .mockRejectedValueOnce(new Error("commit outcome unknown"))
       .mockResolvedValueOnce([]);
@@ -107,7 +123,7 @@ describe("LoopScheduler", () => {
     await expect(scheduler.runDue()).rejects.toThrow("commit outcome unknown");
     await expect(scheduler.runDue()).resolves.toBe(0);
 
-    expect(recoverPendingEvents).toHaveBeenCalledTimes(2);
+    expect(recoverPendingEvents).toHaveBeenCalledTimes(1);
     expect(handleNewEvent).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
       "SessionRouter failed while recovering retained Session sess_committed:",
