@@ -24,9 +24,11 @@ Every run, including 1 and 2:
 - one Turn under one turnId (`turn_1_a1`), exactly one `turn_completed`, no `recovery_*` error;
 - one `session.turn_resumed { reason: "expired", generation: 2, danglingToolUseIds: [the bash call] }`;
 - the bash call answered by the "outcome unknown" result, not rerun (one `sleep` call in the Turn);
-- the model then ran `cat` on the marker file and answered `RESULT:START`, so the orphaned Sandbox
-  process had been interrupted before `DONE` (as expected: no orphan kill in this phase, the Sandbox
-  command stops when its wrapper loses its stream);
+- the model then ran `cat` on the marker file, about 35 s into the 120 s sleep, and answered
+  `RESULT:START`, which was the file's content at that moment;
+- the orphaned Sandbox command kept running and finished: read after 120 s, the file holds
+  `STARTDONE` in all three runs. This matches #234 (no orphan kill in this phase) and the "outcome
+  unknown" text, which warns that a process the call started may still be running;
 - the other replica took over (run 3: `oma-runner-…-9l8b5`), every tool call has exactly one result.
 
 ## Finding: a forced Pod delete is a graceful shutdown here

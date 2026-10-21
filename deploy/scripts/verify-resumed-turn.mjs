@@ -62,6 +62,7 @@ try{
  else if(phase==='handoff-start')await start('handoff',12);
  else if(phase==='handoff-finish')await finish('handoff','released',0);
  else if(phase==='mark-disrupted'){const name=process.argv[4];e.sessions[name].disruptedAt=new Date().toISOString();check(`${name}: disruption marked`,true)}
+ else if(phase==='file'){const s=e.sessions[process.argv[4]];const access=await api(`/v1/workspaces/${s.workspaceId}/files/${s.marker}.txt`);const bytes=await (await fetch(access.url)).text();e.sessions[process.argv[4]].fileLater=bytes;check(`${process.argv[4]}: marker file now`,true,{bytes,at:new Date().toISOString()})}
  else if(phase==='cleanup'){for(const s of Object.values(e.sessions)){try{await api(`/v1/sessions/${s.id}`,undefined,'DELETE')}catch(error){failures.push(error)}}check('verification Sessions terminated',true,{count:Object.keys(e.sessions).length})}
  else throw Error('unknown phase')
 }catch(error){failures.push(error)}finally{for(const f of [save,()=>keys.revoke(e.runId,key.apiKey.id),()=>pool.end()]){try{await f()}catch(error){failures.push(error)}}}

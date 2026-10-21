@@ -225,6 +225,16 @@
           "disruptedAt": "2026-10-21T22:34:29.997Z",
           "resumedAt": "2026-10-21T22:35:15.932Z"
         }
+      },
+      {
+        "name": "kill: marker file now",
+        "ok": true,
+        "phase": "file",
+        "at": "2026-10-21T22:44:56.884Z",
+        "details": {
+          "bytes": "STARTDONE",
+          "at": "2026-10-21T22:44:56.884Z"
+        }
       }
     ],
     "sessions": {
@@ -238,7 +248,8 @@
           "unknown": true,
           "isError": true
         },
-        "takeoverMs": 45935
+        "takeoverMs": 45935,
+        "fileLater": "STARTDONE"
       }
     },
     "agent": "agent_KTYSh4a14ZUa4NKpg71zj"
@@ -366,6 +377,16 @@
           "disruptedAt": "2026-10-21T22:38:17.397Z",
           "resumedAt": "2026-10-21T22:39:01.294Z"
         }
+      },
+      {
+        "name": "kill: marker file now",
+        "ok": true,
+        "phase": "file",
+        "at": "2026-10-21T22:44:57.650Z",
+        "details": {
+          "bytes": "STARTDONE",
+          "at": "2026-10-21T22:44:57.650Z"
+        }
       }
     ],
     "sessions": {
@@ -379,7 +400,8 @@
           "unknown": true,
           "isError": true
         },
-        "takeoverMs": 43897
+        "takeoverMs": 43897,
+        "fileLater": "STARTDONE"
       }
     },
     "agent": "agent_kZbmy2SGmqtuRXgASG-Op"
@@ -522,6 +544,16 @@
         "details": {
           "bytes": "START"
         }
+      },
+      {
+        "name": "kill: marker file now",
+        "ok": true,
+        "phase": "file",
+        "at": "2026-10-21T22:44:58.370Z",
+        "details": {
+          "bytes": "STARTDONE",
+          "at": "2026-10-21T22:44:58.370Z"
+        }
       }
     ],
     "sessions": {
@@ -535,7 +567,8 @@
           "unknown": true,
           "isError": true
         },
-        "takeoverMs": 30969
+        "takeoverMs": 30969,
+        "fileLater": "STARTDONE"
       }
     },
     "agent": "agent_xObsvF6hSySq-JkeI4pJ_"
