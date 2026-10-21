@@ -25,7 +25,10 @@ interface CoordinatorDeps {
   store: DelegationStore;
   pending: PendingEventStore;
   sessions: SessionStore;
+  /** Input may be claimable: any Runner may start it. */
   wake(sessionId: string): void;
+  /** The owner of the Session's running Turn should re-read its durable state now. */
+  check(sessionId: string): void;
   maxSteps: number;
   pollMs?: number;
 }
@@ -257,7 +260,10 @@ export class DelegationCoordinator {
         childId: execution.childId, executionId: execution.id,
         kind: "interrupt", message: "The originating synchronous parent Turn was interrupted",
       }, fence);
+      // A queued child needs the wake to start; a running one sees the
+      // command when its owner checks, at once on the hint.
       this.deps.wake(execution.childId);
+      this.deps.check(execution.childId);
     }
   }
 }

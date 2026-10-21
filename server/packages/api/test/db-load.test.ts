@@ -2,15 +2,15 @@
  * Database load of N Runners sharing one PostgreSQL (#234): which activity
  * issues how many SQL statements, as a function of active Turns, idle
  * Sessions and Runners. Runs the production Runner wiring on store-memory in
- * fake time at the real defaults (1:1 virtual time: 30 s lease, 1 s heartbeat
+ * fake time at the real defaults (1:1 virtual time: 30 s lease, 10 s heartbeat
  * tick, 100 ms–5 s claim retry, 5 s pending scan, 15 s Loop scan, 200 ms
  * delegation poll) and converts every store call into the statements its
  * PostgreSQL implementation issues (db-load/pg-statements.ts).
  *
  * The printed tables feed docs/verification/db-load-multi-runner-2026-10-22.md.
  * Set DB_LOAD_JSON=<file> to also write the raw per-source numbers.
- * Assertions are behavioural invariants plus regression tripwires set at
- * roughly twice today's measured cost.
+ * Assertions are behavioural invariants plus regression tripwires that fail
+ * on a return to per-second polling.
  */
 import { writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -154,8 +154,8 @@ describe("database load of N Runners", () => {
         [...turn!.methods].sort(([, a], [, b]) => b.statements - a.statements).map(([method, totals]) => ({
           method, calls: round(totals.calls / sessions, 1), statements: round(totals.statements / sessions, 1) })));
 
-      // Tripwires at about twice today's cost (heartbeat ≈6/s, attempts ≈2–4/s per Turn at N=4).
-      expect(row["heartbeat /s per active Turn"]).toBeLessThan(12);
+      // Tripwires: the heartbeat renews every 10 s (≈0.4/s per Turn; a 1 s tick costs 6/s).
+      expect(row["heartbeat /s per active Turn"]).toBeLessThan(1);
       expect(row["non-owner attempts /s per active Turn"]).toBeLessThan(4 * runners);
       await fleet.stop();
     }

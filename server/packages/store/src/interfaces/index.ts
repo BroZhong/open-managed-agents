@@ -9,6 +9,7 @@ export type {
   PendingEventClaim,
   PendingEventClaimRef,
   PendingEventFence,
+  PendingEventRenewal,
 } from "./pending-event-store.js";
 export type { ApiKeyStore, ApiKeyCreateResult } from "./api-key-store.js";
 export type {

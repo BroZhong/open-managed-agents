@@ -47,6 +47,7 @@ export async function startExecution(deps: PgStores & {
     resolveAdapter: execution?.resolveAdapter ??
       runtimeAdapters(deps.local ? { mock: mockAdapter } : { "pi-agent": piAgentAdapter, mock: mockAdapter }),
     wakeSession: sessionId => deps.signals.publish({ sessionId, kind: "wake" }),
+    checkSession: sessionId => deps.signals.publish({ sessionId, kind: "check" }),
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
     maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 500),
     onDrainError: failure => console.error("Runner drain failed:", failure),

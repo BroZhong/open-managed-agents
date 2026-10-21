@@ -5,6 +5,7 @@ import type {
   PendingEventClaimRef,
   PendingEventIngressStore,
   PendingEventEnqueueInput,
+  PendingEventRenewal,
 } from "@oma-server/store";
 
 interface ClaimState {
@@ -58,12 +59,6 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     if (!claim?.ownerId || claim.expiresAtMs <= Date.now()) return false;
     claim.interruptGeneration = claim.generation;
     return true;
-  }
-
-  async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
-    return this.queues.get(sessionId)?.[0]?.id === eventId &&
-      this.claims.get(eventId)?.interruptGeneration !== undefined &&
-      this.claims.get(eventId)?.interruptGeneration === this.claims.get(eventId)?.generation;
   }
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
@@ -131,11 +126,12 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
-  ): Promise<boolean> {
+  ): Promise<PendingEventRenewal> {
     if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
       throw new RangeError("pending event leaseMs must be a positive finite number");
     }
-    if ((this.queues.get(sessionId) ?? [])[0]?.id !== eventId) return false;
+    const lost = { renewed: false, interruptRequested: false };
+    if ((this.queues.get(sessionId) ?? [])[0]?.id !== eventId) return lost;
     const current = this.claims.get(eventId);
     const now = Date.now();
     if (
@@ -144,10 +140,10 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       current.generation !== claim.generation ||
       current.expiresAtMs <= now
     ) {
-      return false;
+      return lost;
     }
     current.expiresAtMs = now + leaseMs;
-    return true;
+    return { renewed: true, interruptRequested: current.interruptGeneration === current.generation };
   }
 
   async releaseClaim(

@@ -36,7 +36,7 @@ export interface PendingEventClaim extends PendingEventClaimRef {
    * An earlier generation accepted an Interrupt for this input. The input is
    * still queued, so the Interrupt has not ended its Turn: the Runner that
    * accepted it stopped first. Unlike this generation's own Interrupt, which
-   * {@link PendingEventStore.interruptRequested} reports, it is read once here.
+   * {@link PendingEventStore.renewClaim} reports, it is read once here.
    */
   priorInterrupt: boolean;
 }
@@ -45,10 +45,20 @@ export interface PendingEventFence extends PendingEventClaimRef {
   eventId: string;
 }
 
+/** What one heartbeat learns from renewing its claim. */
+export interface PendingEventRenewal {
+  /** False once the exact owner+generation no longer holds a live claim. */
+  renewed: boolean;
+  /** An Interrupt was accepted for the renewed generation (never an earlier one). */
+  interruptRequested: boolean;
+}
+
 export interface PendingEventStore {
-  /** Persist an Interrupt for the currently claimed input only. */
+  /**
+   * Persist an Interrupt for the currently claimed input only. Its owner
+   * learns of it from the result of its next {@link renewClaim}.
+   */
   requestInterrupt(sessionId: string): Promise<boolean>;
-  interruptRequested(sessionId: string, eventId: string): Promise<boolean>;
   enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent>;
   peek(sessionId: string): Promise<PendingEvent | null>;
   /**
@@ -56,13 +66,16 @@ export interface PendingEventStore {
    * expired claim starts a new monotonically fenced generation.
    */
   claim(sessionId: string, ownerId: string, leaseMs: number): Promise<PendingEventClaim | null>;
-  /** Extend only the exact, still-live owner+generation lease. */
+  /**
+   * Extend only the exact, still-live owner+generation lease, and report in
+   * the same round trip whether an Interrupt was accepted for it.
+   */
   renewClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
-  ): Promise<boolean>;
+  ): Promise<PendingEventRenewal>;
   /** Read-only live-fence check around external storage availability checks. */
   ownsClaim(
     sessionId: string,

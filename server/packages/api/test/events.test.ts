@@ -240,6 +240,7 @@ function makeApiKeyStore(entries: Map<string, TenantContext>): ApiKeyStore {
 function createTestApp(
   sessionRouter?: SessionRouter,
   apiKeys: Map<string, TenantContext> = new Map(),
+  checkSession?: (sessionId: string) => void,
 ) {
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
@@ -259,6 +260,7 @@ function createTestApp(
     eventLogStore,
     pendingEventStore,
     sessionRouter,
+    checkSession,
   });
   return { app, agentStore, sessionStore, eventLogStore, pendingEventStore };
 }
@@ -473,17 +475,19 @@ describe("POST /v1/sessions/:id/events", () => {
     expect(handleNewEvent).not.toHaveBeenCalled();
   });
 
-  it("user.interrupt is not persisted and is requested durably for the executing Turn", async () => {
+  it("user.interrupt is not persisted, is requested durably for the executing Turn and hints its owner", async () => {
     const interrupt = vi.fn(() => true);
-    const sessionRouter = { interrupt, handleNewEvent: vi.fn(async () => {}) } as unknown as SessionRouter;
-    const { app, agentStore, sessionStore, eventLogStore, pendingEventStore } = createTestApp(sessionRouter);
+    const checkNow = vi.fn();
+    const checkSession = vi.fn();
+    const sessionRouter = { interrupt, checkNow, handleNewEvent: vi.fn(async () => {}) } as unknown as SessionRouter;
+    const { app, agentStore, sessionStore, eventLogStore, pendingEventStore } = createTestApp(sessionRouter, new Map(), checkSession);
     const { session } = await createTestSession(agentStore, sessionStore);
     const executing = await pendingEventStore.enqueue(session.id, {
       type: "user.message",
       data: { content: [{ type: "text", text: "running now" }] },
       sessionThreadId: "sthr_primary",
     });
-    await pendingEventStore.claim(session.id, "host", 60_000);
+    const claim = (await pendingEventStore.claim(session.id, "host", 60_000))!;
 
     const res = await app.request(`/v1/sessions/${session.id}/events`, {
       method: "POST",
@@ -497,7 +501,10 @@ describe("POST /v1/sessions/:id/events", () => {
     // The claim owner stops its Turn on its heartbeat; this process stops nothing.
     expect(await res.json()).toEqual({ accepted: true, requested: true, interrupted: false });
     expect(interrupt).not.toHaveBeenCalled();
-    expect(await pendingEventStore.interruptRequested(session.id, executing.id)).toBe(true);
+    expect((await pendingEventStore.renewClaim(session.id, executing.id, claim, 60_000)).interruptRequested).toBe(true);
+    // The hint makes the owner renew, and so see the marker, now.
+    expect(checkSession).toHaveBeenCalledExactlyOnceWith(session.id);
+    expect(checkNow).toHaveBeenCalledExactlyOnceWith(session.id);
 
     // Verify nothing was persisted
     const events = await eventLogStore.getEvents(session.id);
@@ -511,7 +518,8 @@ describe("POST /v1/sessions/:id/events", () => {
       interrupt: vi.fn(() => false),
       handleNewEvent: vi.fn(async () => {}),
     } as unknown as SessionRouter;
-    const { app, agentStore, sessionStore } = createTestApp(sessionRouter);
+    const checkSession = vi.fn();
+    const { app, agentStore, sessionStore } = createTestApp(sessionRouter, new Map(), checkSession);
     const { session } = await createTestSession(agentStore, sessionStore);
 
     const res = await app.request(`/v1/sessions/${session.id}/events`, {
@@ -522,6 +530,7 @@ describe("POST /v1/sessions/:id/events", () => {
 
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ accepted: true, requested: false, interrupted: false });
+    expect(checkSession).not.toHaveBeenCalled();
   });
 
   it("reports interrupted:false when no router is wired at all", async () => {

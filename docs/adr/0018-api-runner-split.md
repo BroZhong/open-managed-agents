@@ -5,6 +5,8 @@
 Accepted for #197–#203. Implementation and local verification only; production
 cutover is a separate operation. Extends ADR-0007, ADR-0010 and ADR-0016.
 ADR-0019 supersedes the original ADR-0017-based Sandbox lifetime portion.
+#234 amends how a running Turn's owner learns of an Interrupt: from its claim
+renewal every renew interval, and at once on a `check` hint (below).
 
 ## Decision
 
@@ -66,9 +68,17 @@ already-open pages. Missing transient Deltas are not reconstructed. Redis is
 not a readiness prerequisite. PG failures do not count as accepted input.
 
 Interrupt ingress writes the existing PG marker for the current FIFO input and
-claim generation. The owner observes it on its heartbeat. Acceptance never means
-an external command has actually stopped, and an old generation cannot interrupt
-a later one. A local AbortController is not required on the accepting API.
+claim generation. The owner's claim renewal returns the marker of its own
+generation, so the heartbeat needs no separate query and renews only every renew
+interval (10 s of a 30 s lease). The API then publishes a `check` signal for the
+Session. Every Runner receives it, and only the Turn's owner acts: it renews at
+once. A `check` is not deduplicated like a wake, because a drain started from a
+wake holds its Session for the whole Turn. With Redis an Interrupt therefore takes
+effect within about a second, and within one renew interval without it.
+Acceptance never means an external command has actually stopped, and an old
+generation cannot interrupt a later one. A local AbortController is not required
+on the accepting API. Delegation Interrupt commands for a child, including the
+one that reconciling a terminated parent records, are hinted the same way.
 
 Session termination revokes the queue and records a cleanup outbox request and
 an idempotent `session.status_terminated` Event in the same transaction. Runners

@@ -3,6 +3,7 @@ import type {
   PendingEventStore,
   PendingEventClaim,
   PendingEventFence,
+  PendingEventRenewal,
   StoredEvent,
   Agent,
   AgentFileStore,
@@ -70,6 +71,15 @@ interface AttemptWrites {
   fromAdapter?(event: Exclude<SessionEvent, StreamEvent>): { event: JournalEvent; key: string };
 }
 
+/** The claim heartbeat of one Turn attempt. */
+interface ClaimHeartbeat {
+  stop(): void;
+  /** Renew and read the Interrupt marker and delegation commands now. */
+  check(): void;
+  /** The Child execution this attempt runs, once started; its Interrupt commands arrive here. */
+  execution?: DelegationExecution;
+}
+
 interface ActiveSessionRun {
   controller: AbortController;
   /** Stops the running Turn attempt, if any, without terminal events. */
@@ -85,6 +95,14 @@ class PendingLeaseLostError extends Error {
 
 export interface SessionRouterDeps {
   wakeSession?: (sessionId: string) => void;
+  /**
+   * Hint the owner of a Session's running Turn to re-read its durable state
+   * now (an accepted Interrupt, a delegation command, a child result): every
+   * Runner receives it and calls {@link SessionRouter.checkNow}. Absent ⇒ this
+   * Router checks locally. A lost hint costs latency only: the heartbeat and
+   * the delegation wait still poll.
+   */
+  checkSession?: (sessionId: string) => void;
   delegationStore?: DelegationStore;
   maxConcurrentSubagents?: number;
   maxSubagentModelSteps?: number;
@@ -170,7 +188,10 @@ export interface SessionRouterDeps {
   pendingClaimOwnerId?: string;
   /** Pending lease duration; renewed while an Adapter/tool turn is running. */
   pendingClaimLeaseMs?: number;
-  /** Heartbeat cadence. Must be shorter than pendingClaimLeaseMs. */
+  /**
+   * Heartbeat cadence, which also bounds how late an Interrupt is seen when
+   * its hint is lost. Must be shorter than pendingClaimLeaseMs.
+   */
   pendingClaimRenewIntervalMs?: number;
   /** Bounded retry window when another Host currently owns the FIFO head. */
   pendingClaimRetryMinMs?: number;
@@ -227,7 +248,7 @@ export class SessionRouter {
   private readonly settledActivities = new Map<string, SandboxActivity>();
   private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly claimRetryAttempts = new Map<string, number>();
-  private readonly claimHeartbeatStops = new Map<string, () => void>();
+  private readonly claimHeartbeats = new Map<string, ClaimHeartbeat>();
   private readonly idleWaiters = new Set<() => void>();
   /**
    * Sessions for which new pending input arrived while their drain loop was
@@ -250,6 +271,7 @@ export class SessionRouter {
   private readonly delegationStore?: DelegationStore;
   private readonly delegations?: DelegationCoordinator;
   private readonly maxConcurrentSubagents: number;
+  private readonly checkSession: (sessionId: string) => void;
 
   constructor(deps: SessionRouterDeps) {
     this.delegationStore = deps.delegationStore;
@@ -262,6 +284,7 @@ export class SessionRouter {
     if (deps.delegationStore) this.delegations = new DelegationCoordinator({
       store: deps.delegationStore, pending: deps.pendingEventStore,
       sessions: deps.sessionStore, maxSteps,
+      check: (sessionId) => this.checkSession(sessionId),
       wake: (sessionId) => {
         if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
         void deps.sessionStore.getById(sessionId).then((session) => {
@@ -291,6 +314,7 @@ export class SessionRouter {
     this.interruptedAdapterDrainTimeoutMs =
       deps.interruptedAdapterDrainTimeoutMs ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS;
     this.onDrainError = deps.onDrainError;
+    this.checkSession = deps.checkSession ?? ((sessionId) => this.checkNow(sessionId));
     if (
       this.pendingClaimRenewIntervalMs <= 0 ||
       this.pendingClaimRenewIntervalMs >= this.pendingClaimLeaseMs
@@ -324,7 +348,7 @@ export class SessionRouter {
   private async renewPendingClaim(
     sessionId: string,
     claim: PendingEventClaim,
-  ): Promise<boolean> {
+  ): Promise<PendingEventRenewal> {
     return this.pendingEventStore.renewClaim(
       sessionId,
       claim.event.id,
@@ -431,37 +455,37 @@ export class SessionRouter {
     });
   }
 
+  /**
+   * Renew the attempt's claim every renew interval. The renewal reports an
+   * accepted Interrupt, and a Child execution's Interrupt commands are read
+   * with it. A check hint ({@link checkNow}) runs the same tick at once.
+   */
   private startClaimHeartbeat(
     sessionId: string,
     claim: PendingEventClaim,
     turnController: AbortController,
     onLeaseLost: (error: unknown) => void,
-  ): () => void {
-    this.claimHeartbeatStops.get(sessionId)?.();
+  ): ClaimHeartbeat {
+    this.claimHeartbeats.get(sessionId)?.stop();
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      if (timer) clearTimeout(timer);
-      if (this.claimHeartbeatStops.get(sessionId) === stop) {
-        this.claimHeartbeatStops.delete(sessionId);
-      }
+    let ticking = false;
+    let checkAgain = false;
+    const lost = (error: unknown) => {
+      onLeaseLost(error);
+      turnController.abort(error);
+      heartbeat.stop();
     };
     const tick = async () => {
       if (stopped || turnController.signal.aborted) return;
+      ticking = true;
+      clearTimeout(timer);
       try {
-        const renewed = await this.renewPendingClaim(sessionId, claim);
+        const renewal = await this.renewPendingClaim(sessionId, claim);
         if (stopped) return;
-        if (!renewed) {
-          const error = new PendingLeaseLostError();
-          onLeaseLost(error);
-          turnController.abort(error);
-          stop();
-          return;
-        }
-        let shouldInterrupt = await this.pendingEventStore.interruptRequested(sessionId, claim.event.id);
-        const execution = await this.delegationStore?.getByPendingEventId(claim.event.id);
+        if (!renewal.renewed) { lost(new PendingLeaseLostError()); return; }
+        let shouldInterrupt = renewal.interruptRequested;
+        const execution = heartbeat.execution;
         if (execution && this.delegationStore) {
           for (const command of await this.delegationStore.listCommands(execution.id)) {
             if (command.kind !== "interrupt" || command.status !== "accepted") continue;
@@ -474,19 +498,42 @@ export class SessionRouter {
         }
         if (shouldInterrupt) { this.interrupt(sessionId); return; }
       } catch (error) {
-        if (stopped) return;
-        onLeaseLost(error);
-        turnController.abort(error);
-        stop();
+        if (!stopped) lost(error);
         return;
+      } finally {
+        ticking = false;
       }
-      if (!stopped) {
-        timer = setTimeout(() => void tick(), Math.min(this.pendingClaimRenewIntervalMs, 1000));
-      }
+      if (stopped) return;
+      // A hint that arrived during this tick may have missed its marker.
+      if (checkAgain) { checkAgain = false; void tick(); return; }
+      timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
     };
-    timer = setTimeout(() => void tick(), Math.min(this.pendingClaimRenewIntervalMs, 1000));
-    this.claimHeartbeatStops.set(sessionId, stop);
-    return stop;
+    const heartbeat: ClaimHeartbeat = {
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        clearTimeout(timer);
+        if (this.claimHeartbeats.get(sessionId) === heartbeat) this.claimHeartbeats.delete(sessionId);
+      },
+      check: () => {
+        if (stopped) return;
+        if (ticking) { checkAgain = true; return; }
+        void tick();
+      },
+    };
+    timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
+    this.claimHeartbeats.set(sessionId, heartbeat);
+    return heartbeat;
+  }
+
+  /**
+   * Re-read the durable state of this Session's running Turn now, if this
+   * Router owns it: the claim renewal reports an accepted Interrupt, and a
+   * Child execution's Interrupt commands are read with it. Receiving the
+   * hint costs a Runner that does not own the Turn nothing.
+   */
+  checkNow(sessionId: string): void {
+    this.claimHeartbeats.get(sessionId)?.check();
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
@@ -548,7 +595,7 @@ export class SessionRouter {
     };
     // Session termination revokes its pending lease first. Reconcile durable
     // child results even when a Host died before the local cleanup callback.
-    await this.delegationStore?.reconcileTerminatedExecutions();
+    this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions() ?? []);
     const sessionIds = new Set(await this.pendingEventStore.listPendingSessionIds());
 
     for (const sessionId of sessionIds) {
@@ -583,7 +630,7 @@ export class SessionRouter {
       return false;
     }
     this.clearClaimRetry(sessionId);
-    this.claimHeartbeatStops.get(sessionId)?.();
+    this.claimHeartbeats.get(sessionId)?.stop();
     activeRun.controller.abort(new DOMException(SESSION_INTERRUPTED_MESSAGE, "AbortError"));
     this.notifyIdleIfSettled();
     return true;
@@ -593,7 +640,9 @@ export class SessionRouter {
   async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
     const requested = await this.pendingEventStore.requestInterrupt(sessionId);
     // The owner observes the exact durable input marker on its heartbeat; a
-    // local abort here could hit the next Turn after a completion race.
+    // local abort here could hit the next Turn after a completion race. The
+    // hint makes the owner's heartbeat run now instead of at its next tick.
+    if (requested) this.checkSession(sessionId);
     return { requested, interrupted: false };
   }
 
@@ -609,7 +658,7 @@ export class SessionRouter {
       // and the drain it granted must still end at once.
       activeRun.stopAttempt?.(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       this.clearClaimRetry(sessionId);
-      this.claimHeartbeatStops.get(sessionId)?.();
+      this.claimHeartbeats.get(sessionId)?.stop();
       activeRun.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
     }
     // Termination, unlike an idle user interrupt, intentionally cancels any
@@ -618,6 +667,7 @@ export class SessionRouter {
     this.notifyIdleIfSettled();
     await this.pendingEventStore.clear(sessionId);
     const reconciled = await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? [];
+    this.checkReconciled(reconciled);
     for (const execution of reconciled) {
       const parent = await this.sessionStore.getById(execution.callerSessionId);
       if (parent && parent.status !== "terminated") {
@@ -641,7 +691,7 @@ export class SessionRouter {
       active.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       return false; // Wait for actual settlement; abort acceptance is not exit proof.
     }
-    await this.delegationStore?.reconcileTerminatedExecutions(sessionId);
+    this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? []);
     const bindingId = session.delegation?.sandboxSessionId ?? session.id;
     // Disposal rechecks shared users under binding coordination. A confirmed
     // missing resource can also clear an obsolete pointer despite old unknown use.
@@ -653,6 +703,17 @@ export class SessionRouter {
     return this.delegationStore
       ? this.delegationStore.withEnvironmentLock(bindingId, async id => ({ sandboxId: id, value: id === null }))
       : true;
+  }
+
+  /**
+   * Reconciliation interrupts a running child with a command and ends a
+   * queued or terminated one: the owners of both sides check at once.
+   */
+  private checkReconciled(executions: DelegationExecution[]): void {
+    for (const execution of executions) {
+      this.checkSession(execution.childId);
+      this.checkSession(execution.callerSessionId);
+    }
   }
 
   private async finishSettledActivity(activity: SandboxActivity): Promise<void> {
@@ -1035,7 +1096,8 @@ export class SessionRouter {
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
-      const stopHeartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
+      const heartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
+      const stopHeartbeat = heartbeat.stop;
       // The one stop path of a lost lease, a failed write and termination: the
       // Adapter loses its write entry and its Turn signal at once. `stopped`
       // is set before the signal aborts: the fenced executor reads it, so the
@@ -1117,6 +1179,7 @@ export class SessionRouter {
           return;
         }
         delegationExecution = started;
+        heartbeat.execution = started;
         // Starting the execution is how this claim learns its state. One that
         // has not ended changes no plan; one that has ends the Turn now.
         const executionPlan = planResume({ ...facts, execution: started });
@@ -1493,7 +1556,7 @@ export class SessionRouter {
 
       // Fence the availability check and its optional durable diagnostic.
       const storageCheckLease = await this.renewPendingClaim(sessionId, claim);
-      if (!storageCheckLease) {
+      if (!storageCheckLease.renewed) {
         stopAttempt(new PendingLeaseLostError());
         return;
       }
@@ -1505,7 +1568,7 @@ export class SessionRouter {
 
       // Fence again before changing global Turn state after the storage check.
       const completionLease = await this.renewPendingClaim(sessionId, claim);
-      if (!completionLease) {
+      if (!completionLease.renewed) {
         stopAttempt(new PendingLeaseLostError());
         return;
       }

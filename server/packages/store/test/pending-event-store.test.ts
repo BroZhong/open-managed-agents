@@ -73,16 +73,19 @@ describe("PgPendingEventStore", () => {
     const event = await store.enqueue("interrupt_generation", { type: "user.message", data: { text: "work" }, sessionThreadId: "t" });
     const first = (await store.claim("interrupt_generation", "first-owner", 60_000))!;
     expect(first.priorInterrupt).toBe(false);
+    expect(await store.renewClaim("interrupt_generation", event.id, first, 60_000)).toEqual({ renewed: true, interruptRequested: false });
     expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
-    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+    // The owner learns of the Interrupt from its next renewal.
+    expect(await store.renewClaim("interrupt_generation", event.id, first, 60_000)).toEqual({ renewed: true, interruptRequested: true });
     await store.releaseClaim("interrupt_generation", event.id, first);
     // D1: the takeover learns of the Interrupt its predecessor never applied...
     const replacement = (await store.claim("interrupt_generation", "replacement-owner", 60_000))!;
     expect(replacement.priorInterrupt).toBe(true);
     // D2: ...which does not interrupt it the way its own Interrupt does.
-    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(false);
+    expect(await store.renewClaim("interrupt_generation", event.id, replacement, 60_000)).toEqual({ renewed: true, interruptRequested: false });
+    expect(await store.renewClaim("interrupt_generation", event.id, first, 60_000)).toEqual({ renewed: false, interruptRequested: false });
     expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
-    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+    expect(await store.renewClaim("interrupt_generation", event.id, replacement, 60_000)).toEqual({ renewed: true, interruptRequested: true });
     // D4: an Interrupt the takeover accepted is prior to the claim after it.
     await store.releaseClaim("interrupt_generation", event.id, replacement);
     expect((await store.claim("interrupt_generation", "third-owner", 60_000))!.priorInterrupt).toBe(true);
@@ -229,10 +232,10 @@ describe("PgPendingEventStore", () => {
     const second = await store.claim("sess_1", "host_b", 60_000);
     expect(second).not.toBeNull();
     expect(second!.generation).toBe(first!.generation + 1);
-    expect(await store.renewClaim("sess_1", event.id, first!, 60_000)).toBe(false);
+    expect((await store.renewClaim("sess_1", event.id, first!, 60_000)).renewed).toBe(false);
     expect(await store.releaseClaim("sess_1", event.id, first!)).toBe(false);
     expect(await store.ack("sess_1", event.id, first!)).toBe(false);
-    expect(await store.renewClaim("sess_1", event.id, second!, 60_000)).toBe(true);
+    expect(await store.renewClaim("sess_1", event.id, second!, 60_000)).toEqual({ renewed: true, interruptRequested: false });
     expect(await store.ack("sess_1", event.id, second!)).toBe(true);
     expect(await store.peek("sess_1")).toBeNull();
   });
@@ -357,8 +360,8 @@ describe("PgPendingEventStore", () => {
     const tail = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "t" });
     expect(await store.requestInterrupt("sess_1")).toBe(false);
     expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toEqual({ acknowledged: true });
-    await store.claim("sess_1", "tail-owner", 60_000);
-    expect(await store.interruptRequested("sess_1", tail.id)).toBe(false);
+    const tailClaim = (await store.claim("sess_1", "tail-owner", 60_000))!;
+    expect((await store.renewClaim("sess_1", tail.id, tailClaim, 60_000)).interruptRequested).toBe(false);
   });
 
   it("keeps the Session running between inputs and commits idle only with the final acknowledgement", async () => {

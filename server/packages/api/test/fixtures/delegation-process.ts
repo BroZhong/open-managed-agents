@@ -49,7 +49,10 @@ const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local:
 if (process.env.PARENT_SESSION_ID) {
   // A deterministic existing owner. Only the other OS process scans for children.
   const router = new SessionRouter({ ...deps, sandboxManager, workspaceMount, resolveAdapter: () => adapter,
-    wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }) });
+    wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
+    checkSession: sessionId => signals.publish({ sessionId, kind: "check" }) });
+  // As RunnerDispatch does: the child's Runner hints this owner when the child ends.
+  signals.subscribe(signal => { if (signal.kind === "check") router.checkNow(signal.sessionId); });
   const session = (await stores.sessionStore.getById(process.env.PARENT_SESSION_ID))!;
   await router.handleNewEvent(session.id, session.agent);
   console.log("parent completed");

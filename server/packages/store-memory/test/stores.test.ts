@@ -334,7 +334,7 @@ describe("createMemoryStores", () => {
 
       const second = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
       expect(second?.generation).toBe(2);
-      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first!, 60_000)).toBe(false);
+      expect((await stores.pendingEventStore.renewClaim("s1", event.id, first!, 60_000)).renewed).toBe(false);
       expect(await stores.pendingEventStore.ack("s1", event.id, second!)).toBe(true);
     });
 
@@ -349,9 +349,9 @@ describe("createMemoryStores", () => {
       const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
       expect(second.priorInterrupt).toBe(true);
       // ...without interrupting it the way its own Interrupt does.
-      expect(await stores.pendingEventStore.interruptRequested("s1", event.id)).toBe(false);
+      expect((await stores.pendingEventStore.renewClaim("s1", event.id, second, 60_000)).interruptRequested).toBe(false);
       expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
-      expect(await stores.pendingEventStore.interruptRequested("s1", event.id)).toBe(true);
+      expect((await stores.pendingEventStore.renewClaim("s1", event.id, second, 60_000)).interruptRequested).toBe(true);
       await stores.pendingEventStore.releaseClaim("s1", event.id, second);
 
       expect((await stores.pendingEventStore.claim("s1", "host_c", 60_000))!.priorInterrupt).toBe(true);
@@ -365,6 +365,24 @@ describe("createMemoryStores", () => {
       expect(await stores.pendingEventStore.ack("s1", interrupted.id, first)).toBe(true);
 
       expect((await stores.pendingEventStore.claim("s1", "host_a", 60_000))!.priorInterrupt).toBe(false);
+    });
+
+    it("reports an Interrupt through the renewal of the generation it was accepted for", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first, 60_000))
+        .toEqual({ renewed: true, interruptRequested: false });
+      expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first, 60_000))
+        .toEqual({ renewed: true, interruptRequested: true });
+
+      // A later generation does not inherit the earlier generation's Interrupt.
+      await stores.pendingEventStore.releaseClaim("s1", event.id, first);
+      const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, second, 60_000))
+        .toEqual({ renewed: true, interruptRequested: false });
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first, 60_000))
+        .toEqual({ renewed: false, interruptRequested: false });
     });
 
     it("rejects a durable append from an old pending fence", async () => {

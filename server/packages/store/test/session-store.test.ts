@@ -182,7 +182,7 @@ describe("PgSessionStore", () => {
     await store.terminate(created.id);
 
     expect(await pending.count(created.id)).toBe(0);
-    expect(await pending.renewClaim(created.id, input.id, claim!, 60_000)).toBe(false);
+    expect((await pending.renewClaim(created.id, input.id, claim!, 60_000)).renewed).toBe(false);
     expect(await pending.ack(created.id, input.id, claim!)).toBe(false);
     await expect(new PgEventLogStore(harness.pool).append(created.id, {
       type: "agent.message",

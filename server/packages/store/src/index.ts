@@ -86,6 +86,7 @@ export type {
   PendingEventClaim,
   PendingEventClaimRef,
   PendingEventFence,
+  PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
 export { PendingEventClaimLostError } from "./errors.js";

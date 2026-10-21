@@ -41,6 +41,8 @@ export interface EventRouteDeps {
   eventStreamHub?: EventStreamHub;
   sessionRouter?: SessionRouter;
   wakeSession?: (sessionId: string) => void;
+  /** Hint the owner of a Session's running Turn to check it now. */
+  checkSession?: (sessionId: string) => void;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * the SSE reconnect merge is done server-side: completed Events are replayed
@@ -143,6 +145,12 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
         return c.json({ error: "user.interrupt must be the only event in a batch" }, 400);
       }
       const requested = await deps.pendingEventStore.requestInterrupt(sessionId);
+      // The owner sees the durable marker on its next claim renewal; the hint
+      // makes it renew now instead of up to a renew interval later.
+      if (requested) {
+        deps.checkSession?.(sessionId);
+        deps.sessionRouter?.checkNow(sessionId);
+      }
       return c.json({ accepted: true, requested, interrupted: false }, 202);
     }
 

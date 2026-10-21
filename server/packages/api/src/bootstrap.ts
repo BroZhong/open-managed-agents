@@ -75,6 +75,7 @@ export async function startHost(role: HostRole): Promise<void> {
     modelProviderService: modelProviders,
     thinkingOptions: (tenant, model) => modelProviders.thinkingOptions(tenant, model, managedOptions),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
+    checkSession: sessionId => signals.publish({ sessionId, kind: "check" }),
     sseCatchupIntervalMs: Number(process.env.SSE_CATCHUP_INTERVAL_MS ?? 2000),
   }));
   const healthPath = role === "runner" ? "" : (process.env.API_BASE_PATH ?? "").replace(/\/$/, "");

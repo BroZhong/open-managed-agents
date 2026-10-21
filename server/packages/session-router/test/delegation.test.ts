@@ -235,7 +235,7 @@ describe("Host-owned delegation through the Session Router", () => {
     const child = (await h.stores.sessionStore.getById(childId))!;
     const coordinator = new DelegationCoordinator({ store: h.stores.delegationStore,
       pending: h.stores.pendingEventStore, sessions: h.stores.sessionStore,
-      wake() {}, maxSteps: 30 });
+      wake() {}, check() {}, maxSteps: 30 });
     expect(() => coordinator.capability({ session: child, turnId: "direct-child-turn",
       fence: { eventId: "not-issued", ownerId: "host", generation: 1 }, signal: new AbortController().signal,
     })).toThrow("Child Sessions cannot receive delegation capabilities");
@@ -279,6 +279,55 @@ describe("Host-owned delegation through the Session Router", () => {
     expect((await h.log()).filter((e) => e.type === "session.turn_aborted")).toHaveLength(1);
     expect(parentTurns).toBe(2);
     expect(h.errors).toEqual([]);
+  });
+
+  it("stops a synchronous child at once when its parent's Interrupt is hinted, not at the child's next renewal", async () => {
+    let childStarted = false; let childAbortedAt = 0;
+    const h = await harness({ async run(input) {
+      const write = journalWriter(input);
+      if (input.execution?.isChild) {
+        childStarted = true;
+        await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => { childAbortedAt = Date.now(); resolve(); }, { once: true }));
+        return "finished";
+      }
+      const call = tool("hinted-interrupt"); await write(call);
+      const done = await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "hinted-interrupt" });
+      await write(result("hinted-interrupt", done));
+      return "finished";
+    } }, { leaseMs: 30_000 }); // Renews every 10 s: only the hint can stop the child sooner.
+    await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
+    await until(async () => childStarted && (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
+    const requestedAt = Date.now();
+    expect((await h.router.requestInterrupt(h.parent.id)).requested).toBe(true);
+    await until(async () => childAbortedAt > 0);
+    expect(childAbortedAt - requestedAt).toBeLessThan(500);
+    await running;
+    expect(await h.router.waitForIdle(4000)).toBe(true);
+    expect((await h.stores.delegationStore.list("tenant", h.parent.id))[0].status).toBe("interrupted");
+    expect(h.errors).toEqual([]);
+  });
+
+  it("stops a synchronous child at once when its parent Session is terminated", async () => {
+    let childStarted = false; let childAbortedAt = 0;
+    const h = await harness({ async run(input) {
+      const write = journalWriter(input);
+      if (input.execution?.isChild) {
+        childStarted = true;
+        await new Promise<void>((resolve) => input.signal!.addEventListener("abort", () => { childAbortedAt = Date.now(); resolve(); }, { once: true }));
+        return "finished";
+      }
+      const call = tool("terminated-parent"); await write(call);
+      await input.subagents!.delegate({ prompt: "child", runInBackground: false }, { toolUseId: "terminated-parent" });
+      return "finished";
+    } }, { leaseMs: 30_000 });
+    await h.enqueue(); void h.router.handleNewEvent(h.parent.id, h.agent);
+    await until(async () => childStarted && (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
+    const terminatedAt = Date.now();
+    await h.stores.sessionStore.terminate(h.parent.id);
+    await h.router.terminateSession(h.parent.id);
+    await until(async () => childAbortedAt > 0);
+    expect(childAbortedAt - terminatedAt).toBeLessThan(500);
+    expect(await h.router.waitForIdle(4000)).toBe(true);
   });
 
   it("cancels a wait on an independent asynchronous child without stopping the child", async () => {

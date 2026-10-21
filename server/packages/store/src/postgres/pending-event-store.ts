@@ -7,6 +7,7 @@ import type {
   PendingEventClaimRef,
   PendingEventEnqueueInput,
   PendingEventIngressStore,
+  PendingEventRenewal,
 } from "../interfaces/pending-event-store.js";
 
 interface PendingRow {
@@ -48,14 +49,6 @@ export class PgPendingEventStore implements PendingEventIngressStore {
        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = p.session_id
          AND e.type = 'session.turn_completed' AND e.data->>'pendingEventId' = p.id)
        RETURNING p.id`, [sessionId],
-    );
-    return result.rows.length > 0;
-  }
-
-  async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT 1 FROM pending_events WHERE session_id = $1 AND id = $2
-       AND interrupt_requested_at IS NOT NULL AND interrupt_generation = claim_generation`, [sessionId, eventId],
     );
     return result.rows.length > 0;
   }
@@ -208,8 +201,9 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
-  ): Promise<boolean> {
+  ): Promise<PendingEventRenewal> {
     this.validateLeaseMs(leaseMs);
+    const lost = { renewed: false, interruptRequested: false };
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -221,9 +215,11 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       );
       if (!locked.rows[0]) {
         await client.query("COMMIT");
-        return false;
+        return lost;
       }
-      const { rows } = await client.query<{ id: string }>(
+      // The heartbeat reads the Interrupt marker of its own generation here
+      // instead of in a separate query per tick.
+      const { rows } = await client.query<{ interrupt_requested: boolean }>(
         `UPDATE pending_events
          SET claim_expires_at = clock_timestamp() + CAST($5 || ' milliseconds' AS interval)
          WHERE session_id = $1
@@ -231,11 +227,12 @@ export class PgPendingEventStore implements PendingEventIngressStore {
            AND claim_owner = $3
            AND claim_generation = $4
            AND claim_expires_at > clock_timestamp()
-         RETURNING id`,
+         RETURNING COALESCE(interrupt_requested_at IS NOT NULL
+           AND interrupt_generation = claim_generation, false) AS interrupt_requested`,
         [sessionId, eventId, claim.ownerId, claim.generation, leaseMs],
       );
       await client.query("COMMIT");
-      return rows.length > 0;
+      return rows[0] ? { renewed: true, interruptRequested: rows[0].interrupt_requested === true } : lost;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;

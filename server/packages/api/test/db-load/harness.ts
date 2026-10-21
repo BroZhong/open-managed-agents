@@ -206,12 +206,12 @@ export class Meter {
 
 // ─── Infrastructure doubles ──────────────────────────────────────────────────
 
-/** Redis pub/sub in one process: every Runner's subscription sees every wake. */
+/** Redis pub/sub in one process: every Runner's subscription sees every signal. */
 class InMemorySignals implements SessionSignals {
   private readonly listeners = new Set<(signal: SessionSignal) => void>();
   publish(signal: SessionSignal): void {
     const origin = sourceOf(activity.getStore());
-    for (const listener of this.listeners) activity.run({ source: `wake <- ${origin}` }, () => listener(signal));
+    for (const listener of this.listeners) activity.run({ source: `${signal.kind} <- ${origin}` }, () => listener(signal));
   }
   subscribe(listener: (signal: SessionSignal) => void): () => void {
     this.listeners.add(listener);
@@ -361,6 +361,7 @@ export class Fleet {
         sandboxManager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, provisionSources: {}, lifecycle: this.meter.lifecycle(name) }),
         workspaceMount: WORKSPACE_MOUNT, pendingClaimOwnerId: name,
         wakeSession: (sessionId) => this.signals.publish({ sessionId, kind: "wake" }),
+        checkSession: (sessionId) => this.signals.publish({ sessionId, kind: "check" }),
         onDrainError: ({ error }) => this.errors.push(error),
       });
       instrument(router);

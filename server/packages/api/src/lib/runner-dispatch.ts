@@ -22,6 +22,9 @@ export class RunnerDispatch {
   async start(): Promise<void> {
     this.unsubscribe = this.deps.signals.subscribe(signal => {
       if (signal.kind === "wake") this.wake(signal.sessionId);
+      // Not deduplicated like wakes: a drain started from a wake holds its
+      // Session in `waking` for the whole Turn, and the owner must still check.
+      if (signal.kind === "check") this.deps.router.checkNow(signal.sessionId);
     });
     await this.scan();
     this.timer = setInterval(() => { void this.scan(); }, this.interval);

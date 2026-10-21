@@ -24,8 +24,11 @@ and loads the shared Sandbox Secret. API alone requires user-login credentials.
 
 `PENDING_SCAN_INTERVAL_MS=5000`, `LOOP_POLL_INTERVAL_MS=15000`, and
 `SSE_CATCHUP_INTERVAL_MS=2000` are independent. Healthy wake hints normally allow
-claiming without waiting for a scan. PostgreSQL is the only pending queue and
-history authority. Redis contains disposable Deltas, active-Turn projections and
+claiming without waiting for a scan. A running Turn renews its claim every 10 s
+(30 s lease); the renewal also reports an accepted Interrupt. The API's `check`
+hint makes the owner renew at once, so an Interrupt takes effect within about a
+second while Redis is healthy and within 10 s without it. PostgreSQL is the only
+pending queue and history authority. Redis contains disposable Deltas, active-Turn projections and
 notifications. Outages lose temporary token animation, never committed answers.
 A Turn's Delta stream expires 30 minutes after its last append, so streams left
 behind by a lost Runner need no manual cleanup.

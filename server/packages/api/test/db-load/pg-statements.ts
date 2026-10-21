@@ -84,7 +84,6 @@ const appendInput = (facts: CallFacts) => facts.args[1] as { pendingFence?: unkn
 export const PG_COSTS: Record<string, Cost> = {
   // PgPendingEventStore
   "pendingEventStore.requestInterrupt": fixed([ix("UPDATE", "pending_events")]), // NOT EXISTS reads every event of the Session
-  "pendingEventStore.interruptRequested": fixed([pk("SELECT", "pending_events")]),
   "pendingEventStore.enqueue": fixed([st("INSERT", "pending_events")]), // + trigger: sessions lookup, delegation_environments upsert + lock
   "pendingEventStore.enqueueBatchIfSessionActive": (facts) => tx(pk("SELECT FOR UPDATE", "sessions"),
     ...((facts.args[1] as unknown[]) ?? []).map(() => st("INSERT", "pending_events"))),
@@ -92,6 +91,7 @@ export const PG_COSTS: Record<string, Cost> = {
   "pendingEventStore.claim": (facts) => facts.claimOutcome === "empty"
     ? tx(ix("SELECT FOR UPDATE", "pending_events"))
     : tx(ix("SELECT FOR UPDATE", "pending_events"), pk("UPDATE", "pending_events")),
+  // The UPDATE also returns the generation's Interrupt marker.
   "pendingEventStore.renewClaim": fixed(tx(pk("SELECT FOR UPDATE", "pending_events"), pk("UPDATE", "pending_events"))),
   "pendingEventStore.releaseClaim": fixed([pk("UPDATE", "pending_events")]),
   "pendingEventStore.ownsClaim": fixed(tx(pk("SELECT FOR UPDATE", "pending_events"), pk("SELECT", "pending_events"))),
