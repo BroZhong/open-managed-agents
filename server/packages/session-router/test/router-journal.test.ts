@@ -143,17 +143,23 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     expectPublishedInOrder(h.frames, log);
   });
 
-  it.each(["a journal write fails", "the lease is lost"] as const)("stops without terminal events when %s, leaving the input to the next claim", async (cause) => {
+  it.each([
+    "a journal write fails and the Adapter carries on",
+    "a journal write fails and run() rejects",
+    "the lease is lost",
+  ] as const)("stops without terminal events when %s, leaving the input to the next claim", async (cause) => {
+    const writeFails = cause !== "the lease is lost";
     const h = await harness({ async run(input) {
       const write = journalWriter(input);
       await write(text("committed"));
-      // The Adapter ignores its failed write: the Router stops the attempt itself.
-      if (cause === "a journal write fails") await write(contextEntry("lost")).catch(() => {});
+      if (cause === "a journal write fails and run() rejects") await write(contextEntry("lost"));
+      // An Adapter that ignores its failed write is stopped by the Router all the same.
+      if (cause === "a journal write fails and the Adapter carries on") await write(contextEntry("lost")).catch(() => {});
       await aborted(input.signal!);
       await write(text("never written")).catch(() => {});
       return "finished";
     } });
-    if (cause === "a journal write fails") {
+    if (writeFails) {
       let failures = 1;
       h.appends.mockImplementation(async (sessionId, input) => {
         if (input.type === "agent.context_entry" && failures-- > 0) throw new Error("connection reset");
@@ -166,7 +172,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
     h.stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) => {
       if (claim.generation !== 1) return renew(sessionId, eventId, claim, leaseMs);
       firstRenewals.push(Date.now());
-      return cause === "the lease is lost" ? false : renew(sessionId, eventId, claim, leaseMs);
+      return writeFails ? renew(sessionId, eventId, claim, leaseMs) : false;
     };
     const router = h.makeRouter({ pendingClaimLeaseMs: 60, pendingClaimRenewIntervalMs: 20 });
     await h.enqueue();
@@ -174,7 +180,7 @@ describe("SessionRouter writes each Turn attempt through one TurnJournal", () =>
 
     expect((await h.log()).map(stored => stored.type)).toEqual(["user.message", "session.status_running", "agent.message"]);
     expect(await h.stores.pendingEventStore.count(h.session.id)).toBe(1);
-    expect(h.errors).toEqual([expect.objectContaining({ message: cause === "the lease is lost" ? "Pending event lease lost" : "connection reset" })]);
+    expect(h.errors).toEqual([expect.objectContaining({ message: writeFails ? "connection reset" : "Pending event lease lost" })]);
     // The heartbeat stopped with the attempt.
     const renewals = firstRenewals.length;
     await sleep(60);
