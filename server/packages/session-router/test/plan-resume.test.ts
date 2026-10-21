@@ -20,8 +20,12 @@ function log(...events: Logged[]): StoredEvent[] {
 }
 
 function facts(overrides: Partial<ResumeFacts> = {}): ResumeFacts {
-  return { pendingEventId: INPUT, promotedSeq: PROMOTED_SEQ, claim: { generation: 2 }, events: [], waits: [], ...overrides };
+  return { pendingEventId: INPUT, promotedSeq: PROMOTED_SEQ, claim: { generation: 2, priorInterrupt: false }, events: [], waits: [], ...overrides };
 }
+
+/** The facts of a claim whose predecessor accepted an Interrupt and stopped before it took effect. */
+const afterInterrupt = (overrides: Partial<ResumeFacts> = {}): ResumeFacts =>
+  facts({ claim: { generation: 2, priorInterrupt: true }, ...overrides });
 
 const running: Logged = ["session.status_running", {}];
 const completed: Logged = ["session.turn_completed", { pendingEventId: INPUT, turnId: "turn_10_a1" }];
@@ -71,6 +75,7 @@ const PARTIAL = {
   message: "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
 };
 const ended = (repairs: DanglingToolCall[] = []): ResumePlan => ({ kind: "complete", cause: "turn_ended", turnId: NEW_TURN, repairs, interruptChildren: true });
+const interrupted = (repairs: DanglingToolCall[] = [], turnId = NEW_TURN): ResumePlan => ({ kind: "complete", cause: "interrupted", turnId, repairs, interruptChildren: true });
 const partial = (repairs: DanglingToolCall[] = []): ResumePlan => ({ kind: "complete", cause: "partial_output", turnId: NEW_TURN, repairs, error: PARTIAL, interruptChildren: false });
 const bash = (toolUseId: string): DanglingToolCall => ({ type: "agent.tool_use", toolUseId, name: "bash" });
 
@@ -188,6 +193,44 @@ const rows: Array<[string, ResumeFacts, ResumePlan]> = [
   ["C3 Agent tool call committed, delegation not accepted: no wait, repair the call",
     facts({ events: log(running, contextStart, assistant([call("call_agent", "Agent")])) }),
     partial([{ type: "agent.tool_use", toolUseId: "call_agent", name: "Agent" }])],
+
+  // An Interrupt an earlier generation accepted ends the Turn as an Interrupted
+  // Turn once the log neither completes nor ends it, before any other row.
+  ["D1 Interrupt accepted, Runner lost before the Turn committed output: Interrupted Turn, not run",
+    afterInterrupt({ events: log(running) }),
+    interrupted()],
+  ["D1 Interrupt accepted, Runner lost before even the running status: Interrupted Turn, not run",
+    afterInterrupt(),
+    interrupted()],
+  ["D1 Interrupt accepted while a native tool call ran: repair it, Interrupted Turn",
+    afterInterrupt({ events: log(running, contextStart, assistant([text("running it"), call("call_1")])) }),
+    interrupted([bash("call_1")])],
+  ["D1 Interrupt accepted during parallel tools: repair only the call without a result",
+    afterInterrupt({ events: log(running, contextStart, assistant([call("call_1"), call("call_2")]), nativeResult("call_2")) }),
+    interrupted([bash("call_1")])],
+  ["D1 Interrupt accepted after the final answer was committed: Interrupted Turn, not completed as answered",
+    afterInterrupt({ events: log(running, contextStart, assistant([text("done")])) }),
+    interrupted()],
+  ["D1 Interrupt accepted after a compaction boundary: Interrupted Turn",
+    afterInterrupt({ events: log(running, contextStart, ["agent.compaction", { summary: "earlier work" }]) }),
+    interrupted()],
+  ["D1/C12 Interrupt accepted while the Turn waits on a delegation: the waiting Turn ends interrupted, not resumed",
+    afterInterrupt({ waits: [wait("call_agent")], events: log(running, contextStart, modelRequest,
+      assistant([text("delegating"), call("call_agent", "Agent")], { blockIndex: 0 }), ["session.status_waiting", { turnId: WAITING_TURN }]) }),
+    interrupted([{ type: "agent.tool_use", toolUseId: "call_agent", name: "Agent" }], WAITING_TURN)],
+  ["D3 Interrupt accepted, lost while writing its repairs: repair only the rest, Interrupted Turn",
+    afterInterrupt({ events: log(running, toolUse("call_1"), toolUse("call_2"), toolResult("call_1")) }),
+    interrupted([bash("call_2")])],
+  ["D3 Interrupt accepted, lost after turn_aborted: the log ends the Turn, complete it",
+    afterInterrupt({ events: log(running, assistant([call("call_1")]), toolUse("call_2"), toolResult("call_1"),
+      ["session.turn_aborted", { turnId: "turn_10_a1" }]) }),
+    ended([bash("call_2")])],
+  ["D1 a session.error committed before the Interrupt took effect: the log ends the Turn, complete it",
+    afterInterrupt({ events: log(running, sessionError("adapter_error")) }),
+    ended()],
+  ["A13 Interrupt accepted after turn_completed was committed: acknowledge only",
+    afterInterrupt({ events: log(running, ["agent.message", { content: [] }], completed) }),
+    { kind: "acknowledge", turnId: NEW_TURN }],
 ];
 
 /** The Child execution of the input, as starting it under the new claim left it. */
@@ -213,6 +256,9 @@ const executionRows: Array<[string, ResumeFacts, ResumePlan]> = [
   ["A13 a completed Turn is only acknowledged, whatever its Child execution",
     facts({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(running, completed) }),
     { kind: "acknowledge", turnId: NEW_TURN }],
+  ["D1 a Child execution that has ended outranks the Interrupt its lost owner accepted",
+    afterInterrupt({ execution: { status: "completed", turnId: CHILD_TURN }, events: log(running, contextStart, assistant([text("done")])) }),
+    { kind: "complete", cause: "execution_ended", turnId: CHILD_TURN, repairs: [], interruptChildren: false }],
 ];
 
 describe("planResume", () => {

@@ -12,7 +12,11 @@ export interface ResumeFacts {
   /** The seq its promotion gave the input; a new Turn is named after it. */
   promotedSeq: number;
   /** The claim this attempt holds. */
-  claim: { generation: number };
+  claim: {
+    generation: number;
+    /** An earlier generation accepted an Interrupt for the input, and the Runner holding it stopped first. */
+    priorInterrupt: boolean;
+  };
   /** Every event after the promoted input, in seq order. */
   events: readonly StoredEvent[];
   /** The delegation waits recorded for the input's Turn. */
@@ -45,7 +49,9 @@ export interface CompletePlan {
     /** An earlier attempt committed output and no wait resumes the Turn; it is not run again. */
     | "partial_output"
     /** The Child execution the input runs has ended, or its lost owner left its outcome uncertain. */
-    | "execution_ended";
+    | "execution_ended"
+    /** An earlier attempt accepted an Interrupt it did not live to apply: the Turn ends as an Interrupted Turn. */
+    | "interrupted";
   /** Tool calls of the Turn without a result; each gets one before the Turn completes. */
   repairs: DanglingToolCall[];
   /** The session.error that ends the Turn, when its log does not end it yet. */
@@ -101,9 +107,10 @@ export interface TurnResume extends AdapterResume {
  *   1. its Turn completed: acknowledge the input;
  *   2. the Child execution it runs has ended: complete the Turn;
  *   3. the log ends the Turn: repair the dangling calls, complete it;
- *   4. the Turn waits on delegations: resume the waits;
- *   5. an earlier attempt committed output: repair, complete with an error;
- *   6. otherwise: run a new Turn.
+ *   4. an earlier generation accepted an Interrupt: repair, end as an Interrupted Turn;
+ *   5. the Turn waits on delegations: resume the waits;
+ *   6. an earlier attempt committed output: repair, complete with an error;
+ *   7. otherwise: run a new Turn.
  */
 export function planResume(facts: ResumeFacts): ResumePlan {
   const waits = facts.waits.filter((wait) => wait.status !== "cancelled");
@@ -125,6 +132,11 @@ export function planResume(facts: ResumeFacts): ResumePlan {
   const output = facts.events.filter((event) => event.type !== "subagent.result");
   if (output.some((event) => event.type === "session.status_idle" || event.type === "session.error" || event.type === "session.turn_aborted")) {
     return { kind: "complete", cause: "turn_ended", turnId, repairs: danglingToolCalls(output), interruptChildren: true };
+  }
+  // The user stopped this Turn and the log shows the stop never took effect.
+  // Continuing it would ignore the stop, so it ends as the Interrupt would have ended it.
+  if (facts.claim.priorInterrupt) {
+    return { kind: "complete", cause: "interrupted", turnId, repairs: danglingToolCalls(output), interruptChildren: true };
   }
   if (waits.length) return { kind: "run", turnId, resume: resumeWaits(facts.events, turnId, waits) };
   if (output.some((event) => event.type !== "session.status_running")) {

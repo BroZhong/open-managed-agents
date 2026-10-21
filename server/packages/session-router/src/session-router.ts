@@ -916,7 +916,8 @@ export class SessionRouter {
         ...(isMcp ? { serverName: call.serverName ?? "unknown" } : {}),
         content: [{
           type: "text",
-          text: "The previous tool execution was interrupted before a result was committed.",
+          text: "The previous tool execution was interrupted before a result was committed. " +
+            "Before retrying it, check whether it already took effect.",
         }],
         isError: true,
         turnId,
@@ -1121,7 +1122,8 @@ export class SessionRouter {
       // attempts made durable decides how this one proceeds.
       let priorEvents = await this.readAllEvents(sessionId);
       const facts: ResumeFacts = {
-        pendingEventId: pendingEvent.id, promotedSeq: promotedEvent.seq, claim: { generation: claim.generation },
+        pendingEventId: pendingEvent.id, promotedSeq: promotedEvent.seq,
+        claim: { generation: claim.generation, priorInterrupt: claim.priorInterrupt },
         events: priorEvents.filter((event) => event.seq > promotedEvent.seq),
         waits: await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [],
       };
@@ -1186,6 +1188,10 @@ export class SessionRouter {
       if (plan.kind === "complete") {
         if (plan.interruptChildren) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
         this.recordRepairs(journal, pendingEvent.id, turnId, plan.repairs, plan.error);
+        // Under the key of the attempt that accepted the Interrupt: whichever writes it, it is written once.
+        if (plan.cause === "interrupted") {
+          journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEvent.id, "turn_aborted"));
+        }
         await this.reclaimEarlierAttempts(
           sessionId,
           promotedEvent.seq,
