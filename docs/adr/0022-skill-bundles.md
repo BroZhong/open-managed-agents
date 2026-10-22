@@ -145,12 +145,14 @@ As implemented (#268):
   records `session.error` `skills_install_failed`. The Turn installs no more.
 - A Turn that makes no Sandbox operation waits for its install only at its
   end, so the end span precedes `session.turn_completed` and a complete
-  install is recorded. If that install fails, the Turn still completes
-  normally: the failure is in the end span only, the binding records nothing,
-  and the next Turn installs again.
+  install is recorded. If that install failed, the Turn keeps its answer and
+  ends with `session.error` `skills_install_failed` naming the stage and
+  reason ("The answer is retained; ..."), like the Workspace check at Turn
+  end. The binding records nothing, and the next Turn installs again.
 - An Interrupt cancels the install: its exec is killed, it is neither retried
   nor recorded, the binding's single flight is free at once, and the end span
-  says `aborted`.
+  says `aborted`. A cancelled install, by an Interrupt or a stopped attempt,
+  records no error.
 - `span.skills_install_start` carries `turnId`, `installId`, `setHash` and
   `skills` (Skills in the Set); `span.skills_install_end` adds `outcome`
   (`installed`, `failed`, `aborted`), `durationMs`, `downloaded` and `bytes`
