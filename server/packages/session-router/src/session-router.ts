@@ -1138,6 +1138,10 @@ export class SessionRouter {
     pendingEventId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
+    // The acknowledgement is the attempt's last write under its claim, and it
+    // deletes the claim row. A heartbeat still running after it would renew a
+    // claim that no longer exists and report the lease lost.
+    this.claimHeartbeats.get(sessionId)?.stop();
     const result = await this.pendingEventStore.ackCompletedTurn(sessionId, pendingEventId, pendingFence);
     if (result.idleEvent) {
       this.eventStreamHub.publish(sessionId, {
