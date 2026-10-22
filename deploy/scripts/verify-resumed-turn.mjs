@@ -42,7 +42,7 @@ const presented=es=>es.flatMap(x=>presentEvent(x));
 const textOf=x=>(x?.data?.content??[]).map(c=>c.text??'').join('');
 async function session(name){const s=await api('/v1/sessions',{agent:e.agent,workspace_name:`${e.runId}-${name}`});e.sessions[name]={id:s.id,workspaceId:s.workspaceId};await save();return e.sessions[name]}
 const prompt=(marker,seconds)=>`Use bash exactly once with this exact command: ${JSON.stringify(`printf START > /home/user/workspace/${marker}.txt; sleep ${seconds}; printf DONE >> /home/user/workspace/${marker}.txt`)}. When it returns, or if its outcome is reported as unknown, inspect /home/user/workspace/${marker}.txt with bash before deciding anything, never run the sleep command again, and finally reply with exactly the file content prefixed by RESULT:.`;
-async function start(name,seconds){const s=await session(name);const marker=`${e.runId}-${name}`;e.sessions[name].marker=marker;await api(`/v1/sessions/${s.id}/events`,{events:[{type:'user.message',data:{content:[{type:'text',text:prompt(marker,seconds)}]}}]});
+async function start(name,seconds){const s=await session(name);const marker=`${e.runId}-${name}`;e.sessions[name].marker=marker;e.sessions[name].sleepSeconds=seconds;await api(`/v1/sessions/${s.id}/events`,{events:[{type:'user.message',data:{content:[{type:'text',text:prompt(marker,seconds)}]}}]});
  const es=await wait('bash tool committed',()=>events(s.id),es=>presented(es).some(x=>x.type==='agent.tool_use'&&x.data.name==='bash'));e.sessions[name].toolCommittedAt=new Date().toISOString();await save();
  check(`${name}: long bash committed before disruption`,true,{sessionId:s.id,turnId:presented(es).find(x=>x.type==='agent.tool_use')?.data.turnId});console.log(`DISRUPT_NOW session=${s.id}`)}
 async function finish(name,expectReason,maxTakeoverMs,expectUnknown,maxHandoffGapMs){const s=e.sessions[name];const es=await wait('Turn completion',()=>events(s.id),es=>es.some(x=>x.type==='session.turn_completed'));const p=presented(es);
@@ -60,7 +60,8 @@ async function finish(name,expectReason,maxTakeoverMs,expectUnknown,maxHandoffGa
    :x.type==='agent.tool_result'&&/^(recovery_|delegation_result_)/.test(x.data?.id??'')?[x.data.toolUseId]:[]);
  const resultIds=uses.map(u=>sources.filter(id=>id===u.data.toolUseId).length);
  check(`${name}: every tool call has exactly one result`,resultIds.every(n=>n===1),{uses:uses.length,resultsPerCall:resultIds});
- const sleeps=uses.filter(u=>JSON.stringify(u.data.input).includes('sleep'));check(`${name}: the long command was not rerun`,sleeps.length===1,{sleeps:sleeps.length});
+ // The long command itself, not any later wait the model writes (e.g. a time.sleep poll).
+ const sleeps=uses.filter(u=>JSON.stringify(u.data.input).includes(`sleep ${s.sleepSeconds}; printf DONE`));check(`${name}: the long command was not rerun`,sleeps.length===1,{sleeps:sleeps.length});
  const first=results.find(r=>r.data.toolUseId===sleeps[0]?.data.toolUseId);const unknown=JSON.stringify(first?.data.content??'').includes('outcome is unknown');
  e.sessions[name].outcome={unknown,isError:first?.data.isError};const after=uses.filter(u=>u.seq>first.seq);
  if(expectUnknown!==undefined)check(`${name}: long call outcome ${expectUnknown?'unknown':'committed'}`,unknown===expectUnknown,{unknown,isError:first?.data.isError});
