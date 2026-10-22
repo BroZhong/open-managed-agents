@@ -89,6 +89,13 @@ describe("migrateSkillBundles", () => {
     dryRun: false, font, target: TARGET, now: () => new Date("2026-10-10T00:00:00.000Z"), log: (line) => logs.push(line), ...options,
   });
   const entry = (report: MigrationReport, skillId: string) => report.skills.find((skill) => skill.skillId === skillId)!;
+  /** The repaired font as unpacked from the bundles of the edited fork and of the Library Skill (which its unedited fork shares). */
+  const verifiedFonts = (report: MigrationReport) => [entry(report, "skill_fork2"), entry(report, "skill_lib")]
+    .map((skill) => ({
+      tenantId: TENANT, bundleSha256: skill.bundleSha256, path: FONT_PATH, sha256: sha256(official), size: official.byteLength,
+      header: "00010000", problem: null,
+    }))
+    .sort((a, b) => (a.bundleSha256! < b.bundleSha256! ? -1 : 1));
   const rows = async () => (await harness.pool.query<{ skill_id: string; bundle_sha256: string | null; bundle_size: string | null; updated_at: Date }>(
     "SELECT skill_id, bundle_sha256, bundle_size, updated_at FROM skills ORDER BY skill_id")).rows
     .map((row) => ({ ...row, bundle_size: row.bundle_size == null ? null : Number(row.bundle_size), updated_at: new Date(row.updated_at).toISOString() }));
@@ -135,7 +142,7 @@ describe("migrateSkillBundles", () => {
       byStatus: { "would-write": 4, failed: 2 }, distinctBundles: 3, filteredFiles: 4, replacedFonts: 3, corruptFonts: 0,
       bundlesUploaded: 0,
     });
-    expect(report.verification).toEqual({ source: "packed", bundles: 3, problems: [] });
+    expect(report.verification).toEqual({ source: "packed", bundles: 3, problems: [], fonts: verifiedFonts(report) });
     expect(oss.objects.size).toBe(0);
     expect(await rows()).toEqual(before);
   });
@@ -159,7 +166,8 @@ describe("migrateSkillBundles", () => {
     const fontEntry = files.find((file) => file.path === FONT_PATH)!;
     expect(fontProblem(fontEntry.body)).toBeNull();
     expect(Buffer.from(fontEntry.body).equals(Buffer.from(official))).toBe(true);
-    expect(report.verification).toEqual({ source: "bundle-store", bundles: 3, problems: [] });
+    expect(report.verification).toEqual({ source: "bundle-store", bundles: 3, problems: [], fonts: verifiedFonts(report) });
+    expect(formatSummary(report)).toContain(`Fonts in verified bundles: 2 x ${sha256(official)} header 00010000 valid`);
   });
 
   it("reruns with the previous report as manifest: same bundles, no new objects, no writes", async () => {
@@ -173,7 +181,7 @@ describe("migrateSkillBundles", () => {
     expect(oss.calls.put).toBe(putsAfterFirst);
     expect(oss.objects.size).toBe(3);
     expect(second.totals.bundlesUploaded).toBe(0);
-    expect(second.verification).toEqual({ source: "bundle-store", bundles: 3, problems: [] });
+    expect(second.verification).toEqual(first.verification);
     expect(await rows()).toEqual(stateAfterFirst);
   });
 

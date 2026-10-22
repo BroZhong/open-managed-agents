@@ -12,7 +12,9 @@
 # JSON report back to <local report.json> (summary beside it as .txt) and deletes the copies.
 # --schema/--bucket are filled in per environment and checked by the tool against PG_SCHEMA
 # and S3_BUCKET. Cluster: OMA_KUBECONFIG (default ~/.kube/agent-platform-config), never the ambient
-# KUBECONFIG. Production needs separate authorization (#271): OMA_ALLOW_PRODUCTION_MIGRATION=yes.
+# KUBECONFIG. Every kubectl call has --request-timeout (OMA_KUBECTL_REQUEST_TIMEOUT, default 30s);
+# it bounds each API request, not the streamed run. Production needs separate authorization (#271):
+# OMA_ALLOW_PRODUCTION_MIGRATION=yes.
 set -euo pipefail
 
 usage() { sed -n '2,8p' "$0" >&2; exit 64; }
@@ -30,13 +32,14 @@ font=${OMA_FONT:?Set OMA_FONT to the official LiberationSans-Regular.ttf (see se
 [ -f "$font" ] || { echo "No font file at $font" >&2; exit 1; }
 # Never the ambient KUBECONFIG: it may point at another cluster.
 export KUBECONFIG=${OMA_KUBECONFIG:-$HOME/.kube/agent-platform-config}
+kc() { kubectl --request-timeout="${OMA_KUBECTL_REQUEST_TIMEOUT:-30s}" -n "$ns" "$@"; }
 root=$(cd "$(dirname "$0")/../.." && pwd)
 build=$(mktemp -d)
-pod=$(kubectl -n "$ns" get pod -l app=oma-api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+pod=$(kc get pod -l app=oma-api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
 [ -n "$pod" ] || { echo "No running oma-api Pod in $ns" >&2; exit 1; }
 dir=/tmp/oma-skill-bundle-migration-$(date +%s)-$$
 cleanup() {
-  kubectl -n "$ns" exec "$pod" -- rm -rf "$dir" >/dev/null 2>&1 || echo "WARNING: could not delete $ns/$pod:$dir" >&2
+  kc exec "$pod" -- rm -rf "$dir" >/dev/null 2>&1 || echo "WARNING: could not delete $ns/$pod:$dir" >&2
   rm -rf "$build"
 }
 trap cleanup EXIT
@@ -46,9 +49,9 @@ trap cleanup EXIT
   "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
   --outfile="$build/migrate-skill-bundles.mjs"
 
-kubectl -n "$ns" exec "$pod" -- mkdir -p "$dir"
-kubectl -n "$ns" cp "$build/migrate-skill-bundles.mjs" "$pod:$dir/migrate-skill-bundles.mjs" >/dev/null
-kubectl -n "$ns" cp "$font" "$pod:$dir/LiberationSans-Regular.ttf" >/dev/null
+kc exec "$pod" -- mkdir -p "$dir"
+kc cp "$build/migrate-skill-bundles.mjs" "$pod:$dir/migrate-skill-bundles.mjs" >/dev/null
+kc cp "$font" "$pod:$dir/LiberationSans-Regular.ttf" >/dev/null
 args=(--schema "$schema" --bucket "$bucket" --font "$dir/LiberationSans-Regular.ttf" --report "$dir/report.json")
 manifests=0
 while [ $# -gt 0 ]; do
@@ -56,17 +59,17 @@ while [ $# -gt 0 ]; do
     --manifest)
       [ -f "${2:-}" ] || { echo "No manifest file at ${2:-}" >&2; exit 1; }
       manifests=$((manifests + 1))
-      kubectl -n "$ns" cp "$2" "$pod:$dir/manifest-$manifests.json" >/dev/null
+      kc cp "$2" "$pod:$dir/manifest-$manifests.json" >/dev/null
       args+=(--manifest "$dir/manifest-$manifests.json"); shift 2 ;;
     *) args+=("$1"); shift ;;
   esac
 done
 
 status=0
-kubectl -n "$ns" exec "$pod" -- node "$dir/migrate-skill-bundles.mjs" "${args[@]}" | tee "${report%.json}.txt" || status=$?
-if kubectl -n "$ns" exec "$pod" -- test -f "$dir/report.json"; then
+kc exec "$pod" -- node "$dir/migrate-skill-bundles.mjs" "${args[@]}" | tee "${report%.json}.txt" || status=$?
+if kc exec "$pod" -- test -f "$dir/report.json"; then
   mkdir -p "$(dirname "$report")"
-  kubectl -n "$ns" cp "$pod:$dir/report.json" "$report" >/dev/null
+  kc cp "$pod:$dir/report.json" "$report" >/dev/null
   echo "Report copied to $report" >&2
 fi
 exit "$status"

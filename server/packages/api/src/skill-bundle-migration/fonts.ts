@@ -60,7 +60,7 @@ const SFNT_VERSIONS = new Set([0x00010000, 0x74727565 /* 'true' */, 0x4f54544f /
 const HEAD_MAGIC = 0x5f0f3cf5;
 const HEAD_MIN_LENGTH = 54;
 
-const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+export const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 export const isFontPath = (path: string) => /\.(ttf|otf)$/i.test(path);
 

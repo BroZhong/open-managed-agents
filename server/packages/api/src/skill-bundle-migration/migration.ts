@@ -8,7 +8,7 @@ import {
   type SkillBundleFile,
   type SkillBundleStore,
 } from "@oma-server/store";
-import { fontProblem, isFontPath, repairFonts, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
+import { fontProblem, isFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
 import type { SupabaseReadStats } from "./supabase-reader.js";
 
 /**
@@ -116,6 +116,19 @@ export interface SkillReportEntry {
   corruptFonts?: CorruptFont[];
 }
 
+/** A font file of a verified bundle, as unpacked from it. */
+export interface VerifiedFont {
+  tenantId: string;
+  bundleSha256: string;
+  path: string;
+  sha256: string;
+  size: number;
+  /** The first four bytes in hex: `00010000` for TrueType. */
+  header: string;
+  /** Why the file is not a valid font; null when it is. */
+  problem: string | null;
+}
+
 export interface MigrationReport {
   tool: "migrate-skill-bundles";
   version: 1;
@@ -145,7 +158,13 @@ export interface MigrationReport {
   /** Agent Skills compared with their Library source in this run. */
   forks: { total: number; sameBundleAsSource: string[]; differentFromSource: string[]; sourceNotPacked: string[] };
   /** Every distinct bundle unpacked again: from the bundle store on a real run, from memory on a dry run. */
-  verification: { source: "bundle-store" | "packed"; bundles: number; problems: Array<{ tenantId: string; sha256: string; problem: string }> };
+  verification: {
+    source: "bundle-store" | "packed";
+    bundles: number;
+    problems: Array<{ tenantId: string; sha256: string; problem: string }>;
+    /** Every font file of every verified bundle. */
+    fonts: VerifiedFont[];
+  };
   supabase: SupabaseReadStats;
   skills: SkillReportEntry[];
 }
@@ -292,11 +311,21 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
   const uploads = new Map<string, Promise<number>>();
   const verified = new Map<string, Promise<void>>();
   const problems: MigrationReport["verification"]["problems"] = [];
+  const fonts: VerifiedFont[] = [];
+  let verifiedBundles = 0;
   const verify = (tenantId: string, sha256: string, load: () => Promise<Uint8Array | null>) =>
     memo(verified, rowKey(tenantId, sha256), async () => {
       const bytes = await load();
       if (!bytes) throw new SkillFailure(`bundle ${sha256} is missing from the bundle store`);
-      for (const problem of bundleProblems(await unpackSkillBundle(bytes))) problems.push({ tenantId, sha256, problem });
+      const files = await unpackSkillBundle(bytes);
+      for (const problem of bundleProblems(files)) problems.push({ tenantId, sha256, problem });
+      for (const file of files.filter((entry) => isFontPath(entry.path))) {
+        fonts.push({
+          tenantId, bundleSha256: sha256, path: file.path, sha256: sha256Hex(file.body), size: file.body.byteLength,
+          header: Buffer.from(file.body.subarray(0, 4)).toString("hex"), problem: fontProblem(file.body),
+        });
+      }
+      verifiedBundles += 1;
     });
   const upload = (tenantId: string, packed: PackedSkillBundle) =>
     memo(uploads, rowKey(tenantId, packed.sha256), async () => {
@@ -414,7 +443,12 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       .map((group) => ({ ...group, skillIds: group.skillIds.sort(byCodeUnit) }))
       .sort((a, b) => byCodeUnit(a.tenantId, b.tenantId) || byCodeUnit(a.sha256, b.sha256)),
     forks,
-    verification: { source: options.dryRun ? "packed" : "bundle-store", bundles: verified.size, problems },
+    verification: {
+      source: options.dryRun ? "packed" : "bundle-store",
+      bundles: verifiedBundles,
+      problems: problems.sort((a, b) => byCodeUnit(a.tenantId, b.tenantId) || byCodeUnit(a.sha256, b.sha256) || byCodeUnit(a.problem, b.problem)),
+      fonts: fonts.sort((a, b) => byCodeUnit(a.tenantId, b.tenantId) || byCodeUnit(a.bundleSha256, b.bundleSha256) || byCodeUnit(a.path, b.path)),
+    },
     supabase: { ...deps.source.stats, retriesByCause: { ...deps.source.stats.retriesByCause } },
     skills,
   };
@@ -423,6 +457,12 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
 /** The human summary printed after a run. */
 export function formatSummary(report: MigrationReport): string {
   const { totals } = report;
+  const fontCounts = new Map<string, number>();
+  for (const font of report.verification.fonts) {
+    const key = `${font.sha256} header ${font.header} ${font.problem ? `invalid (${font.problem})` : "valid"}`;
+    fontCounts.set(key, (fontCounts.get(key) ?? 0) + 1);
+  }
+  const fontLines = [...fontCounts].map(([key, count]) => `${count} x ${key}`);
   const statuses = (["written", "would-write", "unchanged", "kept", "conflict", "failed"] as const)
     .map((status) => `${status} ${totals.byStatus[status] ?? 0}`).join(", ");
   const lines = [
@@ -439,6 +479,7 @@ export function formatSummary(report: MigrationReport): string {
     `Filtered files (.pyc, __pycache__): ${totals.filteredFiles}`,
     `Replaced fonts: ${totals.replacedFonts} (with ${report.font.fileName} ${report.font.sha256}); corrupt fonts not replaced: ${totals.corruptFonts}`,
     `Verification (${report.verification.source}): ${report.verification.bundles} bundles, ${report.verification.problems.length} problems`,
+    `Fonts in verified bundles: ${fontLines.length ? fontLines.join(", ") : "none"}`,
   ];
   for (const problem of report.verification.problems) lines.push(`  problem ${problem.tenantId}/${problem.sha256}: ${problem.problem}`);
   for (const skill of report.skills) {
