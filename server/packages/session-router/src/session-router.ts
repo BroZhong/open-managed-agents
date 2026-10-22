@@ -1050,8 +1050,8 @@ export class SessionRouter {
    * Apply an Interrupt to the attempt's own Turn: stop the synchronous
    * children it waits on, give every call left without a result the
    * Interrupt's result and record the Turn as an Interrupted Turn. The
-   * repairs read the Turn's output from the log, including what the Adapter
-   * recorded before it lost its write entry.
+   * repairs read the Turn's output from the log, so the caller has flushed
+   * what the attempt recorded, the Adapter's last events included.
    */
   private async interruptTurn(
     journal: TurnJournal,
@@ -1062,7 +1062,6 @@ export class SessionRouter {
     pendingFence: PendingEventFence,
   ): Promise<void> {
     await this.delegations?.interruptChildren(session, turnId, pendingFence);
-    await journal.flush();
     const turnEvents = (await this.readAllEvents(session.id)).filter((event) => event.seq > promotedSeq);
     await this.recordRepairs(journal, session.id, pendingEventId, turnId, danglingToolCalls(turnEvents), "interrupted");
     this.recordTurnAborted(journal, pendingEventId, turnId);
@@ -1293,8 +1292,7 @@ export class SessionRouter {
         lastOwnedTurn = projectionWriter;
         return this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, endedTurnId, pendingFence);
       };
-      // End the Turn with an error no later attempt could avoid: retaining
-      // its input would make every claim retry and recovery scan run it again.
+      // End the Turn with an error the Router records itself, then close it.
       const endTurnWithError = (endedTurnId: string, keySegment: string, error: { code: string; message: string }): Promise<boolean> => {
         this.recordTurnError(journal, pendingEvent.id, endedTurnId, keySegment, error);
         return endTurn(endedTurnId);
@@ -1567,6 +1565,9 @@ export class SessionRouter {
         };
       } catch (error) {
         if (turnController.signal.aborted && !stopped && this.delegations) {
+          // The repairs read the log: first write what preparing the input
+          // recorded, such as a resumed wait's transitions.
+          await journal.flush();
           await this.interruptTurn(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence);
           if (!await endTurn(turnId)) return;
           continue;
