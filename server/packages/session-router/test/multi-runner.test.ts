@@ -8,6 +8,7 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
+import { acceptInterrupt } from "./accept-interrupt.js";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
@@ -106,14 +107,13 @@ describe("Runners sharing one store", () => {
   it("sees an Interrupt accepted on another Host at once when the check hint arrives", async () => {
     const f = await fleet();
     const owner = f.makeRouter("runner-a");
-    // The hint reaches the owner as Redis delivers it in production.
-    const api = f.makeRouter("api", { checkSession: (sessionId) => owner.checkNow(sessionId) });
     await f.send();
     void owner.handleNewEvent(f.session.id, f.agent);
     await advance(1_500);
 
     const requestedAt = Date.now();
-    expect(await api.requestInterrupt(f.session.id)).toEqual({ requested: true, interrupted: false });
+    // The API accepts it; the hint reaches the owner as Redis delivers it in production.
+    expect(await acceptInterrupt(f.stores.pendingEventStore, f.session.id, owner)).toBe(true);
     await advance(100);
     expect(f.turn.aborts).toHaveLength(1);
     expect(f.turn.aborts[0] - requestedAt).toBeLessThan(50);
@@ -125,13 +125,12 @@ describe("Runners sharing one store", () => {
   it("sees an Interrupt within one renew interval when its hint is lost", async () => {
     const f = await fleet();
     const owner = f.makeRouter("runner-a");
-    const api = f.makeRouter("api", { checkSession: () => {} });
     await f.send();
     void owner.handleNewEvent(f.session.id, f.agent);
     await advance(1_500);
 
     const requestedAt = Date.now();
-    expect((await api.requestInterrupt(f.session.id)).requested).toBe(true);
+    expect(await acceptInterrupt(f.stores.pendingEventStore, f.session.id)).toBe(true);
     await advance(10_100);
     expect(f.turn.aborts).toHaveLength(1);
     expect(f.turn.aborts[0] - requestedAt).toBeLessThanOrEqual(10_000);

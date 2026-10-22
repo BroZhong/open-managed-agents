@@ -8,6 +8,7 @@ import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
 import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
+import { acceptInterrupt } from "./accept-interrupt.js";
 
 const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (message: string) => event("agent.message", { content: [{ type: "text", text: message }], stopReason: "stop" });
@@ -272,7 +273,8 @@ describe("Host-owned delegation through the Session Router", () => {
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => childStarted && (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
     await h.enqueue("later input");
-    expect(await h.makeRouter().requestInterrupt(h.parent.id)).toEqual({ requested: true, interrupted: false });
+    // Accepted on a Host that runs nothing; the owner reads it on its next renewal.
+    expect(await acceptInterrupt(h.stores.pendingEventStore, h.parent.id)).toBe(true);
     await running;
     expect(await h.router.waitForIdle(4000)).toBe(true);
     const executions = await h.stores.delegationStore.list("tenant", h.parent.id);
@@ -299,7 +301,7 @@ describe("Host-owned delegation through the Session Router", () => {
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => childStarted && (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
     const requestedAt = Date.now();
-    expect((await h.router.requestInterrupt(h.parent.id)).requested).toBe(true);
+    expect(await acceptInterrupt(h.stores.pendingEventStore, h.parent.id, h.router)).toBe(true);
     await until(async () => childAbortedAt > 0);
     expect(childAbortedAt - requestedAt).toBeLessThan(500);
     await running;
@@ -410,7 +412,7 @@ describe("Host-owned delegation through the Session Router", () => {
     } }, { leaseMs: 300 });
     await h.enqueue(); const running = h.router.handleNewEvent(h.parent.id, h.agent);
     await until(async () => (await h.stores.sessionStore.getById(h.parent.id))?.status === "waiting");
-    await h.router.requestInterrupt(h.parent.id); await running;
+    await acceptInterrupt(h.stores.pendingEventStore, h.parent.id, h.router); await running;
     expect((await h.stores.delegationStore.list("tenant", h.parent.id))[0].status).toBe("running");
     childGate.release(); expect(await h.router.waitForIdle(4000)).toBe(true);
     expect((await h.stores.delegationStore.list("tenant", h.parent.id))[0].status).toBe("completed");

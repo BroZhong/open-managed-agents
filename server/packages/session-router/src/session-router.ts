@@ -727,16 +727,6 @@ export class SessionRouter {
     return true;
   }
 
-  /** Accept a durable command; execution confirms interruption in its history. */
-  async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
-    const requested = await this.pendingEventStore.requestInterrupt(sessionId);
-    // The owner observes the exact durable input marker on its heartbeat; a
-    // local abort here could hit the next Turn after a completion race. The
-    // hint makes the owner's heartbeat run now instead of at its next tick.
-    if (requested) this.checkSession(sessionId);
-    return { requested, interrupted: false };
-  }
-
   /**
    * Terminate a session: stop the active turn and destroy its sandbox (if one
    * was ever created). Disposal releases execution resources; successfully

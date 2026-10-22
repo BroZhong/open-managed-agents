@@ -5,6 +5,7 @@ import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnStreamStor
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
+import { acceptInterrupt } from "./accept-interrupt.js";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
@@ -135,7 +136,7 @@ describe("Session idle at queue boundaries", () => {
     const router = f.makeRouter();
     const first = router.handleNewEvent(f.session.id, f.agent);
     await firstStarted;
-    await router.requestInterrupt(f.session.id);
+    await acceptInterrupt(f.pendingEventStore, f.session.id, router);
     await first;
     expect(await router.waitForIdle(2000)).toBe(true);
     expect(runs).toBe(2);

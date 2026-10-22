@@ -5,6 +5,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
+import { acceptInterrupt } from "./accept-interrupt.js";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const aborted = (signal: AbortSignal) => new Promise<void>((resolve) => {
@@ -102,7 +103,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
 
     // The user presses stop and the Runner dies before it ever sees the Interrupt.
     h.lost.add("runner-a");
-    expect(await first.requestInterrupt(h.session.id)).toEqual({ requested: true, interrupted: false });
+    expect(await acceptInterrupt(h.stores.pendingEventStore, h.session.id, first)).toBe(true);
     await h.lose("runner-a", draining);
     expect(await h.ofType("session.turn_aborted")).toEqual([]);
     expect(await h.ofType("session.turn_completed")).toEqual([]);
@@ -146,7 +147,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     const draining = first.handleNewEvent(h.session.id, h.agent);
     await running;
     h.lost.add("runner-a");
-    await first.requestInterrupt(h.session.id);
+    await acceptInterrupt(h.stores.pendingEventStore, h.session.id, first);
     await h.lose("runner-a", draining);
 
     await h.takeOver("runner-b");
@@ -165,7 +166,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     const draining = only.handleNewEvent(h.session.id, h.agent);
     await until(async () => (await h.ofType("agent.tool_use")).length === 1);
 
-    await only.requestInterrupt(h.session.id);
+    await acceptInterrupt(h.stores.pendingEventStore, h.session.id, only);
     await draining;
     expect(await only.waitForIdle(4000)).toBe(true);
 
@@ -190,7 +191,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     const first = h.runner("runner-a");
     const draining = first.handleNewEvent(h.session.id, h.agent);
     await until(async () => (await h.ofType("agent.tool_use")).length === 1);
-    await first.requestInterrupt(h.session.id);
+    await acceptInterrupt(h.stores.pendingEventStore, h.session.id, first);
     await h.expire(draining);
     expect(await h.ofType("session.turn_aborted")).toHaveLength(1);
     expect(await h.ofType("session.turn_completed")).toEqual([]);
@@ -228,7 +229,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     const replacement = h.runner("runner-b");
     const resuming = replacement.handleNewEvent(h.session.id, h.agent);
     await resumedRunning;
-    expect(await replacement.requestInterrupt(h.session.id)).toEqual({ requested: true, interrupted: false });
+    expect(await acceptInterrupt(h.stores.pendingEventStore, h.session.id, replacement)).toBe(true);
     await resuming;
     expect(await replacement.waitForIdle(4000)).toBe(true);
 
@@ -255,7 +256,7 @@ describe("an Interrupt accepted before its Runner was lost", () => {
     const resuming = second.handleNewEvent(h.session.id, h.agent);
     await next;
     h.lost.add("runner-b");
-    await second.requestInterrupt(h.session.id);
+    await acceptInterrupt(h.stores.pendingEventStore, h.session.id, second);
     await h.lose("runner-b", resuming);
 
     await h.takeOver("runner-c");
