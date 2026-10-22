@@ -30,6 +30,14 @@ export interface SandboxExecOptions {
   timeoutSeconds?: number;
   /** Extra environment variables layered onto the command. */
   env?: Record<string, string>;
+  /** Run as root instead of the Sandbox's ordinary user (the Skill Install). */
+  user?: "root";
+  /**
+   * Written to the command's stdin once it has started. Never part of argv,
+   * env or any log. Stdin is not closed afterwards (the Sandbox's envd cannot
+   * close it), so the command must not wait for EOF.
+   */
+  stdin?: string;
   /**
    * Abort the running process, not just the transport receiving its output.
    */

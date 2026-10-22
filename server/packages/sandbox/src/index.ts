@@ -23,6 +23,7 @@ export {
 export {
   FakeSandboxClient,
   type FakeSandboxClientOptions,
+  type FakeSkillInstallFault,
 } from "./fake-sandbox-client.js";
 
 export {
@@ -31,6 +32,25 @@ export {
   type WorkspaceMountTarget,
 } from "./workspace-mount.js";
 export type { SandboxFsAccess } from "./sandbox-client.js";
+
+export {
+  EMPTY_SKILL_SET,
+  SKILLS_PATH,
+  SKILLS_ROOT,
+  SKILL_INSTALL_COMMAND,
+  DEFAULT_SKILL_INSTALL_THROUGHPUT,
+  MIN_SKILL_INSTALL_BUDGET_MS,
+  SkillInstallError,
+  isSkillInstallCommand,
+  redactUrls,
+  skillSetOf,
+  skillInstallBudgetMs,
+  type SkillSet,
+  type SkillSetMember,
+  type SkillInstallStage,
+  type SkillInstallReport,
+  type SkillInstallBudget,
+} from "./skill-install.js";
 
 export {
   S3ProvisionSource,
