@@ -56,7 +56,8 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
   async requestInterrupt(sessionId: string): Promise<boolean> {
     const event = this.queues.get(sessionId)?.[0];
     const claim = event ? this.claims.get(event.id) : undefined;
-    if (!claim?.ownerId || claim.expiresAtMs <= Date.now()) return false;
+    // A Turn runs once a claim started it, also while no Runner holds it.
+    if (!claim || claim.generation === 0) return false;
     claim.interruptGeneration = claim.generation;
     return true;
   }

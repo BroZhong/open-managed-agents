@@ -45,7 +45,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
        interrupt_generation = claim_generation
        WHERE p.id = (SELECT id FROM pending_events WHERE session_id = $1
          ORDER BY seq LIMIT 1)
-       AND p.claim_owner IS NOT NULL AND p.claim_expires_at > clock_timestamp()
+       AND p.claim_generation > 0
        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = p.session_id
          AND e.type = 'session.turn_completed' AND e.data->>'pendingEventId' = p.id)
        RETURNING p.id`, [sessionId],

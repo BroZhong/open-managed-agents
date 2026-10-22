@@ -66,8 +66,11 @@ export interface PendingEventRenewal {
 
 export interface PendingEventStore {
   /**
-   * Persist an Interrupt for the currently claimed input only. Its owner
-   * learns of it from the result of its next {@link renewClaim}.
+   * Persist an Interrupt for the input whose Turn runs: the head a claim
+   * started and whose Turn has not completed, whether a Runner holds its
+   * claim now or it lapsed or was released. Its owner learns of it from the
+   * result of its next {@link renewClaim}; a claim taking the input over,
+   * from {@link PendingEventClaim.priorInterrupt}.
    */
   requestInterrupt(sessionId: string): Promise<boolean>;
   enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent>;
