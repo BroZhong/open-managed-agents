@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, expect, it, vi } from "vitest";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { InMemoryTurnStreamStore, type TurnDelta } from "@oma-server/redis";
+import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnDelta, type TurnStreamStore } from "@oma-server/redis";
 import type { SandboxManager, SandboxSession } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent, type DelegationCommand, type DelegationExecution, type PendingEventClaim, type PendingEventClaimEnd, type StoredEvent } from "@oma-server/store";
@@ -97,6 +97,16 @@ export interface Scenario {
   childSteps?: number;
   /** The parent's limit of concurrently running Child executions. */
   maxChildren?: number;
+  /**
+   * The user stops every Turn a Runner holds right before the Runner is lost:
+   * the API accepts the Interrupt under the Runner's live claim, and the
+   * Runner dies before it sees it (D1).
+   */
+  interruptOnLoss?: boolean;
+  /** Whether Redis is unavailable to a Runner: each of its Delta and active-Turn calls fails, as a dropped connection fails them (G3). */
+  redisDown?(runner: number): boolean;
+  /** The models the scripted provider offers a Runner; all of {@link MODELS} by default. */
+  models?(runner: number): readonly string[];
 }
 
 /** A Runner's part in a scenario whose Child Sessions run apart. */
@@ -136,6 +146,8 @@ export interface Outcome {
   errors: Array<{ runner: number; error: unknown }>;
   /** Every Delta any Runner streamed, in order. */
   deltas: TurnDelta[];
+  /** Every Sandbox a Runner disposed, by that Runner. */
+  disposals: number[];
 }
 
 /** What a lost Runner left of one Session whose claim it held, or that it held none. */
@@ -178,6 +190,14 @@ export interface Run {
   log(sessionId?: string): Promise<StoredEvent[]>;
   /** The Delegation Executions the scenario's Session created, as they are now. */
   executions(): Promise<DelegationExecution[]>;
+  /** Send the scenario's Session one more user message, as the API accepts it; it becomes the Session's last input. */
+  send(text: string): Promise<void>;
+  /**
+   * Terminate the scenario's Session as the API does: PostgreSQL ends it and
+   * removes its queued input in one transaction, which fences every later
+   * write of whoever executes it.
+   */
+  terminate(): Promise<void>;
   readonly runner: number;
   /** The stores as the API reaches them, for edits a user makes meanwhile; no Runner's loss affects them. */
   readonly stores: MemoryStores;
@@ -342,7 +362,7 @@ function request(body: { model: string; thinking?: unknown; system?: unknown; me
 }
 
 /** A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool` as every tool. */
-function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void): SandboxManager {
+function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void, disposed: () => void): SandboxManager {
   const files = new Map<string, Uint8Array>();
   let temporary = 0;
   const missing = (path: string) => Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
@@ -372,7 +392,7 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
       options?.onExit?.({ exitCode: 0 });
     },
     readFile: unsupported, writeFile: unsupported, list: unsupported,
-    prepare: async () => {}, checkWorkspace: async () => {}, dispose: async () => {},
+    prepare: async () => {}, checkWorkspace: async () => {}, dispose: async () => { disposed(); },
   };
   return { open: () => session, list: async () => [], reclaim: async () => {} };
 }
@@ -404,28 +424,47 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     runtime: "pi-agent", sandbox: { enabled: true } });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
   const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
-  for (const text of scenario.inputs) {
-    await stores.pendingEventStore.enqueue(session.id, { type: "user.message", data: { content: [{ type: "text", text }] }, sessionThreadId: "sthr_primary" });
-  }
-  const provider: CustomProviderDefinition = { id: PROVIDER, name: "Scripted", api: "anthropic-messages", baseUrl: "https://model.example.invalid",
-    apiKey: "controlled-test-key", models: MODELS.map((id) => ({ id, name: id, contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] })) };
-  const outcome: Outcome = { log: [], sessionId: session.id, sessions: [], executions: [], stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], commands: [], errors: [], deltas: [] };
+  const enqueue = (text: string) => stores.pendingEventStore.enqueue(session.id,
+    { type: "user.message", data: { content: [{ type: "text", text }] }, sessionThreadId: "sthr_primary" });
+  for (const text of scenario.inputs) await enqueue(text);
+  /** The scripted provider as a Runner's Pi sees it. */
+  const providerOf = (runner: number): CustomProviderDefinition => ({ id: PROVIDER, name: "Scripted", api: "anthropic-messages",
+    baseUrl: "https://model.example.invalid", apiKey: "controlled-test-key",
+    models: (scenario.models?.(runner) ?? MODELS).map((id) => ({ id, name: id, contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] })) });
+  const outcome: Outcome = { log: [], sessionId: session.id, sessions: [], executions: [], stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], commands: [], errors: [], deltas: [], disposals: [] };
   // The Redis stand-in all Runners share; it records every Delta as it is appended.
   const turnStreams = new InMemoryTurnStreamStore();
   const appendDelta = turnStreams.appendDelta.bind(turnStreams);
   turnStreams.appendDelta = async (sessionId, delta) => { outcome.deltas.push(delta); return appendDelta(sessionId, delta); };
+  // Redis as a Runner reaches it while it is down: production wraps it as best effort.
+  const redisDown = new BestEffortTurnStreamStore(new Proxy({} as TurnStreamStore, {
+    get: () => () => Promise.reject(new Error("Redis connection is closed")) }), () => true);
   const readLog = async (sessionId = session.id) => (await stores.eventLogStore.getEvents(sessionId, { limit: 100_000 })).data;
   const executions = async () => (await stores.delegationStore.listExecutions("tenant", { callerSessionId: session.id, limit: 500 })).reverse();
-  /** A Session's inputs: the scenario's, or the prompt of each execution of a Child Session. */
-  const inputsOf = async (sessionId: string) => sessionId === session.id ? scenario.inputs
+  /** The messages a Run sent the scenario's Session after it started. */
+  const sent: string[] = [];
+  /**
+   * A Session's inputs: the scenario's, then those sent, then each Delegation
+   * Result a Turn of its own delivered; or the prompt of each execution of a
+   * Child Session.
+   */
+  const inputsOf = async (sessionId: string) => sessionId === session.id
+    ? [...scenario.inputs, ...sent, ...(await readLog()).filter((event) => event.type === "subagent.result_claimed").map((event) => inputKey(event.type, event.data)!)]
     : (await stores.delegationStore.listExecutions("tenant", { childId: sessionId, limit: 500 }))
       .sort((a, b) => a.sequence - b.sequence).map((execution) => execution.prompt);
+  /** The input each loss held, by key: a Delegation Result is promoted only by the claim that runs it. */
+  const lostInputs = new Map<Loss, string>();
   const sessionIds = async () => [session.id, ...new Set((await executions()).map((execution) => execution.childId))];
 
-  // A lost Runner's claim lapses: the next claim takes the input over.
+  // A lost Runner's claim lapses: the next claim takes the input over. An
+  // Interrupt the API accepted under it right before is the next claim's to apply.
   const lapse = (runner: Runner) => {
     const state = stores.pendingEventStore.snapshotState();
-    for (const claim of state.claims.values()) if (claim.ownerId === runner.ownerId) claim.expiresAtMs = 0;
+    for (const claim of state.claims.values()) {
+      if (claim.ownerId !== runner.ownerId) continue;
+      if (scenario.interruptOnLoss) claim.interruptGeneration = claim.generation;
+      claim.expiresAtMs = 0;
+    }
     stores.pendingEventStore.restoreState(state);
   };
   const apart = scenario.children === "apart";
@@ -457,6 +496,16 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
         if (requested) checkSession(sessionId);
         return requested;
       },
+      // The API wakes every Runner for new input; the one that executes the Session joins its drain.
+      send: async (text) => {
+        sent.push(text);
+        await enqueue(text);
+        for (const host of live()) if (host.role === "parent") void host.router.handleNewEvent(session.id, agent).catch((error) => { outcome.errors.push({ runner: host.runner.index, error }); });
+      },
+      terminate: async () => {
+        await stores.sessionStore.terminate(session.id);
+        await stores.pendingEventStore.clear(session.id);
+      },
       executions, stores, agentId: agent.id, sessionId: session.id };
     const fetchModel: typeof fetch = async (_url, init) => {
       if (runner.dead) return GONE;
@@ -474,18 +523,20 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
       }
       return sse(reply.blocks, reply.stop, reply.inputTokens);
     };
+    const provider = providerOf(index);
     const pi = new PiAgentAdapter({ configureModelRuntime: (_input, runtime) => registerCustomProvider(runtime, provider, fetchModel) });
     const adapter: Adapter = { async run(input) {
       if (runner.dead) return GONE;
       outcome.attempts.push({ runner: index, input, log: await readLog(input.sessionId) });
       return pi.run(input);
     } };
-    router = new SessionRouter({ ...runner.stores({ ...stores, turnStreamStore: turnStreams }), eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
+    const turnStreamStore = scenario.redisDown?.(index) ? redisDown : turnStreams;
+    router = new SessionRouter({ ...runner.stores({ ...stores, turnStreamStore }), eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
       sandboxManager: sandbox(runner, async (call) => {
         const toolCall = { ...call, runner: index };
         outcome.toolCalls.push(toolCall);
         return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
-      }, (command) => outcome.commands.push({ runner: index, command })),
+      }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.disposals.push(index)),
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       pendingClaimOwnerId: runner.ownerId, onDrainError: ({ error }) => outcome.errors.push({ runner: index, error }),
       ...(scenario.childSteps !== undefined ? { maxSubagentModelSteps: scenario.childSteps } : {}),
@@ -520,7 +571,10 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
       // A Runner shut down went idle as it handed its Turns over; its process exits once the handoff is done.
       const handingOff = current.filter((host) => host.runner.handingOff);
       if (handingOff.length) { await Promise.all(handingOff.map((host) => host.runner.handingOff)); continue; }
-      if (await drained()) break;
+      if (await drained()) {
+        await cleanUpTerminated(current);
+        break;
+      }
       // A refused write stops the attempt (ADR-0020). The Runner stays up, and
       // the claim it no longer renews lapses after its lease.
       const refused = current.find((host) => outcome.errors.some((error) => error.runner === host.runner.index && error.error instanceof RefusedWrite));
@@ -540,9 +594,26 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     await unlessLost(replacement, replacement.router.recoverPendingEvents());
   }
   outcome.executions = await executions();
+  for (const [loss, key] of lostInputs) loss.input = (await inputsOf(loss.sessionId!)).indexOf(key);
   outcome.sessions = await Promise.all((await sessionIds()).map(async (id) => ({ id, inputs: await inputsOf(id), log: await readLog(id) })));
   outcome.log = outcome.sessions[0].log;
   return outcome;
+
+  /**
+   * A Runner's cleanup sweep releases what a terminated Session left, its
+   * Sandbox included, once no Runner still executes it.
+   */
+  async function cleanUpTerminated(current: Host[]): Promise<void> {
+    const [sweeper] = current;
+    if (!sweeper) return;
+    for (const id of await sessionIds()) {
+      if ((await stores.sessionStore.getById(id))?.status !== "terminated") continue;
+      for (let sweeps = 0; !await sweeper.router.cleanupTerminatedSession(id); sweeps++) {
+        if (sweeps > 100) throw new Error(`Session ${id} was never cleaned up`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+  }
 
   /**
    * The inputs a lost Runner held, or a Runner shut down handed over, and
@@ -568,11 +639,12 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
     if (!left.size) return [{ runner: runner.index, reason, dangling: [], ...detached }];
     const losses: Loss[] = [];
     for (const [sessionId, claim] of left) {
-      const inputs = await inputsOf(sessionId);
-      const input = inputs.indexOf((claim.event.data as { content: Array<{ text: string }> }).content[0].text);
-      const events = eventsOfInput(await readLog(sessionId), { inputs }, input);
-      losses.push({ runner: runner.index, reason, sessionId, input, generation: claim.generation,
-        completed: events.some((event) => event.type === "session.turn_completed"), dangling: dangling(events), ...detached });
+      const key = inputKey(claim.event.type, claim.event.data)!;
+      const events = eventsOfKey(await readLog(sessionId), key);
+      const loss: Loss = { runner: runner.index, reason, sessionId, input: (await inputsOf(sessionId)).indexOf(key), generation: claim.generation,
+        completed: events.some((event) => event.type === "session.turn_completed"), dangling: dangling(events), ...detached };
+      lostInputs.set(loss, key);
+      losses.push(loss);
     }
     return losses;
   }
@@ -580,15 +652,26 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
 
 /** The input's promotion and every event after it, up to the next input's promotion. */
 export function eventsOfInput(log: StoredEvent[], session: Pick<Scenario, "inputs">, input: number): StoredEvent[] {
-  // A Child Session's input is its execution's delegation input.
-  const promotions = log.filter((event) => event.type === "user.message" || event.type === "delegation.input");
-  const start = promotions.find((event) => textOf(event) === session.inputs[input]);
+  return eventsOfKey(log, session.inputs[input]);
+}
+
+/**
+ * How the harness names an input: a user message or a Child Session's
+ * Delegation Input by its text, a Delegation Result by the execution it reports.
+ */
+function inputKey(type: string, data: unknown): string | undefined {
+  if (type === "subagent.result" || type === "subagent.result_claimed") return `subagent.result:${(data as { executionId: string }).executionId}`;
+  return ((data as { content?: Array<{ text?: string }> } | null)?.content ?? [])[0]?.text;
+}
+
+const PROMOTIONS = new Set(["user.message", "delegation.input", "subagent.result_claimed"]);
+function eventsOfKey(log: StoredEvent[], key: string | undefined): StoredEvent[] {
+  const promotions = log.filter((event) => PROMOTIONS.has(event.type));
+  const start = promotions.find((event) => inputKey(event.type, event.data) === key);
   if (!start) return [];
   const next = promotions.find((event) => event.seq > start.seq);
   return log.filter((event) => event.seq >= start.seq && (!next || event.seq < next.seq));
 }
-
-const textOf = (event: StoredEvent) => ((event.data as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text;
 const turnIdOf = (event: StoredEvent) => (event.data as { turnId?: unknown } | null)?.turnId;
 const displayed = (log: StoredEvent[]) => log.flatMap((event) => presentEvent(event));
 
@@ -779,7 +862,7 @@ export async function sweep(scenario: Scenario, also: (outcome: Outcome, write: 
  * Turn over cleanly: its tools finish within the grace period, so no call's
  * outcome is unknown.
  */
-export async function handoffSweep(scenario: Scenario): Promise<void> {
+export async function handoffSweep(scenario: Scenario, also: (outcome: Outcome, write: number) => void | Promise<void> = () => {}): Promise<void> {
   const writes = await writesOf(scenario);
   it.each(writes.map((write, index) => [`F@${rowOf(writes, index)}`, index + 1, describeWrite(write)] as const))("%s Runner shut down after write %i (%s): the Turn is handed over and completes", async (_row, n) => {
     const outcome = await execute(scenario, [], [n]);
@@ -788,6 +871,7 @@ export async function handoffSweep(scenario: Scenario): Promise<void> {
     // Whatever the takeover found, it was handed over, never lost.
     expect(outcome.log.filter((event) => event.type === "session.turn_resumed").map((event) => (event.data as { reason: string }).reason)
       .filter((reason) => reason !== "released")).toEqual([]);
+    await also(outcome, n);
   });
 }
 

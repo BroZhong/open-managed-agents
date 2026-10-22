@@ -1,5 +1,5 @@
-import { describe, expect } from "vitest";
-import { sweep, text, usePiSettings, type Outcome, type Scenario } from "./harness.js";
+import { describe, expect, it } from "vitest";
+import { execute, expectResumed, handoffSweep, sweep, text, usePiSettings, type Outcome, type Scenario } from "./harness.js";
 
 await usePiSettings();
 
@@ -62,5 +62,36 @@ describe("crash injection: overflow compaction of a request that is too large", 
       (event.data as { entry?: { message?: { role?: string; stopReason?: string } } }).entry?.message?.role === "assistant" &&
       (event.data as { entry: { message: { stopReason?: string } } }).entry.message.stopReason === "stop");
     expect(JSON.stringify(answers.at(-1)?.data)).toContain("second answer");
+  });
+});
+
+/**
+ * B5: a Runner shut down around a compaction (#254) hands the Turn over like
+ * any other: Pi stops only at its model request gate, which a summary
+ * request is not, so a summary in flight is committed or never used.
+ */
+describe("B5 handoff sweep: threshold compaction after the final answer", async () => {
+  await handoffSweep(threshold, expectCommittedSummariesOnly);
+});
+
+describe("B5 handoff sweep: overflow compaction of a request that is too large", async () => {
+  await handoffSweep(overflow, expectCommittedSummariesOnly);
+});
+
+describe("B5 SIGTERM while the summary request is in flight", () => {
+  it("B5 the compaction completes on the Runner that shuts down, and the next Runner runs the queued Turn on its summary", async () => {
+    const scenario: Scenario = { ...threshold,
+      model: (request, run) => {
+        if (request.summary && run.runner === 0) run.shutDown();
+        return threshold.model(request, run);
+      } };
+    const outcome = await execute(scenario);
+    expectResumed(scenario, outcome);
+    expectCommittedSummariesOnly(outcome);
+    expect(outcome.losses).toEqual([expect.objectContaining({ runner: 0, reason: "released", detached: false, dangling: [] })]);
+    // One summary was asked for and committed; the second Turn ran on it, on the next Runner.
+    expect(outcome.requests.filter((request) => request.summary).map((request) => request.runner)).toEqual([0]);
+    expect(committedSummaries(outcome)).toHaveLength(1);
+    expect(outcome.requests.filter((request) => request.lastUser === "second question").map((request) => request.runner)).toEqual([1]);
   });
 });
