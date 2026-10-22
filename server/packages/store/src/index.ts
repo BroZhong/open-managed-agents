@@ -52,11 +52,6 @@ export type {
 } from "./interfaces/skill-store.js";
 
 export type {
-  SkillArtifactStore,
-  SkillFile,
-} from "./interfaces/skill-artifact-store.js";
-
-export type {
   SessionStore,
   SessionStoreCreateInput,
   SessionStoreListOpts,
@@ -129,9 +124,6 @@ export { migrateEventPayloads } from "./postgres/migrate-event-payloads.js";
 export type { OSSArtifactStoreOptions, OSSObjectClient } from "./oss/artifact-store.js";
 export { workspaceObjectPrefix, validateArtifactPath } from "./workspace-path.js";
 export { resolveArtifactContentType } from "./artifact-content-type.js";
-
-export { S3SkillArtifactStore } from "./s3/skill-artifact-store.js";
-export type { S3SkillArtifactStoreOptions } from "./s3/skill-artifact-store.js";
 
 export {
   createPgStores,

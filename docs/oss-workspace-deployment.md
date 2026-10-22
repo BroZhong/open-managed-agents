@@ -155,20 +155,25 @@ follow the [supported local installation paths](../sandbox/auto-story-v2/README.
 Rebuilds can discard them. Only mounted Workspace content persists. Arbitrary
 shell commands are not rewritten to exclude `node_modules` or `.venv`.
 
-## Skills remain on Supabase
+## Skills are bundles in the Workspace Bucket
 
-Retain `S3_ENDPOINT` or `SUPABASE_STORAGE_URL`, and `S3_SERVICE_KEY` or
-`SUPABASE_SERVICE_KEY`. `S3_BUCKET` defaults to the existing `workspace` bucket;
-that historical bucket name now identifies Skills storage, not Workspace file
-storage. Do not rename or clear it merely because Workspace files moved to OSS.
-The application manifest preserves its existing endpoint and service-key Secret
-reference. The full Host still requires these Skills settings at startup.
+Skills are immutable Skill Bundles under `__oma/skills/<tenantId>/<sha256>.zip`
+in the Workspace OSS Bucket, read and written with the Host's Workspace OSS
+credentials ([ADR-0022](adr/0022-skill-bundles.md)). A Sandbox downloads them
+itself through URLs signed for `WORKSPACE_OSS_INTERNAL_ENDPOINT` (default: the
+region's internal endpoint) and holds no storage credentials. The Host no
+longer reads Supabase Storage.
 
-Equipped Skills remain read-only projections outside the Workspace at
-`/skills/<skill-name>/`. Internal storage lookup and authorization still use
-Skill IDs. Unsafe or duplicate equipped names fail visibly. Refresh/rebuild
-reprojects Skills and removes obsolete named paths; neither Skills nor Agent
-Files become Workspace objects.
+`S3_ENDPOINT`, `S3_BUCKET`, `STORAGE_PUBLIC_BASE` and the `SUPABASE_SERVICE_KEY`
+Secret reference stay in the manifests only while Supabase Skill data is
+retained (#272): an image rollback needs them, and the post-deploy delta pass
+of the bundle migration (#266) reads Supabase through them. No running code
+requires them.
+
+Equipped Skills are installed read-only outside the Workspace at
+`/skills/<skill-name>/`, a symlink to the installed Skill Set version, and only
+when the Agent's Skill Set changed. Unsafe or duplicate equipped names fail
+visibly; neither Skills nor Agent Files become Workspace objects.
 
 ## Read-only OSS startup check
 
@@ -185,7 +190,7 @@ Other startup responsibilities, such as existing database initialization and
 pending-input recovery, remain application behavior.
 
 Inspect only the relevant non-secret startup status messages, such as
-`OSS Workspace enabled; Sandbox mount checks required; Skills projected from Supabase`
+`OSS Workspace enabled; Sandbox mount checks required`
 or the explicit `OSS Workspace startup check failed` error. Do not dump Secret
 contents, environment variables, cloud responses containing tokens, or signed
 URLs into release notes or logs.
