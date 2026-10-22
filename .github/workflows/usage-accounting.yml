@@ -111,7 +111,6 @@ jobs:
       - name: Verify tool results and queue completion against real PostgreSQL
         env:
           PG_TEST_URL: postgresql://postgres:oma-test@127.0.0.1:${{ job.services.postgres.ports[5432] }}/oma_test
-          PG_TEST_SCHEMA: oma_unicode_test
         run: |
           pnpm --dir server --filter @oma-server/store exec vitest run test/event-payload.test.ts test/event-presentation.test.ts test/pending-event-store.test.ts
           pnpm --dir server --filter @oma-server/api exec vitest run test/big-results-pi-context.test.ts

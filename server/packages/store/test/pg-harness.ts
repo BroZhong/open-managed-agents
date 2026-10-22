@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { DataType, newDb } from "pg-mem";
 import { ensureSchema } from "../src/postgres/schema.js";
 import type { Pool } from "../src/postgres/connection.js";
@@ -7,13 +8,17 @@ import type { Pool } from "../src/postgres/connection.js";
  *
  * By default, spins up an in-memory PostgreSQL (`pg-mem`) so the suite runs
  * with no external server — equivalent coverage to the old mongodb-memory-server
- * setup. Set `PG_TEST_URL` to point the same suite at a real PostgreSQL (e.g.
- * the oma cluster) for integration runs.
+ * setup. Set `PG_TEST_URL` to point the same suite at a throwaway real
+ * PostgreSQL for integration runs.
  *
  * `harness.pool` is a getter so callers always see the current pool after a
  * `reset()`. For pg-mem, `reset()` builds a brand-new in-memory database (the
  * cleanest form of isolation — pg-mem does not fully support DROP of PK
- * index relations). For real PG, `reset()` drops and recreates the schema.
+ * index relations). For real PG, each harness owns a schema of its own,
+ * `oma_harness_<random>`, which `reset()` drops and recreates and `close()`
+ * drops: test files run in parallel, and a shared schema let one file's reset
+ * wipe another's rows. The harness drops no schema it did not name itself, so
+ * a real environment's schema (`oma`, `oma_test`) is never touched.
  *
  * Note: pg-mem does not enforce `search_path` schema qualification the way real
  * PG does, so the DDL is applied to the default (public) schema in-memory. The
@@ -22,6 +27,8 @@ import type { Pool } from "../src/postgres/connection.js";
  */
 export interface PgTestHarness {
   readonly pool: Pool;
+  /** The schema the pool's tables live in: the harness's own on real PostgreSQL, `public` on pg-mem. */
+  readonly schema: string;
   /** Recreate a clean database/schema — call in beforeEach for isolation. */
   reset(): Promise<void>;
   close(): Promise<void>;
@@ -29,9 +36,18 @@ export interface PgTestHarness {
 
 const REAL_PG_URL = process.env.PG_TEST_URL;
 
+/** A schema name only a harness gives: the one kind of schema it may drop. */
+const HARNESS_SCHEMA = /^oma_harness_[0-9a-f]{12}$/;
+
+/** Drop a harness's own schema; any other, a real environment's `oma` or `oma_test` say, is refused. */
+async function dropHarnessSchema(pool: Pool, schema: string): Promise<void> {
+  if (!HARNESS_SCHEMA.test(schema)) throw new Error(`Refusing to drop schema "${schema}": a test harness drops only its own`);
+  await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+}
+
 async function createRealPgHarness(url: string): Promise<PgTestHarness> {
   const pg = await import("pg");
-  const schema = process.env.PG_TEST_SCHEMA ?? "oma_test";
+  const schema = `oma_harness_${randomBytes(6).toString("hex")}`;
   const pool = new pg.default.Pool({ connectionString: url }) as unknown as Pool;
   (pool as unknown as { on: (e: string, cb: (c: { query: (q: string) => unknown }) => void) => void }).on(
     "connect",
@@ -41,7 +57,7 @@ async function createRealPgHarness(url: string): Promise<PgTestHarness> {
   );
 
   const reset = async () => {
-    await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await dropHarnessSchema(pool, schema);
     await ensureSchema(pool, schema);
   };
   await reset();
@@ -50,9 +66,10 @@ async function createRealPgHarness(url: string): Promise<PgTestHarness> {
     get pool() {
       return pool;
     },
+    schema,
     reset,
     close: async () => {
-      await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => {});
+      await dropHarnessSchema(pool, schema).catch(() => {});
       await (pool as unknown as { end: () => Promise<void> }).end();
     },
   };
@@ -89,6 +106,7 @@ function createMemHarness(noAstCoverageCheck = false): PgTestHarness {
     get pool() {
       return pool;
     },
+    schema: "public",
     reset,
     close: async () => {
       /* pg-mem is process-local; nothing to release */
