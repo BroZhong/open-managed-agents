@@ -4,7 +4,7 @@ import type { Artifact, ArtifactContent, ArtifactMetadata, ArtifactPutInput, Art
 import { validateArtifactPath, workspaceObjectPrefix } from "../workspace-path.js";
 import { resolveArtifactContentType } from "../artifact-content-type.js";
 
-function isMissingObject(error: unknown): boolean {
+export function isMissingObject(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "NoSuchKey";
 }
 

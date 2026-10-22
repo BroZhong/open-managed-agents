@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS ${s}.skills (
   source_skill_id TEXT,
   created_at      TIMESTAMPTZ,
   updated_at      TIMESTAMPTZ NOT NULL,
+  bundle_sha256   TEXT,
+  bundle_size     BIGINT,
   PRIMARY KEY (tenant_id, skill_id)
 );
 CREATE INDEX IF NOT EXISTS skills_tenant_id_idx ON ${s}.skills (tenant_id, skill_id);
@@ -112,6 +114,11 @@ UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND own
 
 -- Preserve unknown upload times for legacy Skills; updated_at is not creation time.
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+-- The current Skill Bundle (ADR-0022): sha256 of the immutable zip and its
+-- total uncompressed size, set together. NULL until the Skill is packed.
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS bundle_sha256 TEXT;
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS bundle_size   BIGINT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS skills_owner_name_unique
   ON ${s}.skills (tenant_id, owner_type, owner_id, name);

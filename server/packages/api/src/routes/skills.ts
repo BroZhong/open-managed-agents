@@ -1,5 +1,6 @@
 import { SkillNameConflictError } from "@oma-server/store";
 import { replaceSkillFiles } from "../skills/replace-files.js";
+import { publicSkill } from "../lib/public-projection.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { SkillStore, SkillArtifactStore } from "@oma-server/store";
@@ -110,7 +111,7 @@ export function skillRoutes(
       created.push(await skillStore.update(row.id, { description: skill.description }));
     }
 
-    return c.json({ data: created }, 201);
+    return c.json({ data: created.map((skill) => skill && publicSkill(skill)) }, 201);
   });
 
   // GET /v1/skills — list the tenant's Library
@@ -146,7 +147,7 @@ export function skillRoutes(
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
     const files = await skillArtifacts.list(skill.tenantId, skill.id);
-    return c.json({ ...skill, files });
+    return c.json({ ...publicSkill(skill), files });
   });
 
   // POST /v1/skills/:id — update metadata
@@ -167,7 +168,7 @@ export function skillRoutes(
     }
     const updated = await skillStore.update(existing.id, update);
     if (!updated) return c.json({ error: "Not found" }, 404);
-    return c.json(updated);
+    return c.json(publicSkill(updated));
   });
 
   // DELETE /v1/skills/:id — remove from Library + S3

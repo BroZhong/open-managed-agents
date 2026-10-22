@@ -1,4 +1,4 @@
-import { SkillNameConflictError } from "@oma-server/store";
+import { SkillNameConflictError, SkillVersionConflictError, skillBundleColumns } from "@oma-server/store";
 import type {
   Skill,
   SkillOwnerType,
@@ -6,6 +6,7 @@ import type {
   SkillStoreCreateInput,
   SkillStoreListOpts,
   SkillStoreUpdateInput,
+  SkillStoreUpdateOptions,
   PaginatedResult,
 } from "@oma-server/store";
 
@@ -17,6 +18,7 @@ export class InMemorySkillStore implements SkillStore {
     const now = new Date();
     const ownerType: SkillOwnerType = input.ownerType ?? "library";
     const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
+    const bundle = skillBundleColumns(input) ?? { bundleSha256: null, bundleSize: null };
     this.assertUnique(input.tenantId, ownerType, ownerId, input.name);
     const skill: Skill = {
       id: `skill_${this.nextId++}`,
@@ -28,6 +30,7 @@ export class InMemorySkillStore implements SkillStore {
       sourceSkillId: input.sourceSkillId ?? null,
       createdAt: now,
       updatedAt: now,
+      ...bundle,
     };
     this.skills.push(skill);
     return skill;
@@ -63,15 +66,21 @@ export class InMemorySkillStore implements SkillStore {
     );
   }
 
-  async update(id: string, input: SkillStoreUpdateInput): Promise<Skill | null> {
+  async update(id: string, input: SkillStoreUpdateInput, options: SkillStoreUpdateOptions = {}): Promise<Skill | null> {
+    const bundle = skillBundleColumns(input);
     const skill = this.skills.find((s) => s.id === id);
     if (!skill) return null;
+    const expected = options.expectedBundleSha256;
+    if (expected !== undefined && skill.bundleSha256 !== expected) {
+      throw new SkillVersionConflictError(id, expected, skill.bundleSha256);
+    }
     if (input.name !== undefined) {
       this.assertUnique(skill.tenantId, skill.ownerType, skill.ownerId, input.name, id);
       skill.name = input.name;
     }
     if (input.sourceSkillId !== undefined) skill.sourceSkillId = input.sourceSkillId;
     if (input.description !== undefined) skill.description = input.description;
+    if (bundle) Object.assign(skill, bundle);
     skill.updatedAt = new Date();
     return skill;
   }

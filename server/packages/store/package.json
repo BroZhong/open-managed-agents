@@ -12,13 +12,18 @@
   },
   "dependencies": {
     "ali-oss": "^6.23.0",
+    "lru-cache": "^11.5.1",
     "nanoid": "^5.1.0",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@types/ali-oss": "^6.23.3",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.0",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
     "pg-mem": "^3.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"
