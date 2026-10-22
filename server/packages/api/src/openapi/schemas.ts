@@ -231,6 +231,17 @@ export const SkillFileContentSchema = z
   })
   .openapi("SkillFileContent");
 
+export const SkillBinaryFileSchema = z
+  .object({
+    path: z.string(),
+    binary: z.literal(true),
+    size: z.number().int().nonnegative().openapi({ description: "Bytes" }),
+    contentType: z.string().openapi({ example: "font/ttf" }),
+  })
+  .openapi("SkillBinaryFile", {
+    description: "A file that is not opened as text. Its bytes are returned by GET /v1/skills/{id}/files/raw.",
+  });
+
 export const WorkspaceSchema = z
   .object({
     id: z.string(),

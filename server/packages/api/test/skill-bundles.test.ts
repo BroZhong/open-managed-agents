@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { SKILL_BUNDLE_MAX_BYTES, packSkillBundle, type PackedSkillBundle, type SkillStoreUpdateInput, type SkillStoreUpdateOptions } from "@oma-server/store";
 import { InMemorySkillBundleStore, InMemorySkillStore } from "@oma-server/store-memory";
-import { bytes, currentFiles, seedSkill } from "./fixtures/skill-bundles.js";
+import { PNG, TTF, bytes, currentFiles, seedSkill } from "./fixtures/skill-bundles.js";
 
 /**
  * ADR-0022 acceptance for the Skill routes (#264): every Skill version is one
@@ -11,8 +11,6 @@ import { bytes, currentFiles, seedSkill } from "./fixtures/skill-bundles.js";
  */
 
 const SKILL_MD = "---\nname: fonts\ndescription: Subtitle fonts\n---\nUse the fonts.";
-/** A TrueType header followed by bytes that are not valid UTF-8. */
-const TTF = new Uint8Array(Buffer.concat([Buffer.from([0x00, 0x01, 0x00, 0x00]), randomBytes(64 * 1024), Buffer.from([0xff, 0xfe, 0xc3, 0x28, 0x80])]));
 
 /** Holds every `put` until `parties` of them have arrived, so concurrent edits read the same version. */
 class GatedSkillBundleStore extends InMemorySkillBundleStore {
@@ -256,5 +254,192 @@ describe("SKILL.md always exists", () => {
     const res = await json("PUT", `/v1/skills/${skill.id}/files/content`, { path: "notes.md/child.md", content: "x" });
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("invalid_skill_file");
+  });
+});
+
+/** POST /v1/skills/:id/files/upload, shaped like the Workspace upload. */
+function uploadInto(
+  app: ReturnType<typeof setup>["app"],
+  id: string,
+  files: { name: string; body: string | Uint8Array; type?: string }[],
+  fields: Record<string, string> = {},
+) {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) form.set(name, value);
+  for (const file of files) form.append("files", new Blob([file.body], { type: file.type ?? "" }), file.name);
+  return app.request(`/v1/skills/${id}/files/upload`, { method: "POST", body: form });
+}
+
+const INVALID_UTF8 = new Uint8Array([0x23, 0x20, 0xc3, 0x28, 0x0a]);
+
+describe("binary files in an existing Skill (#269)", () => {
+  it("uploads a TTF and the byte endpoint returns it byte-identical", async () => {
+    const env = setup();
+    const skill = await env.seed();
+    const res = await uploadInto(env.app, skill.id, [{ name: "Regular.ttf", body: TTF }], { path: "assets/Regular.ttf" });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ data: [{ path: "assets/Regular.ttf" }] });
+    expect((await env.filesOf(skill.id)).sha256).not.toBe(skill.bundleSha256);
+
+    const raw = await env.app.request(`/v1/skills/${skill.id}/files/raw?path=assets/Regular.ttf`);
+    expect(raw.status).toBe(200);
+    expect(Buffer.from(await raw.arrayBuffer()).equals(Buffer.from(TTF))).toBe(true);
+    expect(Object.fromEntries(raw.headers)).toMatchObject({
+      "content-type": "font/ttf",
+      "content-length": String(TTF.byteLength),
+      "content-disposition": "inline",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "cache-control": "no-store",
+    });
+    const download = await env.app.request(`/v1/skills/${skill.id}/files/raw?path=assets/Regular.ttf&download=1`);
+    expect(download.headers.get("content-disposition")).toBe('attachment; filename="Regular.ttf"');
+  });
+
+  it("places several files under destDir, keeping uploaded folder paths, as one new version", async () => {
+    const env = setup();
+    const skill = await env.seed();
+    const put = vi.spyOn(env.skillBundleStore, "put");
+    const res = await uploadInto(env.app, skill.id, [
+      { name: "Regular.ttf", body: TTF },
+      { name: "icons/logo.png", body: PNG, type: "image/png" },
+    ], { destDir: "assets/" });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect((await res.json()).data).toEqual([{ path: "assets/Regular.ttf" }, { path: "assets/icons/logo.png" }]);
+    expect(put).toHaveBeenCalledTimes(1);
+    const { bundleSha256 } = (await env.skillStore.getById(skill.id))!;
+    expect((await env.skillBundleStore.listFiles("dev", bundleSha256!))!.map((entry) => entry.path))
+      .toEqual(["SKILL.md", "assets/Regular.ttf", "assets/icons/logo.png", "notes.md"]);
+    const png = await env.app.request(`/v1/skills/${skill.id}/files/raw?path=${encodeURIComponent("assets/icons/logo.png")}`);
+    expect(png.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await png.arrayBuffer()).equals(Buffer.from(PNG))).toBe(true);
+  });
+
+  it("replaces an existing file in place, keeping its mode", async () => {
+    const { app, skillStore, skillBundleStore } = setup();
+    const packed = await packSkillBundle([
+      { path: "SKILL.md", body: bytes(SKILL_MD) },
+      { path: "scripts/render.sh", body: bytes("#!/bin/sh\n"), mode: 0o755 },
+    ]);
+    await skillBundleStore.put("dev", packed);
+    const skill = await skillStore.create({ tenantId: "dev", name: "fonts", description: "", bundleSha256: packed.sha256, bundleSize: packed.size });
+    const res = await uploadInto(app, skill.id, [{ name: "render.sh", body: "#!/bin/sh\necho hi\n" }], { destDir: "scripts" });
+    expect(res.status).toBe(200);
+    const { bundleSha256 } = (await skillStore.getById(skill.id))!;
+    expect(await skillBundleStore.listFiles("dev", bundleSha256!)).toContainEqual({ path: "scripts/render.sh", size: 18, mode: 0o755 });
+    expect(await (await app.request(`/v1/skills/${skill.id}/files/content?path=scripts/render.sh`)).json())
+      .toEqual({ path: "scripts/render.sh", content: "#!/bin/sh\necho hi\n" });
+  });
+
+  it("an uploaded SKILL.md refreshes the Skill's name and description", async () => {
+    const { app, seed, skillStore } = setup();
+    const skill = await seed();
+    const res = await uploadInto(app, skill.id, [{ name: "SKILL.md", body: "---\nname: uploaded\ndescription: From the upload\n---" }]);
+    expect(res.status).toBe(200);
+    expect(await skillStore.getById(skill.id)).toMatchObject({ name: "uploaded", description: "From the upload" });
+  });
+
+  it("reads a binary file as metadata and a text file as its exact content", async () => {
+    const { app, seed } = setup();
+    const skill = await seed({
+      "SKILL.md": SKILL_MD,
+      "notes.md": "notes",
+      "LICENSE": "MIT",
+      "bom.txt": "﻿hello",
+      "assets/Regular.ttf": TTF,
+      "assets/logo.png": PNG,
+      "assets/icon.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+      "broken.md": INVALID_UTF8,
+      "zeros.bin": new Uint8Array(16),
+    });
+    const read = async (path: string) => {
+      const res = await app.request(`/v1/skills/${skill.id}/files/content?path=${encodeURIComponent(path)}`);
+      expect(res.status).toBe(200);
+      return res.json();
+    };
+    expect(await read("notes.md")).toEqual({ path: "notes.md", content: "notes" });
+    expect(await read("LICENSE")).toEqual({ path: "LICENSE", content: "MIT" });
+    expect(await read("bom.txt")).toEqual({ path: "bom.txt", content: "﻿hello" });
+    expect(await read("assets/Regular.ttf")).toEqual({ path: "assets/Regular.ttf", binary: true, size: TTF.byteLength, contentType: "font/ttf" });
+    expect(await read("assets/logo.png")).toEqual({ path: "assets/logo.png", binary: true, size: PNG.byteLength, contentType: "image/png" });
+    expect(await read("assets/icon.svg")).toMatchObject({ binary: true, contentType: "image/svg+xml" });
+    expect(await read("broken.md")).toEqual({ path: "broken.md", binary: true, size: 5, contentType: "text/markdown; charset=utf-8" });
+    expect(await read("zeros.bin")).toEqual({ path: "zeros.bin", binary: true, size: 16, contentType: "application/octet-stream" });
+  });
+
+  it("rejects compiled Python with 400 instead of dropping it silently", async () => {
+    const { app, json, seed, skillStore } = setup();
+    const skill = await seed();
+    for (const res of [
+      await uploadInto(app, skill.id, [{ name: "render.cpython-312.pyc", body: randomBytes(32) }], { destDir: "scripts" }),
+      await uploadInto(app, skill.id, [{ name: "render.py", body: "print()" }], { destDir: "scripts/__pycache__" }),
+      await uploadInto(app, skill.id, [{ name: "ok.md", body: "ok" }, { name: "__pycache__/x.pyc", body: randomBytes(8) }]),
+      await json("PUT", `/v1/skills/${skill.id}/files/content`, { path: "scripts/render.pyc", content: "x" }),
+      await json("POST", `/v1/skills/${skill.id}/files/rename`, { from: "notes.md", to: "__pycache__/notes.md" }),
+    ]) {
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.code).toBe("invalid_skill_file");
+      expect(body.error).toMatch(/\.pyc files and __pycache__ directories/);
+    }
+    expect((await skillStore.getById(skill.id))?.bundleSha256).toBe(skill.bundleSha256);
+  });
+
+  it("rejects an upload over 50 MB uncompressed with 413 and keeps the version", async () => {
+    const { app, seed, skillStore } = setup();
+    const skill = await seed();
+    const res = await uploadInto(app, skill.id, [{ name: "big.bin", body: new Uint8Array(SKILL_BUNDLE_MAX_BYTES) }]);
+    expect(res.status).toBe(413);
+    expect((await res.json()).code).toBe("skill_bundle_too_large");
+    expect((await skillStore.getById(skill.id))?.bundleSha256).toBe(skill.bundleSha256);
+  });
+
+  it("an upload and an edit based on the same version: one wins, the other gets 409", async () => {
+    const { app, json, seed, filesOf, skillBundleStore } = setup();
+    const skill = await seed();
+    skillBundleStore.arm(2);
+    const [upload, edit] = await Promise.all([
+      uploadInto(app, skill.id, [{ name: "Regular.ttf", body: TTF }]),
+      json("PUT", `/v1/skills/${skill.id}/files/content`, { path: "notes.md", content: "edited" }),
+    ]);
+    expect([upload.status, edit.status].sort()).toEqual([200, 409]);
+    const loser = upload.status === 409 ? upload : edit;
+    expect((await loser.json()).code).toBe("skill_version_conflict");
+    // The winner's change alone is published; the loser's is not merged.
+    const { files } = await filesOf(skill.id);
+    expect({ uploaded: "Regular.ttf" in files, edited: files["notes.md"] === "edited" })
+      .toEqual(upload.status === 200 ? { uploaded: true, edited: false } : { uploaded: false, edited: true });
+  });
+
+  it("rejects malformed uploads with 400 and changes nothing", async () => {
+    const { app, seed, skillStore } = setup();
+    const skill = await seed();
+    const empty = new FormData();
+    empty.set("destDir", "assets");
+    for (const res of [
+      await app.request(`/v1/skills/${skill.id}/files/upload`, { method: "POST", body: empty }),
+      await uploadInto(app, skill.id, [{ name: "x.md", body: "x" }], { path: "../x.md" }),
+      await uploadInto(app, skill.id, [{ name: "x.md", body: "x" }], { destDir: "../outside" }),
+      await uploadInto(app, skill.id, [{ name: "x.md", body: "x" }], { destDir: "notes.md" }),
+    ]) {
+      expect(res.status, await res.clone().text()).toBe(400);
+    }
+    expect((await skillStore.getById(skill.id))?.bundleSha256).toBe(skill.bundleSha256);
+  });
+
+  it("serves only the caller's Skills and files that exist", async () => {
+    const { app, skillStore, skillBundleStore, seed } = setup();
+    const own = await seed();
+    const other = await seedSkill(skillStore, skillBundleStore, { tenantId: "other", name: "theirs", description: "" }, { "SKILL.md": SKILL_MD });
+    for (const res of [
+      await app.request(`/v1/skills/${other.id}/files/raw?path=SKILL.md`),
+      await app.request(`/v1/skills/${other.id}/files/content?path=SKILL.md`),
+      await uploadInto(app, other.id, [{ name: "x.md", body: "x" }]),
+      await app.request(`/v1/skills/${own.id}/files/raw?path=missing.ttf`),
+    ]) {
+      expect(res.status).toBe(404);
+    }
+    expect((await app.request(`/v1/skills/${own.id}/files/raw`)).status).toBe(400);
+    expect((await skillStore.getById(other.id))?.bundleSha256).toBe(other.bundleSha256);
   });
 });

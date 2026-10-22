@@ -1,4 +1,6 @@
 import {
+  InvalidSkillFileError,
+  isFilteredSkillPath,
   packSkillBundle,
   type PackedSkillBundle,
   type Skill,
@@ -80,12 +82,21 @@ export class SkillVersions {
    * Skill. Throws `InvalidSkillFileError` or `SkillBundleTooLargeError` before
    * anything is written, and `SkillVersionConflictError` if another edit
    * published a version since the checkout. Null if the Skill was deleted.
+   *
+   * A checked-out version never holds compiled Python (packing leaves it
+   * out), so such a path here is one the edit targets: it is rejected rather
+   * than dropped, and an edit never reports a file it did not store.
    */
   async commit(
     base: SkillCheckout,
     files: readonly SkillBundleInputFile[],
     metadata: Pick<SkillStoreUpdateInput, "name" | "description"> = {},
   ): Promise<Skill | null> {
+    const excluded = files.filter((file) => isFilteredSkillPath(file.path)).map((file) => file.path);
+    if (excluded.length) {
+      throw new InvalidSkillFileError(excluded[0], `Compiled Python cannot be stored in a Skill: ${excluded.join(", ")}. `
+        + ".pyc files and __pycache__ directories are left out of every Skill version; remove them and retry.");
+    }
     const version = await this.store(base.skill.tenantId, await packSkillBundle(files));
     return this.skills.update(base.skill.id, { ...metadata, ...version }, { expectedBundleSha256: base.bundleSha256 });
   }

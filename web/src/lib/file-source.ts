@@ -35,7 +35,8 @@ export interface FileNode {
 /**
  * The result of {@link FileSource.read}. Text is returned inline for the editor;
  * binary content is NOT returned as a body — its bytes are fetched via
- * {@link FileSource.previewUrl} (a signed GET) or downloaded, never inlined.
+ * {@link FileSource.previewUrl} (a signed GET or an object URL) or downloaded,
+ * never inlined.
  */
 export interface FileContent {
   path: string;
@@ -108,21 +109,24 @@ export interface FileSource {
    */
   upload?(files: File[], destDir?: string): Promise<void>;
   /**
-   * Present ⇒ media-previewable. Return a short-lived signed GET URL for direct
-   * object-store read (images/video), bypassing the Host proxy (ADR-0006 §1, #88). Writes
-   * are NEVER presigned — only this downward read is.
+   * Present ⇒ media-previewable. Return a short-lived URL a media element can
+   * load: a signed GET for direct object-store read (Workspace images/video),
+   * bypassing the Host proxy (ADR-0006 §1, #88), or an object URL of bytes
+   * fetched with the API credential (Skills). Writes are NEVER presigned —
+   * only this downward read is.
    */
   previewUrl?(path: string, options?: FileReadOptions): Promise<string>;
-  /** Request a fresh signed attachment URL for a browser-native download. */
+  /** Request a fresh URL for a browser-native download (a signed attachment or an object URL). */
   downloadUrl?(path: string, options?: FileReadOptions): Promise<string>;
 }
 
 // ─── the three domain implementations ─────────────────────────────────────────
 //
 // These plain objects expose each domain's authenticated API without React.
-// Workspace bytes use signed object-store URLs; metadata and writes use the Host.
+// Workspace bytes use signed object-store URLs; Skill bytes come from the Host
+// with the API credential; metadata and writes use the Host.
 
-import { apiFetch, apiUpload } from "@/lib/api";
+import { apiBlob, apiFetch, apiUpload } from "@/lib/api";
 import { encodePath } from "@/lib/workspace-tree";
 import { AGENT_FILE_NAMES } from "@/lib/hooks/use-agent-files";
 
@@ -130,19 +134,50 @@ import { AGENT_FILE_NAMES } from "@/lib/hooks/use-agent-files";
 
 /**
  * Skill (Library Skill or Agent's Skill Fork — same component, different id;
- * ADR-0004). Nested, fully writable, uploads attachments into the Skill, no
- * media preview (Skills are text). Wraps the `/v1/skills/:id/files` routes
- * (same paths as `use-skills.ts`).
+ * ADR-0004). Nested and fully writable; wraps the `/v1/skills/:id/files`
+ * routes (same paths as `use-skills.ts`). Files are bytes (ADR-0022): text
+ * files open in the editor and save through the text PUT; binary files are
+ * read as metadata only and previewed or downloaded from the byte endpoint
+ * (`files/raw`), never opened as text. Uploads put any files INTO this Skill
+ * with the Workspace's multipart form.
+ *
+ * The byte endpoint needs the API credential, which a media element or a
+ * download link cannot send, so previews and downloads fetch the bytes and
+ * hand out object URLs. One preview shows at a time: a new preview revokes the
+ * previous URL, and `dispose` revokes the last one.
  *
  * The Library-Skill vs Skill-Fork distinction is *only* the `skillId` passed to
  * the constructor — both hit the same routes.
  */
 export type SkillFileSource = FileSource & {
   capabilities: { hierarchy: "nested"; idleGated: false };
+  /** Revoke the current preview's object URL. The source stays usable. */
+  dispose(): void;
 };
+
+/** `GET /v1/skills/:id/files/content`: a text file's content, or a binary file's metadata. */
+type SkillFileRead =
+  | { path: string; content: string; binary?: undefined }
+  | { path: string; binary: true; size: number; contentType: string };
+
+/** How long a download's object URL outlives the click that starts the download. */
+const SKILL_DOWNLOAD_URL_LIFETIME_MS = 60_000;
 
 export function createSkillFileSource(skillId: string, onChanged?: () => void): SkillFileSource {
   const base = `/v1/skills/${skillId}/files`;
+  let preview: string | undefined;
+
+  function releasePreview(): void {
+    if (preview) URL.revokeObjectURL(preview);
+    preview = undefined;
+  }
+
+  async function bytes(path: string, options: FileReadOptions = {}): Promise<Blob> {
+    const blob = await apiBlob(`${base}/raw?path=${encodeURIComponent(path)}`, { signal: options.signal });
+    options.signal?.throwIfAborted();
+    return blob;
+  }
+
   return {
     capabilities: { hierarchy: "nested", idleGated: false },
 
@@ -152,10 +187,12 @@ export function createSkillFileSource(skillId: string, onChanged?: () => void): 
     },
 
     async read(path: string): Promise<FileContent> {
-      const res = await apiFetch<{ path: string; content: string }>(
+      const res = await apiFetch<SkillFileRead>(
         `${base}/content?path=${encodeURIComponent(path)}`,
       );
-      // Skills are text-only; there is no binary path here.
+      if (res.binary) {
+        return { path: res.path, text: null, contentType: res.contentType, size: res.size, isBinary: true };
+      }
       return {
         path: res.path,
         text: res.content,
@@ -189,27 +226,38 @@ export function createSkillFileSource(skillId: string, onChanged?: () => void): 
     },
 
     async upload(files: File[], destDir?: string): Promise<void> {
-      // Attachments INTO this Skill — one PUT per file (the Skill file routes
-      // are single-file; there is no batch endpoint). This is NOT the Library's
-      // "upload a folder to create a Skill" (useUploadSkills), which stays out.
-      //
-      // TEXT-ONLY: the Skill content route (`PUT …/files/content`) takes a JSON
-      // `{ path, content: string }`, so bytes go through `file.text()`. Skills
-      // are a text domain (no previewUrl); binary attachments would be mangled.
-      // Uploading arbitrary binaries into a Skill needs a multipart Skill route
-      // that does not exist yet — see #91 (deliberately out of scope this pass).
-      for (const file of files) {
-        const path = joinDest(destDir, file.name);
-        const content = await file.text();
-        await apiFetch(`${base}/content`, {
-          method: "PUT",
-          body: JSON.stringify({ path, content }),
-        });
-        onChanged?.();
-      }
+      // Attachments INTO this Skill, as one new version. This is NOT the
+      // Library's "upload a folder to create a Skill" (useUploadSkills).
+      await uploadFiles(`${base}/upload`, files, destDir);
+      onChanged?.();
     },
-    // No previewUrl: Skills are text.
+
+    async previewUrl(path: string, options?: FileReadOptions): Promise<string> {
+      const blob = await bytes(path, options);
+      releasePreview();
+      preview = URL.createObjectURL(blob);
+      return preview;
+    },
+
+    async downloadUrl(path: string, options?: FileReadOptions): Promise<string> {
+      const url = URL.createObjectURL(await bytes(path, options));
+      setTimeout(() => URL.revokeObjectURL(url), SKILL_DOWNLOAD_URL_LIFETIME_MS);
+      return url;
+    },
+
+    dispose: releasePreview,
   };
+}
+
+/**
+ * The Workspace and Skill upload form: repeated `files` fields, each placed
+ * under `destDir` by its filename (which carries a dropped folder's path).
+ */
+async function uploadFiles(url: string, files: File[], destDir?: string): Promise<void> {
+  const form = new FormData();
+  if (destDir) form.set("destDir", destDir);
+  for (const file of files) form.append("files", file, file.name);
+  await apiUpload(url, form);
 }
 
 // ── Workspace ───────────────────────────────────────────────────────────────
@@ -405,10 +453,7 @@ export function createWorkspaceFileSource(workspaceId: string): WorkspaceFileSou
     },
 
     async upload(files: File[], destDir?: string): Promise<void> {
-      const form = new FormData();
-      if (destDir) form.set("destDir", destDir);
-      for (const file of files) form.append("files", file, file.name);
-      await apiUpload(`${apiPath}/files/upload`, form);
+      await uploadFiles(`${apiPath}/files/upload`, files, destDir);
     },
 
   };
@@ -666,10 +711,4 @@ export function methodsOf(source: FileSource): MethodsPresent {
     upload: typeof source.upload === "function",
     previewUrl: typeof source.previewUrl === "function",
   };
-}
-
-/** Join an optional destination dir with a filename into a source-relative path. */
-function joinDest(destDir: string | undefined, name: string): string {
-  if (!destDir) return name;
-  return `${destDir.replace(/\/+$/, "")}/${name}`;
 }

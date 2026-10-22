@@ -123,7 +123,7 @@ export type { EventPayloadRef, EventPayloadStore } from "./event-payload.js";
 export { migrateEventPayloads } from "./postgres/migrate-event-payloads.js";
 export type { OSSArtifactStoreOptions, OSSObjectClient } from "./oss/artifact-store.js";
 export { workspaceObjectPrefix, validateArtifactPath } from "./workspace-path.js";
-export { resolveArtifactContentType } from "./artifact-content-type.js";
+export { attachmentDisposition, resolveArtifactContentType } from "./artifact-content-type.js";
 
 export {
   createPgStores,
@@ -170,6 +170,7 @@ export {
   verifySkillBundle,
   skillSetHash,
   isSkillBundleSha256,
+  isFilteredSkillPath,
   assertSkillBundleIdentity,
   assertInstallUrlExpiry,
   skillBundleColumns,

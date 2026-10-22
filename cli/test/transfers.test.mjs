@@ -256,3 +256,95 @@ test("Skill download rejects an invalid local directory before contacting Host",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/** A TrueType header followed by bytes that are not valid UTF-8. */
+const TTF = Buffer.from([
+  0x00, 0x01, 0x00, 0x00, 0xff, 0xfe, 0xc3, 0x28, 0x80, 0x00, 0x0a,
+]);
+
+test("Skill download writes every file's exact bytes from the byte endpoint", async () => {
+  const dir = await realpath(
+    await mkdtemp(join(tmpdir(), "oma-skill-bytes-")),
+  );
+  const files = {
+    "SKILL.md": Buffer.from("---\nname: fonts\n---\n"),
+    "assets/Regular.ttf": TTF,
+  };
+  const f = await fixture((req, res) => {
+    const url = new URL(req.url, "http://host");
+    if (url.pathname === "/prefix/v1/skills/s")
+      return json(res, { id: "s", files: Object.keys(files) });
+    if (url.pathname === "/prefix/v1/skills/s/files/raw") {
+      const body = files[url.searchParams.get("path")];
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": body.length,
+      });
+      return res.end(body);
+    }
+    json(res, { error: "Not found" }, 404);
+  });
+  try {
+    const out = join(dir, "out");
+    const r = await run(
+      ["skill", "download", "--skill-id", "s", "--output", out],
+      auth(f),
+    );
+    assert.equal(r.code, 0, r.stderr);
+    for (const [path, body] of Object.entries(files))
+      assert.deepEqual(await readFile(join(out, path)), body);
+    assert.deepEqual(
+      r.data().data.map((x) => [x.path, x.size, x.status]),
+      [
+        ["SKILL.md", files["SKILL.md"].length, "succeeded"],
+        ["assets/Regular.ttf", TTF.length, "succeeded"],
+      ],
+    );
+    assert.equal(
+      f.requests.filter((x) => x.url.includes("/files/content")).length,
+      0,
+    );
+    assert.ok(
+      f.requests.some(
+        (x) =>
+          x.url ===
+          "/prefix/v1/skills/s/files/raw?path=" +
+            encodeURIComponent("assets/Regular.ttf"),
+      ),
+    );
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Skill upload sends the files' bytes, decoding only SKILL.md", async () => {
+  const dir = await realpath(
+    await mkdtemp(join(tmpdir(), "oma-skill-upload-bytes-")),
+  );
+  await mkdir(join(dir, "fonts/assets"), { recursive: true });
+  await writeFile(join(dir, "fonts/SKILL.md"), "---\nname: fonts\n---\n");
+  await writeFile(join(dir, "fonts/assets/Regular.ttf"), TTF);
+  const f = await fixture((req, res) =>
+    json(
+      res,
+      req.method === "GET"
+        ? { data: [], has_more: false }
+        : { data: [{ id: "s1", name: "fonts" }] },
+      req.method === "GET" ? 200 : 201,
+    ),
+  );
+  try {
+    const r = await run(
+      ["skill", "upload", "--directory", join(dir, "fonts")],
+      auth(f),
+    );
+    assert.equal(r.code, 0, r.stderr);
+    const post = f.requests.find((x) => x.method === "POST");
+    assert.ok(post.body.includes(TTF), "multipart body carries the TTF bytes");
+    assert.match(post.body.toString("latin1"), /fonts\/assets\/Regular\.ttf/);
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

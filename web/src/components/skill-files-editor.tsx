@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FileManager } from "@/components/file-manager";
 import { createSkillFileSource } from "@/lib/file-source";
@@ -12,8 +12,9 @@ import { createSkillFileSource } from "@/lib/file-source";
  *
  * SkillFileSource is nested, writable (save/rename/delete/upload) and NOT
  * idle-gated (`capabilities.idleGated === false`), so the `turnStatus` a Skill
- * receives never gates its writes — we pass the constant `"idle"`. Skills are
- * text-only (no `previewUrl`), so binary files fall back to download.
+ * receives never gates its writes — we pass the constant `"idle"`. Text files
+ * open in the editor; binary files (fonts, images, …) are previewed when they
+ * are images, video or audio and otherwise offered as a download.
  */
 export function SkillFilesEditor({ skillId, agentId, presentation = "default" }: { skillId: string; agentId?: string; presentation?: "default" | "workbench" }) {
   const queryClient = useQueryClient();
@@ -23,6 +24,8 @@ export function SkillFilesEditor({ skillId, agentId, presentation = "default" }:
       void queryClient.invalidateQueries({ queryKey: ["agents", agentId, "skills"] });
     }
   }), [skillId, agentId, queryClient]);
+  // Previews are object URLs of fetched bytes: release the last one on leave.
+  useEffect(() => () => source.dispose(), [source]);
   return (
     <FileManager
       key={skillId}

@@ -139,13 +139,14 @@ matches the Host parser; YAML multiline descriptions are not fully interpreted.
 Names fall back to the real directory basename. Overwrite retains the selected
 Skill ID and replaces its full tree. Upload never automatically equips.
 
-Skill files are a server UTF-8 text channel; BOM or invalid bytes may already have
-been normalized. Use Workspace transfers for binary fidelity. Root SKILL.md can
-be written, updating metadata through the Host parser; it cannot be renamed or
-deleted by CLI. Nested SKILL.md is ordinary text. Rename checks source existence;
-same-path is a no-op. Other renames copy then delete, so failure may leave two
-copies. Skill file delete is idempotent for absent files in an existing Skill.
-Skill export is not an atomic snapshot and preserves unrelated local files.
+Skill file read/write are full UTF-8 text operations; read refuses binary files
+(fonts, images, invalid UTF-8). Skill upload and download preserve arbitrary
+bytes. Root SKILL.md can be written, updating metadata through the Host parser;
+it cannot be renamed or deleted by CLI. Nested SKILL.md is ordinary text. Rename
+checks source existence; same-path is a no-op. Other renames copy then delete,
+so failure may leave two copies. Skill file delete is idempotent for absent
+files in an existing Skill. Skill export is not an atomic snapshot and
+preserves unrelated local files.
 
 ## Inputs, output and errors
 

@@ -15,19 +15,43 @@ export class ApiError extends Error {
 
 const STORAGE_KEY = "oma_api_key";
 
+/** The console's API credential, if signed in. */
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem(STORAGE_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** Send the user to login on 401; throw the API's error for any other failure. */
+async function ensureOk(response: Response, failure: string): Promise<void> {
+  if (response.status === 401) {
+    localStorage.removeItem(STORAGE_KEY);
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message =
+      (body as { message?: string }).message ??
+      (body as { error?: string }).error ??
+      `${failure} with status ${response.status}`;
+    throw new ApiError(message, response.status, (body as { code?: string }).code);
+  }
+}
+
+async function jsonBody<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = localStorage.getItem(STORAGE_KEY);
-
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
+    ...authHeaders(),
   };
-
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
   const method = (options.method ?? "GET").toUpperCase();
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
@@ -38,59 +62,38 @@ export async function apiFetch<T = unknown>(
     ...options,
     headers,
   });
-
-  if (response.status === 401) {
-    localStorage.removeItem(STORAGE_KEY);
-    window.location.href = "/login";
-    throw new Error("Unauthorized");
-  }
-
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const message =
-      (body as { message?: string }).message ??
-      (body as { error?: string }).error ??
-      `Request failed with status ${response.status}`;
-    throw new ApiError(message, response.status, (body as { code?: string }).code);
-  }
-
-  const text = await response.text();
-  if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+  await ensureOk(response, "Request failed");
+  return jsonBody<T>(response);
 }
 
 /**
  * POST a `FormData` body (multipart) with auth, without forcing a JSON
  * Content-Type — the browser sets the multipart boundary itself. Used for the
- * Skill folder upload (POST /v1/skills).
+ * Skill folder upload (POST /v1/skills) and the Workspace and Skill file uploads.
  */
 export async function apiUpload<T = unknown>(path: string, form: FormData): Promise<T> {
-  const token = localStorage.getItem(STORAGE_KEY);
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers,
+    headers: authHeaders(),
     body: form,
   });
+  await ensureOk(response, "Upload failed");
+  return jsonBody<T>(response);
+}
 
-  if (response.status === 401) {
-    localStorage.removeItem(STORAGE_KEY);
-    window.location.href = "/login";
-    throw new Error("Unauthorized");
-  }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const message =
-      (body as { message?: string }).message ??
-      (body as { error?: string }).error ??
-      `Upload failed with status ${response.status}`;
-    throw new ApiError(message, response.status, (body as { code?: string }).code);
-  }
-  const text = await response.text();
-  if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+/**
+ * GET a response body as bytes with auth, for content a media element or
+ * download link cannot fetch itself because it needs the API credential
+ * (Skill file bytes). The Blob's type is the response's Content-Type.
+ */
+export async function apiBlob(path: string, options: { signal?: AbortSignal } = {}): Promise<Blob> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    headers: authHeaders(),
+    signal: options.signal,
+    cache: "no-store",
+  });
+  await ensureOk(response, "Download failed");
+  return response.blob();
 }
 
 export const queryClient = new QueryClient({
