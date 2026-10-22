@@ -2,15 +2,14 @@ import { describe, it, expect } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import {
-  InMemoryEventLogStore,
-  InMemoryPendingEventStore,
-  InMemorySessionStore,
+  createMemoryStores,
   InMemoryAgentFileStore,
   InMemorySkillStore,
   InMemorySkillArtifactStore,
 } from "@oma-server/store-memory";
 import type { Agent } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 
 const AGENT: Agent = {
   id: "agent_1",
@@ -31,14 +30,16 @@ const AGENT: Agent = {
 function capturingAdapter(): { adapter: Adapter; last: () => AdapterInput | undefined } {
   let captured: AdapterInput | undefined;
   const adapter: Adapter = {
-    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+    async run(input: AdapterInput) {
+      const write = journalWriter(input);
       captured = input;
-      yield {
+      await write({
         id: "evt_1",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: "ok" }],
-      } as SessionEvent;
+      } as SessionEvent);
+      return "finished";
     },
   };
   return { adapter, last: () => captured };
@@ -51,9 +52,7 @@ async function runOneTurn(deps: {
   agent?: Agent;
   thinking?: Agent["thinking"];
 }) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const { adapter, last } = capturingAdapter();
   const agent = deps.agent ?? AGENT;

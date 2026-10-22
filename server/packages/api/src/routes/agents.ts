@@ -1,5 +1,5 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { AgentStore, Runtime } from "@oma-server/store";
+import { RUNTIMES, type AgentStore, type Runtime } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import {
   normalizeManagedMcpRefs,
@@ -17,7 +17,6 @@ type Env = {
   };
 };
 
-const VALID_RUNTIMES: readonly Runtime[] = ["claude-code", "codex", "pi-agent", "mock"];
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function validateSandbox(value: unknown): string | undefined {
@@ -66,9 +65,9 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
     if (!runtime || typeof runtime !== "string") {
       return c.json({ error: "runtime is required" }, 400);
     }
-    if (!VALID_RUNTIMES.includes(runtime as Runtime)) {
+    if (!RUNTIMES.includes(runtime as Runtime)) {
       return c.json(
-        { error: `runtime must be one of: ${VALID_RUNTIMES.join(", ")}` },
+        { error: `runtime must be one of: ${RUNTIMES.join(", ")}` },
         400,
       );
     }
@@ -177,9 +176,9 @@ export function agentRoutes(agentStore: AgentStore): OpenAPIHono<Env> {
 
     // Validate runtime if provided
     if (body.runtime !== undefined) {
-      if (!VALID_RUNTIMES.includes(body.runtime as any)) {
+      if (!RUNTIMES.includes(body.runtime as any)) {
         return c.json(
-          { error: `runtime must be one of: ${VALID_RUNTIMES.join(", ")}` },
+          { error: `runtime must be one of: ${RUNTIMES.join(", ")}` },
           400,
         );
       }

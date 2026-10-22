@@ -3,14 +3,16 @@ import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnStreamStore } from "@oma-server/redis";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
+import { acceptInterrupt } from "./accept-interrupt.js";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
-async function fixture(run: (input: AdapterInput) => AsyncIterable<SessionEvent>, turnStreamStore?: TurnStreamStore) {
+async function fixture(run: Adapter["run"], turnStreamStore?: TurnStreamStore) {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "t", name: "test", model: "test", system: "test",
-    runtime: "claude-code", sandbox: { enabled: false } });
+    runtime: "mock", sandbox: { enabled: false } });
   const session = await stores.sessionStore.create({ tenantId: "t", agentId: agent.id, agent, workspaceId: "ws" });
   const eventStreamHub = new InProcessEventStreamHub();
   const publish = vi.spyOn(eventStreamHub, "publish");
@@ -27,11 +29,11 @@ function reply(id: string): SessionEvent {
 }
 
 describe("Session idle at queue boundaries", () => {
-  it("completes PG-owned work when Redis reads fail and its projection CAS conflicts", async () => {
+  it("completes PG-owned work when its projection writes fail or are refused", async () => {
     const redis = new InMemoryTurnStreamStore();
-    vi.spyOn(redis, "getActiveTurn").mockRejectedValue(new Error("Redis read unavailable"));
-    vi.spyOn(redis, "compareAndSetActiveTurn").mockResolvedValue(false);
-    const f = await fixture(async function* () { yield reply("durable answer"); },
+    vi.spyOn(redis, "recordActiveTurn").mockRejectedValue(new Error("Redis write unavailable"));
+    vi.spyOn(redis, "clearActiveTurn").mockResolvedValue(false);
+    const f = await fixture(async (input: AdapterInput) => { const write = journalWriter(input); await write(reply("durable answer")); return "finished"; },
       new BestEffortTurnStreamStore(redis, () => true));
     const router = f.makeRouter();
     try {
@@ -50,10 +52,12 @@ describe("Session idle at queue boundaries", () => {
 
   it("completes each Turn while staying running until both queued inputs finish", async () => {
     let runs = 0;
-    const f = await fixture(async function* () {
+    const f = await fixture(async (input: AdapterInput) => {
+      const write = journalWriter(input);
       expect(f.session.status).toBe("running");
       expect(f.publish.mock.calls.filter(([, e]) => e.type === "session.status_idle")).toHaveLength(0);
-      yield reply(`reply-${++runs}`);
+      await write(reply(`reply-${++runs}`));
+      return "finished";
     });
     await f.enqueue("A"); await f.enqueue("B");
     await f.makeRouter().handleNewEvent(f.session.id, f.agent);
@@ -68,7 +72,7 @@ describe("Session idle at queue boundaries", () => {
 
   it("picks up input arriving after completion is persisted but before acknowledgement", async () => {
     let runs = 0;
-    const f = await fixture(async function* () { yield reply(`reply-${++runs}`); });
+    const f = await fixture(async (input: AdapterInput) => { const write = journalWriter(input); await write(reply(`reply-${++runs}`)); return "finished"; });
     const router = f.makeRouter();
     const append = f.eventLogStore.append.bind(f.eventLogStore);
     let acceptedTail = false;
@@ -92,7 +96,7 @@ describe("Session idle at queue boundaries", () => {
   it.each([false, true])("recovers completion before acknowledgement without rerunning it (tail: %s)", async (tail) => {
     vi.useFakeTimers();
     let runs = 0;
-    const f = await fixture(async function* () { yield reply(`reply-${++runs}`); });
+    const f = await fixture(async (input: AdapterInput) => { const write = journalWriter(input); await write(reply(`reply-${++runs}`)); return "finished"; });
     await f.enqueue("A");
     if (tail) await f.enqueue("B");
     vi.spyOn(f.pendingEventStore, "ackCompletedTurn").mockImplementationOnce(async (sessionId, eventId, claim) => {
@@ -116,21 +120,23 @@ describe("Session idle at queue boundaries", () => {
     let runs = 0;
     let started!: () => void;
     const firstStarted = new Promise<void>(resolve => { started = resolve; });
-    const f = await fixture(async function* (input) {
+    const f = await fixture(async (input) => {
+      const write = journalWriter(input);
       runs++;
       if (runs === 1) {
         started();
         await new Promise<void>(resolve => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
-        return;
+        return "finished";
       }
       expect(f.publish.mock.calls.filter(([, e]) => e.type === "session.status_idle")).toHaveLength(0);
-      yield reply("B");
+      await write(reply("B"));
+      return "finished";
     });
     await f.enqueue("A"); await f.enqueue("B");
     const router = f.makeRouter();
     const first = router.handleNewEvent(f.session.id, f.agent);
     await firstStarted;
-    await router.requestInterrupt(f.session.id);
+    await acceptInterrupt(f.pendingEventStore, f.session.id, router);
     await first;
     expect(await router.waitForIdle(2000)).toBe(true);
     expect(runs).toBe(2);
@@ -143,7 +149,7 @@ describe("Session idle at queue boundaries", () => {
 
   it("does not declare idle when another Host holds the queue head", async () => {
     vi.useFakeTimers();
-    const f = await fixture(async function* () { throw new Error("must not run"); });
+    const f = await fixture(async () => { throw new Error("must not run"); });
     await f.enqueue("A");
     await f.pendingEventStore.claim(f.session.id, "other-host", 60000);
     await f.sessionStore.updateStatus(f.session.id, "running");

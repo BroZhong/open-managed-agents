@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { RUNTIMES } from "@oma-server/store";
 
 export const DateTimeSchema = z.iso.datetime().openapi({
   description: "ISO 8601 timestamp",
@@ -13,11 +14,11 @@ export const ErrorSchema = z
   .openapi("Error");
 
 export const RuntimeSchema = z
-  .enum(["claude-code", "codex", "pi-agent", "mock"], {
+  .enum(RUNTIMES, {
     error: (issue) =>
       issue.input === undefined
         ? "runtime is required"
-        : "runtime must be one of: claude-code, codex, pi-agent, mock",
+        : `runtime must be one of: ${RUNTIMES.join(", ")}`,
   })
   .openapi("Runtime");
 
@@ -470,7 +471,7 @@ export const DelegationExecutionSchema = z.object({
 export const DelegationListSchema = z.object({ data: z.array(DelegationExecutionSchema), has_more: z.boolean(), next_cursor: z.string().optional(), origin: DelegationOriginSchema.optional() }).openapi("DelegationList");
 export const DelegationTraceSchema = z.object({
   execution: DelegationExecutionSchema, workspaceId: z.string(), data: z.array(StoredEventSchema),
-  deltas: z.array(z.object({ type: z.string(), data: z.unknown(), turnId: z.string(), blockIndex: z.number(), deltaId: z.string(), ts: DateTimeSchema })),
+  deltas: z.array(z.object({ type: z.string(), data: z.unknown(), turnId: z.string(), blockIndex: z.number(), attempt: z.number(), deltaId: z.string(), ts: DateTimeSchema })),
   has_more: z.boolean(), next_cursor: z.number(), usage: TokenUsageSchema,
 }).openapi("DelegationTrace");
 export const DelegationUsageSchema = z.object({ self: TokenUsageSchema, delegated: TokenUsageSchema, total: TokenUsageSchema, scope: z.string() }).openapi("DelegationUsage");

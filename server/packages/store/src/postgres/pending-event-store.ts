@@ -7,6 +7,7 @@ import type {
   PendingEventClaimRef,
   PendingEventEnqueueInput,
   PendingEventIngressStore,
+  PendingEventRenewal,
 } from "../interfaces/pending-event-store.js";
 
 interface PendingRow {
@@ -20,6 +21,7 @@ interface PendingRow {
   claim_owner?: string | null;
   claim_expires_at?: Date | null;
   claim_generation?: string | number;
+  prior_interrupt?: boolean;
 }
 
 function rowToEvent(row: PendingRow): PendingEvent {
@@ -43,18 +45,10 @@ export class PgPendingEventStore implements PendingEventIngressStore {
        interrupt_generation = claim_generation
        WHERE p.id = (SELECT id FROM pending_events WHERE session_id = $1
          ORDER BY seq LIMIT 1)
-       AND p.claim_owner IS NOT NULL AND p.claim_expires_at > clock_timestamp()
+       AND p.claim_generation > 0
        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = p.session_id
          AND e.type = 'session.turn_completed' AND e.data->>'pendingEventId' = p.id)
        RETURNING p.id`, [sessionId],
-    );
-    return result.rows.length > 0;
-  }
-
-  async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT 1 FROM pending_events WHERE session_id = $1 AND id = $2
-       AND interrupt_requested_at IS NOT NULL AND interrupt_generation = claim_generation`, [sessionId, eventId],
     );
     return result.rows.length > 0;
   }
@@ -140,43 +134,6 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     }
   }
 
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    // Legacy-only destructive pop. Lock the FIFO head, then return it only if
-    // this transaction actually deleted it. A claimed head cannot be bypassed,
-    // and a losing concurrent transaction never returns the winner's row.
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const head = await client.query<PendingRow>(
-        `SELECT id, session_id, type, data, session_thread_id, api_key_id, arrived_at
-         FROM pending_events
-         WHERE session_id = $1
-         ORDER BY seq ASC
-         LIMIT 1
-         FOR UPDATE`,
-        [sessionId],
-      );
-      const selected = head.rows[0];
-      if (!selected) {
-        await client.query("COMMIT");
-        return null;
-      }
-      const deleted = await client.query<{ id: string }>(
-        `DELETE FROM pending_events
-         WHERE id = $1 AND claim_owner IS NULL
-         RETURNING id`,
-        [selected.id],
-      );
-      await client.query("COMMIT");
-      return deleted.rows[0] ? rowToEvent(selected) : null;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
   async peek(sessionId: string): Promise<PendingEvent | null> {
     const { rows } = await this.pool.query<PendingRow>(
       `SELECT id, session_id, type, data, session_thread_id, api_key_id, arrived_at
@@ -197,9 +154,11 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       await client.query("BEGIN");
       // Acquire the row lock without any time predicate. PostgreSQL may evaluate
       // WHERE/SET expressions before a lock wait, so all lease-clock checks must
-      // happen in the following statement, after this SELECT has returned.
-      const head = await client.query<{ id: string }>(
-        `SELECT id FROM pending_events
+      // happen in the following statement, after this SELECT has returned. The
+      // locked row is the version the UPDATE replaces, so its owner tells how
+      // the previous claim ended: release clears it, expiry leaves it.
+      const head = await client.query<{ id: string; claim_owner: string | null; claim_generation: string | number }>(
+        `SELECT id, claim_owner, claim_generation FROM pending_events
          WHERE session_id = $1
          ORDER BY seq ASC
          LIMIT 1
@@ -218,7 +177,8 @@ export class PgPendingEventStore implements PendingEventIngressStore {
          WHERE id = $1
            AND (claim_owner IS NULL OR claim_expires_at <= clock_timestamp())
          RETURNING id, session_id, type, data, session_thread_id, api_key_id, arrived_at,
-                   claim_owner, claim_expires_at, claim_generation`,
+                   claim_owner, claim_expires_at, claim_generation,
+                   (interrupt_requested_at IS NOT NULL AND interrupt_generation < claim_generation) AS prior_interrupt`,
         [head.rows[0].id, ownerId, leaseMs],
       );
       await client.query("COMMIT");
@@ -228,6 +188,9 @@ export class PgPendingEventStore implements PendingEventIngressStore {
         ownerId: row.claim_owner!,
         generation: Number(row.claim_generation),
         expiresAt: new Date(row.claim_expires_at!),
+        priorInterrupt: row.prior_interrupt === true,
+        previous: Number(head.rows[0].claim_generation) === 0 ? null
+          : head.rows[0].claim_owner === null ? "released" : "expired",
       } : null;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
@@ -242,8 +205,9 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
-  ): Promise<boolean> {
+  ): Promise<PendingEventRenewal> {
     this.validateLeaseMs(leaseMs);
+    const lost = { renewed: false, interruptRequested: false };
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -255,9 +219,11 @@ export class PgPendingEventStore implements PendingEventIngressStore {
       );
       if (!locked.rows[0]) {
         await client.query("COMMIT");
-        return false;
+        return lost;
       }
-      const { rows } = await client.query<{ id: string }>(
+      // The heartbeat reads the Interrupt marker of its own generation here
+      // instead of in a separate query per tick.
+      const { rows } = await client.query<{ interrupt_requested: boolean }>(
         `UPDATE pending_events
          SET claim_expires_at = clock_timestamp() + CAST($5 || ' milliseconds' AS interval)
          WHERE session_id = $1
@@ -265,11 +231,12 @@ export class PgPendingEventStore implements PendingEventIngressStore {
            AND claim_owner = $3
            AND claim_generation = $4
            AND claim_expires_at > clock_timestamp()
-         RETURNING id`,
+         RETURNING COALESCE(interrupt_requested_at IS NOT NULL
+           AND interrupt_generation = claim_generation, false) AS interrupt_requested`,
         [sessionId, eventId, claim.ownerId, claim.generation, leaseMs],
       );
       await client.query("COMMIT");
-      return rows.length > 0;
+      return rows[0] ? { renewed: true, interruptRequested: rows[0].interrupt_requested === true } : lost;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
@@ -336,7 +303,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
   async ack(
     sessionId: string,
     eventId: string,
-    claim?: PendingEventClaimRef,
+    claim: PendingEventClaimRef,
   ): Promise<boolean> {
     return (await this.acknowledge(sessionId, eventId, claim, false)).acknowledged;
   }
@@ -348,7 +315,7 @@ export class PgPendingEventStore implements PendingEventIngressStore {
   private async acknowledge(
     sessionId: string,
     eventId: string,
-    claim: PendingEventClaimRef | undefined,
+    claim: PendingEventClaimRef,
     completed: boolean,
   ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }> {
     const client = await this.pool.connect();
@@ -382,19 +349,14 @@ export class PgPendingEventStore implements PendingEventIngressStore {
         await client.query("COMMIT");
         return { acknowledged: false };
       }
-      const params: unknown[] = [sessionId, eventId];
-      let fence = "AND claim_owner IS NULL";
-      if (claim) {
-        params.push(claim.ownerId, claim.generation);
-        fence = `AND claim_owner = $3
-                 AND claim_generation = $4
-                 AND claim_expires_at > clock_timestamp()`;
-      }
       const { rows } = await client.query<{ id: string }>(
         `DELETE FROM pending_events
-         WHERE session_id = $1 AND id = $2 ${fence}
+         WHERE session_id = $1 AND id = $2
+           AND claim_owner = $3
+           AND claim_generation = $4
+           AND claim_expires_at > clock_timestamp()
          RETURNING id`,
-        params,
+        [sessionId, eventId, claim.ownerId, claim.generation],
       );
       let idleEvent: StoredEvent | undefined;
       if (completed && rows.length > 0) {
@@ -430,11 +392,32 @@ export class PgPendingEventStore implements PendingEventIngressStore {
     }
   }
 
-  async listPendingSessionIds(): Promise<string[]> {
+  async listClaimableSessionIds(): Promise<string[]> {
+    // Each Session's head by pending_events_session_idx, then the claim
+    // predicate of `claim`. A Runner's scan thus never contends for a head
+    // whose owner holds a live lease.
     const { rows } = await this.pool.query<{ session_id: string }>(
-      `SELECT DISTINCT session_id FROM pending_events ORDER BY session_id ASC`,
+      `SELECT session_id FROM (
+         SELECT DISTINCT ON (session_id) session_id, claim_owner, claim_expires_at
+         FROM pending_events
+         ORDER BY session_id, seq
+       ) head
+       WHERE claim_owner IS NULL OR claim_expires_at <= clock_timestamp()
+       ORDER BY session_id ASC`,
     );
     return rows.map((row) => row.session_id);
+  }
+
+  async headClaimable(sessionId: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ claimable: boolean }>(
+      `SELECT (claim_owner IS NULL OR claim_expires_at <= clock_timestamp()) AS claimable
+       FROM pending_events
+       WHERE session_id = $1
+       ORDER BY seq ASC
+       LIMIT 1`,
+      [sessionId],
+    );
+    return rows[0]?.claimable === true;
   }
 
   async clear(sessionId: string): Promise<void> {

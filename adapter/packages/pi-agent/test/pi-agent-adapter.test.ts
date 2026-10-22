@@ -9,7 +9,6 @@ import type {
   SessionFactoryArgs,
 } from "../src/pi-agent-adapter.js";
 import type {
-  AdapterInput,
   SessionEvent,
   AgentMessageEvent,
   AgentThinkingEvent,
@@ -22,8 +21,9 @@ import type {
   AgentToolUseInputStreamEndEvent,
   SpanModelRequestEndEvent,
 } from "@open-managed-agents/adapter-core";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 
-function makeInput(prompt: string): AdapterInput {
+function makeInput(prompt: string): InputWithoutJournal {
   return {
     sessionId: "test-session",
     turnId: "test-turn",
@@ -31,14 +31,6 @@ function makeInput(prompt: string): AdapterInput {
     agent: { model: "claude-sonnet-4-5", system: "You are helpful." },
     history: [],
   };
-}
-
-async function collectEvents(
-  iterable: AsyncIterable<SessionEvent>,
-): Promise<SessionEvent[]> {
-  const events: SessionEvent[] = [];
-  for await (const e of iterable) events.push(e);
-  return events;
 }
 
 /**
@@ -141,7 +133,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits NO session lifecycle events — the Host router owns them (issue #83)", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const events = await runWithJournal(adapter, makeInput("2+2"));
       const types = events.map((e) => e.type);
       // The adapter must not double-emit lifecycle events: the router persists
       // exactly one running/idle per turn. The adapter yields content only.
@@ -151,7 +143,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits span.model_request_start and span.model_request_end", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const events = await runWithJournal(adapter, makeInput("2+2"));
       const types = events.map((e) => e.type);
       expect(types).toContain("span.model_request_start");
       expect(types).toContain("span.model_request_end");
@@ -159,7 +151,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits agent.message with correct text", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const events = await runWithJournal(adapter, makeInput("2+2"));
       const msg = events.find(
         (e) => e.type === "agent.message",
       ) as AgentMessageEvent;
@@ -169,7 +161,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("span.model_request_end contains usage", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const events = await runWithJournal(adapter, makeInput("2+2"));
       const end = events.find(
         (e) => e.type === "span.model_request_end",
       ) as SpanModelRequestEndEvent;
@@ -187,7 +179,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: fakeFactory(cachedScript),
       });
-      const events = await collectEvents(adapter.run(makeInput("cached")));
+      const events = await runWithJournal(adapter, makeInput("cached"));
       const end = events.find(
         (event) => event.type === "span.model_request_end",
       ) as SpanModelRequestEndEvent;
@@ -202,7 +194,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits streaming events in correct order", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const events = await runWithJournal(adapter, makeInput("2+2"));
       const types = events.map((e) => e.type);
       const streamStart = types.indexOf("agent.message_stream_start");
       const chunk = types.indexOf("agent.message_chunk");
@@ -229,7 +221,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits agent.thinking with accumulated text", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("think")));
+      const events = await runWithJournal(adapter, makeInput("think"));
       const thinking = events.find(
         (e) => e.type === "agent.thinking",
       ) as AgentThinkingEvent;
@@ -239,7 +231,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits thinking stream events", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("think")));
+      const events = await runWithJournal(adapter, makeInput("think"));
       const types = events.map((e) => e.type);
       expect(types).toContain("agent.thinking_stream_start");
       expect(types).toContain("agent.thinking_chunk");
@@ -276,7 +268,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits agent.tool_use with correct name and input", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("ls")));
+      const events = await runWithJournal(adapter, makeInput("ls"));
       const toolUse = events.find(
         (e) => e.type === "agent.tool_use",
       ) as AgentToolUseEvent;
@@ -287,7 +279,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits agent.tool_result with output", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("ls")));
+      const events = await runWithJournal(adapter, makeInput("ls"));
       const result = events.find(
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
@@ -301,7 +293,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("tool_result.toolUseId equals the tool_use's toolUseId (toolCall.id pairing)", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("ls")));
+      const events = await runWithJournal(adapter, makeInput("ls"));
       const toolUse = events.find(
         (e) => e.type === "agent.tool_use",
       ) as AgentToolUseEvent;
@@ -337,7 +329,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: fakeFactory(errorScript),
       });
-      const events = await collectEvents(adapter.run(makeInput("run false")));
+      const events = await runWithJournal(adapter, makeInput("run false"));
       const result = events.find(
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
@@ -373,7 +365,7 @@ describe("PiAgentAdapter (SDK)", () => {
       assistantEnd(200, 20),
     ];
 
-    function makeMcpInput(): AdapterInput {
+    function makeMcpInput(): InputWithoutJournal {
       const input = makeInput("Review recent sessions");
       input.agent.mcpServers = [
         { name: "session-data", command: "node", args: ["server.js"] },
@@ -383,7 +375,7 @@ describe("PiAgentAdapter (SDK)", () => {
 
     it("emits canonical MCP use/result events for a proxy tool call", async () => {
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeMcpInput()));
+      const events = await runWithJournal(adapter, makeMcpInput());
 
       const toolUse = events.find(
         (event) => event.type === "agent.mcp_tool_use",
@@ -435,7 +427,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: fakeFactory(discoveryScript),
       });
-      const events = await collectEvents(adapter.run(makeMcpInput()));
+      const events = await runWithJournal(adapter, makeMcpInput());
 
       expect(events).toContainEqual(
         expect.objectContaining({
@@ -488,7 +480,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: fakeFactory(actionScript),
       });
-      const events = await collectEvents(adapter.run(makeMcpInput()));
+      const events = await runWithJournal(adapter, makeMcpInput());
 
       expect(events).toContainEqual(
         expect.objectContaining({
@@ -540,7 +532,7 @@ describe("PiAgentAdapter (SDK)", () => {
         assistantEnd(10, 2),
       ];
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("write")));
+      const events = await runWithJournal(adapter, makeInput("write"));
 
       const start = events.find(
         (e) => e.type === "agent.tool_use_input_stream_start",
@@ -577,7 +569,7 @@ describe("PiAgentAdapter (SDK)", () => {
         assistantEnd(10, 2),
       ];
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("go")));
+      const events = await runWithJournal(adapter, makeInput("go"));
 
       const starts = events.filter(
         (e) => e.type === "agent.tool_use_input_stream_start",
@@ -625,7 +617,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter = new PiAgentAdapter({
         _sessionFactory: scriptedFactory(abortedMidText),
       });
-      const events = await collectEvents(adapter.run(makeInput("write")));
+      const events = await runWithJournal(adapter, makeInput("write"));
       const messages = events.filter(
         (e) => e.type === "agent.message",
       ) as AgentMessageEvent[];
@@ -645,7 +637,7 @@ describe("PiAgentAdapter (SDK)", () => {
         } as never as AgentSessionEvent,
       ];
       const adapter = new PiAgentAdapter({ _sessionFactory: scriptedFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("write")));
+      const events = await runWithJournal(adapter, makeInput("write"));
       const messages = events.filter(
         (e) => e.type === "agent.message",
       ) as AgentMessageEvent[];
@@ -675,7 +667,7 @@ describe("PiAgentAdapter (SDK)", () => {
         } as never as AgentSessionEvent,
       ];
       const adapter = new PiAgentAdapter({ _sessionFactory: scriptedFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("write")));
+      const events = await runWithJournal(adapter, makeInput("write"));
       const messages = events.filter(
         (e) => e.type === "agent.message",
       ) as AgentMessageEvent[];
@@ -712,7 +704,7 @@ describe("PiAgentAdapter (SDK)", () => {
           } as never as AgentSessionEvent,
         ]),
       });
-      const events = await collectEvents(adapter.run(makeInput("2+2")));
+      const events = await runWithJournal(adapter, makeInput("2+2"));
       const messages = events.filter(
         (e) => e.type === "agent.message",
       ) as AgentMessageEvent[];
@@ -730,7 +722,7 @@ describe("PiAgentAdapter (SDK)", () => {
         } as never as AgentSessionEvent,
       ];
       const adapter = new PiAgentAdapter({ _sessionFactory: scriptedFactory(script) });
-      const events = await collectEvents(adapter.run(makeInput("write")));
+      const events = await runWithJournal(adapter, makeInput("write"));
       expect(events.filter((e) => e.type === "agent.message")).toHaveLength(0);
     });
   });
@@ -775,7 +767,7 @@ describe("PiAgentAdapter (SDK)", () => {
         _sessionFactory: scriptedFactory(script),
       });
 
-      const events = await collectEvents(adapter.run(makeInput("retry")));
+      const events = await runWithJournal(adapter, makeInput("retry"));
 
       expect(events).toContainEqual(
         expect.objectContaining({
@@ -831,7 +823,7 @@ describe("PiAgentAdapter (SDK)", () => {
         _sessionFactory: scriptedFactory(script),
       });
 
-      const events = await collectEvents(adapter.run(makeInput("overflow")));
+      const events = await runWithJournal(adapter, makeInput("overflow"));
 
       expect(events).toContainEqual(
         expect.objectContaining({
@@ -899,7 +891,7 @@ describe("PiAgentAdapter (SDK)", () => {
         _sessionFactory: scriptedFactory(script),
       });
 
-      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const events = await runWithJournal(adapter, makeInput("fail"));
       const errors = events.filter(
         (event) => event.type === "session.error",
       ) as Array<SessionEvent & { error: { message: string; code: string } }>;
@@ -932,7 +924,7 @@ describe("PiAgentAdapter (SDK)", () => {
           throw new Error("unexpected crash");
         },
       });
-      const events = await collectEvents(adapter.run(makeInput("crash")));
+      const events = await runWithJournal(adapter, makeInput("crash"));
       const last = events[events.length - 1] as SessionEvent & {
         error?: { message: string; code: string };
       };
@@ -952,7 +944,7 @@ describe("PiAgentAdapter (SDK)", () => {
           dispose: () => {},
         }),
       });
-      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const events = await runWithJournal(adapter, makeInput("fail"));
       const last = events[events.length - 1] as SessionEvent & {
         error?: { message: string; code: string };
       };
@@ -967,7 +959,7 @@ describe("PiAgentAdapter (SDK)", () => {
           throw new Error("boom");
         },
       });
-      const events = await collectEvents(adapter.run(makeInput("fail")));
+      const events = await runWithJournal(adapter, makeInput("fail"));
       expect(events.length).toBeGreaterThan(0);
       expect(events[events.length - 1].type).toBe("session.error");
     });
@@ -1022,16 +1014,13 @@ describe("PiAgentAdapter (SDK)", () => {
       const input = makeInput("hang");
       input.signal = controller.signal;
 
-      const events: SessionEvent[] = [];
-      const runPromise = (async () => {
-        for await (const e of adapter.run(input)) events.push(e);
-      })();
+      const runPromise = runWithJournal(adapter, input);
 
       // Let the turn wedge, then interrupt.
       await promptStarted;
       controller.abort();
 
-      await runPromise; // must resolve — proves the hang was broken.
+      const events = await runPromise; // must resolve — proves the hang was broken.
       expect(abortCalled).toBe(true);
       // The adapter no longer emits lifecycle events (issue #83); run()
       // completing is itself the proof the hang was broken.
@@ -1080,7 +1069,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const input = makeInput("go");
       input.signal = controller.signal;
 
-      await collectEvents(adapter.run(input));
+      await runWithJournal(adapter, input);
       expect(abortCalled).toBe(true);
     });
   });
@@ -1096,8 +1085,8 @@ describe("PiAgentAdapter (SDK)", () => {
       ];
       const adapter = new PiAgentAdapter({ _sessionFactory: fakeFactory(script) });
       const [events1, events2] = await Promise.all([
-        collectEvents(adapter.run(makeInput("a"))),
-        collectEvents(adapter.run(makeInput("b"))),
+        runWithJournal(adapter, makeInput("a")),
+        runWithJournal(adapter, makeInput("b")),
       ]);
       const ids1 = events1.map((e) => e.id);
       const ids2 = events2.map((e) => e.id);
@@ -1140,7 +1129,7 @@ describe("PiAgentAdapter (SDK)", () => {
         } as SessionEvent,
       ];
 
-      await collectEvents(adapter.run(input));
+      await runWithJournal(adapter, input);
 
       // The current turn is passed verbatim (no flattened history blob).
       expect(seenPrompt).toBe("What was it?");
@@ -1167,7 +1156,7 @@ describe("PiAgentAdapter (SDK)", () => {
         ),
       });
       // makeInput sets agent.system = "You are helpful." — previously discarded.
-      await collectEvents(adapter.run(makeInput("hi")));
+      await runWithJournal(adapter, makeInput("hi"));
       expect(opts?.appendSystemPrompt).toEqual(["You are helpful."]);
       expect(opts?.additionalSkillPaths).toEqual([]);
       expect(opts?.noContextFiles).toBe(true);
@@ -1188,7 +1177,7 @@ describe("PiAgentAdapter (SDK)", () => {
         { name: "session-data", command: "node", args: ["server.js"] },
       ];
 
-      await collectEvents(adapter.run(input));
+      await runWithJournal(adapter, input);
 
       expect(opts?.appendSystemPrompt).toEqual([
         "You are helpful.",
@@ -1220,7 +1209,7 @@ describe("PiAgentAdapter (SDK)", () => {
       input.agent.system = "BASE";
       input.agent.appendSystemPrompt = ["IDENTITY", "SOUL"];
       input.agent.skillPaths = ["/tmp/skills/a", "/tmp/skills/b"];
-      await collectEvents(adapter.run(input));
+      await runWithJournal(adapter, input);
       expect(opts?.appendSystemPrompt).toEqual(["BASE", "IDENTITY", "SOUL"]);
       expect(opts?.additionalSkillPaths).toEqual([
         "/tmp/skills/a",
@@ -1241,7 +1230,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const input = makeInput("hi");
       input.agent.system = "   ";
       input.agent.appendSystemPrompt = ["", "REAL"];
-      await collectEvents(adapter.run(input));
+      await runWithJournal(adapter, input);
       expect(opts?.appendSystemPrompt).toEqual(["REAL"]);
     });
 
@@ -1255,7 +1244,7 @@ describe("PiAgentAdapter (SDK)", () => {
           },
         ),
       });
-      await collectEvents(adapter.run(makeInput("hi")));
+      await runWithJournal(adapter, makeInput("hi"));
       // A real Pi Model object with provider + id.
       expect(resolved).toBeDefined();
       expect((resolved as { provider?: string }).provider).toBe("anthropic");
@@ -1279,7 +1268,7 @@ describe("PiAgentAdapter (SDK)", () => {
           assistantEnd(1, 1),
         ]),
       });
-      const events = await collectEvents(adapter.run(makeInput("hi")));
+      const events = await runWithJournal(adapter, makeInput("hi"));
       const msg = events.find(
         (e) => e.type === "agent.message",
       ) as AgentMessageEvent & {
@@ -1320,7 +1309,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const adapter1 = new PiAgentAdapter({
         _sessionFactory: fakeFactory(turn1Script),
       });
-      const turn1Events = await collectEvents(adapter1.run(makeInput("count")));
+      const turn1Events = await runWithJournal(adapter1, makeInput("count"));
 
       // Reshape emitted canonical events as history does on the wire
       // (`{ type, ...body }`), prepending the user's turn-1 prompt.
@@ -1351,7 +1340,7 @@ describe("PiAgentAdapter (SDK)", () => {
       });
       const input2 = makeInput("and again?");
       input2.history = history;
-      await collectEvents(adapter2.run(input2));
+      await runWithJournal(adapter2, input2);
 
       // user, assistant(toolCall), toolResult, assistant(text)
       expect(seenHistory.map((m) => m.role)).toEqual([
@@ -1408,7 +1397,7 @@ describe("PiAgentAdapter (SDK)", () => {
       input1.agent.mcpServers = [
         { name: "session-data", command: "node", args: ["server.js"] },
       ];
-      const turn1Events = await collectEvents(adapter1.run(input1));
+      const turn1Events = await runWithJournal(adapter1, input1);
 
       const canonical = new Set([
         "agent.message",
@@ -1439,7 +1428,7 @@ describe("PiAgentAdapter (SDK)", () => {
       const input2 = makeInput("try again");
       input2.agent.mcpServers = input1.agent.mcpServers;
       input2.history = history;
-      await collectEvents(adapter2.run(input2));
+      await runWithJournal(adapter2, input2);
 
       expect(seenHistory.map((message) => message.role)).toEqual([
         "user",

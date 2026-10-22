@@ -2,6 +2,16 @@
 
 ## Status
 
+The snapshot timing in "Context persistence through public hooks" is revised by
+[ADR-0020](0020-turn-journal-single-write-entry.md): an awaited Agent
+`message_end` listener, which runs after Pi's native append, commits each native
+message; model-request, `tool_call` and settlement snapshots are no longer the
+durability boundary.
+
+[ADR-0021](0021-resumed-turn.md) extends "Structured continuation" to every
+Turn another Runner takes over, and drops trailing failed requests from the
+agent's context before Pi continues.
+
 Accepted. Supersedes ADR-0005's requirement to execute native tool factories on
 Host through injected I/O, ADR-0010's patched continuation entry point, and
 ADR-0013's SDK patch and no-JSONL-import implementation decisions. Their Session,
@@ -42,6 +52,12 @@ failure fail visibly, with no Host-native fallback. Cancellation sends SIGTERM t
 The wrapper invokes Pi’s AbortController and emits a cancelled frame only after
 native execution settles. A cancelled frame and process exit are both required;
 killing the wrapper alone cannot prove a detached Bash child stopped. Requests cancelled before process start get best-effort Sandbox cleanup.
+Host's per-Turn executor fence never kills a running command; it only refuses
+to start one. An Interrupt leaves the attempt owning its Turn, so the
+cancellation command is allowed. An attempt on ADR-0020's stop path (lost lease,
+failed journal write, Session termination) owns nothing: it is marked stopped
+before its Turn signal aborts, and from then on sends that Turn's Sandbox
+execution nothing, not even SIGTERM.
 
 Adapter also serializes write/edit requests by executor filesystem identity and
 canonical remote path, because native per-process queues cannot coordinate

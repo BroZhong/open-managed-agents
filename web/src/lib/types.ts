@@ -16,6 +16,12 @@ export interface SessionDelta extends OutputBlockRef {
   data: unknown;
   ts: string;
   deltaId?: string;
+  /**
+   * Claim generation of the attempt that streamed it. Attempts of one input
+   * share the Turn; only the highest attempt's Deltas are shown. Absent counts
+   * as the earliest attempt.
+   */
+  attempt?: number;
 }
 
 /** A single file in a session's Workspace, as listed by the Host proxy. */
@@ -95,7 +101,8 @@ export interface SessionTurnAbortedEvent extends SessionEvent {
 
 export interface SessionErrorEvent extends SessionEvent {
   type: "session.error";
-  data: { error: { message: string; code?: string } };
+  /** The Turn the error ends; logs written before errors named it lack it. */
+  data: { turnId?: string; error: { message: string; code?: string } };
 }
 
 export interface AgentToolUseInputStreamStartEvent extends SessionEvent {

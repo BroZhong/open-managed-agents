@@ -1,0 +1,579 @@
+{
+ "generatedAt": "2026-10-22T08:12Z",
+ "image": "oma-server/oma-web 395e30e564f0 (t255 395e30e)",
+ "window": [
+  "2026-10-22T07:48:58Z",
+  "2026-10-22T08:08:49Z"
+ ],
+ "preflight": {
+  "otherTenantActiveSessions": null,
+  "pendingAll": 0,
+  "lastEventBefore": "2026-10-22T14:57:58.239+08:00",
+  "decision": "proceed"
+ },
+ "fixes": {
+  "68ecf73": "Interrupt cancelling a known-outcome Sandbox filesystem op no longer marks the Turn uncertain",
+  "395e30e": "terminated Session lost claim not logged as Runner drain failed"
+ },
+ "1_interrupts": {
+  "tenant": "split-release-1792655399058",
+  "phases": [
+   {
+    "phase": "interrupt",
+    "n": 1,
+    "start": "2026-10-22T07:49:59Z",
+    "end": "2026-10-22T07:50:17Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt",
+    "n": 2,
+    "start": "2026-10-22T07:50:17Z",
+    "end": "2026-10-22T07:50:36Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt",
+    "n": 3,
+    "start": "2026-10-22T07:50:36Z",
+    "end": "2026-10-22T07:50:58Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt",
+    "n": 4,
+    "start": "2026-10-22T07:50:58Z",
+    "end": "2026-10-22T07:51:14Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt",
+    "n": 5,
+    "start": "2026-10-22T07:51:14Z",
+    "end": "2026-10-22T07:51:38Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt-late",
+    "n": 1,
+    "start": "2026-10-22T07:51:38Z",
+    "end": "2026-10-22T07:52:03Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt-late",
+    "n": 2,
+    "start": "2026-10-22T07:52:03Z",
+    "end": "2026-10-22T07:52:22Z",
+    "exit": 0
+   }
+  ],
+  "checks": 22,
+  "failed": 0,
+  "perTurn": [
+   {
+    "n": "interrupt-1",
+    "session": "sess_TcxVZyQaCSaLy9-zrB3LC",
+    "toolUseTs": "07:50:08.952Z",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:50:10.005Z",
+     "isError": true,
+     "text": "This operation was aborted"
+    },
+    "path": "request-file window",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   },
+   {
+    "n": "interrupt-2",
+    "session": "sess_s04cSItv4SQW05kkncy5Q",
+    "toolUseTs": "07:50:26.699Z",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:50:27.805Z",
+     "isError": true,
+     "text": "This operation was aborted"
+    },
+    "path": "request-file window",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   },
+   {
+    "n": "interrupt-3",
+    "session": "sess_4T5nILe0UPsdy0ioYCIwO",
+    "toolUseTs": "07:50:48.199Z",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:50:50.911Z",
+     "isError": true,
+     "text": "Command aborted"
+    },
+    "path": "SIGTERM (command already running)",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   },
+   {
+    "n": "interrupt-4",
+    "session": "sess_ByykC2g-qNn9NSPGgRPUF",
+    "toolUseTs": "07:51:07.440Z",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:51:08.201Z",
+     "isError": true,
+     "text": "This operation was aborted"
+    },
+    "path": "request-file window",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   },
+   {
+    "n": "interrupt-5",
+    "session": "sess_irsNsFJDUOVNsDztdVvvG",
+    "toolUseTs": "07:51:24.293Z",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:51:25.075Z",
+     "isError": true,
+     "text": "This operation was aborted"
+    },
+    "path": "request-file window",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   },
+   {
+    "n": "interrupt-late-1",
+    "session": "sess_OHwHb_Z5E6NT94oeX2cnT",
+    "toolUseTs": "07:51:50.646Z",
+    "interruptSentAfter": "5 s (07:51:56.526Z)",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:51:56.727Z",
+     "isError": true,
+     "text": "Command aborted"
+    },
+    "path": "SIGTERM",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   },
+   {
+    "n": "interrupt-late-2",
+    "session": "sess_D0edM1kEP2CTIIIxH-H4j",
+    "toolUseTs": "07:52:10.624Z",
+    "interruptSentAfter": "5 s (07:52:15.932Z)",
+    "lastToolResult": {
+     "seq": 15,
+     "ts": "07:52:16.081Z",
+     "isError": true,
+     "text": "Command aborted"
+    },
+    "path": "SIGTERM",
+    "sessionErrors": 0,
+    "turnAborted": 1,
+    "turnCompleted": 2,
+    "userMessages": 2,
+    "preservedTailAnswered": true,
+    "resourceUsesAfterIdle": 0,
+    "pending": 0,
+    "status": "idle"
+   }
+  ],
+  "plusFullVerifierInterrupt": {
+   "session": "sess_ozznKp11Wp7C29jO-n6aX",
+   "lastToolResult": "This operation was aborted",
+   "sessionErrors": 0,
+   "turnAborted": 1,
+   "turnCompleted": 2,
+   "resourceUsesAfterCleanup": 0
+  },
+  "summary": "8 Interrupted Turns: 5 in the request-file window (This operation was aborted), 3 on the SIGTERM path (Command aborted, incl. both 5 s late variants); 0 session.error / workspace_storage_error; PRESERVED_TAIL answered every time; 0 delegation_resource_uses for the 7 variant Sessions while idle (before cleanup)."
+ },
+ "2_fullReleaseVerifier": {
+  "tenant": "split-release-1792655603896",
+  "phases": [
+   {
+    "phase": "init",
+    "start": "2026-10-22T07:53:23Z",
+    "end": "2026-10-22T07:53:24Z",
+    "exit": 0
+   },
+   {
+    "phase": "basic",
+    "start": "2026-10-22T07:53:24Z",
+    "end": "2026-10-22T07:53:26Z",
+    "exit": 0
+   },
+   {
+    "phase": "real-start",
+    "start": "2026-10-22T07:53:26Z",
+    "end": "2026-10-22T07:53:32Z",
+    "exit": 0
+   },
+   {
+    "phase": "real-finish",
+    "start": "2026-10-22T07:53:32Z",
+    "end": "2026-10-22T07:54:26Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt",
+    "start": "2026-10-22T07:54:26Z",
+    "end": "2026-10-22T07:54:42Z",
+    "exit": 0
+   },
+   {
+    "phase": "delegation-sync",
+    "start": "2026-10-22T07:54:42Z",
+    "end": "2026-10-22T07:55:13Z",
+    "exit": 0
+   },
+   {
+    "phase": "delegation-async",
+    "start": "2026-10-22T07:55:13Z",
+    "end": "2026-10-22T07:58:33Z",
+    "exit": 1
+   },
+   {
+    "phase": "loop",
+    "start": "2026-10-22T07:58:33Z",
+    "end": "2026-10-22T07:58:35Z",
+    "exit": 0
+   },
+   {
+    "phase": "terminate",
+    "start": "2026-10-22T07:58:35Z",
+    "end": "2026-10-22T07:58:39Z",
+    "exit": 0
+   },
+   {
+    "phase": "active-terminate",
+    "start": "2026-10-22T07:58:39Z",
+    "end": "2026-10-22T07:58:48Z",
+    "exit": 0
+   },
+   {
+    "phase": "cleanup",
+    "start": "2026-10-22T07:58:48Z",
+    "end": "2026-10-22T07:58:54Z",
+    "exit": 0
+   },
+   {
+    "phase": "rerun-init",
+    "start": "2026-10-22T07:59:43Z",
+    "end": "2026-10-22T07:59:45Z",
+    "exit": 0
+   },
+   {
+    "phase": "rerun-delegation-async",
+    "start": "2026-10-22T07:59:45Z",
+    "end": "2026-10-22T08:00:15Z",
+    "exit": 0
+   },
+   {
+    "phase": "rerun-cleanup",
+    "start": "2026-10-22T08:00:15Z",
+    "end": "2026-10-22T08:00:18Z",
+    "exit": 0
+   }
+  ],
+  "checksFirstRun": 23,
+  "failedFirstRun": 0,
+  "delegationAsyncFirstRun": {
+   "exit": 1,
+   "session": "sess_CLs4dNdw0IFmXInJpUm00",
+   "cause": "model called get_subagent_result {wait:true} at seq 20 and consumed the background result inside the first Turn (seq 24), so the verifier's wait for a second Turn timed out; platform behaviour correct (1 Turn, 0 errors)"
+  },
+  "delegationAsyncRerun": {
+   "tenant": "split-release-1792655985180",
+   "checks": 5,
+   "failed": 0
+  },
+  "activeTerminate": {
+   "session": "sess_hmD5RDLlWWNdU54YRSklp",
+   "runnerDrainFailedLines": 0,
+   "journalFlushWithClaimLost": 1
+  }
+ },
+ "3_resumedTurnVerifier": {
+  "tenant": "resume-1792656042199",
+  "checks": 45,
+  "failed": 1,
+  "cases": {
+   "kill": {
+    "session": "sess_jGAo4kzPByVv4MUa_Ewz6",
+    "reason": "expired",
+    "takeoverMs": 31412,
+    "outcomeUnknown": true,
+    "pass": true
+   },
+   "handoff": {
+    "session": "sess_d9h9dhs-io85jXTvtUCQp",
+    "reason": "released",
+    "takeoverMs": 12393,
+    "handoffGapMs": 27,
+    "pass": true
+   },
+   "detachAttempt1": {
+    "session": "sess_fA24F8s89I4ig1_WDpIep",
+    "reason": "released",
+    "takeoverMs": 21615,
+    "pass": false,
+    "failedCheck": "detach: the long command was not rerun (sleeps:2)",
+    "cause": "false positive of the verifier heuristic: the model never reran the command; after the unknown outcome it ran cat (seq 22, START) and then a python poller using time.sleep (seq 33) that waited for DONE from the still-running Sandbox process, answering RESULT:STARTDONE; every tool call had exactly one result"
+   },
+   "detachAttempt2": {
+    "session": "sess_gXgHPQjKS-Ojqv2Vc4nD7",
+    "reason": "released",
+    "takeoverMs": 21779,
+    "pass": true
+   }
+  },
+  "disruptions": [
+   {
+    "name": "kill",
+    "sessionId": "sess_jGAo4kzPByVv4MUa_Ewz6",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T08:00:58.867Z",
+    "owner": "oma-runner-54db58b889-v6gmn",
+    "ownerLastFlush": "2026-10-22T16:00:58.306381739+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_WFl0vGdrsOlIJt9AhO3OE",
+     "sess_hmD5RDLlWWNdU54YRSklp",
+     "sess_Dbg4irnJ30Z2pXNNTjWNq",
+     "sess_Zjxlq-iFi5hsTolw4xg1-",
+     "sess_jGAo4kzPByVv4MUa_Ewz6"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54db58b889-jp5ct",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     },
+     {
+      "name": "oma-runner-54db58b889-v6gmn",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T08:01:01.234Z",
+    "action": "kill9",
+    "at": "2026-10-22T08:01:01.561Z",
+    "pid": "22",
+    "ok": true,
+    "secondsFromStartPhase": 11
+   },
+   {
+    "name": "handoff",
+    "sessionId": "sess_d9h9dhs-io85jXTvtUCQp",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T08:02:26.287Z",
+    "owner": "oma-runner-54db58b889-jp5ct",
+    "ownerLastFlush": "2026-10-22T16:02:25.617319412+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_d9h9dhs-io85jXTvtUCQp"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54db58b889-jp5ct",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     },
+     {
+      "name": "oma-runner-54db58b889-v6gmn",
+      "ready": true,
+      "deleting": false,
+      "restarts": 1
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T08:02:28.302Z",
+    "action": "delete",
+    "at": "2026-10-22T08:02:28.302Z",
+    "ok": true,
+    "secondsFromStartPhase": 15
+   },
+   {
+    "name": "detach",
+    "sessionId": "sess_fA24F8s89I4ig1_WDpIep",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T08:04:01.299Z",
+    "owner": "oma-runner-54db58b889-v6gmn",
+    "ownerLastFlush": "2026-10-22T16:04:00.758159205+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_jGAo4kzPByVv4MUa_Ewz6",
+     "sess_d9h9dhs-io85jXTvtUCQp",
+     "sess_fA24F8s89I4ig1_WDpIep"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54db58b889-thpwp",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     },
+     {
+      "name": "oma-runner-54db58b889-v6gmn",
+      "ready": true,
+      "deleting": false,
+      "restarts": 1
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T08:04:03.304Z",
+    "action": "delete",
+    "at": "2026-10-22T08:04:03.304Z",
+    "ok": true,
+    "secondsFromStartPhase": 11
+   },
+   {
+    "name": "detach",
+    "sessionId": "sess_gXgHPQjKS-Ojqv2Vc4nD7",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T08:07:03.452Z",
+    "owner": "oma-runner-54db58b889-thpwp",
+    "ownerLastFlush": "2026-10-22T16:07:02.906508940+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_fA24F8s89I4ig1_WDpIep",
+     "sess_gXgHPQjKS-Ojqv2Vc4nD7"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54db58b889-hqmmn",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     },
+     {
+      "name": "oma-runner-54db58b889-thpwp",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T08:07:05.544Z",
+    "action": "delete",
+    "at": "2026-10-22T08:07:05.544Z",
+    "ok": true,
+    "secondsFromStartPhase": 10
+   }
+  ]
+ },
+ "4_logAudit": {
+  "pods": {
+   "oma-runner-54db58b889-v6gmn": 264,
+   "oma-runner-54db58b889-jp5ct": 26,
+   "oma-runner-54db58b889-hqmmn": 17,
+   "oma-runner-54db58b889-g6296": 8,
+   "oma-runner-54db58b889-thpwp": 27
+  },
+  "blockCounts": {
+   "runner listening on http://localhost:3001": 6,
+   "Received SIGTERM; stopping HTTP and handing active Turns to ": 3,
+   "Graceful shutdown detached the Turns still running after 200": 2
+  },
+  "runnerDrainFailed": 0,
+  "pendingLeaseLost": 0,
+  "poolAfterEnd": 0,
+  "claimLostErrorLines": 0,
+  "journalFlush": {
+   "n": 289,
+   "p50": 4.1,
+   "p90": 14.2,
+   "p99": 22.1,
+   "max": 36.3,
+   "errors": 1
+  },
+  "otherErrorLikeLines": 0,
+  "dbWindow": {
+   "workspaceStorageErrors": 0,
+   "sessionErrors": 0,
+   "turnAborted": 8,
+   "turnResumed": 4
+  }
+ },
+ "5_cleanup": {
+  "source": "Supabase MCP execute_sql, read-only, schema oma_test",
+  "at": "2026-10-22T16:09:19.383093+08:00",
+  "verifierTenants": [
+   "split-release-1792655399058",
+   "split-release-1792655603896",
+   "split-release-1792655985180",
+   "resume-1792656042199"
+  ],
+  "sessions": {
+   "terminated": 22
+  },
+  "pendingAll": 0,
+  "runningOrWaitingAll": 0,
+  "delegationResourceUsesAll": 0,
+  "cleanupPending": 0,
+  "liveVerifierApiKeys": 0,
+  "window": {
+   "from": "2026-10-22T07:48:58Z",
+   "writers": {
+    "resume-1792656042199": 114,
+    "split-release-1792655399058": 217,
+    "split-release-1792655603896": 170,
+    "split-release-1792655985180": 53
+   },
+   "sessionErrors": 0,
+   "workspaceStorageErrors": 0,
+   "turnAborted": 8,
+   "turnResumedMarkers": 4
+  },
+  "apiKeyOfStoryboardTenant": "none created in phase 4 (no storyboard runs; every verifier phase creates and revokes its own key in its own tenant)"
+ },
+ "findings": [
+  {
+   "severity": "low",
+   "title": "Resumed-Turn verifier \"not rerun\" check is a substring match on sleep",
+   "detail": "verify-resumed-turn.mjs counts every tool_use whose input contains \"sleep\"; a model that polls with time.sleep after an unknown outcome fails the check although it never repeated the command (sess_fA24F8s89I4ig1_WDpIep seq 33). Match the exact long command instead."
+  },
+  {
+   "severity": "low",
+   "title": "Release verifier delegation-async assumes the model will not wait",
+   "detail": "sess_CLs4dNdw0IFmXInJpUm00: get_subagent_result {wait:true} consumed the background result in the first Turn; the phase then waits for a second Turn and times out. Accept either path (a claimed result in a later Turn or a consumed wait in the first)."
+  }
+ ]
+}

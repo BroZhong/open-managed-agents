@@ -45,6 +45,13 @@ describe("PgPendingEventStore", () => {
     );
   }
 
+  /** Remove the FIFO head the only supported way: claim it, then ack it under that fence. */
+  async function take(sessionId: string) {
+    const claim = await store.claim(sessionId, "host_take", 60_000);
+    if (claim) expect(await store.ack(sessionId, claim.event.id, claim)).toBe(true);
+    return claim?.event ?? null;
+  }
+
   it("atomically enqueues a whole batch only while the Session is active", async () => {
     await seedSession("sess_active");
     const accepted = await store.enqueueBatchIfSessionActive("sess_active", [
@@ -65,13 +72,23 @@ describe("PgPendingEventStore", () => {
     await seedSession("interrupt_generation");
     const event = await store.enqueue("interrupt_generation", { type: "user.message", data: { text: "work" }, sessionThreadId: "t" });
     const first = (await store.claim("interrupt_generation", "first-owner", 60_000))!;
+    expect(first.priorInterrupt).toBe(false);
+    expect(await store.renewClaim("interrupt_generation", event.id, first, 60_000)).toEqual({ renewed: true, interruptRequested: false });
     expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
-    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+    // The owner learns of the Interrupt from its next renewal.
+    expect(await store.renewClaim("interrupt_generation", event.id, first, 60_000)).toEqual({ renewed: true, interruptRequested: true });
     await store.releaseClaim("interrupt_generation", event.id, first);
-    await store.claim("interrupt_generation", "replacement-owner", 60_000);
-    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(false);
+    // D1: the takeover learns of the Interrupt its predecessor never applied...
+    const replacement = (await store.claim("interrupt_generation", "replacement-owner", 60_000))!;
+    expect(replacement.priorInterrupt).toBe(true);
+    // D2: ...which does not interrupt it the way its own Interrupt does.
+    expect(await store.renewClaim("interrupt_generation", event.id, replacement, 60_000)).toEqual({ renewed: true, interruptRequested: false });
+    expect(await store.renewClaim("interrupt_generation", event.id, first, 60_000)).toEqual({ renewed: false, interruptRequested: false });
     expect(await store.requestInterrupt("interrupt_generation")).toBe(true);
-    expect(await store.interruptRequested("interrupt_generation", event.id)).toBe(true);
+    expect(await store.renewClaim("interrupt_generation", event.id, replacement, 60_000)).toEqual({ renewed: true, interruptRequested: true });
+    // D4: an Interrupt the takeover accepted is prior to the claim after it.
+    await store.releaseClaim("interrupt_generation", event.id, replacement);
+    expect((await store.claim("interrupt_generation", "third-owner", 60_000))!.priorInterrupt).toBe(true);
   });
 
   it("rolls back the complete ingress batch if any insert fails", async () => {
@@ -86,7 +103,7 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(0);
   });
 
-  it("enqueue writes an event and dequeue returns it FIFO then deletes", async () => {
+  it("enqueue writes an event that claim returns FIFO and a fenced ack deletes", async () => {
     await store.enqueue("sess_1", {
       type: "user.message",
       data: { content: "hello" },
@@ -94,7 +111,7 @@ describe("PgPendingEventStore", () => {
       apiKeyId: "apikey_1",
     });
 
-    const event = await store.dequeue("sess_1");
+    const event = await take("sess_1");
     expect(event).not.toBeNull();
     expect(event!.sessionId).toBe("sess_1");
     expect(event!.type).toBe("user.message");
@@ -104,7 +121,7 @@ describe("PgPendingEventStore", () => {
     expect(event!.arrivedAt).toBeInstanceOf(Date);
     expect(event!.id).toBeDefined();
 
-    const next = await store.dequeue("sess_1");
+    const next = await take("sess_1");
     expect(next).toBeNull();
   });
 
@@ -121,14 +138,14 @@ describe("PgPendingEventStore", () => {
     expect(claim?.event.apiKeyId).toBe("apikey_batch");
   });
 
-  it("dequeue returns events in FIFO order", async () => {
+  it("claims events in FIFO order", async () => {
     await store.enqueue("sess_1", { type: "m", data: { n: 1 }, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: { n: 2 }, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: { n: 3 }, sessionThreadId: "t" });
 
-    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 1 });
-    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 2 });
-    expect((await store.dequeue("sess_1"))!.data).toEqual({ n: 3 });
+    expect((await take("sess_1"))!.data).toEqual({ n: 1 });
+    expect((await take("sess_1"))!.data).toEqual({ n: 2 });
+    expect((await take("sess_1"))!.data).toEqual({ n: 3 });
   });
 
   it("peek returns the next event without removing it", async () => {
@@ -145,11 +162,11 @@ describe("PgPendingEventStore", () => {
     const peekedAgain = await store.peek("sess_1");
     expect(peekedAgain!.id).toBe(peeked!.id);
 
-    const dequeued = await store.dequeue("sess_1");
-    expect(dequeued!.id).toBe(peeked!.id);
+    const claimed = await store.claim("sess_1", "host_a", 60_000);
+    expect(claimed!.event.id).toBe(peeked!.id);
   });
 
-  it("ack removes exactly the peeked FIFO head and is idempotent", async () => {
+  it("ack removes exactly the claimed FIFO head and is idempotent", async () => {
     const first = await store.enqueue("sess_1", {
       type: "user.message",
       data: { content: "first" },
@@ -161,11 +178,12 @@ describe("PgPendingEventStore", () => {
       sessionThreadId: "sthr_primary",
     });
 
-    expect(await store.ack("sess_1", second.id)).toBe(false);
+    const claim = await store.claim("sess_1", "host_a", 60_000);
+    expect(await store.ack("sess_1", second.id, claim!)).toBe(false);
     expect((await store.peek("sess_1"))?.id).toBe(first.id);
-    expect(await store.ack("sess_1", first.id)).toBe(true);
+    expect(await store.ack("sess_1", first.id, claim!)).toBe(true);
     expect((await store.peek("sess_1"))?.id).toBe(second.id);
-    expect(await store.ack("sess_1", first.id)).toBe(false);
+    expect(await store.ack("sess_1", first.id, claim!)).toBe(false);
   });
 
   it("grants the FIFO head to exactly one live owner", async () => {
@@ -188,7 +206,11 @@ describe("PgPendingEventStore", () => {
     expect(winner.event.id).toBe(event.id);
     expect(winner.generation).toBe(1);
     expect(winner.expiresAt.getTime()).toBeGreaterThan(Date.now());
-    expect(await store.ack("sess_1", event.id)).toBe(false);
+    const losingOwner = winner.ownerId === "host_a" ? "host_b" : "host_a";
+    expect(await store.ack("sess_1", event.id, {
+      ownerId: losingOwner,
+      generation: winner.generation,
+    })).toBe(false);
   });
 
   it("expires and fences an old owner before a new attempt can ack", async () => {
@@ -210,10 +232,10 @@ describe("PgPendingEventStore", () => {
     const second = await store.claim("sess_1", "host_b", 60_000);
     expect(second).not.toBeNull();
     expect(second!.generation).toBe(first!.generation + 1);
-    expect(await store.renewClaim("sess_1", event.id, first!, 60_000)).toBe(false);
+    expect((await store.renewClaim("sess_1", event.id, first!, 60_000)).renewed).toBe(false);
     expect(await store.releaseClaim("sess_1", event.id, first!)).toBe(false);
     expect(await store.ack("sess_1", event.id, first!)).toBe(false);
-    expect(await store.renewClaim("sess_1", event.id, second!, 60_000)).toBe(true);
+    expect(await store.renewClaim("sess_1", event.id, second!, 60_000)).toEqual({ renewed: true, interruptRequested: false });
     expect(await store.ack("sess_1", event.id, second!)).toBe(true);
     expect(await store.peek("sess_1")).toBeNull();
   });
@@ -232,8 +254,40 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(1);
   });
 
-  it("dequeue returns null on empty queue", async () => {
-    const result = await store.dequeue("sess_nonexistent");
+  it("reports to each claim how the claim before it ended: none, expired or released", async () => {
+    const event = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    const first = (await store.claim("sess_1", "host_a", 60_000))!;
+    expect(first.previous).toBeNull();
+    // The Runner holding it is lost: white-box its lapsed lease.
+    await harness.pool.query(`UPDATE pending_events SET claim_expires_at = $2 WHERE id = $1`, [event.id, new Date(Date.now() - 1_000)]);
+    const second = (await store.claim("sess_1", "host_b", 60_000))!;
+    expect(second.previous).toBe("expired");
+    // A Runner that hands the input over releases its claim.
+    await store.releaseClaim("sess_1", event.id, second);
+    const third = (await store.claim("sess_1", "host_c", 60_000))!;
+    expect(third.previous).toBe("released");
+    // The input queued behind an acknowledged one has no earlier claim.
+    await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    expect(await store.ack("sess_1", event.id, third)).toBe(true);
+    expect((await store.claim("sess_1", "host_a", 60_000))!.previous).toBeNull();
+  });
+
+  it("D1 reports an Interrupt its predecessor accepted to the generation that takes over", async () => {
+    const event = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "sthr_primary" });
+    const first = (await store.claim("sess_1", "host_a", 60_000))!;
+    expect(first.priorInterrupt).toBe(false);
+    // White-box the marker as requestInterrupt writes it: pg-mem cannot run its NOT EXISTS.
+    await harness.pool.query(
+      `UPDATE pending_events SET interrupt_requested_at = NOW(), interrupt_generation = claim_generation WHERE id = $1`,
+      [event.id],
+    );
+    await store.releaseClaim("sess_1", event.id, first);
+
+    expect((await store.claim("sess_1", "host_b", 60_000))!.priorInterrupt).toBe(true);
+  });
+
+  it("claim returns null on empty queue", async () => {
+    const result = await store.claim("sess_nonexistent", "host_a", 60_000);
     expect(result).toBeNull();
   });
 
@@ -246,7 +300,7 @@ describe("PgPendingEventStore", () => {
 
     expect(await store.count("sess_1")).toBe(3);
 
-    await store.dequeue("sess_1");
+    await take("sess_1");
     expect(await store.count("sess_1")).toBe(2);
   });
 
@@ -286,13 +340,13 @@ describe("PgPendingEventStore", () => {
     expect(await store.count("sess_1")).toBe(2);
     expect(await store.count("sess_2")).toBe(1);
 
-    const from1 = await store.dequeue("sess_1");
+    const from1 = await take("sess_1");
     expect(from1!.data).toEqual({ msg: "a" });
 
-    const from2 = await store.dequeue("sess_2");
+    const from2 = await take("sess_2");
     expect(from2!.data).toEqual({ msg: "b" });
 
-    const from1Again = await store.dequeue("sess_1");
+    const from1Again = await take("sess_1");
     expect(from1Again!.data).toEqual({ msg: "c" });
   });
 
@@ -301,10 +355,28 @@ describe("PgPendingEventStore", () => {
     await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
     await store.enqueue("sess_1", { type: "m", data: {}, sessionThreadId: "t" });
 
-    expect(await store.listPendingSessionIds()).toEqual(["sess_1", "sess_2"]);
+    expect(await store.listClaimableSessionIds()).toEqual(["sess_1", "sess_2"]);
     await store.clear("sess_1");
     expect(await store.count("sess_1")).toBe(0);
-    expect(await store.listPendingSessionIds()).toEqual(["sess_2"]);
+    expect(await store.listClaimableSessionIds()).toEqual(["sess_2"]);
+  });
+
+  it("lists only Sessions whose head no live claim holds: the owner drains the rest of its queue", async () => {
+    for (const id of ["live", "released", "expired", "unclaimed"]) {
+      await store.enqueue(id, { type: "m", data: {}, sessionThreadId: "t" });
+      await store.enqueue(id, { type: "m", data: {}, sessionThreadId: "t" });
+    }
+    await store.claim("live", "host_a", 60_000);
+    const released = (await store.claim("released", "host_a", 60_000))!;
+    await store.releaseClaim("released", released.event.id, released);
+    const expired = (await store.claim("expired", "host_a", 60_000))!;
+    await harness.pool.query(`UPDATE pending_events SET claim_expires_at = $2 WHERE id = $1`,
+      [expired.event.id, new Date(Date.now() - 1_000)]);
+
+    expect(await store.listClaimableSessionIds()).toEqual(["expired", "released", "unclaimed"]);
+    expect(await store.headClaimable("live")).toBe(false);
+    for (const id of ["released", "expired", "unclaimed"]) expect(await store.headClaimable(id)).toBe(true);
+    expect(await store.headClaimable("empty")).toBe(false);
   });
   async function completedInput(sessionId = "sess_1") {
     const input = await store.enqueue(sessionId, { type: "user.message", data: {}, sessionThreadId: "t" });
@@ -324,8 +396,8 @@ describe("PgPendingEventStore", () => {
     const tail = await store.enqueue("sess_1", { type: "user.message", data: {}, sessionThreadId: "t" });
     expect(await store.requestInterrupt("sess_1")).toBe(false);
     expect(await store.ackCompletedTurn("sess_1", input.id, claim)).toEqual({ acknowledged: true });
-    await store.claim("sess_1", "tail-owner", 60_000);
-    expect(await store.interruptRequested("sess_1", tail.id)).toBe(false);
+    const tailClaim = (await store.claim("sess_1", "tail-owner", 60_000))!;
+    expect((await store.renewClaim("sess_1", tail.id, tailClaim, 60_000)).interruptRequested).toBe(false);
   });
 
   it("keeps the Session running between inputs and commits idle only with the final acknowledgement", async () => {

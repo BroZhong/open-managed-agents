@@ -273,7 +273,7 @@ describe("PgLoopStore", () => {
     const workspaces = new PgWorkspaceMetadataStore(harness.pool);
     expect((await sessions.list("tenant_1")).data).toEqual([]);
     expect(await workspaces.list("tenant_1")).toEqual([]);
-    expect(await pending.listPendingSessionIds()).toEqual([]);
+    expect(await pending.listClaimableSessionIds()).toEqual([]);
     const unchangedLoop = await loops.getById(loop.id);
     expect(unchangedLoop?.lastRunAt).toBeUndefined();
     expect(unchangedLoop?.nextRunAt).toEqual(

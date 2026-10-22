@@ -1,0 +1,576 @@
+{
+  "run-1": {
+    "runId": "resume-1792622023079",
+    "schema": "oma_test",
+    "checks": [
+      {
+        "name": "verification agent created",
+        "ok": true,
+        "phase": "init",
+        "at": "2026-10-21T22:33:43.385Z",
+        "details": {
+          "tenant": "resume-1792622023079"
+        }
+      },
+      {
+        "name": "kill: long bash committed before disruption",
+        "ok": true,
+        "phase": "kill-start",
+        "at": "2026-10-21T22:33:52.931Z",
+        "details": {
+          "sessionId": "sess_KuPHxA1Sof_ukT1AogyUR",
+          "turnId": "turn_1_a1"
+        }
+      },
+      {
+        "name": "kill: disruption marked",
+        "ok": true,
+        "phase": "mark-disrupted",
+        "at": "2026-10-21T22:34:29.997Z"
+      },
+      {
+        "name": "kill: one Turn, one turnId",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:35:28.303Z",
+        "details": {
+          "turnIds": [
+            "turn_1_a1"
+          ]
+        }
+      },
+      {
+        "name": "kill: takeover recorded",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:35:28.304Z",
+        "details": {
+          "resumed": [
+            {
+              "seq": 15,
+              "ts": "2026-10-21T22:35:15.932Z",
+              "reason": "expired",
+              "turnId": "turn_1_a1",
+              "generation": 2,
+              "danglingToolUseIds": [
+                "call_ec9ea5fa85664508ac8972488c5d117b|fc_0e71b510ca062ba3016ad93dcfe52481938aa294e325562739"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: no recovery errors",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:35:28.304Z",
+        "details": {
+          "errors": []
+        }
+      },
+      {
+        "name": "kill: every tool call has exactly one result",
+        "ok": false,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:35:28.304Z",
+        "details": {
+          "uses": 4,
+          "results": 3
+        }
+      },
+      {
+        "name": "kill: one Turn, one turnId",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:27.310Z",
+        "details": {
+          "turnIds": [
+            "turn_1_a1"
+          ]
+        }
+      },
+      {
+        "name": "kill: takeover recorded",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:27.310Z",
+        "details": {
+          "resumed": [
+            {
+              "seq": 15,
+              "ts": "2026-10-21T22:35:15.932Z",
+              "reason": "expired",
+              "turnId": "turn_1_a1",
+              "generation": 2,
+              "danglingToolUseIds": [
+                "call_ec9ea5fa85664508ac8972488c5d117b|fc_0e71b510ca062ba3016ad93dcfe52481938aa294e325562739"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: no recovery errors",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:27.310Z",
+        "details": {
+          "errors": []
+        }
+      },
+      {
+        "name": "kill: every tool call has exactly one result",
+        "ok": false,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:27.310Z",
+        "details": {
+          "uses": 2,
+          "resultsPerCall": [
+            1,
+            2
+          ]
+        }
+      },
+      {
+        "name": "kill: one Turn, one turnId",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.972Z",
+        "details": {
+          "turnIds": [
+            "turn_1_a1"
+          ]
+        }
+      },
+      {
+        "name": "kill: takeover recorded",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.972Z",
+        "details": {
+          "resumed": [
+            {
+              "seq": 15,
+              "ts": "2026-10-21T22:35:15.932Z",
+              "reason": "expired",
+              "turnId": "turn_1_a1",
+              "generation": 2,
+              "danglingToolUseIds": [
+                "call_ec9ea5fa85664508ac8972488c5d117b|fc_0e71b510ca062ba3016ad93dcfe52481938aa294e325562739"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: no recovery errors",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.973Z",
+        "details": {
+          "errors": []
+        }
+      },
+      {
+        "name": "kill: every tool call has exactly one result",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.973Z",
+        "details": {
+          "uses": 2,
+          "resultsPerCall": [
+            1,
+            1
+          ]
+        }
+      },
+      {
+        "name": "kill: the long command was not rerun",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.973Z",
+        "details": {
+          "sleeps": 1
+        }
+      },
+      {
+        "name": "kill: model inspected state after an unknown outcome",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.973Z",
+        "details": {
+          "followUps": [
+            {
+              "command": "cat /home/user/workspace/resume-1792622023079-kill.txt"
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: final answer reports the file",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.973Z",
+        "details": {
+          "final": "RESULT:START"
+        }
+      },
+      {
+        "name": "kill: takeover within 35000 ms of the disruption",
+        "ok": false,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:36:51.973Z",
+        "details": {
+          "msFromDisruptionToTakeover": 45935,
+          "disruptedAt": "2026-10-21T22:34:29.997Z",
+          "resumedAt": "2026-10-21T22:35:15.932Z"
+        }
+      },
+      {
+        "name": "kill: marker file now",
+        "ok": true,
+        "phase": "file",
+        "at": "2026-10-21T22:44:56.884Z",
+        "details": {
+          "bytes": "STARTDONE",
+          "at": "2026-10-21T22:44:56.884Z"
+        }
+      }
+    ],
+    "sessions": {
+      "kill": {
+        "id": "sess_KuPHxA1Sof_ukT1AogyUR",
+        "workspaceId": "ws_8ovG4yc_CCNdXtWIiXytL",
+        "marker": "resume-1792622023079-kill",
+        "toolCommittedAt": "2026-10-21T22:33:52.931Z",
+        "disruptedAt": "2026-10-21T22:34:29.997Z",
+        "outcome": {
+          "unknown": true,
+          "isError": true
+        },
+        "takeoverMs": 45935,
+        "fileLater": "STARTDONE"
+      }
+    },
+    "agent": "agent_KTYSh4a14ZUa4NKpg71zj"
+  },
+  "run-2": {
+    "runId": "resume-1792622269865",
+    "schema": "oma_test",
+    "checks": [
+      {
+        "name": "verification agent created",
+        "ok": true,
+        "phase": "init",
+        "at": "2026-10-21T22:37:49.987Z",
+        "details": {
+          "tenant": "resume-1792622269865"
+        }
+      },
+      {
+        "name": "kill: long bash committed before disruption",
+        "ok": true,
+        "phase": "kill-start",
+        "at": "2026-10-21T22:37:55.483Z",
+        "details": {
+          "sessionId": "sess_sOlTg7cioZmJBd0btkv-U",
+          "turnId": "turn_1_a1"
+        }
+      },
+      {
+        "name": "kill: disruption marked",
+        "ok": true,
+        "phase": "mark-disrupted",
+        "at": "2026-10-21T22:38:17.397Z"
+      },
+      {
+        "name": "kill: one Turn, one turnId",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.855Z",
+        "details": {
+          "turnIds": [
+            "turn_1_a1"
+          ]
+        }
+      },
+      {
+        "name": "kill: takeover recorded",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.855Z",
+        "details": {
+          "resumed": [
+            {
+              "seq": 14,
+              "ts": "2026-10-21T22:39:01.294Z",
+              "reason": "expired",
+              "turnId": "turn_1_a1",
+              "generation": 2,
+              "danglingToolUseIds": [
+                "call_f156eb84a47549f28a9b61571a140d1c|fc_0d1bfa4076a729f4016ad93ec270288194980897fac889e6fa"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: no recovery errors",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.855Z",
+        "details": {
+          "errors": []
+        }
+      },
+      {
+        "name": "kill: every tool call has exactly one result",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.856Z",
+        "details": {
+          "uses": 2,
+          "resultsPerCall": [
+            1,
+            1
+          ]
+        }
+      },
+      {
+        "name": "kill: the long command was not rerun",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.856Z",
+        "details": {
+          "sleeps": 1
+        }
+      },
+      {
+        "name": "kill: model inspected state after an unknown outcome",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.856Z",
+        "details": {
+          "followUps": [
+            {
+              "command": "cat /home/user/workspace/resume-1792622269865-kill.txt"
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: final answer reports the file",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.856Z",
+        "details": {
+          "final": "RESULT:START"
+        }
+      },
+      {
+        "name": "kill: takeover within 35000 ms of the disruption",
+        "ok": false,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:39:12.856Z",
+        "details": {
+          "msFromDisruptionToTakeover": 43897,
+          "disruptedAt": "2026-10-21T22:38:17.397Z",
+          "resumedAt": "2026-10-21T22:39:01.294Z"
+        }
+      },
+      {
+        "name": "kill: marker file now",
+        "ok": true,
+        "phase": "file",
+        "at": "2026-10-21T22:44:57.650Z",
+        "details": {
+          "bytes": "STARTDONE",
+          "at": "2026-10-21T22:44:57.650Z"
+        }
+      }
+    ],
+    "sessions": {
+      "kill": {
+        "id": "sess_sOlTg7cioZmJBd0btkv-U",
+        "workspaceId": "ws_95ca4ZOwNmWjjm_VfcVHn",
+        "marker": "resume-1792622269865-kill",
+        "toolCommittedAt": "2026-10-21T22:37:55.482Z",
+        "disruptedAt": "2026-10-21T22:38:17.397Z",
+        "outcome": {
+          "unknown": true,
+          "isError": true
+        },
+        "takeoverMs": 43897,
+        "fileLater": "STARTDONE"
+      }
+    },
+    "agent": "agent_kZbmy2SGmqtuRXgASG-Op"
+  },
+  "run-3": {
+    "runId": "resume-1792622566467",
+    "schema": "oma_test",
+    "checks": [
+      {
+        "name": "verification agent created",
+        "ok": true,
+        "phase": "init",
+        "at": "2026-10-21T22:42:46.587Z",
+        "details": {
+          "tenant": "resume-1792622566467"
+        }
+      },
+      {
+        "name": "kill: long bash committed before disruption",
+        "ok": true,
+        "phase": "kill-start",
+        "at": "2026-10-21T22:42:56.119Z",
+        "details": {
+          "sessionId": "sess_1lm0rw31P2yVs8ZohFQih",
+          "turnId": "turn_1_a1"
+        }
+      },
+      {
+        "name": "kill: disruption marked",
+        "ok": true,
+        "phase": "mark-disrupted",
+        "at": "2026-10-21T22:43:07.319Z"
+      },
+      {
+        "name": "kill: disruption marked",
+        "ok": true,
+        "phase": "mark-disrupted",
+        "at": "2026-10-21T22:43:20.729Z"
+      },
+      {
+        "name": "kill: one Turn, one turnId",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.532Z",
+        "details": {
+          "turnIds": [
+            "turn_1_a1"
+          ]
+        }
+      },
+      {
+        "name": "kill: takeover recorded",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.532Z",
+        "details": {
+          "resumed": [
+            {
+              "seq": 14,
+              "ts": "2026-10-21T22:43:51.698Z",
+              "reason": "expired",
+              "turnId": "turn_1_a1",
+              "generation": 2,
+              "danglingToolUseIds": [
+                "call_6026c162681e4bd0b82af3a2504280cb|fc_0cce48b0be8aa356016ad93feea7488193a1ad624a7d0fe6d1"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: no recovery errors",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.532Z",
+        "details": {
+          "errors": []
+        }
+      },
+      {
+        "name": "kill: every tool call has exactly one result",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.533Z",
+        "details": {
+          "uses": 2,
+          "resultsPerCall": [
+            1,
+            1
+          ]
+        }
+      },
+      {
+        "name": "kill: the long command was not rerun",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.533Z",
+        "details": {
+          "sleeps": 1
+        }
+      },
+      {
+        "name": "kill: model inspected state after an unknown outcome",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.533Z",
+        "details": {
+          "followUps": [
+            {
+              "command": "cat /home/user/workspace/resume-1792622566467-kill.txt"
+            }
+          ]
+        }
+      },
+      {
+        "name": "kill: final answer reports the file",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.533Z",
+        "details": {
+          "final": "RESULT:START"
+        }
+      },
+      {
+        "name": "kill: takeover within 35000 ms of the disruption",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.533Z",
+        "details": {
+          "msFromDisruptionToTakeover": 30969,
+          "disruptedAt": "2026-10-21T22:43:20.729Z",
+          "resumedAt": "2026-10-21T22:43:51.698Z"
+        }
+      },
+      {
+        "name": "kill: Workspace file",
+        "ok": true,
+        "phase": "kill-finish",
+        "at": "2026-10-21T22:44:03.681Z",
+        "details": {
+          "bytes": "START"
+        }
+      },
+      {
+        "name": "kill: marker file now",
+        "ok": true,
+        "phase": "file",
+        "at": "2026-10-21T22:44:58.370Z",
+        "details": {
+          "bytes": "STARTDONE",
+          "at": "2026-10-21T22:44:58.370Z"
+        }
+      }
+    ],
+    "sessions": {
+      "kill": {
+        "id": "sess_1lm0rw31P2yVs8ZohFQih",
+        "workspaceId": "ws_fLsN_OZb0M4rnWQhlrlbd",
+        "marker": "resume-1792622566467-kill",
+        "toolCommittedAt": "2026-10-21T22:42:56.119Z",
+        "disruptedAt": "2026-10-21T22:43:20.729Z",
+        "outcome": {
+          "unknown": true,
+          "isError": true
+        },
+        "takeoverMs": 30969,
+        "fileLater": "STARTDONE"
+      }
+    },
+    "agent": "agent_xObsvF6hSySq-JkeI4pJ_"
+  }
+}

@@ -5,6 +5,16 @@
 Accepted for #197–#203. Implementation and local verification only; production
 cutover is a separate operation. Extends ADR-0007, ADR-0010 and ADR-0016.
 ADR-0019 supersedes the original ADR-0017-based Sandbox lifetime portion.
+#234 amends how a running Turn's owner learns of an Interrupt: from its claim
+renewal every renew interval, and at once on a `check` hint (below). It also
+stops Runners from contending for input another Runner owns, and a synchronous
+delegation wait from polling.
+
+[ADR-0021](0021-resumed-turn.md) revises the "Release boundary": a Turn whose
+Runner exits is continued by the next Runner instead of ending by the earlier
+recovery rules; general Turn recovery now exists, its checkpoint being the
+committed log. A Runner that is shut down hands its running Turns to the other
+Runners instead of draining them (#254, "Shutdown" below).
 
 ## Decision
 
@@ -46,9 +56,27 @@ that API's sockets; it is never a cross-process fallback.
 Runner subscribes to wake hints and independently scans PG every five seconds
 (`PENDING_SCAN_INTERVAL_MS`). Loop dispatch retains its own fifteen-second timer
 (`LOOP_POLL_INTERVAL_MS`). A Session's existing drainer immediately consumes its
-next input. Delegation wakes use the same signals; synchronous waits also poll
-the durable execution record. Both modes retain ADR-0010's ownership, model,
-budget and result-consumption rules.
+next input. The scan lists only Sessions whose head no live claim holds, and a
+Runner schedules a claim retry only after a failed drain or for a head it can
+take (a released claim, input queued behind an Interrupt), never for a head
+another Runner's live claim holds. A wake still makes every Runner try once. A
+lost owner's input is listed again when its lease expires, so another Runner
+takes it over within the lease plus one scan (35 s).
+
+A Runner that receives SIGTERM stops listening to wakes, stops its scan and
+claims nothing more, but keeps acting on check hints for the Turns it still
+runs. It hands them over (ADR-0021): each stops before its next model request,
+or is detached at the 20 s deadline (`SHUTDOWN_GRACE_MS`); its claim is
+released and a `wake` makes another Runner take the Turn over at once, or
+within one scan without Redis.
+
+Delegation wakes use the same signals. A synchronous wait wakes its child once,
+when the wait starts or a takeover resumes it. The child's Runner sends the
+parent a `check` when the execution ends, and the parent's owner reads the
+execution at once; a 2 s poll of the durable execution record covers a lost
+hint. The wait does not poll ownership: a lost lease aborts the Turn, which ends
+the wait. Both modes retain ADR-0010's ownership, model, budget and
+result-consumption rules.
 
 An API subscribes before replay, then follows the durable sequence cursor.
 Catch-up queries are shared per watched Session, bounded to ten pages of 1,000
@@ -66,9 +94,17 @@ already-open pages. Missing transient Deltas are not reconstructed. Redis is
 not a readiness prerequisite. PG failures do not count as accepted input.
 
 Interrupt ingress writes the existing PG marker for the current FIFO input and
-claim generation. The owner observes it on its heartbeat. Acceptance never means
-an external command has actually stopped, and an old generation cannot interrupt
-a later one. A local AbortController is not required on the accepting API.
+claim generation. The owner's claim renewal returns the marker of its own
+generation, so the heartbeat needs no separate query and renews only every renew
+interval (10 s of a 30 s lease). The API then publishes a `check` signal for the
+Session. Every Runner receives it, and only the Turn's owner acts: it renews at
+once. A `check` is not deduplicated like a wake, because a drain started from a
+wake holds its Session for the whole Turn. With Redis an Interrupt therefore takes
+effect within about a second, and within one renew interval without it.
+Acceptance never means an external command has actually stopped, and an old
+generation cannot interrupt a later one. A local AbortController is not required
+on the accepting API. Delegation Interrupt commands for a child, including the
+one that reconciling a terminated parent records, are hinted the same way.
 
 Session termination revokes the queue and records a cleanup outbox request and
 an idempotent `session.status_terminated` Event in the same transaction. Runners
@@ -95,6 +131,8 @@ mixed rolling fleet. First prepare a compatible combined bridge release, then
 move ingress and execution separately. Ordinary Turn restart recovery remains
 bounded by the existing recovery rules; this decision does not introduce graceful
 pause-at-next-input, general Turn checkpoint recovery or automatic scaling.
+ADR-0021 later introduces the latter two's first parts: Turn recovery from the
+committed log, and the shutdown handoff.
 
 See [operations and cutover](../api-runner-operations.md) and
 [local verification](../verification/api-runner-split.md).

@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { InMemoryAgentStore } from "@oma-server/store-memory";
+import { createMemoryStores, InMemoryAgentStore } from "@oma-server/store-memory";
 import { PendingEventClaimLostError } from "@oma-server/store";
 import {
   FakeSandboxClient,
@@ -9,18 +9,7 @@ import {
   DefaultSandboxManager,
 } from "@oma-server/sandbox";
 import type {
-  EventLogStore,
-  EventLogStoreAppendInput,
-  EventLogStoreGetEventsOpts,
   PendingEventStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
-  SessionStore,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  Session,
-  SessionStatus,
-  StoredEvent,
   PaginatedResult,
   Agent,
   AgentStore,
@@ -37,170 +26,11 @@ import type {
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 
 beforeEach(() => {
   process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
 });
-
-// ─── In-memory EventLogStore ────────────────────────────────────────────────
-
-class InMemoryEventLogStore implements EventLogStore {
-  private events: Map<string, StoredEvent[]> = new Map();
-  private seqCounters: Map<string, number> = new Map();
-
-  async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
-    const currentSeq = this.seqCounters.get(sessionId) ?? 0;
-    const nextSeq = currentSeq + 1;
-    this.seqCounters.set(sessionId, nextSeq);
-
-    const stored: StoredEvent = {
-      sessionId,
-      seq: nextSeq,
-      type: event.type,
-      data: event.data,
-      ts: new Date(),
-      sessionThreadId: event.sessionThreadId,
-    };
-
-    const sessionEvents = this.events.get(sessionId) ?? [];
-    sessionEvents.push(stored);
-    this.events.set(sessionId, sessionEvents);
-
-    return stored;
-  }
-
-  async getEvents(
-    sessionId: string,
-    opts?: EventLogStoreGetEventsOpts,
-  ): Promise<PaginatedResult<StoredEvent>> {
-    const allEvents = this.events.get(sessionId) ?? [];
-    const afterSeq = opts?.afterSeq ?? 0;
-    const limit = opts?.limit ?? 50;
-
-    const filtered = allEvents.filter((e) => e.seq > afterSeq);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-
-    return { data, hasMore };
-  }
-}
-
-// ─── In-memory PendingEventStore ─────────────────────────────────────────────
-
-class InMemoryPendingEventStore implements PendingEventStore {
-  private queues: Map<string, PendingEvent[]> = new Map();
-  private nextId = 1;
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue.length === 0) return null;
-    return queue.shift()!;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue[0] ?? null;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue.length;
-  }
-}
-
-// ─── In-memory SessionStore ──────────────────────────────────────────────────
-
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(
-    tenantId: string,
-    opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    return { data, hasMore };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    session.updatedAt = new Date();
-    return session;
-  }
-}
 
 // ─── Minimal in-memory Skill stores (metadata + non-empty check) ─────────────
 //
@@ -311,13 +141,15 @@ class TinySkillArtifactStore implements SkillArtifactStore {
 
 /** Pure-chat adapter: never touches input.toolExecutor. */
 const chatAdapter: Adapter = {
-  async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
-    yield {
+  async run(input: AdapterInput) {
+    const write = journalWriter(input);
+    await write({
       id: "evt_chat",
       timestamp: "2024-01-01T00:00:00.000Z",
       type: "agent.message",
       content: [{ type: "text", text: "just chatting" }],
-    };
+    });
+    return "finished";
   },
 };
 
@@ -327,18 +159,20 @@ const chatAdapter: Adapter = {
  */
 function toolReadingAdapter(path: string): Adapter {
   return {
-    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+    async run(input: AdapterInput) {
+      const write = journalWriter(input);
       const executor = input.toolExecutor;
       let body = "<no-executor>";
       if (executor) {
         body = await executor.readFile(path);
       }
-      yield {
+      await write({
         id: "evt_tool",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: body }],
-      };
+      });
+      return "finished";
     },
   };
 }
@@ -401,9 +235,7 @@ function createDeps(opts: {
     Record<string, Readonly<Record<string, string>>>
   >;
 }) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
   const provisionSource = opts.provisionSource ?? new FakeProvisionSource();
@@ -468,11 +300,14 @@ async function enqueue(
 describe("SessionRouter — SandboxManager-backed session injection", () => {
   it('observes settlement when termination races with a durable event write', async () => {
     let aborted = false;
-    const deps = createDeps({ adapter: { async *run(input) {
-      yield { id: 'racing-write', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked' }] };
+    // The Router stops the attempt when a write through its Adapter's entry fails.
+    const deps = createDeps({ adapter: { async run(input) {
+      const write = journalWriter(input);
+      await write({ id: 'racing-write', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked' }] }).catch(() => {});
       if (!input.signal!.aborted) await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
       aborted = input.signal!.aborted;
-      yield { id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked too' }] };
+      await write({ id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'revoked too' }] }).catch(() => {});
+      return "finished";
     } } });
     vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
     const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
@@ -498,12 +333,15 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     const ready = new Promise<void>(resolve => { started = resolve; });
     let settle!: () => void;
     const settled = new Promise<void>(resolve => { settle = resolve; });
-    const deps = createDeps({ adapter: { async *run(input) {
+    const deps = createDeps({ adapter: { async run(input) {
+      const write = journalWriter(input);
       await input.toolExecutor!.writeFile('saved.txt', 'preserved');
       started();
       await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
-      yield { id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'must not persist' }] };
+      // Termination revoked the entry; the runtime still runs until it settles.
+      await write({ id: 'late-accounting', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: 'must not persist' }] }).catch(() => {});
       await settled;
+      return "finished";
     } } });
     vi.spyOn(deps.sandboxClient, 'hasUncertainExecution').mockReturnValue(unknown);
     vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
@@ -533,8 +371,9 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   });
 
   it('retains an unknown remote operation even after the model runtime finishes', async () => {
-    const deps = createDeps({ adapter: { async *run(input) {
+    const deps = createDeps({ adapter: { async run(input) {
       await input.toolExecutor!.writeFile('saved.txt', 'closed');
+      return "finished";
     } } });
     vi.spyOn(deps.sandboxClient, 'hasUncertainExecution').mockReturnValue(true);
     vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
@@ -551,8 +390,9 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     const ready = new Promise<void>(resolve => { started = resolve; });
     let settle!: () => void;
     const eventuallySettled = new Promise<void>(resolve => { settle = resolve; });
-    const deps = createDeps({ interruptedAdapterDrainTimeoutMs: 10, adapter: { async *run() {
+    const deps = createDeps({ interruptedAdapterDrainTimeoutMs: 10, adapter: { async run() {
       started(); await eventuallySettled;
+      return "finished";
     } } });
     vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
     const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
@@ -570,11 +410,12 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
     const ready = new Promise<void>(resolve => { started = resolve; });
     let finish!: () => void;
     const wait = new Promise<void>(resolve => { finish = resolve; });
-    const deps = createDeps({ adapter: { async *run(input) {
+    const deps = createDeps({ adapter: { async run(input) {
       started();
       if (outcome === 'Interrupt') await new Promise<void>(resolve => input.signal!.addEventListener('abort', () => resolve(), { once: true }));
       else await wait;
       if (outcome === 'failure') throw new Error('provider failed');
+      return "finished";
     } } });
     const begin = vi.spyOn(deps.sandboxManager!, 'beginActivity').mockResolvedValue(true);
     const end = vi.spyOn(deps.sandboxManager!, 'finishActivity').mockResolvedValue();
@@ -935,14 +776,16 @@ describe("SessionRouter — SandboxManager-backed session injection", () => {
   it("does not inject an executor for a non-sandboxed agent when a manager IS present", async () => {
     let sawExecutor = true;
     const probeAdapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         sawExecutor = input.toolExecutor != null;
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "ok" }],
-        };
+        });
+        return "finished";
       },
     };
     // Manager present, but the agent explicitly opts out of the sandbox.
@@ -970,14 +813,16 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   it("emits session.error(sandbox_unavailable) and does NOT run the adapter when sandboxed but no manager", async () => {
     let adapterInvoked = false;
     const probeAdapter: Adapter = {
-      async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterInvoked = true;
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "should not run" }],
-        };
+        });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
@@ -1016,14 +861,16 @@ describe("SessionRouter — mandatory sandbox fail-loud (#54)", () => {
   it("treats a legacy agent with NO sandbox field as sandboxed (fail-loud without a manager)", async () => {
     let adapterInvoked = false;
     const probeAdapter: Adapter = {
-      async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterInvoked = true;
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "x" }],
-        };
+        });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({
@@ -1151,14 +998,16 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     const sandboxClient = new FakeSandboxClient();
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(input): AsyncIterable<SessionEvent> {
+      async run(input) {
+        const write = journalWriter(input);
         adapterRuns++;
         await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`);
         if (adapterRuns === 1) sandboxClient.setMountFailure(sandboxClient.created[0], "storage offline");
-        yield {
+        await write({
           id: `answer-${adapterRuns}`, timestamp: "2026-09-14T00:00:00.000Z", type: "agent.message",
           content: [{ type: "text", text: `answer-${adapterRuns}` }],
-        };
+        });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, eventStreamHub } = createDeps({ adapter, sandboxClient });
@@ -1202,7 +1051,7 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     let wrote!: () => void;
     const written = new Promise<void>((resolve) => { wrote = resolve; });
     const adapter: Adapter = {
-      async *run(input): AsyncIterable<SessionEvent> {
+      async run(input) {
         await input.toolExecutor!.writeFile("saved.txt", "closed before the Turn ended");
         wrote();
         if (outcome === "failure") throw new Error("adapter failed after saving");
@@ -1210,6 +1059,7 @@ describe("SessionRouter — Workspace availability after completed writes", () =
           if (input.signal?.aborted) return resolve();
           input.signal?.addEventListener("abort", () => resolve(), { once: true });
         });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } = createDeps({ adapter });
@@ -1242,7 +1092,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     // Closing the write persists its bytes; a later Turn reads the shared mount.
     const workspaceClient = new FakeSandboxClient();
     const readOrWrite: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         const ex = input.toolExecutor!;
         const isWrite = input.message.content.some(
           (b) => b.type === "text" && b.text === "write",
@@ -1254,12 +1105,13 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         } else {
           text = await ex.readFile("carry.txt");
         }
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text }],
-        };
+        });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
@@ -1297,7 +1149,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     workspaceClient.seedWorkspace("tenant_1/ws_1/", "edit.txt", "before");
     workspaceClient.seedWorkspace("tenant_1/ws_1/", "deleted.txt", "remove me");
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         const executor = input.toolExecutor!;
         const prompt = input.message.content
           .filter((block) => block.type === "text")
@@ -1313,12 +1166,13 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
             text += "|deleted";
           }
         }
-        yield {
+        await write({
           id: "workspace-refresh",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text }],
-        };
+        });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } =
@@ -1374,7 +1228,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     let readBody = "<unread>";
     let descriptors: AdapterInput["agent"]["skillDescriptors"];
     const skillReadingAdapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         descriptors = input.agent.skillDescriptors;
         // The adapter is pointed at the in-sandbox /skills/<skill-name> root and reads
         // SKILL.md from there, exactly as Pi's sandbox-mapped read would.
@@ -1384,12 +1239,13 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         for await (const chunk of input.toolExecutor!.exec(["cat", `${root}/SKILL.md`])) {
           if (chunk.stream === "stdout") readBody = chunk.text;
         }
-        yield {
+        await write({
           id: "e",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: readBody }],
-        };
+        });
+        return "finished";
       },
     };
 
@@ -1452,13 +1308,13 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     const skillArtifactStore = new TinySkillArtifactStore();
     const ids: string[] = [];
     for (const name of names) {
-      const skill = await skillStore.create({ tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name });
+      const skill = await skillStore.create({ tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name, description: name });
       ids.push(skill.id);
       await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "body");
     }
     let adapterRan = false;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> { adapterRan = true; },
+      async run() { adapterRan = true; return "finished"; },
     };
     const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } = createDeps({ adapter, skillStore, skillArtifactStore });
     const agent = { ...sandboxedAgent, skills: ids };
@@ -1511,7 +1367,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       }>;
     }> = [];
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         const root = input.agent.skillPaths?.[0];
         let body: string | undefined;
         if (root) body = await input.toolExecutor!.readFile(`${root}/SKILL.md`);
@@ -1530,12 +1387,13 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
               : {}),
           })) ?? [],
         });
-        yield {
+        await write({
           id: "live-agent-config",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: body ?? "warm" }],
-        };
+        });
+        return "finished";
       },
     };
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
@@ -1590,14 +1448,16 @@ describe('SessionRouter — recoverable environment faults', () => {
     const sandboxClient = new FakeSandboxClient();
     const errors: string[] = [];
     let runs = 0;
-    const adapter: Adapter = { async *run(input) {
+    const adapter: Adapter = { async run(input) {
+      const write = journalWriter(input);
       runs++;
       await input.toolExecutor!.writeFile('effect.txt', 'once');
       sandboxClient.pause(sandboxClient.created[0]);
       try { await input.toolExecutor!.writeFile('effect.txt', 'twice'); }
       catch (error) { errors.push(String(error)); }
       const saved = await input.toolExecutor!.readFile('effect.txt');
-      yield { id: 'continued', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: saved }] };
+      await write({ id: 'continued', timestamp: new Date().toISOString(), type: 'agent.message', content: [{ type: 'text', text: saved }] });
+      return "finished";
     } };
     const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({ adapter, sandboxClient });
     const session = await sessionStore.create({ tenantId: 'tenant_1', agentId: sandboxedAgent.id, agent: sandboxedAgent, workspaceId: 'ws_1' });

@@ -8,24 +8,15 @@ describe("InMemoryTurnStreamStore", () => {
     store = new InMemoryTurnStreamStore();
   });
 
-  it("CAS protects a newer active turn from stale cleanup", async () => {
-    await store.setActiveTurn("s", { turnId: "turn_1_a2", status: "running" });
-    expect(await store.compareAndSetActiveTurn("s", "turn_1_a1", null)).toBe(false);
-    expect(await store.getActiveTurn("s")).toEqual({
-      turnId: "turn_1_a2",
-      status: "running",
-    });
-  });
-
   describe("active-turn status", () => {
     it("reads back a running turn", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });
-      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "running" });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running", inputSeq: 1, generation: 1 });
+      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "running", inputSeq: 1, generation: 1 });
     });
 
     it("reads back an idle turn", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "idle" });
-      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "idle" });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "idle", inputSeq: 1, generation: 1 });
+      expect(await store.getActiveTurn("sess_1")).toEqual({ turnId: "turn_1", status: "idle", inputSeq: 1, generation: 1 });
     });
 
     it("returns null when there is no record", async () => {
@@ -33,14 +24,14 @@ describe("InMemoryTurnStreamStore", () => {
     });
 
     it("clears the active-turn record", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });
-      await store.clearActiveTurn("sess_1");
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running", inputSeq: 1, generation: 1 });
+      await store.clearActiveTurn("sess_1", { inputSeq: 1, generation: 1 });
       expect(await store.getActiveTurn("sess_1")).toBeNull();
     });
 
     it("isolates active turns by session", async () => {
-      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running" });
-      await store.setActiveTurn("sess_2", { turnId: "turn_2", status: "idle" });
+      await store.setActiveTurn("sess_1", { turnId: "turn_1", status: "running", inputSeq: 1, generation: 1 });
+      await store.setActiveTurn("sess_2", { turnId: "turn_2", status: "idle", inputSeq: 2, generation: 1 });
       expect((await store.getActiveTurn("sess_1"))?.status).toBe("running");
       expect((await store.getActiveTurn("sess_2"))?.status).toBe("idle");
     });
@@ -58,6 +49,13 @@ describe("InMemoryTurnStreamStore", () => {
       const after = await store.readDeltas("session", "turn_1", id0);
       expect(after).toHaveLength(1);
       expect((after[0].data as { text: string }).text).toBe("lo");
+    });
+
+    it("keeps each delta's attempt", async () => {
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 2, attempt: 1, type: "chunk", data: { text: "lost" } });
+      await store.appendDelta("session", { turnId: "turn_1", blockIndex: 2, attempt: 2, type: "chunk", data: { text: "resumed" } });
+
+      expect((await store.readDeltas("session", "turn_1")).map((d) => d.attempt)).toEqual([1, 2]);
     });
 
     it("reclaims a turn's stream", async () => {

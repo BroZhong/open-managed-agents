@@ -4,6 +4,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: oma-test
+replicas:
+- name: oma-runner
+  count: 2
 resources:
 - ../../app
 - namespace.yaml
@@ -28,6 +31,16 @@ patches:
     - {op: replace, path: /data/PG_POOL_MAX, value: '10'}
     - {op: replace, path: /data/REDIS_HOST, value: redis}
     - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
+- target:
+    kind: Deployment
+    name: oma-runner
+  # #234 on test only. With a shared process namespace the Runner's node process
+  # is not PID 1, so `kill -9` from `kubectl exec` stops it abruptly, the way an
+  # OOM kill or a node failure would. A rolling update starts the new Runner
+  # before the old one hands its Turns over on SIGTERM (#254).
+  patch: |-
+    - {op: add, path: /spec/template/spec/shareProcessNamespace, value: true}
+    - {op: replace, path: /spec/strategy, value: {type: RollingUpdate, rollingUpdate: {maxSurge: 1, maxUnavailable: 0}}}
 - target:
     kind: Ingress
     name: oma-console

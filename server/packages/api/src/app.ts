@@ -60,6 +60,8 @@ export interface AppDeps {
   sseCatchupIntervalMs?: number;
   sessionRouter?: SessionRouter;
   wakeSession?: (sessionId: string) => void;
+  /** Hint the owner of a Session's running Turn to check it now (an accepted Interrupt). */
+  checkSession?: (sessionId: string) => void;
   /** Deterministic clock seam for Loop API tests. */
   now?: () => Date;
 }
@@ -192,6 +194,7 @@ export function createApp(deps: AppDeps) {
       sseCatchupIntervalMs: deps.sseCatchupIntervalMs,
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
+      checkSession: deps.checkSession,
     }));
   }
 

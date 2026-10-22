@@ -3,6 +3,7 @@ import type {
   PendingEventStore,
   PendingEventClaim,
   PendingEventFence,
+  PendingEventRenewal,
   StoredEvent,
   Agent,
   AgentFileStore,
@@ -14,12 +15,12 @@ import type {
   DelegationExecution,
   SandboxActivity,
 } from "@oma-server/store";
-import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath, presentEvent, presentContextData } from "@oma-server/store";
+import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
-import type { TurnStreamStore } from "@oma-server/redis";
+import type { ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
 import type {
   EnvSpec,
   SandboxManager,
@@ -31,14 +32,19 @@ import { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.j
 import type {
   Adapter,
   AdapterInput,
+  AdapterRunResult,
+  DurableEvent,
   SessionEvent,
   ContentBlock,
   ToolExecutor,
+  TurnJournalPort,
   UserMessage,
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
-import { isStreamEvent } from "@open-managed-agents/adapter-core";
 import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
+import { TurnJournal, type JournalEvent } from "./turn-journal.js";
+import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type RepairOutcome, type ResumeFacts, type Takeover } from "./plan-resume.js";
+import { repairResult, type DanglingCallResolver } from "./dangling-call-results.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -46,39 +52,51 @@ import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExe
  */
 const AGENT_FILE_ORDER = ["IDENTITY", "SOUL", "USER", "MEMORY"] as const;
 
-/** Stream event types that open a new content block within a turn. */
-const STREAM_START_TYPES: ReadonlySet<string> = new Set([
-  "agent.message_stream_start",
-  "agent.thinking_stream_start",
-  "agent.tool_use_input_stream_start",
-]);
-
-/** Complete event types that replace each kind of transient stream block. */
-const COMPLETE_TYPES_BY_STREAM_START: Readonly<Record<string, ReadonlySet<string>>> = {
-  "agent.message_stream_start": new Set(["agent.message"]),
-  "agent.thinking_stream_start": new Set(["agent.thinking"]),
-  "agent.tool_use_input_stream_start": new Set(["agent.tool_use", "agent.mcp_tool_use"]),
-};
-
 const SESSION_INTERRUPTED_MESSAGE = "Session interrupted";
 const SESSION_TERMINATED_MESSAGE = "Session terminated";
+const RUNNER_SHUTDOWN_MESSAGE = "Runner shutting down";
 const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS = 2_000;
-const DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS = 128;
 
-interface PendingStreamBlock {
-  blockIndex: number;
-  completeTypes: ReadonlySet<string>;
-  toolUseId?: string;
-}
+/** How an Adapter's run() settled. */
+type AdapterOutcome = { result: AdapterRunResult } | { error: unknown };
 
 interface EquippedSkill {
   id: string;
   descriptor: SkillDescriptor;
 }
 
+/** What the ports of a Turn attempt's journal learn while the attempt is prepared. */
+interface AttemptWrites {
+  /** The prepared Turn's delegation run; tool results consume its waits. */
+  delegationRun?: DelegationRun;
+  /** Durable form and idempotency key of an Adapter event, set before the Adapter runs. */
+  fromAdapter?(event: DurableEvent): { event: JournalEvent; key: string };
+}
+
+/** The claim heartbeat of one Turn attempt. */
+interface ClaimHeartbeat {
+  stop(): void;
+  /** Renew and read the Interrupt marker and delegation commands now. */
+  check(): void;
+  /** The Child execution this attempt runs, once started; its Interrupt commands arrive here. */
+  execution?: DelegationExecution;
+}
+
 interface ActiveSessionRun {
   controller: AbortController;
-  terminating: boolean;
+  /** Stops the running Turn attempt, if any, without terminal events. */
+  stopAttempt?: (reason: unknown) => void;
+  /**
+   * Stops the running Turn attempt, if any, on the same path and hands its
+   * Turn over as it stands: the handoff deadline of a shutdown (#254).
+   */
+  detach?: (reason: unknown) => void;
+  /**
+   * The drain released its input because its Child execution waits for a
+   * slot of the parent's concurrency limit. The sibling that frees one wakes
+   * it; the pending scan covers a lost wake.
+   */
+  waitingForSlot?: boolean;
 }
 
 class PendingLeaseLostError extends Error {
@@ -89,7 +107,20 @@ class PendingLeaseLostError extends Error {
 }
 
 export interface SessionRouterDeps {
+  /**
+   * Tell every Runner that a Session's input may be claimable: any of them
+   * may claim it. Delegation wakes a child with it, and a Runner handing its
+   * Turns over (#254) wakes the others for what it leaves.
+   */
   wakeSession?: (sessionId: string) => void;
+  /**
+   * Hint the owner of a Session's running Turn to re-read its durable state
+   * now (an accepted Interrupt, a delegation command, a child result): every
+   * Runner receives it and calls {@link SessionRouter.checkNow}. Absent ⇒ this
+   * Router checks locally. A lost hint costs latency only: the heartbeat and
+   * the delegation wait still poll.
+   */
+  checkSession?: (sessionId: string) => void;
   delegationStore?: DelegationStore;
   maxConcurrentSubagents?: number;
   maxSubagentModelSteps?: number;
@@ -97,7 +128,8 @@ export interface SessionRouterDeps {
   pendingEventStore: PendingEventStore;
   sessionStore: SessionStore;
   eventStreamHub: EventStreamHub;
-  resolveAdapter: (runtime: string) => Adapter;
+  /** The Adapter for an Agent runtime, or undefined when this Runner cannot execute it. */
+  resolveAdapter: (runtime: string) => Adapter | undefined;
   /**
    * The single owner of sandbox lifecycle (ADR-0005 §1, design doc §2/§6).
    * When present and the agent is sandboxed, the router `open`s exactly one
@@ -174,21 +206,24 @@ export interface SessionRouterDeps {
   pendingClaimOwnerId?: string;
   /** Pending lease duration; renewed while an Adapter/tool turn is running. */
   pendingClaimLeaseMs?: number;
-  /** Heartbeat cadence. Must be shorter than pendingClaimLeaseMs. */
+  /**
+   * Heartbeat cadence, which also bounds how late an Interrupt is seen when
+   * its hint is lost. Must be shorter than pendingClaimLeaseMs.
+   */
   pendingClaimRenewIntervalMs?: number;
-  /** Bounded retry window when another Host currently owns the FIFO head. */
+  /**
+   * Bounded retry window after a drain failed or left a claimable head (a
+   * released claim, input queued behind an Interrupt). A head another Host
+   * owns is not retried.
+   */
   pendingClaimRetryMinMs?: number;
   pendingClaimRetryMaxMs?: number;
   /**
-   * Grace window for an Adapter to report final model usage after a user
-   * interrupt. Content and all other post-interrupt events are discarded.
+   * How long an interrupted Adapter's run() may take to settle. The Router
+   * then revokes the Adapter's journal entry and closes the Turn: what the
+   * Adapter recorded until then is written, anything later is dropped.
    */
   interruptedAdapterDrainTimeoutMs?: number;
-  /**
-   * Second bound on post-interrupt draining, preventing a synchronously noisy
-   * Adapter from starving the timeout timer with an endless event sequence.
-   */
-  interruptedAdapterDrainMaxEvents?: number;
   /** Observe background retry failures without creating unhandled rejections. */
   onDrainError?: (failure: PendingRecoveryFailure) => void;
 }
@@ -212,7 +247,7 @@ export class SessionRouter {
   private readonly pendingEventStore: PendingEventStore;
   private readonly sessionStore: SessionStore;
   private readonly eventStreamHub: EventStreamHub;
-  private readonly resolveAdapter: (runtime: string) => Adapter;
+  private readonly resolveAdapter: (runtime: string) => Adapter | undefined;
   private readonly sandboxManager?: SandboxManager;
   private readonly workspaceMount?: Omit<WorkspaceMountSpec, "prefix">;
   private readonly agentFileStore?: AgentFileStore;
@@ -230,13 +265,12 @@ export class SessionRouter {
   private readonly pendingClaimRetryMinMs: number;
   private readonly pendingClaimRetryMaxMs: number;
   private readonly interruptedAdapterDrainTimeoutMs: number;
-  private readonly interruptedAdapterDrainMaxEvents: number;
   private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
   private readonly activeSessions = new Map<string, ActiveSessionRun>();
   private readonly settledActivities = new Map<string, SandboxActivity>();
   private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly claimRetryAttempts = new Map<string, number>();
-  private readonly claimHeartbeatStops = new Map<string, () => void>();
+  private readonly claimHeartbeats = new Map<string, ClaimHeartbeat>();
   private readonly idleWaiters = new Set<() => void>();
   /**
    * Sessions for which new pending input arrived while their drain loop was
@@ -258,7 +292,21 @@ export class SessionRouter {
   private readonly sessions = new Map<string, SandboxSession>();
   private readonly delegationStore?: DelegationStore;
   private readonly delegations?: DelegationCoordinator;
+  /**
+   * Results, by tool name, for calls a takeover finds without one, from the
+   * durable state the tool keeps (the delegation tools, #251). A call no
+   * resolver answers is reported as of unknown outcome.
+   */
+  private readonly danglingCallResolvers: Readonly<Record<string, DanglingCallResolver>>;
   private readonly maxConcurrentSubagents: number;
+  private readonly checkSession: (sessionId: string) => void;
+  private readonly wakeSession?: (sessionId: string) => void;
+  /**
+   * Aborted once this Router hands its Turns over (#254): it claims nothing
+   * more, and each running Adapter is asked to stop before its next model
+   * request.
+   */
+  private readonly handoff = new AbortController();
 
   constructor(deps: SessionRouterDeps) {
     this.delegationStore = deps.delegationStore;
@@ -270,15 +318,16 @@ export class SessionRouter {
     if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000) throw new RangeError("maxSubagentModelSteps must be between 1 and 1000");
     if (deps.delegationStore) this.delegations = new DelegationCoordinator({
       store: deps.delegationStore, pending: deps.pendingEventStore,
-      sessions: deps.sessionStore, events: deps.eventLogStore, maxSteps,
+      sessions: deps.sessionStore, maxSteps,
+      check: (sessionId) => this.checkSession(sessionId),
       wake: (sessionId) => {
         if (deps.wakeSession) { deps.wakeSession(sessionId); return; }
         void deps.sessionStore.getById(sessionId).then((session) => {
           if (session && session.status !== "terminated") return this.handleNewEvent(sessionId, session.agent);
         }).catch((error) => this.reportDrainError(sessionId, error));
       },
-      publish: (event) => deps.eventStreamHub.publish(event.sessionId, { type: event.type, seq: event.seq, data: event.data }),
     });
+    this.danglingCallResolvers = this.delegations?.danglingCallResolvers() ?? {};
     this.eventLogStore = deps.eventLogStore;
     this.pendingEventStore = deps.pendingEventStore;
     this.sessionStore = deps.sessionStore;
@@ -300,9 +349,9 @@ export class SessionRouter {
     this.pendingClaimRetryMaxMs = deps.pendingClaimRetryMaxMs ?? 5_000;
     this.interruptedAdapterDrainTimeoutMs =
       deps.interruptedAdapterDrainTimeoutMs ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_TIMEOUT_MS;
-    this.interruptedAdapterDrainMaxEvents =
-      deps.interruptedAdapterDrainMaxEvents ?? DEFAULT_INTERRUPTED_ADAPTER_DRAIN_MAX_EVENTS;
     this.onDrainError = deps.onDrainError;
+    this.checkSession = deps.checkSession ?? ((sessionId) => this.checkNow(sessionId));
+    this.wakeSession = deps.wakeSession;
     if (
       this.pendingClaimRenewIntervalMs <= 0 ||
       this.pendingClaimRenewIntervalMs >= this.pendingClaimLeaseMs
@@ -315,12 +364,6 @@ export class SessionRouter {
     ) {
       throw new RangeError("interrupted Adapter drain timeout must be a positive finite number");
     }
-    if (
-      !Number.isInteger(this.interruptedAdapterDrainMaxEvents) ||
-      this.interruptedAdapterDrainMaxEvents <= 0
-    ) {
-      throw new RangeError("interrupted Adapter drain max events must be a positive integer");
-    }
   }
 
   private fenceFor(claim: PendingEventClaim): PendingEventFence {
@@ -331,29 +374,18 @@ export class SessionRouter {
     };
   }
 
-  /** Compatibility for narrow single-process test doubles; production PG has claim(). */
   private async claimPendingHead(sessionId: string): Promise<PendingEventClaim | null> {
-    if (typeof this.pendingEventStore.claim === "function") {
-      return this.pendingEventStore.claim(
-        sessionId,
-        this.pendingClaimOwnerId,
-        this.pendingClaimLeaseMs,
-      );
-    }
-    const event = await this.pendingEventStore.peek(sessionId);
-    return event ? {
-      event,
-      ownerId: this.pendingClaimOwnerId,
-      generation: 1,
-      expiresAt: new Date(Date.now() + this.pendingClaimLeaseMs),
-    } : null;
+    return this.pendingEventStore.claim(
+      sessionId,
+      this.pendingClaimOwnerId,
+      this.pendingClaimLeaseMs,
+    );
   }
 
   private async renewPendingClaim(
     sessionId: string,
     claim: PendingEventClaim,
-  ): Promise<boolean> {
-    if (typeof this.pendingEventStore.renewClaim !== "function") return true;
+  ): Promise<PendingEventRenewal> {
     return this.pendingEventStore.renewClaim(
       sessionId,
       claim.event.id,
@@ -362,71 +394,35 @@ export class SessionRouter {
     );
   }
 
-  private turnIdentity(turnId: string): { seq: number; generation: number } | null {
-    const generated = /^turn_(\d+)_a(\d+)$/.exec(turnId);
-    if (generated) {
-      return { seq: Number(generated[1]), generation: Number(generated[2]) };
-    }
-    const legacy = /^turn_(\d+)$/.exec(turnId);
-    return legacy ? { seq: Number(legacy[1]), generation: 0 } : null;
-  }
-
-  private async updateActiveTurnProjection(
-    sessionId: string,
-    next: { turnId: string; status: "running" | "idle" },
-  ): Promise<void> {
+  /**
+   * The Turn's output is durable and it is completing: its Delta stream, which
+   * every attempt of the Turn shares, goes, and the projection shows it idle.
+   * Nothing else deletes the stream; one a lost Runner leaves expires.
+   */
+  private async endTurnStream(sessionId: string, turnId: string, writer: ActiveTurnWriter): Promise<void> {
     if (!this.turnStreamStore) return;
-    const nextIdentity = this.turnIdentity(next.turnId);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const current = await this.turnStreamStore.getActiveTurn(sessionId);
-      const currentIdentity = current ? this.turnIdentity(current.turnId) : null;
-      if (
-        current &&
-        currentIdentity &&
-        nextIdentity &&
-        (
-          currentIdentity.seq > nextIdentity.seq ||
-          (currentIdentity.seq === nextIdentity.seq &&
-            currentIdentity.generation > nextIdentity.generation)
-        )
-      ) {
-        return;
-      }
-      if (this.turnStreamStore.compareAndSetActiveTurn) {
-        if (await this.turnStreamStore.compareAndSetActiveTurn(
-          sessionId,
-          current?.turnId ?? null,
-          next,
-        )) return;
-        continue;
-      }
-      // Narrow test-double fallback; production Redis uses the atomic CAS.
-      await this.turnStreamStore.setActiveTurn(sessionId, next);
-      return;
-    }
-    // Redis is a projection: only the PostgreSQL claim can revoke execution.
-  }
-
-  private async clearActiveTurnFenced(
-    sessionId: string,
-    expectedTurnId: string,
-  ): Promise<boolean> {
-    if (!this.turnStreamStore) return true;
-    if (this.turnStreamStore.compareAndSetActiveTurn) {
-      return this.turnStreamStore.compareAndSetActiveTurn(
-        sessionId,
-        expectedTurnId,
-        null,
-      );
-    }
-    const current = await this.turnStreamStore.getActiveTurn(sessionId);
-    if (current?.turnId !== expectedTurnId) return false;
-    await this.turnStreamStore.clearActiveTurn(sessionId);
-    return true;
+    await this.turnStreamStore.reclaim(sessionId, turnId);
+    // A later attempt's projection (one that took the Turn over, or a later
+    // input's) stays. Redis is a projection: only the PostgreSQL claim can
+    // revoke execution, so a refused write changes nothing else.
+    await this.turnStreamStore.recordActiveTurn(sessionId, { turnId, status: "idle", ...writer });
   }
 
   private reportDrainError(sessionId: string, error: unknown): void {
     this.onDrainError?.({ sessionId, error });
+  }
+
+  /**
+   * Termination deletes the Session's input, so the attempt of a Session the
+   * API terminated finds its claim gone at its next write or heartbeat. That
+   * is termination stopping it, not a failure. Any other loss is reported.
+   */
+  private async reportAttemptFailure(sessionId: string, error: unknown): Promise<void> {
+    if (error instanceof PendingEventClaimLostError || error instanceof PendingLeaseLostError) {
+      const session = await this.sessionStore.getById(sessionId).catch(() => undefined);
+      if (session?.status === "terminated") return;
+    }
+    this.reportDrainError(sessionId, error);
   }
 
   private clearClaimRetry(sessionId: string): void {
@@ -440,8 +436,12 @@ export class SessionRouter {
     this.claimRetryAttempts.delete(sessionId);
   }
 
+  private get handingOff(): boolean {
+    return this.handoff.signal.aborted;
+  }
+
   private scheduleClaimRetry(sessionId: string, agentConfig: Agent): void {
-    if (this.activeSessions.has(sessionId) || this.claimRetryTimers.has(sessionId)) return;
+    if (this.handingOff || this.activeSessions.has(sessionId) || this.claimRetryTimers.has(sessionId)) return;
     const attempt = (this.claimRetryAttempts.get(sessionId) ?? 0) + 1;
     this.claimRetryAttempts.set(sessionId, attempt);
     const delay = Math.min(
@@ -489,67 +489,145 @@ export class SessionRouter {
     });
   }
 
+  /**
+   * Hand this Runner's running Turns to the other Runners as it shuts down
+   * (#254). It claims no more input and cancels its claim retries. Each
+   * running Adapter is asked to stop before its next model request; tools it
+   * runs are not cancelled, so their results are committed. A Turn still
+   * running after `timeoutMs` is detached on the one stop path: its write
+   * entry is revoked and what it runs in the Sandbox keeps running. Every
+   * claim this leaves is released without a terminal event, and the other
+   * Runners are woken to take the Turn over at once; a Turn that completes
+   * meanwhile leaves the input queued behind it to them the same way.
+   *
+   * Resolves once every drain has settled, true when no Turn needed
+   * detaching. The caller bounds the wait for the releases.
+   */
+  async handOff(timeoutMs: number): Promise<boolean> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new RangeError("handOff timeoutMs must be a finite non-negative number");
+    }
+    this.handoff.abort();
+    // A head this Router meant to retry is one the other Runners can take.
+    for (const sessionId of [...this.claimRetryTimers.keys()]) {
+      this.resetClaimRetry(sessionId);
+      this.wakeSession?.(sessionId);
+    }
+    if (await this.waitForIdle(timeoutMs)) return true;
+    const reason = new DOMException(RUNNER_SHUTDOWN_MESSAGE, "AbortError");
+    for (const activeRun of this.activeSessions.values()) activeRun.detach?.(reason);
+    await new Promise<void>((resolve) => {
+      this.idleWaiters.add(resolve);
+      this.notifyIdleIfSettled();
+    });
+    return false;
+  }
+
+  /**
+   * Renew the attempt's claim every renew interval. The renewal reports an
+   * accepted Interrupt, and a Child execution's Interrupt commands are read
+   * with it. A check hint ({@link checkNow}) runs the same tick at once.
+   */
   private startClaimHeartbeat(
     sessionId: string,
     claim: PendingEventClaim,
     turnController: AbortController,
     onLeaseLost: (error: unknown) => void,
-  ): () => void {
-    this.claimHeartbeatStops.get(sessionId)?.();
+  ): ClaimHeartbeat {
+    this.claimHeartbeats.get(sessionId)?.stop();
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      if (timer) clearTimeout(timer);
-      if (this.claimHeartbeatStops.get(sessionId) === stop) {
-        this.claimHeartbeatStops.delete(sessionId);
-      }
+    let ticking = false;
+    let checkAgain = false;
+    const lost = (error: unknown) => {
+      onLeaseLost(error);
+      turnController.abort(error);
+      heartbeat.stop();
     };
     const tick = async () => {
       if (stopped || turnController.signal.aborted) return;
+      ticking = true;
+      clearTimeout(timer);
       try {
-        const renewed = await this.renewPendingClaim(sessionId, claim);
+        const renewal = await this.renewPendingClaim(sessionId, claim);
         if (stopped) return;
-        if (!renewed) {
-          const error = new PendingLeaseLostError();
-          onLeaseLost(error);
-          turnController.abort(error);
-          stop();
-          return;
-        }
-        let shouldInterrupt = await this.pendingEventStore.interruptRequested?.(sessionId, claim.event.id) ?? false;
-        const execution = await this.delegationStore?.getByPendingEventId(claim.event.id);
-        if (execution && this.delegationStore) {
-          for (const command of await this.delegationStore.listCommands(execution.id)) {
-            if (command.kind !== "interrupt" || command.status !== "accepted") continue;
-            await this.delegationStore.applyCommand(command.id, this.fenceFor(claim), {
-              type: "session.interrupt_requested", data: { commandId: command.id, turnId: execution.turnId, source: "delegation" },
-              sessionThreadId: "sthr_primary", idempotencyKey: `interrupt:${command.id}`,
-            });
-            shouldInterrupt = true;
-          }
-        }
-        if (shouldInterrupt) { this.interrupt(sessionId); return; }
+        if (!renewal.renewed) { lost(new PendingLeaseLostError()); return; }
+        const execution = heartbeat.execution;
+        const commanded = execution !== undefined && await this.applyInterruptCommands(sessionId, execution, this.fenceFor(claim));
+        if (renewal.interruptRequested || commanded) { this.interrupt(sessionId); return; }
       } catch (error) {
-        if (stopped) return;
-        onLeaseLost(error);
-        turnController.abort(error);
-        stop();
+        if (!stopped) lost(error);
         return;
+      } finally {
+        ticking = false;
       }
-      if (!stopped) {
-        timer = setTimeout(() => void tick(), Math.min(this.pendingClaimRenewIntervalMs, 1000));
-      }
+      if (stopped) return;
+      // A hint that arrived during this tick may have missed its marker.
+      if (checkAgain) { checkAgain = false; void tick(); return; }
+      timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
     };
-    timer = setTimeout(() => void tick(), Math.min(this.pendingClaimRenewIntervalMs, 1000));
-    this.claimHeartbeatStops.set(sessionId, stop);
-    return stop;
+    const heartbeat: ClaimHeartbeat = {
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        clearTimeout(timer);
+        if (this.claimHeartbeats.get(sessionId) === heartbeat) this.claimHeartbeats.delete(sessionId);
+      },
+      check: () => {
+        if (stopped) return;
+        if (ticking) { checkAgain = true; return; }
+        void tick();
+      },
+    };
+    timer = setTimeout(() => void tick(), this.pendingClaimRenewIntervalMs);
+    this.claimHeartbeats.set(sessionId, heartbeat);
+    return heartbeat;
+  }
+
+  /**
+   * Record each Interrupt the parent accepted for a Child execution in the
+   * child's log, once, under this claim. True when there was one: the Turn
+   * must stop.
+   */
+  private async applyInterruptCommands(sessionId: string, execution: DelegationExecution, fence: PendingEventFence): Promise<boolean> {
+    if (!this.delegationStore) return false;
+    let accepted = false;
+    for (const command of await this.delegationStore.listCommands(execution.id)) {
+      if (command.kind !== "interrupt" || command.status !== "accepted") continue;
+      const applied = await this.delegationStore.applyCommand(command.id, fence, {
+        type: "session.interrupt_requested", data: { commandId: command.id, turnId: execution.turnId, source: "delegation" },
+        sessionThreadId: "sthr_primary", idempotencyKey: `interrupt:${command.id}`,
+      });
+      // The command's transaction appended it, outside the journal.
+      if (applied.appliedEventSeq !== undefined) await this.publishCommitted(sessionId, applied.appliedEventSeq);
+      accepted = true;
+    }
+    return accepted;
+  }
+
+  /** Publish an event another store transaction committed to the log. */
+  private async publishCommitted(sessionId: string, seq: number): Promise<void> {
+    const stored = (await this.eventLogStore.getEvents(sessionId, { afterSeq: seq - 1, limit: 1 })).data[0];
+    if (stored?.seq === seq) this.eventStreamHub.publish(sessionId, { type: stored.type, seq: stored.seq, data: stored.data });
+  }
+
+  /**
+   * Re-read the durable state of this Session's running Turn now, if this
+   * Router owns it: the claim renewal reports an accepted Interrupt, a Child
+   * execution's Interrupt commands are read with it, and a synchronous wait
+   * re-reads the execution it waits on. Receiving the hint costs a Runner
+   * that does not own the Turn nothing.
+   */
+  checkNow(sessionId: string): void {
+    this.claimHeartbeats.get(sessionId)?.check();
+    this.delegations?.recheckWaits(sessionId);
   }
 
   async handleNewEvent(sessionId: string, agentConfig: Agent): Promise<void> {
+    // A Runner handing its Turns over takes none (#254).
+    if (this.handingOff) return;
     // Usually the active loop will pick up newly queued input itself. Remember
-    // the wake as well, so an arrival after its final empty dequeue cannot be
+    // the wake as well, so an arrival after its final empty claim cannot be
     // stranded merely because the per-process active marker is still present.
     if (this.activeSessions.has(sessionId)) {
       this.wakeRequested.add(sessionId);
@@ -559,25 +637,36 @@ export class SessionRouter {
     // A direct request/recovery trigger supersedes a slower scheduled retry.
     this.clearClaimRetry(sessionId);
 
-    const activeRun: ActiveSessionRun = {
-      controller: new AbortController(),
-      terminating: false,
-    };
+    const activeRun: ActiveSessionRun = { controller: new AbortController() };
     this.activeSessions.set(sessionId, activeRun);
 
+    let failed = false;
     try {
-      await this.drainLoop(sessionId, agentConfig, activeRun.controller.signal);
+      await this.drainLoop(sessionId, agentConfig, activeRun);
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
       if (this.activeSessions.get(sessionId) === activeRun) {
         this.activeSessions.delete(sessionId);
       }
-      this.wakeRequested.delete(sessionId);
+      const wokenWhileActive = this.wakeRequested.delete(sessionId);
 
       // Always inspect the durable queue at handoff. This covers the original
       // empty→unlock lost wake, a preloaded tail after user interrupt, and a
       // claim/PG failure that must retry without waiting for a new request.
+      // A head under a live claim is not retried: its owner drains the queue,
+      // and the pending scan finds it once a lost owner's lease expires. Nor is
+      // a child waiting for a slot, unless the wake of a freed slot arrived
+      // while this drain was still releasing its claim.
       try {
-        if (await this.pendingEventStore.peek(sessionId)) {
+        if (this.handingOff) {
+          // What the drain left claimable, a Turn it handed over or the input
+          // queued behind a Turn it completed, goes to the other Runners now
+          // instead of at their next pending scan.
+          if (await this.pendingEventStore.headClaimable(sessionId)) this.wakeSession?.(sessionId);
+        } else if (failed || ((!activeRun.waitingForSlot || wokenWhileActive) &&
+          await this.pendingEventStore.headClaimable(sessionId))) {
           this.scheduleClaimRetry(sessionId, agentConfig);
         } else {
           this.resetClaimRetry(sessionId);
@@ -609,8 +698,9 @@ export class SessionRouter {
     };
     // Session termination revokes its pending lease first. Reconcile durable
     // child results even when a Host died before the local cleanup callback.
-    await this.delegationStore?.reconcileTerminatedExecutions();
-    const sessionIds = new Set(await this.pendingEventStore.listPendingSessionIds());
+    this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions() ?? []);
+    // Only heads no live claim holds: a Runner never contends with an owner.
+    const sessionIds = new Set(await this.pendingEventStore.listClaimableSessionIds());
 
     for (const sessionId of sessionIds) {
       try {
@@ -644,19 +734,10 @@ export class SessionRouter {
       return false;
     }
     this.clearClaimRetry(sessionId);
-    this.claimHeartbeatStops.get(sessionId)?.();
+    this.claimHeartbeats.get(sessionId)?.stop();
     activeRun.controller.abort(new DOMException(SESSION_INTERRUPTED_MESSAGE, "AbortError"));
     this.notifyIdleIfSettled();
     return true;
-  }
-
-  /** Accept a durable command; execution confirms interruption in its history. */
-  async requestInterrupt(sessionId: string): Promise<{ requested: boolean; interrupted: boolean }> {
-    if (!this.pendingEventStore.requestInterrupt) return { requested: true, interrupted: this.interrupt(sessionId) };
-    const requested = await this.pendingEventStore.requestInterrupt(sessionId);
-    // The owner observes the exact durable input marker on its heartbeat; a
-    // local abort here could hit the next Turn after a completion race.
-    return { requested, interrupted: false };
   }
 
   /**
@@ -667,12 +748,11 @@ export class SessionRouter {
   async terminateSession(sessionId: string): Promise<void> {
     const activeRun = this.activeSessions.get(sessionId);
     if (activeRun) {
-      // This mutable flag also covers interrupt→terminate races: AbortSignal's
-      // reason is immutable once aborted, so the later termination must still
-      // revoke the earlier interrupt's accounting-only drain permission.
-      activeRun.terminating = true;
+      // Stopped explicitly: after an Interrupt the signal has already fired,
+      // and the drain it granted must still end at once.
+      activeRun.stopAttempt?.(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       this.clearClaimRetry(sessionId);
-      this.claimHeartbeatStops.get(sessionId)?.();
+      this.claimHeartbeats.get(sessionId)?.stop();
       activeRun.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
     }
     // Termination, unlike an idle user interrupt, intentionally cancels any
@@ -681,6 +761,7 @@ export class SessionRouter {
     this.notifyIdleIfSettled();
     await this.pendingEventStore.clear(sessionId);
     const reconciled = await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? [];
+    this.checkReconciled(reconciled);
     for (const execution of reconciled) {
       const parent = await this.sessionStore.getById(execution.callerSessionId);
       if (parent && parent.status !== "terminated") {
@@ -700,11 +781,11 @@ export class SessionRouter {
     if (!session || session.status !== "terminated") return false;
     const active = this.activeSessions.get(sessionId);
     if (active) {
-      active.terminating = true;
+      active.stopAttempt?.(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       active.controller.abort(new DOMException(SESSION_TERMINATED_MESSAGE, "AbortError"));
       return false; // Wait for actual settlement; abort acceptance is not exit proof.
     }
-    await this.delegationStore?.reconcileTerminatedExecutions(sessionId);
+    this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? []);
     const bindingId = session.delegation?.sandboxSessionId ?? session.id;
     // Disposal rechecks shared users under binding coordination. A confirmed
     // missing resource can also clear an obsolete pointer despite old unknown use.
@@ -716,6 +797,17 @@ export class SessionRouter {
     return this.delegationStore
       ? this.delegationStore.withEnvironmentLock(bindingId, async id => ({ sandboxId: id, value: id === null }))
       : true;
+  }
+
+  /**
+   * Reconciliation interrupts a running child with a command and ends a
+   * queued or terminated one: the owners of both sides check at once.
+   */
+  private checkReconciled(executions: DelegationExecution[]): void {
+    for (const execution of executions) {
+      this.checkSession(execution.childId);
+      this.checkSession(execution.callerSessionId);
+    }
   }
 
   private async finishSettledActivity(activity: SandboxActivity): Promise<void> {
@@ -845,126 +937,158 @@ export class SessionRouter {
 
   /** Check availability without changing the completed answer or claiming all handles are saved. */
   private async checkWorkspace(
-    sessionId: string,
+    journal: TurnJournal,
     sandbox: SandboxSession,
-    idempotencyPrefix?: string,
-    pendingFence?: PendingEventFence,
+    pendingEventId: string,
+    turnId: string,
   ): Promise<void> {
     try {
       await sandbox.checkWorkspace();
     } catch {
-      const error = {
+      this.recordTurnError(journal, pendingEventId, turnId, "workspace_storage_check", {
         message: "Workspace storage could not be checked. The answer is retained; file save status is unconfirmed. Retry the file operation or check the Workspace before continuing.",
         code: "workspace_storage_error",
-      };
-      const stored = await this.eventLogStore.append(sessionId, {
-        type: "session.error",
-        data: { error },
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: idempotencyPrefix,
-        pendingFence,
       });
-      this.eventStreamHub.publish(sessionId, { type: stored.type, seq: stored.seq, data: stored.data });
+      await journal.flush();
     }
   }
 
-  private turnKey(pendingEventId: string, phase: string): string {
-    return `pending:${pendingEventId}:${phase}`;
-  }
-
-  private turnCompleted(events: StoredEvent[], pendingEventId: string): boolean {
-    return events.some((event) => {
-      if (event.type !== "session.turn_completed") return false;
-      const data = event.data as { pendingEventId?: unknown } | null;
-      return data?.pendingEventId === pendingEventId;
-    });
-  }
-
-  private async reclaimEarlierAttempts(
+  /**
+   * The one write entry of a Turn attempt (ADR-0020), composed of the
+   * attempt's fenced append, live publication and Delta output. A tool result
+   * answering a delegation wait is appended by consuming that wait, once the
+   * prepared Turn's delegation run exists.
+   */
+  private createJournal(
     sessionId: string,
-    promotedSeq: number,
-    claimGeneration: number,
-    currentTurnId: string,
-  ): Promise<void> {
-    if (!this.turnStreamStore) return;
-    const staleTurnIds = new Set<string>([`turn_${promotedSeq}`]);
-    if (claimGeneration > 1) staleTurnIds.add(`turn_${promotedSeq}_a${claimGeneration - 1}`);
-    const active = await this.turnStreamStore.getActiveTurn(sessionId);
-    if (active && active.turnId !== currentTurnId) {
-      const activeIdentity = this.turnIdentity(active.turnId);
-      const currentIdentity = this.turnIdentity(currentTurnId);
-      const isExplicitlyOlder = Boolean(
-        activeIdentity &&
-        currentIdentity &&
-        (
-          activeIdentity.seq < currentIdentity.seq ||
-          (activeIdentity.seq === currentIdentity.seq &&
-            activeIdentity.generation < currentIdentity.generation)
-        ),
-      );
-      if (isExplicitlyOlder) {
-        staleTurnIds.add(active.turnId);
-        await this.clearActiveTurnFenced(sessionId, active.turnId);
-      }
-    }
-    staleTurnIds.delete(currentTurnId);
-    for (const staleTurnId of staleTurnIds) {
-      await this.turnStreamStore.reclaim(sessionId, staleTurnId);
-    }
-  }
-
-  private async repairDanglingToolUses(
-    sessionId: string,
-    pendingEventId: string,
-    turnId: string,
-    attemptEvents: StoredEvent[],
     pendingFence: PendingEventFence,
-  ): Promise<void> {
-    attemptEvents = attemptEvents.flatMap(event => presentEvent(event));
-    const results = new Set<string>();
-    for (const event of attemptEvents) {
-      if (event.type !== "agent.tool_result" && event.type !== "agent.mcp_tool_result") continue;
-      const data = event.data as { toolUseId?: unknown } | null;
-      if (typeof data?.toolUseId === "string") results.add(data.toolUseId);
-    }
-
-    for (const event of attemptEvents) {
-      if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") continue;
-      const data = event.data as { toolUseId?: unknown; serverName?: unknown } | null;
-      if (typeof data?.toolUseId !== "string" || results.has(data.toolUseId)) continue;
-      const isMcp = event.type === "agent.mcp_tool_use";
-      const repairedData = {
-        id: `recovery_${pendingEventId}_${data.toolUseId}`,
-        timestamp: new Date().toISOString(),
-        type: isMcp ? "agent.mcp_tool_result" : "agent.tool_result",
-        toolUseId: data.toolUseId,
-        ...(isMcp
-          ? { serverName: typeof data.serverName === "string" ? data.serverName : "unknown" }
-          : {}),
-        content: [{
-          type: "text",
-          text: "The previous tool execution was interrupted before a result was committed.",
-        }],
-        isError: true,
-        turnId,
-      };
-      const stored = await this.eventLogStore.append(sessionId, {
-        type: repairedData.type,
-        data: repairedData,
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: this.turnKey(
-          pendingEventId,
-          `recovery_tool_result:${encodeURIComponent(data.toolUseId)}`,
-        ),
-        pendingFence,
-      });
-      this.eventStreamHub.publish(sessionId, {
+    attempt: AttemptWrites,
+    onFail: (error: unknown) => void,
+  ): TurnJournal {
+    return new TurnJournal({
+      sessionId,
+      attempt: pendingFence.generation,
+      append: async (event, key) => {
+        const consumed = attempt.delegationRun &&
+          await this.delegations?.consumeResult(attempt.delegationRun, event);
+        return consumed ?? this.eventLogStore.append(sessionId, {
+          type: event.type,
+          data: event.data,
+          sessionThreadId: event.sessionThreadId ?? "sthr_primary",
+          ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
+          idempotencyKey: key,
+          pendingFence,
+        });
+      },
+      publish: (stored) => this.eventStreamHub.publish(sessionId, {
         type: stored.type,
         seq: stored.seq,
         data: stored.data,
-      });
-      results.add(data.toolUseId);
+      }),
+      // Transient: Deltas go to the per-turn Redis stream for reconnect
+      // backfill (never to PostgreSQL), then live to in-process subscribers
+      // with the Redis entry id, so live and backfilled frames are identical
+      // and a reconnecting client can de-overlap them exactly.
+      outputDelta: async (delta) => {
+        const deltaId = await this.turnStreamStore?.appendDelta(sessionId, delta);
+        this.eventStreamHub.publishChunk(sessionId, { ...delta, deltaId });
+      },
+      // The Adapter is handed its port only once the mapping is set.
+      fromAdapter: (event) => attempt.fromAdapter!(event),
+      onFail,
+    });
+  }
+
+  /** The idempotency key of a Router write for an input: `keySegment` names the write among the input's. */
+  private turnKey(pendingEventId: string, keySegment: string): string {
+    return `pending:${pendingEventId}:${keySegment}`;
+  }
+
+  /**
+   * Record an error the Router writes itself. It names its Turn as the
+   * Adapter's events do, so the Turn's own reads (a Child execution's trace,
+   * a console grouping by Turn) include it.
+   */
+  private recordTurnError(
+    journal: TurnJournal,
+    pendingEventId: string,
+    turnId: string,
+    keySegment: string,
+    error: { code: string; message?: string },
+  ): void {
+    journal.record({ type: "session.error", data: { turnId, error } }, this.turnKey(pendingEventId, keySegment));
+  }
+
+  /**
+   * Record a result for each tool call that has none, and the error that ends
+   * its Turn. Each result is keyed by its call, so a repair a lost attempt
+   * already wrote is not written twice.
+   */
+  private async recordRepairs(
+    journal: TurnJournal,
+    sessionId: string,
+    pendingEventId: string,
+    turnId: string,
+    repairs: readonly DanglingToolCall[],
+    outcome: RepairOutcome,
+    error?: RecoveryError,
+  ): Promise<void> {
+    for (const call of repairs) {
+      const isMcp = call.type === "agent.mcp_tool_use";
+      const result = await repairResult(call, outcome, this.danglingCallResolvers, { sessionId, turnId, pendingEventId });
+      const repairedData = {
+        id: `recovery_${pendingEventId}_${call.toolUseId}`,
+        timestamp: new Date().toISOString(),
+        type: isMcp ? "agent.mcp_tool_result" : "agent.tool_result",
+        toolUseId: call.toolUseId,
+        ...(isMcp ? { serverName: call.serverName ?? "unknown" } : {}),
+        content: result.content,
+        isError: result.isError,
+        turnId,
+      };
+      journal.record({ type: repairedData.type, data: repairedData }, this.turnKey(
+        pendingEventId,
+        `recovery_tool_result:${encodeURIComponent(call.toolUseId)}`,
+      ));
     }
+    if (error) this.recordTurnError(journal, pendingEventId, turnId, error.keySegment, { code: error.code, message: error.message });
+  }
+
+  /** Under the key of the attempt that accepted the Interrupt: whichever attempt writes it, it is written once. */
+  private recordTurnAborted(journal: TurnJournal, pendingEventId: string, turnId: string): void {
+    journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEventId, "turn_aborted"));
+  }
+
+  /**
+   * Apply an Interrupt to the attempt's own Turn: stop the synchronous
+   * children it waits on, give every call left without a result the
+   * Interrupt's result and record the Turn as an Interrupted Turn. The
+   * repairs read the Turn's output from the log, so the caller has flushed
+   * what the attempt recorded, the Adapter's last events included.
+   */
+  private async interruptTurn(
+    journal: TurnJournal,
+    session: Session,
+    pendingEventId: string,
+    promotedSeq: number,
+    turnId: string,
+    pendingFence: PendingEventFence,
+  ): Promise<void> {
+    await this.delegations?.interruptChildren(session, turnId, pendingFence);
+    const turnEvents = (await this.readAllEvents(session.id)).filter((event) => event.seq > promotedSeq);
+    await this.recordRepairs(journal, session.id, pendingEventId, turnId, danglingToolCalls(turnEvents), "interrupted");
+    this.recordTurnAborted(journal, pendingEventId, turnId);
+  }
+
+  /**
+   * Mark that this attempt continues a Turn another claim held, before it
+   * writes anything else of the Turn. One marker per takeover: a lost
+   * takeover's marker stays, and the next claim writes its own.
+   */
+  private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number, takeover: Takeover | undefined): void {
+    if (!takeover) return;
+    journal.record({ type: "session.turn_resumed", data: { turnId, generation, ...takeover } },
+      this.turnKey(pendingEventId, `turn_resumed:${generation}`));
   }
 
   /**
@@ -975,16 +1099,22 @@ export class SessionRouter {
    * crash after the marker only re-acks and never reruns the Adapter.
    */
   private async completeTurn(
+    journal: TurnJournal,
     sessionId: string,
     pendingEventId: string,
+    promotedSeq: number,
     turnId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
+    // Write what the attempt recorded first: the Child outcome below is read
+    // from the log, and a failed journal must stop the attempt before it
+    // finishes the execution or marks the Turn complete.
+    await journal.flush();
     const execution = await this.delegationStore?.getByPendingEventId(pendingEventId);
     if (execution && !isTerminalExecution(execution) && this.delegationStore) {
       const log = await this.readAllEvents(sessionId);
-      const startSeq = Number(/^turn_(\d+)/.exec(turnId)?.[1] ?? 0);
-      const turnEvents = log.filter((event) => event.seq > startSeq);
+      // The Turn is everything after its input, whatever attempt named it.
+      const turnEvents = log.filter((event) => event.seq > promotedSeq);
       const interrupted = turnEvents.some((event) => event.type === "session.turn_aborted");
       const finished = await this.delegationStore.finishExecution(execution.id, pendingFence,
         outcomeFromEvents({ ...execution, turnId }, turnEvents, interrupted));
@@ -992,17 +1122,12 @@ export class SessionRouter {
       // outside the normal Router append/publish path. Publish that durable
       // event before waking the parent so connected clients see arrival even
       // while another parent Turn is still running or waiting synchronously.
-      if (finished.notificationEventSeq !== undefined) {
-        const notifications = await this.eventLogStore.getEvents(finished.callerSessionId, {
-          afterSeq: finished.notificationEventSeq - 1, limit: 1,
-        });
-        const notification = notifications.data[0];
-        if (notification?.seq === finished.notificationEventSeq) {
-          this.eventStreamHub.publish(finished.callerSessionId, {
-            type: notification.type, seq: notification.seq, data: notification.data,
-          });
-        }
-      }
+      if (finished.notificationEventSeq !== undefined) await this.publishCommitted(finished.callerSessionId, finished.notificationEventSeq);
+      // A synchronous wait on another Runner reads the result on the hint;
+      // the local drain delivers an asynchronous result.
+      this.checkSession(finished.callerSessionId);
+      void this.delegations?.wakeChildrenWaitingForSlot(finished)
+        .catch((error) => this.reportDrainError(finished.callerSessionId, error));
       const parent = await this.sessionStore.getById(finished.callerSessionId);
       if (parent && parent.status !== "terminated") {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
@@ -1014,19 +1139,9 @@ export class SessionRouter {
       if (data.executionId) await this.delegationStore.markNotificationProcessed(data.executionId, pendingFence);
     }
     await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
-    const completionData = { pendingEventId, turnId };
-    const completionEvent = await this.eventLogStore.append(sessionId, {
-      type: "session.turn_completed",
-      data: completionData,
-      sessionThreadId: "sthr_primary",
-      idempotencyKey: this.turnKey(pendingEventId, "completed"),
-      pendingFence,
-    });
-    this.eventStreamHub.publish(sessionId, {
-      type: completionEvent.type,
-      seq: completionEvent.seq,
-      data: completionEvent.data,
-    });
+    journal.record({ type: "session.turn_completed", data: { pendingEventId, turnId } },
+      this.turnKey(pendingEventId, "completed"));
+    await journal.flush();
 
     return this.acknowledgeCompletedTurn(sessionId, pendingEventId, pendingFence);
   }
@@ -1036,54 +1151,59 @@ export class SessionRouter {
     pendingEventId: string,
     pendingFence: PendingEventFence,
   ): Promise<boolean> {
-    if (this.pendingEventStore.ackCompletedTurn) {
-      const result = await this.pendingEventStore.ackCompletedTurn(sessionId, pendingEventId, pendingFence);
-      if (result.idleEvent) {
-        this.eventStreamHub.publish(sessionId, {
-          type: result.idleEvent.type, seq: result.idleEvent.seq, data: result.idleEvent.data,
-        });
-      }
-      return result.acknowledged;
+    // The acknowledgement is the attempt's last write under its claim, and it
+    // deletes the claim row. A heartbeat still running after it would renew a
+    // claim that no longer exists and report the lease lost.
+    this.claimHeartbeats.get(sessionId)?.stop();
+    const result = await this.pendingEventStore.ackCompletedTurn(sessionId, pendingEventId, pendingFence);
+    if (result.idleEvent) {
+      this.eventStreamHub.publish(sessionId, {
+        type: result.idleEvent.type, seq: result.idleEvent.seq, data: result.idleEvent.data,
+      });
     }
+    return result.acknowledged;
+  }
 
-    // Compatibility for narrow single-process stores. Durable production stores
-    // commit acknowledgement, empty-queue observation and idle in one transaction.
-    // The executing input is still the queue head until acknowledgement.
-    if ((await this.pendingEventStore.peek(sessionId))?.id !== pendingEventId) return false;
-    if (await this.pendingEventStore.count(sessionId) === 1) {
-      const session = await this.sessionStore.getById(sessionId);
-      if (session && session.status !== "terminated") {
-        if (this.sessionStore.updateStatusIfClaimed) {
-          await this.sessionStore.updateStatusIfClaimed(sessionId, "idle", pendingFence);
-        } else {
-          await this.sessionStore.updateStatus(sessionId, "idle");
-        }
-        const idleEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.status_idle", data: {}, sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEventId, "status_idle"), pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: idleEvent.type, seq: idleEvent.seq, data: idleEvent.data,
-        });
-      }
-    }
-    return this.pendingEventStore.ack(sessionId, pendingEventId, pendingFence);
+  /**
+   * Wait for an Adapter's run() to settle. Once the Turn is aborted it gets at
+   * most the drain timeout, and a stopped attempt is not waited for at all;
+   * undefined means the runtime has not settled (yet).
+   */
+  private awaitAdapter(
+    run: Promise<AdapterOutcome>,
+    signal: AbortSignal,
+    stopped: Promise<void>,
+  ): Promise<AdapterOutcome | undefined> {
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (outcome: AdapterOutcome | undefined) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", drain);
+        resolve(outcome);
+      };
+      const drain = () => {
+        timer = setTimeout(() => finish(undefined), this.interruptedAdapterDrainTimeoutMs);
+      };
+      if (signal.aborted) drain();
+      else signal.addEventListener("abort", drain, { once: true });
+      void stopped.then(() => finish(undefined));
+      void run.then(finish);
+    });
   }
 
   private async drainLoop(
     sessionId: string,
     agentConfig: Agent,
-    signal: AbortSignal,
+    activeRun: ActiveSessionRun,
   ): Promise<void> {
-    let lastOwnedTurnId: string | undefined;
-    while (!signal.aborted) {
+    const signal = activeRun.controller.signal;
+    let lastOwnedTurn: ActiveTurnWriter | undefined;
+    // A Runner handing its Turns over claims no next input (#254).
+    while (!signal.aborted && !this.handingOff) {
       const claim = await this.claimPendingHead(sessionId);
-      if (!claim) {
-        if (await this.pendingEventStore.peek(sessionId)) {
-          this.scheduleClaimRetry(sessionId, agentConfig);
-        }
-        break;
-      }
+      // An empty or owned head ends the drain; handleNewEvent decides at
+      // handoff whether to retry.
+      if (!claim) break;
       this.resetClaimRetry(sessionId);
       const pendingEvent = claim.event;
       const pendingFence = this.fenceFor(claim);
@@ -1096,11 +1216,16 @@ export class SessionRouter {
         break;
       }
 
-      let leaseLost = false;
+      // Set once the attempt no longer owns the Turn: its lease was lost, a
+      // journal write failed or the Session was terminated. It then writes no
+      // terminal event and leaves its input to the next claim (ADR-0020).
+      let stopped = false;
+      // Set when the attempt hands its Turn over (#254): its claim is
+      // released rather than left to expire, so the next claim takes over now.
+      let handedOff = false;
       let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
       let activitySandbox: SandboxSession | undefined;
       let executionSettled = false;
-      let iterationFailed = false;
       let turnId: string | undefined;
       const turnController = new AbortController();
       const forwardOuterAbort = () => {
@@ -1108,44 +1233,92 @@ export class SessionRouter {
       };
       if (signal.aborted) forwardOuterAbort();
       else signal.addEventListener("abort", forwardOuterAbort, { once: true });
-      const stopHeartbeat = this.startClaimHeartbeat(
-        sessionId,
-        claim,
-        turnController,
-        (error) => {
-          leaseLost = true;
-          this.reportDrainError(sessionId, error);
-        },
-      );
+      let markStopped!: () => void;
+      const attemptStopped = new Promise<void>((resolve) => { markStopped = resolve; });
+      // The failure that stopped the attempt, reported once it has ended.
+      let failure: { error: unknown } | undefined;
+      const stopOnFailure = (error: unknown) => {
+        // A write failing after the stop is its consequence, not news.
+        if (stopped) return;
+        failure = { error };
+        stopAttempt(error);
+      };
+      // Every durable write of this attempt goes through its one journal.
+      const attemptWrites: AttemptWrites = {};
+      const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
+      const heartbeat = this.startClaimHeartbeat(sessionId, claim, turnController, stopOnFailure);
+      const stopHeartbeat = heartbeat.stop;
+      // The one stop path of a lost lease, a failed write and termination: the
+      // Adapter loses its write entry and its Turn signal at once. `stopped`
+      // is set before the signal aborts: the fenced executor reads it, so the
+      // cancellation that abort makes Pi send is refused, not delivered.
+      const stopAttempt = (reason: unknown): void => {
+        if (stopped) return;
+        stopped = true;
+        journal.revokeAdapter();
+        stopHeartbeat();
+        turnController.abort(reason);
+        markStopped();
+      };
+      activeRun.stopAttempt = stopAttempt;
+      // At the handoff deadline the attempt is stopped as it stands. What it
+      // runs in the Sandbox keeps running: the stopped attempt's executor
+      // refuses even the cancellation Pi sends as its Turn signal aborts.
+      const detach = (reason: unknown): void => {
+        if (stopped) return;
+        handedOff = true;
+        stopAttempt(reason);
+      };
+      activeRun.detach = detach;
 
       try {
 
-      // Promote: insert user message into canonical event log (correct seq position)
-      const promotedEvent = await this.eventLogStore.append(sessionId, {
+      // Promote: insert user message into canonical event log (correct seq
+      // position). The Turn is named after the seq this assigns, so promotion
+      // is the attempt's first journal write, flushed alone, and the journal
+      // is bound to the Turn once its name is known below.
+      const promotionKey = `pending:${pendingEvent.id}`;
+      journal.record({
         type: pendingEvent.type === "subagent.result" ? "subagent.result_claimed" : pendingEvent.type,
         data: pendingEvent.data,
         sessionThreadId: pendingEvent.sessionThreadId,
-        ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
-        idempotencyKey: `pending:${pendingEvent.id}`,
-        pendingFence,
-      });
+        apiKeyId: pendingEvent.apiKeyId,
+      }, promotionKey);
+      await journal.flush();
+      const promotedEvent = journal.written(promotionKey)!;
 
-      // Read the complete log once after idempotent promotion. On restart, a
-      // completion marker means the durable Turn output already committed. The
-      // acknowledgement must still settle Session idle if the queue empties.
-      // Never rerun the Adapter in that case.
+      // Read the complete log once after idempotent promotion: what earlier
+      // attempts made durable decides how this one proceeds.
       let priorEvents = await this.readAllEvents(sessionId);
-      turnId = `turn_${promotedEvent.seq}_a${claim.generation}`;
-      const waits = await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [];
-      const resumableWaits = waits.filter((wait) => wait.status !== "cancelled");
-      if (resumableWaits.length) turnId = resumableWaits[0].callerTurnId;
-      if (this.turnCompleted(priorEvents, pendingEvent.id)) {
-        await this.reclaimEarlierAttempts(
-          sessionId,
-          promotedEvent.seq,
-          claim.generation,
-          turnId,
-        );
+      const facts: ResumeFacts = {
+        pendingEventId: pendingEvent.id, promotedSeq: promotedEvent.seq,
+        claim: { generation: claim.generation, priorInterrupt: claim.priorInterrupt, previous: claim.previous },
+        events: priorEvents.filter((event) => event.seq > promotedEvent.seq),
+        waits: await this.delegationStore?.listWaits(sessionId, pendingEvent.id) ?? [],
+      };
+      let plan = planResume(facts);
+      turnId = plan.turnId;
+      journal.bindTurn(turnId);
+      // This attempt as a writer of the active-Turn projection: no attempt of
+      // an earlier input, or of an earlier generation of this one, replaces
+      // what it records.
+      const projectionWriter: ActiveTurnWriter = { inputSeq: promotedEvent.seq, generation: claim.generation };
+      // Close the Turn as it stands: its Delta stream goes, its completion
+      // marker is written and its input acknowledged. False once the attempt
+      // lost its claim on the way.
+      const endTurn = async (endedTurnId: string): Promise<boolean> => {
+        await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
+        lastOwnedTurn = projectionWriter;
+        return this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, endedTurnId, pendingFence);
+      };
+      // End the Turn with an error the Router records itself, then close it.
+      const endTurnWithError = (endedTurnId: string, keySegment: string, error: { code: string; message: string }): Promise<boolean> => {
+        this.recordTurnError(journal, pendingEvent.id, endedTurnId, keySegment, error);
+        return endTurn(endedTurnId);
+      };
+      // A completed Turn is never run again. Its acknowledgement must still
+      // settle Session idle if the queue empties.
+      if (plan.kind === "acknowledge") {
         const acknowledged = await this.acknowledgeCompletedTurn(
           sessionId,
           pendingEvent.id,
@@ -1164,8 +1337,11 @@ export class SessionRouter {
       // Child restrictions belong to the Session, including later direct user
       // input that has no DelegationExecution record for this pending event.
       if (claimedSession.delegation) currentAgent = { ...currentAgent, mcpServers: undefined };
-      const waitingConfig = resumableWaits[0]?.checkpoint.config as { model?: string; thinking?: string } | undefined;
-      if (typeof waitingConfig?.model === "string") currentAgent = { ...currentAgent, model: waitingConfig.model };
+      // A Turn keeps the model and thinking its first attempt ran with, so
+      // an edit mid-Turn applies from the next Turn; its prompt, Skills and
+      // MCP servers are the current ones (#253). A Child execution's own
+      // snapshot outranks both.
+      if (plan.kind === "run" && plan.config?.model) currentAgent = { ...currentAgent, model: plan.config.model };
       let delegationExecution: DelegationExecution | null = await this.delegationStore?.getByPendingEventId(pendingEvent.id) ?? null;
       if (delegationExecution && this.delegationStore) {
         currentAgent = { ...currentAgent, mcpServers: undefined,
@@ -1178,167 +1354,105 @@ export class SessionRouter {
           this.maxConcurrentSubagents,
         );
         if (!started) {
-          await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);
+          await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
+          activeRun.waitingForSlot = true;
           return;
         }
         delegationExecution = started;
-        if (isTerminalExecution(started)) {
-          if (started.status === "recovery_required") {
-            await this.repairDanglingToolUses(sessionId, pendingEvent.id, started.turnId ?? turnId,
-              priorEvents.filter((event) => event.seq > promotedEvent.seq), pendingFence);
-            await this.eventLogStore.append(sessionId, {
-              type: "session.error", data: { turnId: started.turnId ?? turnId,
-                error: { code: "recovery_required", message: started.result?.reason } },
-              sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pendingEvent.id}:recovery_required`, pendingFence,
-            });
-          }
-          if (!await this.completeTurn(sessionId, pendingEvent.id, started.turnId ?? turnId, pendingFence)) return;
+        heartbeat.execution = started;
+        // Starting the execution is how this claim learns its state. One that
+        // has not ended changes no plan, unless the parent asked to stop it
+        // before this claim and its lost owner never did; one that has ended
+        // ends the Turn now. A first start has no earlier owner to have missed it.
+        const interruptRequested = claim.previous !== null && !isTerminalExecution(started) &&
+          (await this.delegationStore.listCommands(started.id)).some((command) => command.kind === "interrupt" && command.status !== "not_applied");
+        const executionPlan = planResume({ ...facts, execution: { ...started, interruptRequested } });
+        if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
+          this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
+          await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
+            executionPlan.repairOutcome, executionPlan.error);
+          if (!await endTurn(executionPlan.turnId)) return;
           continue;
         }
+        if (executionPlan.kind !== "acknowledge") plan = executionPlan;
       }
 
-      const attemptEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq && event.type !== "subagent.result");
-      const alreadyIdle = attemptEvents.some((event) => event.type === "session.status_idle");
-      const alreadyTerminal = alreadyIdle || attemptEvents.some((event) =>
-        event.type === "session.error" || event.type === "session.turn_aborted");
-      const partialDurableOutput = attemptEvents.some(
-        (event) => event.type !== "session.status_running",
-      );
-      if (alreadyTerminal || (partialDurableOutput && resumableWaits.length === 0)) {
-        if (alreadyTerminal) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
-        await this.repairDanglingToolUses(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          attemptEvents,
-          pendingFence,
-        );
-        if (!alreadyTerminal) {
-          const recoveryError = {
-            message:
-              "A previous attempt stopped after committing partial output; it was not rerun to avoid mixing attempts.",
-            code: "recovery_partial_turn_aborted",
-          };
-          const errorEvent = await this.eventLogStore.append(sessionId, {
-            type: "session.error",
-            data: { error: recoveryError },
-            sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "recovery_partial_turn_aborted"),
-            pendingFence,
-          });
-          this.eventStreamHub.publish(sessionId, {
-            type: errorEvent.type,
-            seq: errorEvent.seq,
-            data: errorEvent.data,
-          });
+      this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover);
+      if (plan.kind === "complete") {
+        if (plan.cause === "interrupted" && delegationExecution) {
+          // The parent's Interrupt takes effect now, after the takeover marker:
+          // the child's log records it as its lost owner would have.
+          await journal.flush();
+          await this.applyInterruptCommands(sessionId, delegationExecution, pendingFence);
         }
-        await this.reclaimEarlierAttempts(
-          sessionId,
-          promotedEvent.seq,
-          claim.generation,
-          turnId,
-        );
-        if (this.turnStreamStore) {
-          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-          lastOwnedTurnId = turnId;
-        }
-        if (!await this.completeTurn(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          pendingFence,
-        )) return;
+        if (plan.interruptChildren) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
+        await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId, plan.repairs, plan.repairOutcome, plan.error);
+        if (plan.cause === "interrupted") this.recordTurnAborted(journal, pendingEvent.id, turnId);
+        if (!await endTurn(turnId)) return;
         continue;
       }
 
-      // A retry with no durable output is safe. Remove prior transient deltas
-      // first; generation in turnId also prevents browser-side concatenation.
-      await this.reclaimEarlierAttempts(
-        sessionId,
-        promotedEvent.seq,
-        claim.generation,
-        turnId,
-      );
-
-      this.eventStreamHub.publish(sessionId, {
-        type: promotedEvent.type,
-        seq: promotedEvent.seq,
-        data: promotedEvent.data,
-      });
-
       // Record the active turn in Redis (not process memory) so a reconnecting
       // client — possibly on another Host instance — can find and backfill the
-      // in-flight turn's deltas.
+      // in-flight turn's deltas. Earlier attempts of the Turn streamed into the
+      // same stream; each Delta carries its attempt, and consoles keep only the
+      // highest one's.
       if (this.turnStreamStore) {
-        await this.updateActiveTurnProjection(sessionId, { turnId, status: "running" });
-        lastOwnedTurnId = turnId;
+        await this.turnStreamStore.recordActiveTurn(sessionId, { turnId, status: "running", ...projectionWriter });
+        lastOwnedTurn = projectionWriter;
       }
 
       // Set session status to running
-      const runningSession = this.sessionStore.updateStatusIfClaimed
-        ? await this.sessionStore.updateStatusIfClaimed(sessionId, "running", pendingFence)
-        : await this.sessionStore.updateStatus(sessionId, "running");
+      const runningSession = await this.sessionStore.updateStatusIfClaimed(sessionId, "running", pendingFence);
       if (!runningSession || runningSession.status === "terminated") {
         await this.pendingEventStore.clear(sessionId);
         break;
       }
 
-      // Persist + publish session.status_running
-      const runningEvent = await this.eventLogStore.append(sessionId, {
-        type: "session.status_running",
-        data: {},
-        sessionThreadId: "sthr_primary",
-        idempotencyKey: this.turnKey(pendingEvent.id, "status_running"),
-        pendingFence,
-      });
-      this.eventStreamHub.publish(sessionId, {
-        type: runningEvent.type,
-        seq: runningEvent.seq,
-        data: runningEvent.data,
-      });
+      // A takeover answers the calls the lost attempt left without a result
+      // before anything runs; nothing is executed again (ADR-0021).
+      await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId, plan.repairs, "unknown");
+      // Persist + publish session.status_running now: Sandbox preparation
+      // can take seconds, and the Session shows running meanwhile.
+      journal.record({ type: "session.status_running", data: {} },
+        this.turnKey(pendingEvent.id, "status_running"));
+      await journal.flush();
 
       // Ordinary conversations resolve mutable Agent configuration per Turn.
       // A Loop occurrence is different: ADR-0007 makes the Agent snapshot
       // captured in the same dispatch transaction part of that occurrence.
       // Recovery must therefore use the durable Session snapshot even if the
       // Agent changes after commit but before the pending input is claimed.
-      if (leaseLost) return;
+      if (stopped) return;
+      // A Runner handing its Turns over prepares no Sandbox and resumes no
+      // wait for a Turn it would stop at once; the takeover marker is written.
+      if (this.handingOff) { handedOff = true; return; }
+
+      // Existing Agents keep a retired runtime (claude-code, codex); they are
+      // not migrated. Like the managed MCP refusal below, an unsupported
+      // runtime is durable, not transient: record one terminal Turn and
+      // acknowledge its input, or every claim retry and recovery scan would
+      // run it again.
+      const adapter = this.resolveAdapter(currentAgent.runtime);
+      if (!adapter) {
+        if (!await endTurnWithError(turnId, "unsupported_runtime", {
+          code: "unsupported_runtime",
+          message: `Agent runtime "${currentAgent.runtime}" is not supported`,
+        })) return;
+        continue;
+      }
 
       // Fail-loud (issue #54): a sandboxed Agent with no provisionable manager
       // must NOT run — otherwise the adapter falls back to built-in fs/bash tools
       // that write to the server pod filesystem. Emit a session.error, mark the
-      // turn handled (it was already dequeued), and skip the adapter for this turn.
+      // turn handled (it was already claimed), and skip the adapter for this turn.
       if (this.isSandboxedButUnprovisionable(currentAgent)) {
         const error = {
           message:
             "Agent is sandboxed but no sandbox manager is available (SANDBOX_ENABLED / E2B config missing)",
           code: "sandbox_unavailable",
         };
-        const errorEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_unavailable"),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: errorEvent.type,
-          seq: errorEvent.seq,
-          data: errorEvent.data,
-        });
-        // Mirror the normal turn-end housekeeping so the transient stream/active
-        // turn record don't leak, then move on to the next pending event (the
-        // drain loop falls through to the idle transition when the queue empties).
-        if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(sessionId, turnId);
-          await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-        }
-        if (!await this.completeTurn(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          pendingFence,
-        )) return;
+        if (!await endTurnWithError(turnId, "sandbox_unavailable", error)) return;
         continue;
       }
 
@@ -1358,13 +1472,25 @@ export class SessionRouter {
       // turn never touches it, so nothing is created. Needs the Session record
       // for its tenant/workspace binding.
       const session = await this.sessionStore.getById(sessionId);
-      if (leaseLost) return;
+      if (stopped) return;
       if (!session) {
         throw new Error(`Cannot run turn: session ${sessionId} not found`);
       }
       const delegationRun: DelegationRun = { session, turnId, fence: pendingFence,
         signal: turnController.signal, apiKeyId: pendingEvent.apiKeyId,
-        effectiveConfig: { model: currentAgent.model } };
+        effectiveConfig: { model: currentAgent.model }, journal };
+      attemptWrites.delegationRun = delegationRun;
+      // Sandbox commands are fenced by ownership of this Turn, not by its
+      // signal. An Interrupt aborts the Turn while this attempt still owns it,
+      // and the Adapter must still be able to stop its own running tool (Pi
+      // sends SIGTERM to the tool wrapper through this executor). A stopped
+      // attempt owns nothing: it sends the Sandbox no command for the Turn, not
+      // even a cancellation. Checked again after the claim read, so a stop that
+      // lands during it still wins.
+      const assertExecutionOwner = async () => {
+        if (!stopped) await this.delegations!.assertClaim(delegationRun);
+        if (stopped) throw new PendingEventClaimLostError(sessionId, pendingFence.eventId, pendingFence.ownerId, pendingFence.generation);
+      };
       await this.delegationStore?.acquireResourceUse(sessionId,
         session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
       executionSettled = true; // No runtime has started, including preparation failures.
@@ -1376,41 +1502,17 @@ export class SessionRouter {
       let sandbox: SandboxSession | undefined;
       try {
           equippedSkills = await this.equippedSkills(currentAgent);
-          if (leaseLost) return;
+          if (stopped) return;
           sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
           activitySandbox = sandbox;
           await sandbox?.prepare(this.skillProjections(session, equippedSkills));
-          if (leaseLost) return;
+          if (stopped) return;
         } catch (error) {
           const refreshError = {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
             code: "sandbox_prepare_failed",
           };
-          const stored = await this.eventLogStore.append(sessionId, {
-            type: "session.error",
-            data: { error: refreshError },
-            sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "sandbox_prepare_failed"),
-            pendingFence,
-          });
-          this.eventStreamHub.publish(sessionId, {
-            type: stored.type,
-            seq: stored.seq,
-            data: stored.data,
-          });
-          if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-            await this.updateActiveTurnProjection(sessionId, {
-              turnId,
-              status: "idle",
-            });
-          }
-          if (!await this.completeTurn(
-            sessionId,
-            pendingEvent.id,
-            turnId,
-            pendingFence,
-          )) return;
+          if (!await endTurnWithError(turnId, "sandbox_prepare_failed", refreshError)) return;
           continue;
       }
 
@@ -1420,38 +1522,29 @@ export class SessionRouter {
       // adapter is pointed at their in-sandbox `/skills/<skill-name>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
       if (sandbox) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
-      if (leaseLost) return;
+      if (stopped) return;
       const skillPaths = equippedSkills.map(({ descriptor }) => `/skills/${descriptor.name}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
 
       let adapterInput: AdapterInput;
       try {
-        if (resumableWaits.length && this.delegations) {
-          await this.delegations.recoverWaits(delegationRun, resumableWaits);
-          priorEvents = await this.readAllEvents(sessionId);
-          const turnEvents = priorEvents.filter((event) => event.seq > promotedEvent.seq).flatMap(event => presentEvent(event));
-          const completedTools = new Set(turnEvents.filter((event) => event.type === "agent.tool_result" || event.type === "agent.mcp_tool_result")
-            .map((event) => (event.data as { toolUseId?: string }).toolUseId));
-          if (turnEvents.some((event) => (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
-            !completedTools.has((event.data as { toolUseId?: string }).toolUseId))) {
-            await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId, priorEvents.filter(event => event.seq > promotedEvent.seq), pendingFence);
-            await this.eventLogStore.append(sessionId, {
-              type: "session.error", data: { turnId, error: { code: "recovery_required",
-                message: "A non-wait tool has an uncertain outcome. Inspect its external effects before continuing in a new Turn." } },
-              sessionThreadId: "sthr_primary", idempotencyKey: `pending:${pendingEvent.id}:unsafe_continuation`, pendingFence,
-            });
-            if (!await this.completeTurn(sessionId, pendingEvent.id, turnId, pendingFence)) return;
-            continue;
-          }
+        if (plan.waits.length && this.delegations) {
+          await this.delegations.recoverWaits(delegationRun, plan.waits);
+          // Consuming the last result records the running transition, written
+          // by the next flush: the history handed to the Adapter includes it.
+          await journal.flush();
         }
+        // The Adapter continues from the history as it is now, with the
+        // results this attempt wrote for the calls it found dangling.
+        if (plan.waits.length || plan.repairs.length) priorEvents = await this.readAllEvents(sessionId);
         adapterInput = this.buildAdapterInput(
           sessionId,
           turnId,
+          journal.adapter,
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox && this.delegations ? fencedExecutor(sandbox,
-            () => this.delegations!.assertOwner(delegationRun), turnController.signal) : sandbox,
+          sandbox && this.delegations ? fencedExecutor(sandbox, assertExecutionOwner) : sandbox,
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,
@@ -1473,30 +1566,29 @@ export class SessionRouter {
               : {}),
           };
         }
-        if (resumableWaits.length) {
-          adapterInput.history = this.adapterHistory(priorEvents);
-          adapterInput.continuation = { toolResults: [] };
-          adapterInput.execution = { ...adapterInput.execution,
-            completedModelSteps: priorEvents.filter((event) => event.type === "span.model_request_start" &&
-              (event.data as { turnId?: string }).turnId === turnId).length };
-          if (waitingConfig?.thinking) adapterInput.execution.thinking = waitingConfig.thinking;
-        }
+        // A continued Turn picks up after what it already committed: its
+        // model steps and its output blocks.
+        if (plan.start === "continue") adapterInput.resume = plan.progress;
+        if (plan.config?.thinking) adapterInput.execution = { ...adapterInput.execution,
+          thinking: adapterInput.execution?.thinking ?? plan.config.thinking };
         if (this.delegations) adapterInput.execution = { ...adapterInput.execution,
           onResolved: async (config) => {
             await this.delegations!.assertOwner(delegationRun);
             delegationRun.effectiveConfig = { ...config };
-            if (delegationExecution) await this.delegationStore!.updateEffectiveConfig(delegationExecution.id, pendingFence, config);
+            // The attempt that started the Turn recorded its configuration on
+            // the execution before it named the Turn's model and thinking. A
+            // later attempt runs with those (#253): recording them again would
+            // relabel the pinned thinking as an override.
+            if (delegationExecution && !plan.config) await this.delegationStore!.updateEffectiveConfig(delegationExecution.id, pendingFence, config);
           },
         };
       } catch (error) {
-        if (turnController.signal.aborted && !leaseLost && this.delegations) {
-          await this.delegations.interruptChildren(session, turnId, pendingFence);
-          const interruptedEvents = await this.readAllEvents(sessionId);
-          await this.repairDanglingToolUses(sessionId, pendingEvent.id, turnId,
-            interruptedEvents.filter((event) => event.seq > promotedEvent.seq), pendingFence);
-          await this.eventLogStore.append(sessionId, { type: "session.turn_aborted", data: { turnId },
-            sessionThreadId: "sthr_primary", idempotencyKey: this.turnKey(pendingEvent.id, "turn_aborted"), pendingFence });
-          if (!await this.completeTurn(sessionId, pendingEvent.id, turnId, pendingFence)) return;
+        if (turnController.signal.aborted && !stopped && this.delegations) {
+          // The repairs read the log: first write what preparing the input
+          // recorded, such as a resumed wait's transitions.
+          await journal.flush();
+          await this.interruptTurn(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence);
+          if (!await endTurn(turnId)) return;
           continue;
         }
         if (!(error instanceof ManagedMcpResolutionError)) throw error;
@@ -1507,424 +1599,83 @@ export class SessionRouter {
           message: "A managed MCP connection is unavailable for this Tenant",
           code: "managed_mcp_unavailable",
         };
-        const stored = await this.eventLogStore.append(sessionId, {
-          type: "session.error",
-          data: { error: managedMcpError },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(
-            pendingEvent.id,
-            "managed_mcp_unavailable",
-          ),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: stored.type,
-          seq: stored.seq,
-          data: stored.data,
-        });
-        if (this.turnStreamStore) {
-          await this.turnStreamStore.reclaim(sessionId, turnId);
-          await this.updateActiveTurnProjection(sessionId, {
-            turnId,
-            status: "idle",
-          });
-        }
-        if (!await this.completeTurn(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          pendingFence,
-        )) return;
+        if (!await endTurnWithError(turnId, "managed_mcp_unavailable", managedMcpError)) return;
         continue;
       }
 
-      // The Adapter is a pure translator: it runs directly and routes any tool
-      // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
-      // There is no separate sandbox orchestrator — the sandbox lives behind the
-      // session and is invisible to the router and the adapter alike.
-      const adapter = this.resolveAdapter(currentAgent.runtime);
-      executionSettled = false;
-      const events = adapter.run(adapterInput);
-      const eventIterator = events[Symbol.asyncIterator]();
-
-      // blockIndex increments on each stream_start, aligning a turn's deltas to
-      // the full Event they roll up into (shared turnId + blockIndex).
-      let blockIndex = resumableWaits.length
-        ? Math.max(-1, ...priorEvents.flatMap(event => presentEvent(event)).filter((event) => (event.data as { turnId?: string })?.turnId === turnId)
-          .map((event) => (event.data as { blockIndex?: number })?.blockIndex ?? -1)) : -1;
-      let durableEventIndex = 0;
-      const streamBlockBase = blockIndex + 1;
-      const pendingStreamBlocks: PendingStreamBlock[] = [];
-      // The Complete Events this attempt persisted, in order. Only the Adapter
-      // knows what it produced, so an Interrupt's cleanup (dangling tool_use
-      // repair) reads this instead of re-querying the log.
-      const attemptStoredEvents: StoredEvent[] = [];
-
-      const alignCompleteEvent = (event: { type: string; toolUseId?: unknown }): { type: string; toolUseId?: unknown; turnId: string; blockIndex?: number } => {
-        const matchesCompleteEvent = (block: PendingStreamBlock): boolean => {
-          if (!block.completeTypes.has(event.type)) return false;
-          if (block.toolUseId === undefined) return true;
-          if (event.type !== "agent.tool_use" && event.type !== "agent.mcp_tool_use") {
-            return false;
-          }
-          return event.toolUseId === block.toolUseId;
-        };
-        // Prefer the latest matching start. A runtime may emit an empty stream
-        // lifecycle with no Complete Event; an older unmatched start must never
-        // steal the next real block's completion.
-        let pendingBlockIndex = -1;
-        for (let i = pendingStreamBlocks.length - 1; i >= 0; i--) {
-          if (matchesCompleteEvent(pendingStreamBlocks[i])) {
-            pendingBlockIndex = i;
-            break;
-          }
-        }
-        const pendingBlock = pendingBlockIndex === -1
-          ? undefined
-          : pendingStreamBlocks.splice(pendingBlockIndex, 1)[0];
-        return pendingBlock
-          ? { ...event, turnId: turnId!, blockIndex: pendingBlock.blockIndex }
-          : { ...event, turnId: turnId! };
-      };
-
-      const persistCompleteEvent = async (event: SessionEvent): Promise<void> => {
-        // Session lifecycle belongs to the durable input, not Pi's temporary prompt.
-        if (this.delegations && (event.type === "session.status_idle" || event.type === "session.status_running")) return;
-        let alignedEvent = { ...event, ...alignCompleteEvent(event) } as SessionEvent;
-        if (event.type === "agent.context_entry" && event.presentation) {
-          const displays = presentContextData(event.type, event);
-          const blocks = event.presentation.blocks.map(block => ({ ...block }));
-          // A native assistant bundles several completions. Match backwards,
-          // preserving the same latest-start rule used for individual events.
-          for (let i = blocks.length - 1; i >= 0; i--) {
-            if (blocks[i].streamIndex !== undefined) {
-              blocks[i].blockIndex = streamBlockBase + blocks[i].streamIndex!;
-              const pending = pendingStreamBlocks.findIndex(block => block.blockIndex === blocks[i].blockIndex);
-              if (pending >= 0) pendingStreamBlocks.splice(pending, 1);
-              continue;
-            }
-            const aligned = alignCompleteEvent({ ...displays[i].data, type: displays[i].type });
-            if (aligned.blockIndex !== undefined) blocks[i].blockIndex = aligned.blockIndex;
-          }
-          alignedEvent = { ...event, turnId: turnId!, presentation: { version: 1, blocks } };
-        }
-        const completeEvent = delegationExecution ? { ...alignedEvent,
+      // Every Adapter event is stamped with its Turn and Child Session caller
+      // and keyed by its id, so the journal writes and publishes it once and
+      // no attempt's event takes another's key. The Adapter has given each
+      // its final blockIndex (ADR-0020).
+      const durableForms = new Map<string, { event: JournalEvent; key: string }>();
+      attemptWrites.fromAdapter = (event) => {
+        const known = durableForms.get(event.id);
+        if (known) return known;
+        const completeEvent = delegationExecution ? { ...event, turnId,
           callerSessionId: delegationExecution.callerSessionId,
           callerTurnId: delegationExecution.callerTurnId,
           callerToolUseId: delegationExecution.callerToolUseId,
           executionId: delegationExecution.id,
-        } : alignedEvent;
-        const consumed = await this.delegations?.persistToolResult(delegationRun, completeEvent);
-        const stored = consumed ?? await this.eventLogStore.append(sessionId, {
-          type: completeEvent.type,
-          data: completeEvent,
-          sessionThreadId: "sthr_primary",
-          ...(pendingEvent.apiKeyId ? { apiKeyId: pendingEvent.apiKeyId } : {}),
-          idempotencyKey: this.turnKey(
-            pendingEvent.id,
-            this.delegations || event.type === "agent.context_start" || event.type === "agent.context_entry" || event.type === "agent.context_usage" || event.type === "agent.compaction"
-              ? `event:${event.id}` : `event:${durableEventIndex++}`,
-          ),
-          pendingFence,
-        });
-        attemptStoredEvents.push(stored);
-        this.eventStreamHub.publish(sessionId, {
-          type: stored.type,
-          seq: stored.seq,
-          data: stored.data,
-        });
+        } : { ...event, turnId };
+        const durable = {
+          event: { type: completeEvent.type, data: completeEvent, apiKeyId: pendingEvent.apiKeyId },
+          key: this.turnKey(pendingEvent.id, `event:${event.id}`),
+        };
+        durableForms.set(event.id, durable);
+        return durable;
       };
-
-      // The SDK must await this before using a newly compacted context. Writes
-      // use the same fence and event IDs as ordinary iteration and checkpoints.
-      adapterInput.persistContext = async (contextEvents) => {
-        for (const event of contextEvents) {
-          if (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type === "compaction") {
-            turnController.signal.throwIfAborted();
-          }
-          await persistCompleteEvent(event);
-        }
-      };
-
-      try {
-        type IteratorOutcome =
-          | { kind: "next"; result: IteratorResult<SessionEvent> }
-          | { kind: "error"; error: unknown };
-        type IteratorWaitOutcome =
-          | IteratorOutcome
-          | { kind: "aborted" }
-          | { kind: "timeout" };
-        const activeRunOwnsSignal = () => {
-          const activeRun = this.activeSessions.get(sessionId);
-          return activeRun?.controller.signal === signal && !activeRun.terminating;
-        };
-        const isUserInterruptDrain = () =>
-          !leaseLost &&
-          signal.aborted &&
-          activeRunOwnsSignal() &&
-          signal.reason instanceof DOMException &&
-          signal.reason.name === "AbortError" &&
-          signal.reason.message === SESSION_INTERRUPTED_MESSAGE;
-
-        let abortObservedAt = turnController.signal.aborted ? Date.now() : undefined;
-        const nextOutcome = (): Promise<IteratorOutcome> => {
-          try {
-            return Promise.resolve(eventIterator.next()).then(
-              (result): IteratorOutcome => ({ kind: "next", result }),
-              (error): IteratorOutcome => ({ kind: "error", error }),
-            );
-          } catch (error) {
-            return Promise.resolve({ kind: "error", error });
-          }
-        };
-        const waitForNextOrAbort = (next: Promise<IteratorOutcome>): Promise<IteratorWaitOutcome> => {
-          if (turnController.signal.aborted) {
-            abortObservedAt ??= Date.now();
-            return Promise.resolve({ kind: "aborted" });
-          }
-          return new Promise<IteratorWaitOutcome>((resolve) => {
-            let settled = false;
-            const finish = (outcome: IteratorWaitOutcome) => {
-              if (settled) return;
-              settled = true;
-              turnController.signal.removeEventListener("abort", onAbort);
-              resolve(outcome);
-            };
-            const onAbort = () => {
-              abortObservedAt ??= Date.now();
-              finish({ kind: "aborted" });
-            };
-            turnController.signal.addEventListener("abort", onAbort, { once: true });
-            void next.then(finish);
-          });
-        };
-        const waitForNextDuringDrain = (
-          next: Promise<IteratorOutcome>,
-        ): Promise<IteratorWaitOutcome> => {
-          const remainingMs = this.interruptedAdapterDrainTimeoutMs -
-            (Date.now() - (abortObservedAt ?? Date.now()));
-          if (remainingMs <= 0) return Promise.resolve({ kind: "timeout" });
-          return new Promise<IteratorWaitOutcome>((resolve) => {
-            let settled = false;
-            const finish = (outcome: IteratorWaitOutcome) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timeout);
-              resolve(outcome);
-            };
-            const timeout = setTimeout(() => finish({ kind: "timeout" }), remainingMs);
-            void next.then(finish);
-          });
-        };
-
-        let pendingNext: Promise<IteratorOutcome> | undefined;
-        let postAbortEventsSeen = 0;
-        let abandonIterator = false;
-        try {
-          while (true) {
-            pendingNext ??= nextOutcome();
-
-            let outcome: IteratorWaitOutcome;
-            if (!turnController.signal.aborted) {
-              outcome = await waitForNextOrAbort(pendingNext);
-              if (outcome.kind === "aborted") {
-                // Keep the already-issued next() in flight. A user interrupt may
-                // let it resolve with final provider accounting; termination and
-                // lease loss are not allowed to persist anything from this run.
-                if (!isUserInterruptDrain()) {
-                  abandonIterator = true;
-                  break;
-                }
-                continue;
-              }
-            } else {
-              if (!isUserInterruptDrain()) {
-                abandonIterator = true;
-                break;
-              }
-              if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
-                abandonIterator = true;
-                break;
-              }
-              outcome = await waitForNextDuringDrain(pendingNext);
-              if (outcome.kind === "timeout") {
-                abandonIterator = true;
-                break;
-              }
-            }
-
-            pendingNext = undefined;
-            if (outcome.kind === "error") {
-              executionSettled = true; // Runtime rejected; remote exit evidence is checked separately.
-              throw outcome.error;
-            }
-            if (outcome.kind !== "next" || outcome.result.done) {
-              executionSettled = outcome.kind === 'next' && Boolean(outcome.result.done);
-              break;
-            }
-            const event = outcome.result.value;
-
-            if (turnController.signal.aborted) {
-              if (!isUserInterruptDrain()) {
-                abandonIterator = true;
-                break;
-              }
-              postAbortEventsSeen++;
-              if (event.type === "span.model_request_end" ||
-                  (event.type === "agent.context_entry" && (event.entry as { type?: string })?.type !== "compaction") ||
-                  (event.type === "agent.message" && event.stopReason === "aborted")) {
-                // interrupt() stops the regular heartbeat. Revalidate and extend
-                // this exact generation immediately before the accounting write;
-                // pendingFence then enforces the same ownership atomically in PG.
-                const accountingLease = await this.renewPendingClaim(sessionId, claim);
-                if (!accountingLease) {
-                  leaseLost = true;
-                  turnController.abort(new PendingLeaseLostError());
-                  abandonIterator = true;
-                  break;
-                }
-                // terminateSession may race the renewal after a prior interrupt.
-                // Its mutable active-run flag revokes drain permission even though
-                // an already-aborted signal's original reason cannot be replaced.
-                if (!isUserInterruptDrain()) {
-                  abandonIterator = true;
-                  break;
-                }
-                await persistCompleteEvent(event);
-              }
-              if (postAbortEventsSeen >= this.interruptedAdapterDrainMaxEvents) {
-                abandonIterator = true;
-                break;
-              }
-              continue;
-            }
-
-            if (isStreamEvent(event)) {
-              if (STREAM_START_TYPES.has(event.type)) {
-                blockIndex++;
-                pendingStreamBlocks.push({
-                  blockIndex,
-                  completeTypes: COMPLETE_TYPES_BY_STREAM_START[event.type],
-                  toolUseId:
-                    event.type === "agent.tool_use_input_stream_start"
-                      ? event.toolUseId
-                      : undefined,
-                });
-              }
-              const currentBlock = blockIndex < 0 ? 0 : blockIndex;
-
-              // Transient: token-level deltas go to the per-turn Redis stream for
-              // reconnect backfill (never to PostgreSQL), tagged with turnId +
-              // blockIndex. The returned Redis entry id lets a reconnecting client
-              // dedup live vs. backfilled deltas exactly.
-              let deltaId: string | undefined;
-              if (this.turnStreamStore) {
-                deltaId = await this.turnStreamStore.appendDelta(sessionId, {
-                  turnId,
-                  blockIndex: currentBlock,
-                  type: event.type,
-                  data: event,
-                });
-              }
-
-              // Live: publish to in-process subscribers, carrying the same
-              // turnId + blockIndex (and the Redis entry id) so live and
-              // backfilled frames are identical and can be de-overlapped on
-              // reconnect.
-              this.eventStreamHub.publishChunk(sessionId, {
-                type: event.type,
-                data: event,
-                turnId,
-                blockIndex: currentBlock,
-                deltaId,
-              });
-            } else {
-              await persistCompleteEvent(event);
-            }
-          }
-        } catch (error) {
-          if (!executionSettled) {
-            // A fenced write can fail before the heartbeat observes revocation.
-            // Stop the runtime and observe its exit just as for an explicit abort.
-            iterationFailed = !turnController.signal.aborted;
-            abandonIterator = true;
-            turnController.abort(error);
-          }
-          throw error;
-        } finally {
-          if (abandonIterator) {
-            // AsyncIterator.return() is advisory: a non-compliant Adapter may
-            // leave it queued behind the same hung next(). Never await it, and
-            // absorb either a synchronous throw or eventual rejection.
-            const closeAbandonedIterator = () => {
-              try {
-                const closeIterator = eventIterator.return;
-                if (closeIterator) {
-                  void Promise.resolve(closeIterator.call(eventIterator)).catch(() => {});
-                }
-              } catch {
-                // Best-effort closure only; Router completion remains bounded.
-              }
-            };
-            if (sandboxActivity) {
-              const activity = sandboxActivity;
-              // Pi can emit final accounting before its natural end. Observe
-              // that end without publishing revoked output or blocking cleanup.
-              // Calling return() first would conceal the settlement evidence.
-              void (async () => {
-                let next = pendingNext;
-                for (let seen = 0; seen < this.interruptedAdapterDrainMaxEvents; seen++) {
-                  const outcome = await (next ?? nextOutcome());
-                  next = undefined;
-                  if (outcome.kind === 'error' || outcome.result.done) {
-                    if (activitySandbox?.executionSettled?.() !== false) {
-                      await this.finishSettledActivity(activity);
-                    }
-                    return;
-                  }
-                }
-                // Unknown execution does not trigger idle; the platform retains its finite deadline.
-              })().catch(error => this.reportDrainError(sessionId, error))
-                .finally(closeAbandonedIterator);
-            } else {
-              closeAbandonedIterator();
-            }
-          }
-        }
-      } catch (err) {
-        if (leaseLost || err instanceof PendingEventClaimLostError) {
-          if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-          }
-          return;
-        }
-        if (turnController.signal.aborted && !iterationFailed) {
-          if (this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-          }
-        } else {
-          const errorEvent = await this.eventLogStore.append(sessionId, {
-            type: "session.error",
-            data: { error: { message: String(err), code: "adapter_error" } },
-            sessionThreadId: "sthr_primary",
-            idempotencyKey: this.turnKey(pendingEvent.id, "adapter_error"),
-            pendingFence,
-          });
-          this.eventStreamHub.publish(sessionId, {
-            type: errorEvent.type,
-            seq: errorEvent.seq,
-            data: errorEvent.data,
-          });
-        }
+      // The Adapter is a pure translator: it runs directly and routes any tool
+      // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
+      // There is no separate sandbox orchestrator — the sandbox lives behind the
+      // session and is invisible to the router and the adapter alike.
+      if (stopped) return;
+      if (this.handingOff) { handedOff = true; return; }
+      executionSettled = false;
+      const run = (async () => adapter.run(adapterInput))().then(
+        (result): AdapterOutcome => ({ result }),
+        (error: unknown): AdapterOutcome => ({ error }),
+      );
+      const outcome = await this.awaitAdapter(run, turnController.signal, attemptStopped);
+      // However the attempt ends, the Adapter loses its write entry before any
+      // closing event: what it recorded so far is written by the next flush,
+      // anything later is dropped (ADR-0020).
+      journal.revokeAdapter();
+      if (outcome) {
+        executionSettled = true;
+      } else if (sandboxActivity && !handedOff) {
+        // An expired lease or a bounded Interrupt wait is not proof that the
+        // runtime ended. Observe its natural end without blocking the Session.
+        // A Turn detached at the handoff deadline is not watched: this Runner
+        // is exiting, and the next owner's admitted generation supersedes the
+        // abandoned activity (ADR-0019).
+        const activity = sandboxActivity;
+        void run.then(async () => {
+          if (activitySandbox?.executionSettled?.() !== false) await this.finishSettledActivity(activity);
+        }).catch((error) => this.reportDrainError(sessionId, error));
+      }
+      // A stopped attempt leaves the Turn, and the Delta stream all its
+      // attempts share, to the attempt that continues it.
+      if (stopped) return;
+      await journal.flush();
+      // An Adapter stops before the Turn finishes only at the Host's request,
+      // a handoff (#254): the Turn goes to the next claim as it stands.
+      if (outcome && "result" in outcome && outcome.result === "stopped") { handedOff = true; return; }
+      const interrupted = turnController.signal.aborted;
+      // A rejection after an abort is how the abort ended the run, not a failure.
+      const failure = outcome && "error" in outcome && !interrupted ? outcome : undefined;
+      if (failure) {
+        // Signal anything the failed runtime left behind, as an abort would.
+        turnController.abort(failure.error);
+        this.recordTurnError(journal, pendingEvent.id, turnId, "adapter_error", { message: String(failure.error), code: "adapter_error" });
+        await journal.flush();
       }
 
-      if (leaseLost) return;
-
       // A temporary Adapter return cannot finish a Turn that still owns a
-      // durable wait. Reclaim the same input and continue from its checkpoint.
-      if (!turnController.signal.aborted && this.delegationStore &&
+      // durable wait. Reclaim the same input and continue from the event log.
+      if (!interrupted && !failure && this.delegationStore &&
         (await this.delegationStore.listWaits(sessionId, pendingEvent.id)).some((wait) => wait.status === "waiting")) {
-        await this.pendingEventStore.releaseClaim?.(sessionId, pendingEvent.id, pendingFence);
+        await journal.flush();
+        await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
         return;
       }
 
@@ -1934,77 +1685,39 @@ export class SessionRouter {
       // those orphans with the same repair the restart path uses, and record the
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
-      if (turnController.signal.aborted && !iterationFailed) {
-        await this.delegations?.interruptChildren(session, turnId, pendingFence);
-        await this.repairDanglingToolUses(
-          sessionId,
-          pendingEvent.id,
-          turnId,
-          attemptStoredEvents,
-          pendingFence,
-        );
-        const abortedEvent = await this.eventLogStore.append(sessionId, {
-          type: "session.turn_aborted",
-          data: { turnId },
-          sessionThreadId: "sthr_primary",
-          idempotencyKey: this.turnKey(pendingEvent.id, "turn_aborted"),
-          pendingFence,
-        });
-        this.eventStreamHub.publish(sessionId, {
-          type: abortedEvent.type,
-          seq: abortedEvent.seq,
-          data: abortedEvent.data,
-        });
+      if (interrupted) {
+        await this.interruptTurn(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence);
+        await journal.flush();
       }
 
       // Fence the availability check and its optional durable diagnostic.
       const storageCheckLease = await this.renewPendingClaim(sessionId, claim);
-      if (!storageCheckLease) {
-        leaseLost = true;
-        turnController.abort(new PendingLeaseLostError());
-        if (this.turnStreamStore) await this.turnStreamStore.reclaim(sessionId, turnId);
+      if (!storageCheckLease.renewed) {
+        stopAttempt(new PendingLeaseLostError());
         return;
       }
 
       if (sandbox) {
-        await this.checkWorkspace(sessionId, sandbox,
-          this.turnKey(pendingEvent.id, "workspace_storage_check"), pendingFence);
+        await this.checkWorkspace(journal, sandbox, pendingEvent.id, turnId);
       }
 
       // Fence again before changing global Turn state after the storage check.
       const completionLease = await this.renewPendingClaim(sessionId, claim);
-      if (!completionLease) {
-        leaseLost = true;
-        turnController.abort(new PendingLeaseLostError());
+      if (!completionLease.renewed) {
+        stopAttempt(new PendingLeaseLostError());
         return;
       }
 
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
-      // the turn idle. This runs on normal completion and on an in-turn
-      // interrupt (the for-loop `break` falls through to here).
-      if (this.turnStreamStore) {
-        await this.turnStreamStore.reclaim(sessionId, turnId);
-        await this.updateActiveTurnProjection(sessionId, { turnId, status: "idle" });
-      }
-
-      if (!await this.completeTurn(
-        sessionId,
-        pendingEvent.id,
-        turnId,
-        pendingFence,
-      )) return;
+      // the turn idle. This runs on normal completion and after an Interrupt.
+      if (!await endTurn(turnId)) return;
       } catch (error) {
-        if (leaseLost || error instanceof PendingEventClaimLostError) {
-          if (turnId && this.turnStreamStore) {
-            await this.turnStreamStore.reclaim(sessionId, turnId);
-          }
-          return;
-        }
+        if (stopped || error instanceof PendingEventClaimLostError) return;
         throw error;
       } finally {
-        // A completed history marker, expired lease, bounded Interrupt drain or
-        // advisory iterator.return() is not proof of actual runtime settlement.
+        // A completed history marker, expired lease or bounded Interrupt wait
+        // is not proof of actual runtime settlement.
         try {
           if (sandboxActivity && executionSettled &&
             activitySandbox?.executionSettled?.() !== false) {
@@ -2015,6 +1728,12 @@ export class SessionRouter {
         } finally {
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);
+          if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
+          if (activeRun.detach === detach) activeRun.detach = undefined;
+          if (failure) await this.reportAttemptFailure(sessionId, failure.error);
+          // Released, not left to expire: the next claim learns the Turn was
+          // handed over, which no takeover limit counts, and need not wait.
+          if (handedOff) await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);
         }
       }
     }
@@ -2022,8 +1741,8 @@ export class SessionRouter {
     // Every handled Turn persisted its completion before acknowledgement. The
     // last acknowledgement committed Session idle atomically with queue removal.
     // A failed claim alone is never evidence of idle: another Host may own it.
-    if (this.turnStreamStore && lastOwnedTurnId) {
-      await this.clearActiveTurnFenced(sessionId, lastOwnedTurnId);
+    if (this.turnStreamStore && lastOwnedTurn) {
+      await this.turnStreamStore.clearActiveTurn(sessionId, lastOwnedTurn);
     }
 
     // The session's sandbox (if any was created) is intentionally kept across
@@ -2050,8 +1769,9 @@ export class SessionRouter {
     const all: StoredEvent[] = [];
     let afterSeq = 0;
     for (;;) {
+      // Each claim reads the whole log: large pages keep that a few statements.
       const { data, hasMore } = await this.eventLogStore.getEvents(sessionId, {
-        afterSeq,
+        afterSeq, limit: 1000,
       });
       all.push(...data);
       if (!hasMore || data.length === 0) break;
@@ -2063,6 +1783,7 @@ export class SessionRouter {
   private buildAdapterInput(
     sessionId: string,
     turnId: string,
+    journal: TurnJournalPort,
     promotedEvent: StoredEvent,
     agentConfig: Agent,
     priorEvents: StoredEvent[],
@@ -2090,12 +1811,16 @@ export class SessionRouter {
       message.content = [{ type: "text", text: JSON.stringify(eventData) }];
     } else if (promotedEvent.type === "delegation.input") message.source = "delegation";
 
-    // History: all events before the current promoted event
-    const history = this.adapterHistory(priorEvents.filter((e) => e.seq < promotedEvent.seq));
+    // History: everything committed but the input itself, which the Adapter
+    // is handed as `message`. A Turn earlier attempts started keeps what they
+    // committed after the input: its native chain, and the results written
+    // for calls they left without one.
+    const history = this.adapterHistory(priorEvents.filter((e) => e.seq !== promotedEvent.seq));
 
     return {
       sessionId,
       turnId,
+      journal,
       inputEventId: `${sessionId}:${promotedEvent.seq}`,
       message,
       agent: {
@@ -2127,6 +1852,8 @@ export class SessionRouter {
       // The turn's abort signal (issue #84): the adapter wires it to its
       // runtime's native cancel so a user interrupt can end a hung turn.
       signal,
+      // A handoff stops the Turn before its next model request (#254).
+      stopRequest: this.handoff.signal,
     };
   }
 

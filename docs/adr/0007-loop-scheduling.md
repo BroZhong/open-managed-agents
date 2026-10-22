@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. #234 amends §2: the scheduler scans retained input only after a tick
+that dispatched or failed; a Runner's five-second pending scan (ADR-0018)
+covers the rest.
 
 ## Context
 
@@ -47,8 +49,8 @@ it re-reads the tenant-matching Agent and, in the same transaction:
 The transaction commits before the scheduler asks Session Router to promote the
 pending input. A crash before commit leaves no partial occurrence and no cadence
 advance. A crash after commit, or an ambiguous client error after the commit,
-leaves a durable pending input that startup recovery or the scheduler's
-every-tick recovery scan can claim. Multiple Hosts skip one another's locked
+leaves a durable pending input that the scheduler's recovery scan after that
+tick, startup recovery or a Runner's pending scan can claim. Multiple Hosts skip one another's locked
 rows, so one due state cannot create competing Sessions. If an Agent was deleted,
 its soft-linked Loop is disabled under the same row lock instead of failing every
 later poll.

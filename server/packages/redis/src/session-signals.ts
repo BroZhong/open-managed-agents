@@ -1,10 +1,17 @@
 import type { RedisClient } from "./index.js";
 
-/** Ephemeral hints only. No pending payloads, claims or durable history here. */
+/**
+ * Ephemeral hints only. No pending payloads, claims or durable history here.
+ *  - wake: input may be claimable; any Runner may claim it.
+ *  - check: the owner of the Session's running Turn re-reads its durable state
+ *    now (an accepted Interrupt, a delegation command, a child result); other
+ *    Runners ignore it.
+ *  - durable / chunk: an API's live stream catches up / receives a Delta.
+ */
 export interface SessionSignal {
   sessionId: string;
-  kind: "wake" | "durable" | "chunk";
-  chunk?: { type: string; data: unknown; turnId?: string; blockIndex?: number; deltaId?: string };
+  kind: "wake" | "check" | "durable" | "chunk";
+  chunk?: { type: string; data: unknown; turnId?: string; blockIndex?: number; attempt?: number; deltaId?: string };
 }
 export interface SessionSignals {
   publish(signal: SessionSignal): void;

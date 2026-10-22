@@ -2,253 +2,21 @@ import { randomBytes } from "node:crypto";
 import { ModelProviderService } from "./lib/model-providers.js";
 import { PiAgentAdapter } from "@open-managed-agents/adapter-pi-agent";
 import { serve } from "@hono/node-server";
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { createApp } from "./app.js";
-import { adapterProcessEnvFromHost, sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
-import type {
-  Adapter,
-  AdapterInput,
-  SessionEvent,
-} from "@open-managed-agents/adapter-core";
-import {
-  generateEventId,
-  generateTimestamp,
-} from "@open-managed-agents/adapter-core";
+import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
+import type { Adapter } from "@open-managed-agents/adapter-core";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
 import { createGracefulShutdown } from "./lib/graceful-shutdown.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
-import { translateDevCodexTerminalEvent } from "./lib/dev-codex-events.js";
+import { runtimeAdapters } from "./lib/runtime-adapters.js";
 import { memoryPiAgentAdapter } from "./lib/memory-pi-agent.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 process.env.AUTH_DISABLED = process.env.AUTH_DISABLED || "true";
-const adapterProcessEnv = adapterProcessEnvFromHost(process.env);
-
-// ─── Claude Code Adapter (spawns `claude` CLI) ──────────────────────────────
-
-class DevClaudeCodeAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const prompt = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    const isFirstTurn = input.history.length === 0;
-    // Generate a deterministic UUID from sessionId for claude's --session-id
-    const hash = createHash("md5").update(input.sessionId).digest("hex");
-    const sessionUuid = `${hash.slice(0,8)}-${hash.slice(8,12)}-${hash.slice(12,16)}-${hash.slice(16,20)}-${hash.slice(20,32)}`;
-
-    // Check if a session file already exists (to determine --session-id vs --resume)
-    const cwd = process.cwd();
-    const projectKey = cwd.replace(/\//g, "-").replace(/^-/, "");
-    const sessionFile = join(homedir(), ".claude", "projects", projectKey, `${sessionUuid}.jsonl`);
-    const sessionExists = existsSync(sessionFile);
-
-    const args = [
-      "--print",
-      "--output-format", "stream-json",
-      "--verbose",
-      "--permission-mode", "bypassPermissions",
-      ...(sessionExists ? ["--resume", sessionUuid] : ["--session-id", sessionUuid]),
-      "-p", prompt,
-    ];
-    if (input.agent.model && input.agent.model !== "default") args.push("--model", input.agent.model);
-    if (!sessionExists && input.agent.system) args.push("--system-prompt", input.agent.system);
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-
-    const child = spawn("claude", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: adapterProcessEnv,
-    });
-    child.stdin.end();
-
-    let stderrData = "";
-    child.stderr.on("data", (chunk: Buffer) => { stderrData += chunk.toString(); });
-
-    const rl = createInterface({ input: child.stdout });
-    let hasError = false;
-
-    try {
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let event: any;
-        try { event = JSON.parse(line); } catch { continue; }
-
-        if (event.type === "assistant" && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === "text" && block.text) {
-              yield {
-                id: generateEventId(), timestamp: generateTimestamp(),
-                type: "agent.message", content: [{ type: "text", text: block.text }],
-              } as SessionEvent;
-            } else if (block.type === "thinking" && block.thinking) {
-              yield {
-                id: generateEventId(), timestamp: generateTimestamp(),
-                type: "agent.thinking", text: block.thinking,
-              } as SessionEvent;
-            } else if (block.type === "tool_use") {
-              yield {
-                id: generateEventId(), timestamp: generateTimestamp(),
-                type: "agent.tool_use", toolUseId: block.id || "", name: block.name || "unknown", input: block.input || {},
-              } as SessionEvent;
-            }
-          }
-          if (event.message.usage) {
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "span.model_request_end",
-              usage: {
-                inputTokens:
-                  event.message.usage.input_tokens +
-                  (event.message.usage.cache_read_input_tokens ?? 0) +
-                  (event.message.usage.cache_creation_input_tokens ?? 0),
-                outputTokens: event.message.usage.output_tokens,
-                cacheReadTokens: event.message.usage.cache_read_input_tokens ?? 0,
-                cacheWriteTokens: event.message.usage.cache_creation_input_tokens ?? 0,
-              },
-            } as SessionEvent;
-          }
-        }
-
-        if (event.type === "user" && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === "tool_result" && block.tool_use_id) {
-              const text = typeof block.content === "string"
-                ? block.content
-                : Array.isArray(block.content)
-                  ? block.content.map((c: any) => c.text || JSON.stringify(c)).join("")
-                  : JSON.stringify(block.content ?? "");
-              yield {
-                id: generateEventId(), timestamp: generateTimestamp(),
-                type: "agent.tool_result", toolUseId: block.tool_use_id,
-                content: [{ type: "text", text: text || "(empty)" }], isError: !!block.is_error,
-              } as SessionEvent;
-            }
-          }
-        }
-
-        if (event.type === "result") {
-          if (event.subtype === "error" || event.is_error) {
-            hasError = true;
-            yield {
-              id: generateEventId(), timestamp: generateTimestamp(),
-              type: "session.error", error: { message: event.result || "Unknown error", code: "sdk_error" },
-            } as SessionEvent;
-          }
-        }
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.on("close", (code) => {
-          if (code !== 0 && !hasError) reject(new Error(`claude exited with code ${code}: ${stderrData}`));
-          else resolve();
-        });
-        child.on("error", reject);
-      });
-
-      if (!hasError) {
-        yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-      }
-    } catch (err: unknown) {
-      yield {
-        id: generateEventId(), timestamp: generateTimestamp(),
-        type: "session.error", error: { message: String(err), code: "sdk_error" },
-      } as SessionEvent;
-    }
-  }
-}
-
-// ─── Codex Adapter (spawns `codex` CLI) ─────────────────────────────────────
-
-class DevCodexAdapter implements Adapter {
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-    const prompt = input.message.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    // Build context from history for multi-turn
-    let fullPrompt = prompt;
-    if (input.history.length > 0) {
-      const context = input.history
-        .filter((e: any) => e.type === "user.message" || e.type === "agent.message")
-        .map((e: any) => {
-          if (e.type === "user.message") {
-            const text = e.content?.map((c: any) => c.text).join("") || "";
-            return `User: ${text}`;
-          }
-          const text = e.content?.map((c: any) => c.text).join("") || "";
-          return `Assistant: ${text}`;
-        })
-        .join("\n\n");
-      fullPrompt = `<conversation_history>\n${context}\n</conversation_history>\n\nUser: ${prompt}`;
-    }
-
-    const args = ["exec", "--json", "-s", "danger-full-access", "--", fullPrompt];
-
-    yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_running" } as SessionEvent;
-
-    const child = spawn("codex", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: adapterProcessEnv,
-    });
-    child.stdin.end();
-
-    const rl = createInterface({ input: child.stdout });
-    let hasError = false;
-
-    try {
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let event: any;
-        try { event = JSON.parse(line); } catch { continue; }
-
-        if (event.type === "item.completed" && event.item?.type === "agent_message" && event.item?.text) {
-          yield {
-            id: generateEventId(), timestamp: generateTimestamp(),
-            type: "agent.message", content: [{ type: "text", text: event.item.text }],
-          } as SessionEvent;
-        }
-
-        for (const terminalEvent of translateDevCodexTerminalEvent(event)) {
-          if (terminalEvent.type === "session.error") hasError = true;
-          yield {
-            id: generateEventId(),
-            timestamp: generateTimestamp(),
-            ...terminalEvent,
-          } as SessionEvent;
-        }
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.on("close", (code) => {
-          if (code !== 0 && !hasError) reject(new Error(`codex exited with code ${code}`));
-          else resolve();
-        });
-        child.on("error", reject);
-      });
-
-      if (!hasError) {
-        yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.status_idle" } as SessionEvent;
-      }
-    } catch (err: unknown) {
-      yield {
-        id: generateEventId(), timestamp: generateTimestamp(),
-        type: "session.error", error: { message: String(err), code: "codex_error" },
-      } as SessionEvent;
-    }
-  }
-}
 
 // ─── Mock Adapter (echo) ────────────────────────────────────────────────────
 
@@ -257,15 +25,6 @@ const mockAdapter = new MockAdapter({ delayMs: 75 });
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 let configuredPiAgentAdapter: Adapter = memoryPiAgentAdapter;
-function resolveAdapter(runtime: string): Adapter {
-  switch (runtime) {
-    case "claude-code": return new DevClaudeCodeAdapter();
-    case "codex": return new DevCodexAdapter();
-    case "pi-agent": return configuredPiAgentAdapter;
-    case "mock": return mockAdapter;
-    default: return mockAdapter;
-  }
-}
 
 async function main() {
   const stores = createMemoryStores();
@@ -288,7 +47,7 @@ async function main() {
     pendingEventStore: stores.pendingEventStore,
     sessionStore: stores.sessionStore,
     eventStreamHub,
-    resolveAdapter,
+    resolveAdapter: runtimeAdapters({ "pi-agent": configuredPiAgentAdapter, mock: mockAdapter }),
     ...sandboxEnvPolicy,
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
@@ -342,7 +101,7 @@ async function main() {
     console.log(`\nServer listening on http://localhost:${info.port}`);
     console.log(`Storage: in-memory (no PostgreSQL/Redis required)`);
     console.log(`AUTH_DISABLED=${process.env.AUTH_DISABLED}`);
-    console.log(`Adapters: claude-code, codex, pi-agent`);
+    console.log(`Runtimes: pi-agent, mock`);
     console.log(`\nDev API key seeded (value hidden)`);
     console.log(`\nTry: curl http://localhost:${info.port}/health`);
   });
@@ -350,7 +109,7 @@ async function main() {
   const shutdown = createGracefulShutdown({
     server: httpServer,
     stopBackgroundWork: () => loopScheduler.stop(),
-    waitForIdle: (timeoutMs) => sessionRouter.waitForIdle(timeoutMs),
+    handOff: (timeoutMs) => sessionRouter.handOff(timeoutMs),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => {},
   });

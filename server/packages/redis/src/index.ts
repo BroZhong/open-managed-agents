@@ -17,9 +17,8 @@ export type {
   StoredTurnDelta,
   ActiveTurn,
   ActiveTurnStatus,
+  ActiveTurnWriter,
 } from "./turn-stream-store.js";
-
-export { RedisPendingEventStore } from "./pending-event-store.js";
 
 export interface RedisConnectionConfig {
   /** Full connection URL (redis://[:password@]host:port[/db]). Takes precedence. */

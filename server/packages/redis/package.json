@@ -11,9 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@oma-server/store": "workspace:*",
-    "ioredis": "^5.4.0",
-    "nanoid": "^5.1.11"
+    "ioredis": "^5.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

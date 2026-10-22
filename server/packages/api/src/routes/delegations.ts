@@ -14,7 +14,7 @@ export interface DelegationRouteDeps {
   turnStreamStore?: TurnStreamStore;
 }
 
-/** Coordination leases, billing credentials and execution checkpoints are Host-private. */
+/** Coordination leases and billing credentials are Host-private. */
 function publicExecution(execution: DelegationExecution) {
   const config = execution.effectiveConfig;
   return {
@@ -91,7 +91,7 @@ export function delegationRoutes(deps: DelegationRouteDeps) {
         callerTurnId: command.callerTurnId, callerToolUseId: command.callerToolUseId,
       })) }, workspaceId: child.workspaceId,
       data: page.data, has_more: page.hasMore, next_cursor: page.data.at(-1)?.seq ?? afterSeq,
-      deltas: page.hasMore ? [] : deltas.map((delta) => ({ type: delta.type, data: delta.data, turnId: delta.turnId, blockIndex: delta.blockIndex, deltaId: delta.id, ts: new Date().toISOString() })),
+      deltas: page.hasMore ? [] : deltas.map((delta) => ({ type: delta.type, data: delta.data, turnId: delta.turnId, blockIndex: delta.blockIndex, attempt: delta.attempt, deltaId: delta.id, ts: new Date().toISOString() })),
       usage: tokenUsageToWire(usage),
     });
   });

@@ -2,14 +2,13 @@ import { describe, it, expect } from "vitest";
 import { createLocalToolExecutor } from "@open-managed-agents/adapter-tool-executor-local";
 import type { AgentSessionEvent, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
-  AdapterInput,
-  SessionEvent,
   AgentToolResultEvent,
   ToolExecutor,
   ExecOptions,
   ExecOutputChunk,
   FileListEntry,
 } from "@open-managed-agents/adapter-core";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import type {
   PiSessionLike,
@@ -21,7 +20,7 @@ function makeInput(
   prompt: string,
   toolExecutor?: ToolExecutor,
   sessionId = "seam-session",
-): AdapterInput {
+): InputWithoutJournal {
   return {
     sessionId,
     turnId: "t1",
@@ -30,14 +29,6 @@ function makeInput(
     history: [],
     toolExecutor,
   };
-}
-
-async function collect(
-  iterable: AsyncIterable<SessionEvent>,
-): Promise<SessionEvent[]> {
-  const events: SessionEvent[] = [];
-  for await (const e of iterable) events.push(e);
-  return events;
 }
 
 /** A single scripted tool call the fake Pi runtime should make. */
@@ -166,9 +157,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
           { id: "tc_read", name: "read", args: { path: "note.txt" } },
         ]),
       });
-      const events = await collect(
-        adapter.run(makeInput("write then read", executor)),
-      );
+      const events = await runWithJournal(adapter, makeInput("write then read", executor));
 
       const results = events.filter(
         (e) => e.type === "agent.tool_result",
@@ -197,7 +186,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
           { id: "tc_sh", name: "bash", args: { command: "printf hi-from-exec" } },
         ]),
       });
-      const events = await collect(adapter.run(makeInput("run", executor)));
+      const events = await runWithJournal(adapter, makeInput("run", executor));
       const result = events.find(
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
@@ -216,9 +205,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
           { id: "tc_miss", name: "read", args: { path: "does-not-exist.txt" } },
         ]),
       });
-      const events = await collect(
-        adapter.run(makeInput("read missing", executor)),
-      );
+      const events = await runWithJournal(adapter, makeInput("read missing", executor));
       const result = events.find(
         (e) => e.type === "agent.tool_result",
       ) as AgentToolResultEvent;
@@ -259,7 +246,7 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
       },
     });
     // No toolExecutor on the input.
-    await collect(adapter.run(makeInput("ls")));
+    await runWithJournal(adapter, makeInput("ls"));
     expect(hadExecutor).toBe(false);
     expect(toolNames).toEqual([]);
   });
@@ -316,8 +303,8 @@ describe("Pi adapter ToolExecutor seam (SDK custom tools)", () => {
     });
 
     const [eventsA, eventsB] = await Promise.all([
-      collect(adapter.run(makeInput("run-A", execA, "session-A"))),
-      collect(adapter.run(makeInput("run-B", execB, "session-B"))),
+      runWithJournal(adapter, makeInput("run-A", execA, "session-A")),
+      runWithJournal(adapter, makeInput("run-B", execB, "session-B")),
     ]);
 
     // Both wrote the SAME filename; distinct executors keep them isolated.

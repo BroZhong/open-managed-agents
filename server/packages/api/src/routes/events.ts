@@ -41,6 +41,8 @@ export interface EventRouteDeps {
   eventStreamHub?: EventStreamHub;
   sessionRouter?: SessionRouter;
   wakeSession?: (sessionId: string) => void;
+  /** Hint the owner of a Session's running Turn to check it now. */
+  checkSession?: (sessionId: string) => void;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * the SSE reconnect merge is done server-side: completed Events are replayed
@@ -142,12 +144,14 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       if (events.length !== 1) {
         return c.json({ error: "user.interrupt must be the only event in a batch" }, 400);
       }
-      const outcome = deps.pendingEventStore.requestInterrupt
-        ? { requested: await deps.pendingEventStore.requestInterrupt(sessionId), interrupted: false }
-        : deps.sessionRouter?.requestInterrupt
-        ? await deps.sessionRouter.requestInterrupt(sessionId)
-        : { requested: false, interrupted: deps.sessionRouter?.interrupt(sessionId) ?? false };
-      return c.json({ accepted: true, ...outcome }, 202);
+      const requested = await deps.pendingEventStore.requestInterrupt(sessionId);
+      // The owner sees the durable marker on its next claim renewal; the hint
+      // makes it renew now instead of up to a renew interval later.
+      if (requested) {
+        deps.checkSession?.(sessionId);
+        deps.sessionRouter?.checkNow(sessionId);
+      }
+      return c.json({ accepted: true, requested, interrupted: false }, 202);
     }
 
     const pendingEvents = events.filter((event) => PENDING_USER_TYPES.has(event.type));
@@ -247,23 +251,12 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
       return c.json({ error: "Session not found" }, 404);
     }
 
-    const store = deps.pendingEventStore;
-    // A narrow store double may not implement listUnclaimed. Degrade to the
-    // depth alone rather than failing the request: a count with no preview still
-    // keeps the queued indicator honest.
-    if (typeof store.listUnclaimed !== "function") {
-      const depth = await store.count(sessionId);
-      // Same response shape as the normal path, so a client never has to branch:
-      // an unlistable queue is reported as "there is input, none previewable".
-      return c.json({ count: 0, has_more: depth > 0, data: [] });
-    }
-
     // Read one past the preview so `has_more` is exact without a second query.
     // `count` deliberately describes the returned page, not the whole queue: the
     // only available total (`count`) includes the claimed head, and mixing that
     // in would report a running message as also waiting. A client that needs to
     // say "more is queued" has `has_more` and does not need a total to be honest.
-    const found = await store.listUnclaimed(sessionId, PENDING_PREVIEW_LIMIT + 1);
+    const found = await deps.pendingEventStore.listUnclaimed(sessionId, PENDING_PREVIEW_LIMIT + 1);
     const events = found.slice(0, PENDING_PREVIEW_LIMIT);
     return c.json({
       count: events.length,
@@ -446,6 +439,7 @@ export function eventRoutes(deps: EventRouteDeps): OpenAPIHono<Env> {
                       data: delta.data,
                       turnId: delta.turnId,
                       blockIndex: delta.blockIndex,
+                      attempt: delta.attempt,
                       deltaId: delta.id,
                     });
                     if (!enqueue(

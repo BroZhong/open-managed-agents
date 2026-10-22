@@ -6,12 +6,17 @@ The fixed Sandbox lifetime assumption is superseded for controlled bindings by
 [ADR-0017](0017-sandbox-idle-reclamation.md). Production activation is gated;
 unknown execution is retained without a maximum Sandbox age.
 
+The Adapter contract in §1 is revised by
+[ADR-0020](0020-turn-journal-single-write-entry.md): `run(input)` settles with
+`"finished" | "stopped"` and writes only through the Turn journal the Host
+injects. The Adapter still touches no infrastructure.
+
 **Partially superseded by [ADR-0008](0008-oss-mounted-workspaces.md).** Sections 3 (artifact medium), 4 and 5, and their sync-specific consequences are superseded by ADR-0008. Host/Adapter ownership and per-call ToolExecutor injection remain accepted. The original decision below records history, not the current storage contract.
 
 Accepted for Host-resident Pi and Sandbox-as-Tool. This originally extended
 ADR-0001's proposed second mode; ADR-0001 is now historical, and its
-Agent-in-the-Sandbox deployment recipes are no longer maintained. The presence
-of Claude Code/Codex adapters does not imply a deployed sandbox template for them.
+Agent-in-the-Sandbox deployment recipes are no longer maintained. The Claude
+Code and Codex adapters were removed in #235, so Pi is the only production runtime.
 
 ## Context
 

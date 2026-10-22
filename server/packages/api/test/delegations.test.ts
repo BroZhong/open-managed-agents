@@ -48,7 +48,7 @@ describe("Delegation trace API", () => {
     const { app, parent, child, unrelated, turnStreamStore } = await fixture();
     const turnId = "child-turn-1";
     await Promise.all([parent, child, unrelated].map(async session => {
-      await turnStreamStore.setActiveTurn(session.id, { turnId, status: "running" });
+      await turnStreamStore.setActiveTurn(session.id, { turnId, status: "running", inputSeq: 1, generation: 1 });
       await turnStreamStore.appendDelta(session.id, { turnId, blockIndex: 0, type: "agent.tool_use_input_chunk", data: { text: `${session.id}-private` } });
     }));
     for (const session of [parent, child]) {
@@ -58,6 +58,20 @@ describe("Delegation trace API", () => {
       expect(trace.deltas).toHaveLength(1);
       expect(trace.deltas[0].data.text).toBe(`${child.id}-private`);
     }
+  });
+
+  it("returns each child delta's attempt, so the trace keeps only the latest attempt's output", async () => {
+    const { app, parent, child, turnStreamStore } = await fixture();
+    const turnId = "child-turn-1";
+    await turnStreamStore.setActiveTurn(child.id, { turnId, status: "running", inputSeq: 1, generation: 1 });
+    await turnStreamStore.appendDelta(child.id, { turnId, blockIndex: 0, attempt: 1, type: "agent.message_chunk", data: { text: "lost" } });
+    await turnStreamStore.appendDelta(child.id, { turnId, blockIndex: 0, attempt: 2, type: "agent.message_chunk", data: { text: "resumed" } });
+
+    const trace = await (await app.request(`/v1/sessions/${parent.id}/delegations/exec-1/events`)).json();
+    expect(trace.deltas.map(({ blockIndex, attempt, data }: { blockIndex: number; attempt: number; data: unknown }) => ({ blockIndex, attempt, data }))).toEqual([
+      { blockIndex: 0, attempt: 1, data: { text: "lost" } },
+      { blockIndex: 0, attempt: 2, data: { text: "resumed" } },
+    ]);
   });
 
   it("restores creation and each resume source independently and paginates persisted references", async () => {

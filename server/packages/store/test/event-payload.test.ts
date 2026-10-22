@@ -3,7 +3,6 @@ import { EventPayloadCodec, BIG_RESULT_BYTES, lazyEventData } from "../src/event
 import { PgEventLogStore } from "../src/postgres/event-log-store.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 import { migrateEventPayloads } from "../src/postgres/migrate-event-payloads.js";
-import { createPgStores } from "../src/postgres/index.js";
 
 describe("durable external results", () => {
   let harness: PgTestHarness;
@@ -69,17 +68,12 @@ describe("durable external results", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it("stores small binary native results and delegation checkpoints without losing identity or presentation", async () => {
+  it("stores small binary native results without losing identity or presentation", async () => {
     const native = { id: "pi_entry_binary", type: "agent.context_entry", sdk: "pi@0.83.0", turnId: "turn1",
       entry: { id: "binary", parentId: "assistant", type: "message", timestamp: "2026-09-22T00:00:00Z",
         message: { role: "toolResult", toolCallId: "call1", toolName: "bash", isError: false,
           content: [{ type: "text", text: "ELF\u0000\ud800" }], details: { signature: "unchanged" } } },
       presentation: { version: 1, blocks: [{ type: "agent.tool_result", blockIndex: 3 }] } };
-    const checkpoint = { events: [native] };
-    const encoded = await codec.checkpoint("s1", checkpoint);
-    await harness.pool.query("INSERT INTO delegation_waits (id,record) VALUES ($1,$2)", ["binary_wait", JSON.stringify({ checkpoint: encoded })]);
-    const saved = (await harness.pool.query("SELECT record FROM delegation_waits WHERE id=$1", ["binary_wait"])).rows[0].record;
-    expect(await codec.checkpoint("s1", saved.checkpoint, true)).toEqual(checkpoint);
     const store = new PgEventLogStore(harness.pool, codec);
     await store.append("s1", { type: native.type, data: native, sessionThreadId: "primary" });
     get.mockClear();
@@ -134,16 +128,14 @@ describe("durable external results", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it("externalizes native Pi tool results and checkpoint copies without changing entry identity or signatures", async () => {
+  it("externalizes native Pi tool results without changing entry identity or signatures", async () => {
     const entry = { id: "native1", parentId: "prior", type: "message", timestamp: "2026-09-21T00:00:00Z",
       message: { role: "toolResult", toolCallId: "call1", toolName: "read", content: [{ type: "image", data: "a".repeat(BIG_RESULT_BYTES * 2), mimeType: "image/png" }], details: { signature: "preserve" } } };
     const event = { type: "agent.context_entry", sdk: "pi@0.83.0", entry };
-    const encoded = await codec.checkpoint("s1", { events: [result, event], config: { model: "test" } });
-    // Only well-typed tool events are transformed.
-    const checkpoint = await codec.checkpoint("s1", { events: [{ ...result, type: "agent.tool_result" }, event] });
-    expect(JSON.stringify(checkpoint).length).toBeLessThan(2048);
-    expect(await codec.checkpoint("s1", checkpoint, true)).toEqual({ events: [{ ...result, type: "agent.tool_result" }, event] });
-    expect((encoded.config as { model: string }).model).toBe("test");
+    const encoded = await codec.encode("s1", event.type, event);
+    expect(JSON.stringify(encoded).length).toBeLessThan(2048);
+    expect(encoded).toMatchObject({ payloadRef: { version: 1 }, entry: { id: "native1", parentId: "prior", message: { role: "toolResult", toolCallId: "call1", toolName: "read" } } });
+    expect(await codec.decode("s1", encoded, event.type)).toEqual(event);
   });
 
   it("rejects missing/corrupt objects rather than passing placeholders to Pi", async () => {
@@ -161,37 +153,15 @@ describe("durable external results", () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it("migrates old events and checkpoint copies with read-back verification and can safely rerun", async () => {
+  it("migrates old events with read-back verification and can safely rerun", async () => {
     const original = new PgEventLogStore(harness.pool);
     await original.append("s1", { type: "agent.tool_result", data: result, sessionThreadId: "primary" });
-    const checkpoint = { events: [{ ...result, type: "agent.tool_result" }] };
-    await harness.pool.query("INSERT INTO delegation_waits (id,record) VALUES ($1,$2)", ["wait1", JSON.stringify({ callerSessionId: "s1", checkpoint })]);
-    expect(await migrateEventPayloads(harness.pool, codec)).toMatchObject({ events: 1, checkpoints: 1, updated: 0 });
+    expect(await migrateEventPayloads(harness.pool, codec)).toMatchObject({ events: 1, updated: 0 });
     expect(put).not.toHaveBeenCalled();
-    expect(await migrateEventPayloads(harness.pool, codec, { apply: true, sessionId: "s1" })).toMatchObject({ events: 1, checkpoints: 1, updated: 2, conflicts: 0 });
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(await migrateEventPayloads(harness.pool, codec, { apply: true, sessionId: "s1" })).toMatchObject({ events: 1, updated: 1, conflicts: 0 });
+    expect(get).toHaveBeenCalledTimes(1);
     const store = new PgEventLogStore(harness.pool, codec);
     expect((await store.getEvents("s1")).data[0].data).toEqual(result);
-    const record = (await harness.pool.query("SELECT record FROM delegation_waits WHERE id='wait1'")).rows[0].record;
-    expect(JSON.stringify(record).length).toBeLessThan(1024);
-    expect(await codec.checkpoint("s1", record.checkpoint, true)).toEqual(checkpoint);
-    expect(await migrateEventPayloads(harness.pool, codec, { apply: true })).toMatchObject({ events: 0, checkpoints: 0, updated: 0 });
-  });
-
-  it("externalizes checkpoints in real delegation transactions and avoids hydrating them for status polling", async () => {
-    const stores = await createPgStores(harness.pool, { ensureSchema: false, payloads: codec });
-    const agent = await stores.agentStore.create({ tenantId: "t1", name: "Agent", model: "test", system: "", runtime: "pi" });
-    const parent = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: "w1" });
-    await stores.pendingEventStore.enqueue(parent.id, { type: "user.message", data: {}, sessionThreadId: "primary" });
-    const claim = (await stores.pendingEventStore.claim!(parent.id, "owner", 60000))!;
-    const fence = { eventId: claim.event.id, ownerId: claim.ownerId, generation: claim.generation };
-    const checkpoint = { events: [{ ...result, type: "agent.tool_result" }] };
-    await stores.delegationStore.accept({ tenantId: "t1", callerSessionId: parent.id, callerTurnId: "turn1", callerToolUseId: "delegate1", prompt: "task", mode: "sync", parentModel: "test", maxSteps: 10, sandboxSessionId: parent.id, checkpoint }, fence);
-    const row = (await harness.pool.query("SELECT record FROM delegation_waits")).rows[0].record;
-    expect(JSON.stringify(row).length).toBeLessThan(2048);
-    get.mockClear();
-    await stores.delegationStore.listWaits(parent.id, fence.eventId, { checkpoint: "reference" });
-    expect(get).not.toHaveBeenCalled();
-    expect((await stores.delegationStore.listWaits(parent.id, fence.eventId))[0].checkpoint).toEqual(checkpoint);
+    expect(await migrateEventPayloads(harness.pool, codec, { apply: true })).toMatchObject({ events: 0, updated: 0 });
   });
 });

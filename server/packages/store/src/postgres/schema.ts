@@ -158,6 +158,13 @@ CREATE INDEX IF NOT EXISTS delegation_child_idx ON ${s}.delegation_executions ((
 CREATE INDEX IF NOT EXISTS delegation_caller_idx ON ${s}.delegation_executions ((record->>'tenantId'), (record->>'callerSessionId'));
 CREATE TABLE IF NOT EXISTS ${s}.delegation_waits (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_commands (id TEXT PRIMARY KEY, record JSONB NOT NULL);
+-- Delegation rows are never pruned, yet they are read on every tool result,
+-- every Child heartbeat and every pending scan of every Runner. The open-state
+-- partial indexes are keyed by id: termination reconciliation reads them in id order.
+CREATE INDEX IF NOT EXISTS delegation_waits_input_idx ON ${s}.delegation_waits ((record->>'callerSessionId'), (record->>'parentPendingEventId'));
+CREATE INDEX IF NOT EXISTS delegation_waits_waiting_idx ON ${s}.delegation_waits (id) WHERE record->>'status' = 'waiting';
+CREATE INDEX IF NOT EXISTS delegation_commands_execution_idx ON ${s}.delegation_commands ((record->>'executionId'));
+CREATE INDEX IF NOT EXISTS delegation_executions_open_idx ON ${s}.delegation_executions (id) WHERE record->>'status' IN ('queued', 'running');
 CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;

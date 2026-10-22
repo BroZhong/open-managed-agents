@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type {
   AdapterInput,
-  SessionEvent,
   ToolExecutor,
 } from "@open-managed-agents/adapter-core";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 
 const sdkSeam = vi.hoisted(() => ({
   loadSkillsCalls: 0,
@@ -72,7 +72,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
         sdkSeam.mcpConfigMode = statSync(configPath).mode & 0o777;
       }
       let listener: ((event: Record<string, unknown>) => void) | undefined;
-      const agent = { subscribe: () => () => {}, state: { messages: [] as unknown[] }, transformContext: undefined as ((messages: unknown[]) => Promise<unknown[]>) | undefined };
+      const agent = { subscribe: () => () => {}, continue: async () => {}, state: { messages: [] as unknown[] }, transformContext: undefined as ((messages: unknown[]) => Promise<unknown[]>) | undefined };
       return {
         session: {
           agent,
@@ -125,7 +125,7 @@ const noopExecutor: ToolExecutor = {
   },
 };
 
-function input(withExecutor: boolean): AdapterInput {
+function input(withExecutor: boolean): InputWithoutJournal {
   return {
     sessionId: "resolved-skills",
     turnId: "turn-1",
@@ -149,12 +149,6 @@ function input(withExecutor: boolean): AdapterInput {
   };
 }
 
-async function collect(iterable: AsyncIterable<SessionEvent>): Promise<SessionEvent[]> {
-  const events: SessionEvent[] = [];
-  for await (const event of iterable) events.push(event);
-  return events;
-}
-
 describe("Pi adapter resolved Skill descriptor seam", () => {
   beforeEach(() => {
     sdkSeam.loadSkillsCalls = 0;
@@ -168,7 +162,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   });
 
   it("formats sandbox Skill descriptors on the real custom-tool createSession path", async () => {
-    const events = await collect(new PiAgentAdapter().run(input(true)));
+    const events = await runWithJournal(new PiAgentAdapter(), input(true));
 
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.loadSkillsCalls).toBe(0);
@@ -195,7 +189,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   it("preserves native skillPaths without a managed ToolExecutor", async () => {
     const nativeInput = input(false);
     nativeInput.agent.skillDescriptors = [];
-    const events = await collect(new PiAgentAdapter().run(nativeInput));
+    const events = await runWithJournal(new PiAgentAdapter(), nativeInput);
 
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.loadSkillsCalls).toBe(0);
@@ -217,8 +211,8 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     secondTurn.sessionId = firstTurn.sessionId;
     secondTurn.turnId = "turn-2";
 
-    await collect(new PiAgentAdapter().run(firstTurn));
-    await collect(new PiAgentAdapter().run(secondTurn));
+    await runWithJournal(new PiAgentAdapter(), firstTurn);
+    await runWithJournal(new PiAgentAdapter(), secondTurn);
 
     const managers = sdkSeam.sessionOptions.map(
       (options) => options.sessionManager,
@@ -240,7 +234,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       const turn = input(true);
       turn.sessionId = sessionId;
 
-      const events = await collect(new PiAgentAdapter().run(turn));
+      const events = await runWithJournal(new PiAgentAdapter(), turn);
 
       expect(events.some((event) => event.type === "session.error")).toBe(false);
       expect(sdkSeam.sessionOptions[0].sessionManager?.getSessionId()).toMatch(
@@ -250,7 +244,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   );
 
   it("fails loud instead of asking Host-native tools to open sandbox Skill paths", async () => {
-    const events = await collect(new PiAgentAdapter().run(input(false)));
+    const events = await runWithJournal(new PiAgentAdapter(), input(false));
 
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -276,7 +270,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       },
     ];
 
-    const events = await collect(new PiAgentAdapter().run(configured));
+    const events = await runWithJournal(new PiAgentAdapter(), configured);
 
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.mcpConfig).toEqual({
@@ -295,7 +289,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   });
 
   it("blocks ambient MCP discovery with an empty isolated config when the Agent has no MCP servers", async () => {
-    const events = await collect(new PiAgentAdapter().run(input(true)));
+    const events = await runWithJournal(new PiAgentAdapter(), input(true));
 
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.mcpConfig).toEqual({ mcpServers: {} });
@@ -319,7 +313,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
       },
     ];
 
-    const events = await collect(new PiAgentAdapter().run(configured));
+    const events = await runWithJournal(new PiAgentAdapter(), configured);
 
     expect(events.some((event) => event.type === "session.error")).toBe(false);
     expect(sdkSeam.mcpConfig).toEqual({
@@ -340,7 +334,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
   });
 
   it("starts and shuts down Pi extension lifecycle around the managed Turn", async () => {
-    await collect(new PiAgentAdapter().run(input(true)));
+    await runWithJournal(new PiAgentAdapter(), input(true));
 
     expect(sdkSeam.lifecycle).toEqual([
       "session_start",
@@ -361,7 +355,7 @@ describe("Pi adapter resolved Skill descriptor seam", () => {
     ];
     sdkSeam.failBindExtensions = true;
 
-    const events = await collect(new PiAgentAdapter().run(configured));
+    const events = await runWithJournal(new PiAgentAdapter(), configured);
 
     expect(events).toEqual([
       expect.objectContaining({
@@ -379,7 +373,7 @@ describe("managed child SDK capability boundary", () => {
   it("loads only seven Sandbox tools and the local Skill bridge for a child", async () => {
     sdkSeam.sessionOptions.length = 0; sdkSeam.resourceLoaderOptions.length = 0; sdkSeam.failBindExtensions = false;
     const child = input(true); child.execution = { isChild: true };
-    const events = await collect(new PiAgentAdapter().run(child));
+    const events = await runWithJournal(new PiAgentAdapter(), child);
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(sdkSeam.resourceLoaderOptions[0]).toMatchObject({ noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true });
     expect(sdkSeam.sessionOptions[0].noTools).toBe("builtin");
@@ -388,7 +382,7 @@ describe("managed child SDK capability boundary", () => {
   it("registers exactly the three Host tools alongside the parent Sandbox tools", async () => {
     sdkSeam.sessionOptions.length = 0; sdkSeam.resourceLoaderOptions.length = 0; sdkSeam.failBindExtensions = false;
     const parent = input(true); parent.subagents = { maxModelSteps: 30, delegate: vi.fn(), getResult: vi.fn(), steer: vi.fn() };
-    const events = await collect(new PiAgentAdapter().run(parent));
+    const events = await runWithJournal(new PiAgentAdapter(), parent);
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(sdkSeam.sessionOptions[0].customTools?.map(t => t.name)).toEqual(["bash", "read", "write", "edit", "ls", "grep", "find", "Agent", "get_subagent_result", "steer_subagent"]);
   });

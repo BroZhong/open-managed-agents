@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { PiAgentAdapter } from "../src/pi-agent-adapter.js";
 import { restorePiSession } from "../src/pi-context.js";
+import { MemoryTurnJournal, runWithJournal, type DurableEvent, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 
-const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, overflowError: "prompt is too long: context window exceeded", summaryError: "503 overloaded", cancelSummary: false, toolPending: false, streamedResponse: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined }));
+const control = vi.hoisted(() => ({ requests: [] as { summary: boolean; context: unknown; options: unknown }[], summaryFailures: 0, overflow: 0, overflowError: "prompt is too long: context window exceeded", summaryError: "503 overloaded", cancelSummary: false, toolPending: false, pauseSummary: false, onSummary: undefined as (() => void) | undefined, onAppendCompaction: undefined as (() => void) | undefined }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -21,6 +22,11 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
     async createAgentSession(options: Parameters<typeof sdk.createAgentSession>[0]) {
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 30 }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
       const result = await sdk.createAgentSession({ ...options, model: { ...options!.model!, contextWindow: 1000 }, settingsManager });
+      // Pi checks its own cancellation before appending a summary; this hook
+      // lets an Interrupt arrive just after that check.
+      const manager = result.session.sessionManager;
+      const appendCompaction = manager.appendCompaction.bind(manager);
+      manager.appendCompaction = (...args) => { const id = appendCompaction(...args); control.onAppendCompaction?.(); return id; };
       result.session.agent.streamFunction = async (model, context, options) => {
         // Model responses arrive after request dispatch. Avoid same-millisecond
         // compaction/message timestamps changing the native stale-usage branch.
@@ -39,16 +45,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
           message.stopReason = "toolUse";
         }
         const stream = createAssistantMessageEventStream();
-        if (!summary && !failed && control.streamedResponse) message.content = [{ type: "text", text: "first" }, { type: "text", text: "second" }];
         stream.push({ type: "start", partial: message });
-        if (!summary && !failed && control.streamedResponse) {
-          message.content.forEach((block, contentIndex) => {
-            if (block.type !== "text") return;
-            stream.push({ type: "text_start", contentIndex, partial: message });
-            stream.push({ type: "text_delta", contentIndex, delta: block.text, partial: message });
-            stream.push({ type: "text_end", contentIndex, content: block.text, partial: message });
-          });
-        }
         if (summary && control.pauseSummary) {
           const cancel = () => stream.push({ type: "error", reason: "aborted", error: { ...message, stopReason: "aborted" } });
           if (options?.signal?.aborted) cancel();
@@ -77,30 +74,22 @@ function seed(highUsage = true) {
 function records(manager: SessionManager): SessionEvent[] {
   return manager.getEntries().map(entry => ({ id: `pi_entry_${entry.id}`, timestamp: entry.timestamp, type: "agent.context_entry", sdk: "pi@0.83.0", turnId: "seed", entry }));
 }
-function input(history: SessionEvent[], persistContext: AdapterInput["persistContext"]): AdapterInput {
-  return { sessionId: "parent", turnId: "turn1", inputEventId: "input1", message: { role: "user", content: [{ type: "text", text: "continue" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, history, persistContext };
+function input(history: SessionEvent[]): InputWithoutJournal {
+  return { sessionId: "parent", turnId: "turn1", inputEventId: "input1", message: { role: "user", content: [{ type: "text", text: "continue" }] }, agent: { model: `${model.provider}/${model.id}`, system: "" }, history };
 }
-async function run(input: AdapterInput) {
-  const events: SessionEvent[] = [];
-  for await (const event of new PiAgentAdapter().run(input)) events.push({ ...event, turnId: input.turnId } as SessionEvent);
-  return events;
+/** The Adapter's output through a journal whose flushes call `write`, with the Turn identity the Host adds. */
+async function run(input: InputWithoutJournal, write?: (batch: DurableEvent[]) => Promise<void>) {
+  const events = await runWithJournal(new PiAgentAdapter(), input, new MemoryTurnJournal(write));
+  return events.map(event => ({ ...event, turnId: input.turnId }) as SessionEvent);
 }
+const isBoundary = (event: SessionEvent) => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "compaction";
 const normalize = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => key === "timestamp" ? undefined : v));
 afterEach(() => vi.unstubAllEnvs());
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.overflowError = "prompt is too long: context window exceeded"; control.cancelSummary = false; control.toolPending = false; control.streamedResponse = false; control.pauseSummary = false; control.onSummary = undefined; control.summaryError = "503 overloaded"; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.requests = []; control.summaryFailures = 0; control.overflow = 0; control.overflowError = "prompt is too long: context window exceeded"; control.cancelSummary = false; control.toolPending = false; control.pauseSummary = false; control.onSummary = undefined; control.onAppendCompaction = undefined; control.summaryError = "503 overloaded"; });
 
 describe("Pi 0.83.0 native/platform compaction contract", () => {
-  it("attaches stable stream indices to native blocks before they enter the persistence queue", async () => {
-    control.streamedResponse = true;
-    const events = await run(input([], async () => {}));
-    expect(events.filter(event => event.type === "agent.message")).toEqual([]);
-    expect(events.filter(event => event.type === "agent.message_chunk")).toHaveLength(2);
-    const assistant = events.find(event => event.type === "agent.context_entry" && (event.entry as { message?: { role?: string } }).message?.role === "assistant");
-    expect(assistant).toMatchObject({ presentation: { version: 1, blocks: [{ type: "agent.message", index: 0, streamIndex: 0 }, { type: "agent.message", index: 1, streamIndex: 1 }] } });
-  });
-
   it("emits native content once and stores only selectors for the existing display protocol", async () => {
-    const events = await run(input([], async () => {}));
+    const events = await run(input([]));
     expect(events.filter(event => ["agent.message", "agent.thinking", "agent.tool_use", "agent.tool_result", "agent.mcp_tool_use", "agent.mcp_tool_result"].includes(event.type))).toEqual([]);
     const assistant = events.filter(event => event.type === "agent.context_entry" && (event.entry as { message?: { role?: string } }).message?.role === "assistant");
     expect(assistant).toHaveLength(1);
@@ -112,7 +101,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("reports the resolved window, rebuilt post-compaction estimate, and fresh model usage", async () => {
     const history = records(seed());
     const committed: SessionEvent[] = [];
-    const events = await run(input(history, async batch => { committed.push(...batch); }));
+    const events = await run(input(history), async batch => { committed.push(...batch); });
     expect(events.filter(event => event.type === "session.error")).toEqual([]);
     const snapshots = events.filter(event => event.type === "agent.context_usage");
     expect(snapshots[0]).toMatchObject({ contextWindow: 1000, tokens: 935, source: "sdk", model: `${model.provider}/${model.id}` });
@@ -128,20 +117,20 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
 
     // Reconnect after the durable compact boundary, before another response.
     const boundary = events.findIndex(event => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "compaction");
-    const resumed = await run({ ...input([...history, ...events.slice(0, boundary + 1)], async () => {}), turnId: "resume", inputEventId: "resume" });
+    const resumed = await run({ ...input([...history, ...events.slice(0, boundary + 1)]), turnId: "resume", inputEventId: "resume" });
     expect(resumed.filter(event => event.type === "session.error")).toEqual([]);
     expect(resumed.find(event => event.type === "agent.context_usage")).toMatchObject({ contextWindow: 1000, source: "estimate" });
     expect(resumed.filter(event => event.type === "agent.context_usage").at(-1)).toMatchObject({ tokens: 13, source: "sdk" });
   });
   it("commits each new boundary when the native extension reports an older entry with equal summary text", async () => {
     const history = records(seed());
-    const first = await run(input(history, async () => {}));
+    const first = await run(input(history));
     const manager = restorePiSession([...history, ...first]);
     for (const entry of seed().getEntries()) {
       if (entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) manager.appendMessage({ ...entry.message, timestamp: Date.now() + 1000 });
     }
     const replay = records(manager);
-    const second = await run({ ...input(replay, async () => {}), turnId: "second", inputEventId: "second" });
+    const second = await run({ ...input(replay), turnId: "second", inputEventId: "second" });
     expect(second.filter(event => event.type === "session.error")).toEqual([]);
     const restored = restorePiSession([...replay, ...second]);
     const summaries = restored.getEntries().filter(entry => entry.type === "compaction");
@@ -162,7 +151,11 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     await session.dispose();
     control.requests = [];
     const committed: SessionEvent[] = [];
-    const events = await run(input(history, async batch => { committed.push(...batch); }));
+    let atCompaction = 0;
+    const events = await run(input(history), async batch => {
+      committed.push(...batch);
+      if (batch.some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")) atCompaction = committed.length;
+    });
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(control.requests.map(r => r.summary)).toEqual([true, false]);
     // Resource-loader prompts contain per-Host paths; compare summary request in
@@ -173,13 +166,13 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const serialized = JSON.stringify([...history, ...events]);
     const fresh = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
       'import {restorePiSession} from "./src/pi-context.ts"; let data=""; for await (const chunk of process.stdin) data+=chunk; process.stdout.write(JSON.stringify(restorePiSession(JSON.parse(data)).buildSessionContext().messages));'],
-      { cwd: fileURLToPath(new URL("../", import.meta.url)), input: JSON.stringify([...history, { id: "input1", type: "user.message", content: [{type: "text", text: "continue"}] }, ...committed]), encoding: "utf8", timeout: 10000 });
+      { cwd: fileURLToPath(new URL("../", import.meta.url)), input: JSON.stringify([...history, { id: "input1", type: "user.message", content: [{type: "text", text: "continue"}] }, ...committed.slice(0, atCompaction)]), encoding: "utf8", timeout: 10000 });
     expect(fresh.status, fresh.stderr).toBe(0);
     expect(normalize(JSON.parse(fresh.stdout))).toEqual(normalize(nativeAtCommit));
     const restored = restorePiSession(JSON.parse(serialized));
     expect(normalize(restored.buildSessionContext().messages)).toEqual(normalize(nativeMessages));
     control.requests = [];
-    const next = await run({ ...input([...history, ...events], async () => {}), turnId: "turn2", inputEventId: "input2" });
+    const next = await run({ ...input([...history, ...events]), turnId: "turn2", inputEventId: "input2" });
     expect(next.some(e => e.type === "agent.compaction")).toBe(false);
     expect(control.requests.map(r => r.summary)).toEqual([false]);
     expect(JSON.stringify(control.requests)).toContain("CONTROLLED SUMMARY");
@@ -191,7 +184,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
   ])("recovers a request-body limit through native overflow compaction: %s", async (error, recovered) => {
     control.overflow = 1;
     control.overflowError = error;
-    const events = await run(input(records(seed(false)), async () => {}));
+    const events = await run(input(records(seed(false))));
     expect(control.requests.map(r => r.summary)).toEqual(recovered ? [false, true, false] : [false]);
     expect(events.some(e => e.type === "agent.compaction" && e.status === "completed" && e.reason === "overflow")).toBe(recovered);
     expect(events.filter(e => e.type === "session.error").map(e => e.type === "session.error" && e.error.message)).toEqual(recovered ? [] : [error]);
@@ -206,7 +199,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
       manager.appendMessage({ role: "toolResult", toolCallId: `read_${i}`, toolName: "read", content: [{ type: "text", text: "Read image file [image/png]" }, { type: "image", mimeType: "image/png", data: "A".repeat(300) }], isError: false, timestamp: 100 + i });
     }
     manager.appendMessage({ role: "assistant", api: model.api, provider: model.provider, model: model.id, content: [{ type: "text", text: "read them" }], usage, stopReason: "stop", timestamp: 200 });
-    const events = await run(input(records(manager), async () => {}));
+    const events = await run(input(records(manager)));
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(events.some(e => e.type === "agent.compaction")).toBe(false);
     expect(control.requests.map(r => r.summary)).toEqual([false]);
@@ -217,13 +210,6 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     expect(JSON.stringify(restorePiSession([...records(manager), ...events]).buildSessionContext().messages).match(/A{300}/g)).toHaveLength(4);
   });
 
-  it.each([false, true])("stops before any request using an uncommitted summary (overflow=%s)", async overflow => {
-    if (overflow) control.overflow = 1;
-    const events = await run(input(records(seed(!overflow)), async () => { throw new Error("context storage unavailable"); }));
-    expect(events.find(e => e.type === "session.error")).toMatchObject({ error: { message: expect.stringContaining("context storage unavailable") } });
-    expect(events.some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")).toBe(false);
-    expect(control.requests.map(r => r.summary)).toEqual(overflow ? [false, true] : [true]);
-  });
   it.each([
     { name: "summary retry", failures: 1, overflow: 0, error: "503 overloaded", cancelled: false },
     { name: "summary retry exhausted", failures: 2, overflow: 0, error: "503 overloaded", cancelled: false },
@@ -244,7 +230,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const baseline = structuredClone(control.requests);
     await session.dispose();
     reset();
-    const events = await run(input(history, async () => {}));
+    const events = await run(input(history));
     expect(control.requests.map(r => r.summary)).toEqual(baseline.map(r => r.summary));
     expect(normalize(control.requests.filter(r => r.summary))).toEqual(normalize(baseline.filter(r => r.summary)));
     const statuses = events.filter(e => e.type === "agent.compaction" && ["completed", "failed", "cancelled"].includes(e.status));
@@ -256,7 +242,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const { executor, dispose } = await createLocalToolExecutor();
     let delivered = false;
     const applied = vi.fn(async () => {});
-    const child = { ...input(records(seed()), async () => {}), sessionId: "child", toolExecutor: executor,
+    const child = { ...input(records(seed())), sessionId: "child", toolExecutor: executor,
       message: { role: "user" as const, source: "delegation" as const, content: [{ type: "text" as const, text: "child task" }] },
       execution: { isChild: true, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "instruction1", message: "verify result" }]), applied } } };
     try {
@@ -279,7 +265,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
       expect(JSON.stringify(request.messages).match(/verify result/g)).toHaveLength(1);
       expect(JSON.stringify(request.messages)).toContain("CONTROLLED SUMMARY");
       control.requests = [];
-      await run(input([], async () => {}));
+      await run(input([]));
       expect(JSON.stringify(control.requests)).not.toContain("CONTROLLED SUMMARY");
       expect(JSON.stringify(control.requests)).not.toContain("verify result");
     } finally { await dispose(); }
@@ -288,7 +274,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("continues with steering without a synthetic compaction boundary or broken replay chain", async () => {
     const history = records(seed(false));
     let delivered = false;
-    const events = await run({ ...input(history, async () => {}), continuation: { toolResults: [] },
+    const events = await run({ ...input(history), resume: { completedModelSteps: 0, blockBase: 0 },
       execution: { isChild: false, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "continue-steer", message: "verify continuation" }]), applied: async () => {} } } });
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     const restored = restorePiSession([...history, ...events]);
@@ -299,7 +285,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     }
     control.requests = [];
     const replay = records(restored);
-    const next = await run({ ...input(replay, async () => {}), turnId: "after-continuation", inputEventId: "next" });
+    const next = await run({ ...input(replay), turnId: "after-continuation", inputEventId: "next" });
     expect(next.filter(e => e.type === "session.error")).toEqual([]);
     expect(control.requests.some(r => r.summary)).toBe(true);
     expect(JSON.stringify(control.requests)).not.toContain("oma.continuation");
@@ -317,7 +303,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
       { id: "display-call", type: "agent.tool_use", turnId: "seed", toolUseId: "waiting-tool", name: "Agent", input: { prompt: "child task" } },
       { id: "recovered-result", type: "agent.tool_result", toolUseId: "waiting-tool", name: "Agent", content: [{ type: "text", text: "durable child result" }], timestamp: new Date().toISOString() },
     ] as SessionEvent[];
-    const events = await run({ ...input(history, async () => {}), continuation: { toolResults: [] } });
+    const events = await run({ ...input(history), resume: { completedModelSteps: 1, blockBase: 1 } });
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     expect(control.requests.map(r => r.summary)).toEqual([false]);
     const messages = (control.requests[0].context as Context).messages;
@@ -330,9 +316,14 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
 
   it("remains recoverable when pre-prompt compaction fails before the promoted input becomes a native user message", async () => {
     const history = records(seed());
-    const failed = await run(input(history, async () => { throw new Error("storage unavailable"); }));
+    // Storage fails at the compaction commit; only the writes before it are durable.
+    const failed: SessionEvent[] = [];
+    await run(input(history), async batch => {
+      if (batch.some(isBoundary)) throw new Error("storage unavailable");
+      failed.push(...batch);
+    });
     const promoted = { id: "input1", type: "user.message", content: [{ type: "text", text: "continue" }] } as unknown as SessionEvent;
-    const next = await run({ ...input([...history, promoted, ...failed], async () => {}), turnId: "next", inputEventId: "next-input" });
+    const next = await run({ ...input([...history, promoted, ...failed]), turnId: "next", inputEventId: "next-input" });
     expect(next.filter(e => e.type === "session.error")).toEqual([]);
     const nativeUsers = restorePiSession([...history, promoted, ...failed, ...next]).buildSessionContext().messages.filter(m => m.role === "user" && JSON.stringify(m.content).includes('"continue"'));
     expect(nativeUsers).toHaveLength(1);
@@ -342,10 +333,10 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const controller = new AbortController();
     control.pauseSummary = true;
     control.onSummary = () => controller.abort();
-    const persist = vi.fn(async () => {});
+    const persist = vi.fn(async (_batch: DurableEvent[]) => {});
     const history = records(seed());
-    const events = await run({ ...input(history, persist), signal: controller.signal });
-    expect(persist).not.toHaveBeenCalled();
+    const events = await run({ ...input(history), signal: controller.signal }, persist);
+    expect(persist.mock.calls.flatMap(([batch]) => batch).some(e => e.type === "agent.context_entry" && (e.entry as {type: string}).type === "compaction")).toBe(false);
     expect(control.requests.map(r => r.summary)).toEqual([true]);
     expect(events.some(e => e.type === "agent.compaction" && e.status === "cancelled")).toBe(true);
     expect(restorePiSession([...history, ...events]).getEntries().some(e => e.type === "compaction")).toBe(false);
@@ -354,7 +345,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("makes no model or summary request when interrupted before prompting", async () => {
     const controller = new AbortController(); controller.abort();
     const persist = vi.fn(async () => {});
-    await run({ ...input(records(seed()), persist), signal: controller.signal });
+    await run({ ...input(records(seed())), signal: controller.signal }, persist);
     expect(control.requests).toEqual([]);
     expect(persist).not.toHaveBeenCalled();
   });
@@ -362,18 +353,62 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
   it.each(["before_compaction", "after_compaction"])("recovers only the persisted prefix when the Host exits %s", async boundary => {
     const history = records(seed());
     const saved: SessionEvent[] = [];
-    await run(input(history, async batch => {
-      saved.push(...(boundary === "before_compaction" ? batch.slice(0, -1) : batch));
+    await run(input(history), async batch => {
+      const at = batch.findIndex(isBoundary);
+      if (at < 0) return void saved.push(...batch);
+      saved.push(...(boundary === "before_compaction" ? batch.slice(0, at) : batch));
       throw new Error("Host exited before acknowledging persistence");
-    }));
+    });
     const promoted = { id: "input1", type: "user.message", content: [{ type: "text", text: "continue" }] } as unknown as SessionEvent;
     const durableHistory = JSON.parse(JSON.stringify([...history, promoted, ...saved]));
     const restored = restorePiSession(durableHistory);
     expect(restored.getEntries().filter(e => e.type === "compaction")).toHaveLength(boundary === "after_compaction" ? 1 : 0);
     control.requests = [];
-    const next = await run({ ...input(durableHistory, async () => {}), turnId: "recovery", inputEventId: "recovery-input" });
+    const next = await run({ ...input(durableHistory), turnId: "recovery", inputEventId: "recovery-input" });
     expect(next.filter(e => e.type === "session.error")).toEqual([]);
     expect(control.requests.map(r => r.summary)).toEqual(boundary === "after_compaction" ? [false] : [true, false]);
   });
 
+});
+
+describe("Pi compaction through an injected Turn journal", () => {
+  const promoted = { id: "input1", type: "user.message", content: [{ type: "text", text: "continue" }] } as unknown as SessionEvent;
+  const runWith = (history: SessionEvent[], journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}) =>
+    runWithJournal(new PiAgentAdapter(), { ...input(history), ...extra }, journal);
+
+  it("commits the boundary before any request uses the summary", async () => {
+    let requestsAtCommit: number | undefined;
+    const history = records(seed());
+    const journal = new MemoryTurnJournal(async batch => { if (batch.some(isBoundary)) requestsAtCommit = control.requests.length; });
+    await runWith(history, journal);
+    expect(journal.recorded.filter(e => e.type === "session.error")).toEqual([]);
+    expect(control.requests.map(r => r.summary)).toEqual([true, false]);
+    expect(requestsAtCommit).toBe(1);
+    expect(journal.recorded.filter(isBoundary)).toHaveLength(1);
+    const restored = restorePiSession([...history, promoted, ...journal.committed]);
+    expect(restored.getEntries().filter(e => e.type === "compaction")).toHaveLength(1);
+  });
+
+  it.each([false, true])("never uses a summary whose boundary failed to commit (overflow=%s)", async overflow => {
+    if (overflow) control.overflow = 1;
+    const journal = new MemoryTurnJournal(async batch => { if (batch.some(isBoundary)) throw new Error("context storage unavailable"); });
+    await runWith(records(seed(!overflow)), journal);
+    expect(journal.committed.some(isBoundary)).toBe(false);
+    expect(control.requests.map(r => r.summary)).toEqual(overflow ? [false, true] : [true]);
+    expect(journal.recorded.filter(e => e.type === "session.error")).toMatchObject([{ error: { message: "context storage unavailable" } }]);
+  });
+
+  it("commits no boundary when an Interrupt arrives after Pi accepted the summary", async () => {
+    const controller = new AbortController();
+    control.onAppendCompaction = () => controller.abort();
+    const history = records(seed());
+    const journal = new MemoryTurnJournal();
+    await runWith(history, journal, { signal: controller.signal });
+    expect(journal.recorded.some(isBoundary)).toBe(false);
+    expect(control.requests.map(r => r.summary)).toEqual([true]);
+    expect(journal.recorded.some(e => e.type === "agent.compaction" && e.status === "cancelled")).toBe(true);
+    // The Interrupted Turn ends with the Router's turn_aborted, not an error.
+    expect(journal.recorded.filter(e => e.type === "session.error")).toEqual([]);
+    expect(restorePiSession([...history, promoted, ...journal.committed]).getEntries().some(e => e.type === "compaction")).toBe(false);
+  });
 });

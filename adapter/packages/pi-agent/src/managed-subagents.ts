@@ -1,10 +1,10 @@
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { HostSubagentCapability, SessionEvent } from "@open-managed-agents/adapter-core";
+import type { HostSubagentCapability } from "@open-managed-agents/adapter-core";
 
 /** These tools carry no Session/Tenant arguments: the Host supplies authority. */
-export function buildSubagentTools(host: HostSubagentCapability, checkpoint: () => SessionEvent[]): ToolDefinition[] {
+export function buildSubagentTools(host: HostSubagentCapability): ToolDefinition[] {
   const maxModelSteps = host.maxModelSteps;
   const child = Type.String({ minLength: 1 });
   const optionalExecution = Type.Optional(Type.String({ minLength: 1 }));
@@ -19,7 +19,7 @@ export function buildSubagentTools(host: HostSubagentCapability, checkpoint: () 
         requiredText(args.prompt, "prompt");
         optionalBoolean(args.run_in_background, "run_in_background");
         optionalText(args.resume, "resume"); optionalText(args.thinking, "thinking");
-        return result(await host.delegate({ prompt: args.prompt, runInBackground: args.run_in_background ?? false, ...(args.resume !== undefined ? { resume: args.resume } : {}), ...(args.thinking !== undefined ? { thinking: args.thinking } : {}) }, { toolUseId, signal, checkpoint: checkpoint() }));
+        return result(await host.delegate({ prompt: args.prompt, runInBackground: args.run_in_background ?? false, ...(args.resume !== undefined ? { resume: args.resume } : {}), ...(args.thinking !== undefined ? { thinking: args.thinking } : {}) }, { toolUseId, signal }));
       },
     }),
     defineTool({
@@ -28,7 +28,7 @@ export function buildSubagentTools(host: HostSubagentCapability, checkpoint: () 
       parameters: Type.Object({ childId: child, executionId: optionalExecution, wait: Type.Optional(Type.Boolean({ default: false })) }, { additionalProperties: false }),
       async execute(toolUseId, args, signal) {
         validateArguments(args, ["childId", "executionId", "wait"]); requiredText(args.childId, "childId"); optionalText(args.executionId, "executionId"); optionalBoolean(args.wait, "wait");
-        return result(await host.getResult({ childId: args.childId, ...(args.executionId ? { executionId: args.executionId } : {}), wait: args.wait ?? false }, { toolUseId, signal, checkpoint: checkpoint() }));
+        return result(await host.getResult({ childId: args.childId, ...(args.executionId ? { executionId: args.executionId } : {}), wait: args.wait ?? false }, { toolUseId, signal }));
       },
     }),
     defineTool({
@@ -37,7 +37,7 @@ export function buildSubagentTools(host: HostSubagentCapability, checkpoint: () 
       parameters: Type.Object({ childId: child, executionId: optionalExecution, message: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
       async execute(toolUseId, args, signal) {
         validateArguments(args, ["childId", "executionId", "message"]); requiredText(args.childId, "childId"); requiredText(args.message, "message"); optionalText(args.executionId, "executionId");
-        return result(await host.steer({ childId: args.childId, message: args.message, ...(args.executionId ? { executionId: args.executionId } : {}) }, { toolUseId, signal, checkpoint: checkpoint() }));
+        return result(await host.steer({ childId: args.childId, message: args.message, ...(args.executionId ? { executionId: args.executionId } : {}) }, { toolUseId, signal }));
       },
     }),
   ];

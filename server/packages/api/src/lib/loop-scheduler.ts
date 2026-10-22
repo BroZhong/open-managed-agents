@@ -15,8 +15,11 @@ export interface LoopSchedulerDeps {
 /**
  * Thin poller around LoopStore's transactional dispatch boundary. The store
  * commits every Session + pending Turn before this class asks SessionRouter to
- * recover retained input. Scanning on every tick also covers an ambiguous
- * commit response or a previous routing failure without a second dispatch.
+ * recover retained input. A tick scans only after it dispatched an occurrence
+ * or its dispatch failed, which also covers an ambiguous commit response
+ * without a second dispatch. Every other retained input, including a later
+ * routing failure, is the Runner's pending scan's (ADR-0018), so idle ticks
+ * cost one dispatch query.
  */
 export class LoopScheduler {
   private readonly now: () => Date;
@@ -77,10 +80,11 @@ export class LoopScheduler {
     } catch (error) {
       // A database/client error does not prove the transaction rolled back. A
       // committed occurrence is discoverable through its retained pending
-      // input, so always run the recovery scan before surfacing the tick error.
+      // input, so run the recovery scan before surfacing the tick error.
       dispatchFailed = true;
       dispatchError = error;
     }
+    if (!dispatchFailed && dispatchedCount === 0) return 0;
 
     try {
       await this.deps.sessionRouter.recoverPendingEvents(({ sessionId, error }) => {

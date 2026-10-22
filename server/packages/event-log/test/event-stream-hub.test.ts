@@ -38,7 +38,7 @@ describe("InProcessEventStreamHub", () => {
     reader.releaseLock();
   });
 
-  it("publishChunk merges turnId + blockIndex into the delta frame for alignment", async () => {
+  it("publishChunk merges turnId, blockIndex and attempt into the delta frame for alignment", async () => {
     const hub = new InProcessEventStreamHub();
     const { stream } = hub.subscribe("sess_1", { includeChunks: true });
     const reader = stream.getReader();
@@ -48,6 +48,7 @@ describe("InProcessEventStreamHub", () => {
       data: { type: "agent.message_chunk", text: "hi" },
       turnId: "turn_1",
       blockIndex: 2,
+      attempt: 3,
     });
 
     const frame = await readNext(reader);
@@ -58,6 +59,7 @@ describe("InProcessEventStreamHub", () => {
       text: "hi",
       turnId: "turn_1",
       blockIndex: 2,
+      attempt: 3,
     });
 
     reader.releaseLock();

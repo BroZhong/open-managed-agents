@@ -145,7 +145,7 @@ describe("POST /v1/agents", () => {
         name: "My Agent",
         model: "claude-3",
         system: "You are helpful",
-        runtime: "claude-code",
+        runtime: "mock",
       }),
     });
 
@@ -155,7 +155,7 @@ describe("POST /v1/agents", () => {
     expect(body.name).toBe("My Agent");
     expect(body.model).toBe("claude-3");
     expect(body.system).toBe("You are helpful");
-    expect(body.runtime).toBe("claude-code");
+    expect(body.runtime).toBe("mock");
     expect(body.tenantId).toBe("dev");
   });
 
@@ -169,7 +169,7 @@ describe("POST /v1/agents", () => {
         description: "Handles short-drama scripts",
         model: "claude-3",
         system: "You are helpful",
-        runtime: "claude-code",
+        runtime: "mock",
       }),
     });
 
@@ -188,7 +188,7 @@ describe("POST /v1/agents", () => {
         description: 42,
         model: "claude-3",
         system: "You are helpful",
-        runtime: "claude-code",
+        runtime: "mock",
       }),
     });
 
@@ -204,7 +204,7 @@ describe("POST /v1/agents", () => {
       body: JSON.stringify({
         model: "claude-3",
         system: "You are helpful",
-        runtime: "claude-code",
+        runtime: "mock",
       }),
     });
 
@@ -221,7 +221,7 @@ describe("POST /v1/agents", () => {
       body: JSON.stringify({
         name: "My Agent",
         system: "You are helpful",
-        runtime: "claude-code",
+        runtime: "mock",
       }),
     });
 
@@ -238,7 +238,7 @@ describe("POST /v1/agents", () => {
       body: JSON.stringify({
         name: "My Agent",
         model: "claude-3",
-        runtime: "claude-code",
+        runtime: "mock",
       }),
     });
 
@@ -295,22 +295,43 @@ describe("POST /v1/agents", () => {
     expect(body.error).toBe("Invalid JSON body");
   });
 
-  it("accepts codex as a valid runtime", async () => {
-    const { app } = createTestApp();
-    const res = await app.request("/v1/agents", {
+  it("rejects the retired claude-code and codex runtimes on create and update, listing the supported ones", async () => {
+    const { app, agentStore } = createTestApp();
+    const existing = await agentStore.create({
+      tenantId: "dev",
+      name: "My Agent",
+      model: "claude-3",
+      system: "You are helpful",
+      runtime: "pi-agent",
+    });
+    const request = (path: string, body: unknown) => app.request(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "Codex Agent",
-        model: "gpt-4",
-        system: "You are helpful",
-        runtime: "codex",
-      }),
+      body: JSON.stringify(body),
     });
 
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.runtime).toBe("codex");
+    for (const runtime of ["claude-code", "codex"]) {
+      const created = await request("/v1/agents", {
+        name: "Retired Agent",
+        model: "claude-3",
+        system: "You are helpful",
+        runtime,
+      });
+      expect(created.status).toBe(400);
+      expect(await created.json()).toEqual({
+        error: "runtime must be one of: pi-agent, mock",
+        code: "validation_error",
+      });
+
+      const updated = await request(`/v1/agents/${existing.id}`, { runtime });
+      expect(updated.status).toBe(400);
+      expect(await updated.json()).toEqual({
+        error: "runtime must be one of: pi-agent, mock",
+        code: "validation_error",
+      });
+    }
+    expect((await agentStore.list("dev")).data).toHaveLength(1);
+    expect((await agentStore.getById(existing.id))?.runtime).toBe("pi-agent");
   });
 
   it("accepts pi-agent as a valid runtime", async () => {
@@ -340,7 +361,7 @@ describe("POST /v1/agents", () => {
         name: "Sandboxed Agent",
         model: "claude-3",
         system: "You are helpful",
-        runtime: "claude-code",
+        runtime: "mock",
         sandbox: { enabled: true, image: "open-managed-agents/sandbox:latest" },
       }),
     });
@@ -649,14 +670,14 @@ describe("GET /v1/agents", () => {
       name: "Agent 1",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     await agentStore.create({
       tenantId: "dev",
       name: "Agent 2",
       model: "claude-3",
       system: "sys",
-      runtime: "codex",
+      runtime: "pi-agent",
     });
 
     const res = await app.request("/v1/agents");
@@ -674,7 +695,7 @@ describe("GET /v1/agents", () => {
         name: `Agent ${i}`,
         model: "claude-3",
         system: "sys",
-        runtime: "claude-code",
+        runtime: "mock",
       });
     }
 
@@ -701,7 +722,7 @@ describe("GET /v1/agents", () => {
         name: `Agent ${i}`,
         model: "claude-3",
         system: "sys",
-        runtime: "claude-code",
+        runtime: "mock",
       });
     }
 
@@ -722,7 +743,7 @@ describe("GET /v1/agents", () => {
         name: `Agent ${i}`,
         model: "claude-3",
         system: "sys",
-        runtime: "claude-code",
+        runtime: "mock",
       });
     }
 
@@ -744,14 +765,14 @@ describe("GET /v1/agents", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     await agentStore.create({
       tenantId: "other-tenant",
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request("/v1/agents");
@@ -773,7 +794,7 @@ describe("GET /v1/agents/:id", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`);
@@ -798,7 +819,7 @@ describe("GET /v1/agents/:id", () => {
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`);
@@ -820,7 +841,7 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
@@ -833,7 +854,7 @@ describe("POST /v1/agents/:id (update)", () => {
     const body = await res.json();
     expect(body.name).toBe("Updated Agent");
     expect(body.model).toBe("claude-3");
-    expect(body.runtime).toBe("claude-code");
+    expect(body.runtime).toBe("mock");
   });
 
   it("enforces the documented update types before persisting changes", async () => {
@@ -843,7 +864,7 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
@@ -1171,7 +1192,7 @@ describe("POST /v1/agents/:id (update)", () => {
       description: "Initial blurb",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const set = await app.request(`/v1/agents/${created.id}`, {
@@ -1198,7 +1219,7 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
     const res = await app.request(`/v1/agents/${created.id}`, {
       method: "POST",
@@ -1216,18 +1237,18 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runtime: "codex" }),
+      body: JSON.stringify({ runtime: "pi-agent" }),
     });
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.runtime).toBe("codex");
+    expect(body.runtime).toBe("pi-agent");
   });
 
   it("returns 400 for invalid runtime in update", async () => {
@@ -1237,7 +1258,7 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
@@ -1271,7 +1292,7 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
@@ -1290,7 +1311,7 @@ describe("POST /v1/agents/:id (update)", () => {
       name: "My Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
@@ -1315,7 +1336,7 @@ describe("DELETE /v1/agents/:id", () => {
       name: "My Agent",
       model: "claude-3",
       system: "You are helpful",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {
@@ -1350,7 +1371,7 @@ describe("DELETE /v1/agents/:id", () => {
       name: "Other Agent",
       model: "claude-3",
       system: "sys",
-      runtime: "claude-code",
+      runtime: "mock",
     });
 
     const res = await app.request(`/v1/agents/${created.id}`, {

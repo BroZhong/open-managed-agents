@@ -4,7 +4,6 @@ import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 
 // Real PostgreSQL is required: the regression is pooled-client exhaustion.
 describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded PostgreSQL pool", () => {
-  const schema = process.env.PG_TEST_SCHEMA ?? "oma_test";
   let harness: PgTestHarness;
   let pool: Pool;
   let stores: PgStores;
@@ -12,7 +11,7 @@ describe.skipIf(!process.env.PG_TEST_URL)("Sandbox environment lock on a bounded
     harness = await createPgTestHarness();
     // The Runner incident: every pooled client held a binding transaction while
     // its Sandbox callback (canExecute → sessions.getById) waited for one more.
-    pool = createPgPool({ connectionString: process.env.PG_TEST_URL, schema, max: 2, connectionTimeoutMillis: 5_000 });
+    pool = createPgPool({ connectionString: process.env.PG_TEST_URL, schema: harness.schema, max: 2, connectionTimeoutMillis: 5_000 });
     stores = await createPgStores(pool, { ensureSchema: false });
   });
   afterAll(async () => { await pool?.end(); await harness?.close(); });

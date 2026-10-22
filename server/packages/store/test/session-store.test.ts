@@ -14,7 +14,7 @@ const mockAgent: Agent = {
   name: "Test Agent",
   model: "claude-3",
   system: "You are helpful",
-  runtime: "claude-code",
+  runtime: "mock",
   createdAt: new Date("2024-01-01"),
   updatedAt: new Date("2024-01-01"),
 };
@@ -182,7 +182,7 @@ describe("PgSessionStore", () => {
     await store.terminate(created.id);
 
     expect(await pending.count(created.id)).toBe(0);
-    expect(await pending.renewClaim(created.id, input.id, claim!, 60_000)).toBe(false);
+    expect((await pending.renewClaim(created.id, input.id, claim!, 60_000)).renewed).toBe(false);
     expect(await pending.ack(created.id, input.id, claim!)).toBe(false);
     await expect(new PgEventLogStore(harness.pool).append(created.id, {
       type: "agent.message",

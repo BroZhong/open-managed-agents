@@ -1,306 +1,31 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import type {
-  TurnStreamStore,
-  TurnDelta,
-  StoredTurnDelta,
-  ActiveTurn,
+import { createMemoryStores } from "@oma-server/store-memory";
+import {
+  InMemoryTurnStreamStore,
+  type TurnDelta,
+  type StoredTurnDelta,
 } from "@oma-server/redis";
-import type {
-  EventLogStore,
-  EventLogStoreAppendInput,
-  EventLogStoreGetEventsOpts,
-  EventLogUsageScope,
-  PendingEventStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
-  SessionStore,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  Session,
-  SessionStatus,
-  StoredEvent,
-  PaginatedResult,
-  TokenUsageSummary,
-  Agent,
-} from "@oma-server/store";
+import type { Agent, PendingEventStore, SessionStore } from "@oma-server/store";
 import type {
   Adapter,
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
+import { MockAdapter, journalWriter } from "@open-managed-agents/adapter-mock";
 
-// ─── In-memory EventLogStore (canonical log only) ────────────────────────────
+// ─── Turn stream (Redis stand-in) that keeps reclaimed deltas observable ─────
 
-class InMemoryEventLogStore implements EventLogStore {
-  private events: Map<string, StoredEvent[]> = new Map();
-  private seqCounters: Map<string, number> = new Map();
-  private usageEvents: Array<{
-    sessionId: string;
-    apiKeyId?: string;
-    type: string;
-    data: unknown;
-  }> = [];
-
-  async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
-    const currentSeq = this.seqCounters.get(sessionId) ?? 0;
-    const nextSeq = currentSeq + 1;
-    this.seqCounters.set(sessionId, nextSeq);
-
-    const stored: StoredEvent = {
-      sessionId,
-      seq: nextSeq,
-      type: event.type,
-      data: event.data,
-      ts: new Date(),
-      sessionThreadId: event.sessionThreadId,
-    };
-
-    const sessionEvents = this.events.get(sessionId) ?? [];
-    sessionEvents.push(stored);
-    this.events.set(sessionId, sessionEvents);
-    this.usageEvents.push({
-      sessionId,
-      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
-      type: event.type,
-      data: event.data,
-    });
-
-    return stored;
-  }
-
-  async getEvents(
-    sessionId: string,
-    opts?: EventLogStoreGetEventsOpts,
-  ): Promise<PaginatedResult<StoredEvent>> {
-    const allEvents = this.events.get(sessionId) ?? [];
-    const afterSeq = opts?.afterSeq ?? 0;
-    const limit = opts?.limit ?? 50;
-
-    const filtered = allEvents.filter((e) => e.seq > afterSeq);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-
-    return { data, hasMore };
-  }
-
-  async getUsage(scope: EventLogUsageScope): Promise<TokenUsageSummary> {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let cacheWriteTokens = 0;
-    const count = (value: unknown) =>
-      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-    for (const event of this.usageEvents) {
-      const inScope = "sessionId" in scope
-        ? event.sessionId === scope.sessionId
-        : event.apiKeyId === scope.apiKeyId;
-      if (!inScope || event.type !== "span.model_request_end") continue;
-      const data = event.data as { usage?: Record<string, unknown> };
-      inputTokens += count(data.usage?.inputTokens);
-      outputTokens += count(data.usage?.outputTokens);
-      cacheReadTokens += count(data.usage?.cacheReadTokens);
-      cacheWriteTokens += count(data.usage?.cacheWriteTokens);
-    }
-    return {
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      totalTokens: inputTokens + outputTokens,
-      cacheHitRate: inputTokens === 0 ? null : cacheReadTokens / inputTokens,
-    };
-  }
-}
-
-// ─── In-memory PendingEventStore ─────────────────────────────────────────────
-
-class InMemoryPendingEventStore implements PendingEventStore {
-  private queues: Map<string, PendingEvent[]> = new Map();
-  private nextId = 1;
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue.length === 0) return null;
-    return queue.shift()!;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue[0] ?? null;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    const queue = this.queues.get(sessionId) ?? [];
-    return queue.length;
-  }
-}
-
-// ─── In-memory TurnStreamStore (Redis stand-in) ──────────────────────────────
-
-class InMemoryTurnStreamStore implements TurnStreamStore {
-  streams = new Map<string, StoredTurnDelta[]>();
-  activeTurns = new Map<string, ActiveTurn>();
+class RecordingTurnStreamStore extends InMemoryTurnStreamStore {
   /** Every delta ever appended, retained across reclaim() for assertions. */
   appendedDeltas: StoredTurnDelta[] = [];
-  private seq = 0;
 
-  async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
-    const id = `0-${this.seq++}`;
-    const list = this.streams.get(JSON.stringify([sessionId, delta.turnId])) ?? [];
-    const stored = { ...delta, id };
-    list.push(stored);
-    this.streams.set(JSON.stringify([sessionId, delta.turnId]), list);
-    this.appendedDeltas.push(stored);
+  override async appendDelta(sessionId: string, delta: TurnDelta): Promise<string> {
+    const id = await super.appendDelta(sessionId, delta);
+    this.appendedDeltas.push({ ...delta, id });
     return id;
   }
-
-  async readDeltas(sessionId: string, turnId: string, afterId?: string): Promise<StoredTurnDelta[]> {
-    const list = this.streams.get(JSON.stringify([sessionId, turnId])) ?? [];
-    if (!afterId) return [...list];
-    const idx = list.findIndex((d) => d.id === afterId);
-    return list.slice(idx + 1);
-  }
-
-  async deltaCount(sessionId: string, turnId: string): Promise<number> {
-    return this.streams.get(JSON.stringify([sessionId, turnId]))?.length ?? 0;
-  }
-
-  async reclaim(sessionId: string, turnId: string): Promise<void> {
-    this.streams.delete(JSON.stringify([sessionId, turnId]));
-  }
-
-  async setActiveTurn(sessionId: string, turn: ActiveTurn): Promise<void> {
-    this.activeTurns.set(sessionId, { ...turn });
-  }
-
-  async getActiveTurn(sessionId: string): Promise<ActiveTurn | null> {
-    return this.activeTurns.get(sessionId) ?? null;
-  }
-
-  async clearActiveTurn(sessionId: string): Promise<void> {
-    this.activeTurns.delete(sessionId);
-  }
-}
-
-// ─── In-memory SessionStore ──────────────────────────────────────────────────
-
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      loopId: input.loopId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(
-    tenantId: string,
-    opts?: SessionStoreListOpts,
-  ): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    const data = filtered.slice(0, limit);
-    const hasMore = filtered.length > limit;
-    return { data, hasMore };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    session.updatedAt = new Date();
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    session.updatedAt = new Date();
-    return session;
-  }
-}
-
-// ─── Mock adapter ────────────────────────────────────────────────────────────
-
-function createMockAdapter(events: SessionEvent[]): Adapter {
-  return {
-    async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
-      for (const event of events) {
-        yield event;
-      }
-    },
-  };
-}
-
-function createDelayedMockAdapter(events: SessionEvent[], delayMs: number): Adapter {
-  return {
-    async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
-      for (const event of events) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        yield event;
-      }
-    },
-  };
 }
 
 // ─── Test helpers ────────────────────────────────────────────────────────────
@@ -311,7 +36,7 @@ const testAgent: Agent = {
   name: "Test Agent",
   model: "claude-3",
   system: "You are helpful",
-  runtime: "claude-code",
+  runtime: "mock",
   // Explicitly opt out of the mandatory sandbox (issue #54): these tests
   // exercise the non-sandbox drain flow with no toolExecutorFactory, so the
   // agent must be opted-out to avoid the sandbox_unavailable fail-loud path.
@@ -322,14 +47,9 @@ const testAgent: Agent = {
 
 function createTestDeps(
   adapter: Adapter,
-  routerOptions: Pick<
-    SessionRouterDeps,
-    "interruptedAdapterDrainTimeoutMs" | "interruptedAdapterDrainMaxEvents"
-  > = {},
+  routerOptions: Pick<SessionRouterDeps, "interruptedAdapterDrainTimeoutMs"> = {},
 ) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
 
   const router = new SessionRouter({
@@ -345,11 +65,9 @@ function createTestDeps(
 }
 
 function createTestDepsWithTurnStream(adapter: Adapter) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
-  const turnStreamStore = new InMemoryTurnStreamStore();
+  const turnStreamStore = new RecordingTurnStreamStore();
 
   const router = new SessionRouter({
     eventLogStore,
@@ -377,7 +95,7 @@ describe("SessionRouter", () => {
         },
       ];
 
-      const adapter = createMockAdapter(canonicalEvents);
+      const adapter = new MockAdapter({ events: canonicalEvents });
       const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps(adapter);
 
       const session = await sessionStore.create({
@@ -418,13 +136,72 @@ describe("SessionRouter", () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
     });
 
+    it("executes the Turn under a live claim and fences every durable write with it", async () => {
+      const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
+      const appends = vi.spyOn(eventLogStore, "append");
+      let fenceLiveDuringRun: boolean | undefined;
+      const adapter: Adapter = {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
+          const fence = appends.mock.calls[0]?.[1].pendingFence;
+          fenceLiveDuringRun = fence !== undefined &&
+            await pendingEventStore.ownsClaim(session.id, fence.eventId, fence);
+          await write({
+            id: "evt_1",
+            timestamp: "2024-01-01T00:00:00.000Z",
+            type: "agent.message",
+            content: [{ type: "text", text: "fenced" }],
+          });
+          return "finished";
+        },
+      };
+      const router = new SessionRouter({
+        eventLogStore,
+        pendingEventStore,
+        sessionStore,
+        eventStreamHub: new InProcessEventStreamHub(),
+        resolveAdapter: () => adapter,
+        pendingClaimOwnerId: "host_fenced",
+      });
+      const session = await sessionStore.create({
+        tenantId: "tenant_1",
+        agentId: "agent_1",
+        agent: testAgent,
+        workspaceId: "ws_test",
+      });
+      const input = await pendingEventStore.enqueue(session.id, {
+        type: "user.message",
+        data: { content: [{ type: "text", text: "Hello" }] },
+        sessionThreadId: "sthr_primary",
+      });
+
+      await router.handleNewEvent(session.id, testAgent);
+
+      expect(fenceLiveDuringRun).toBe(true);
+      expect(appends.mock.calls.map(([, event]) => event.type)).toEqual([
+        "user.message",
+        "session.status_running",
+        "agent.message",
+        "session.turn_completed",
+      ]);
+      for (const [, event] of appends.mock.calls) {
+        expect(event.pendingFence, event.type).toEqual({
+          eventId: input.id,
+          ownerId: "host_fenced",
+          generation: 1,
+        });
+      }
+      expect((await sessionStore.getById(session.id))!.status).toBe("idle");
+    });
+
     it("handles a revoked managed MCP connection once without poisoning the pending queue", async () => {
       const originalAllowlist = process.env.OMA_SUPABASE_ALLOWED_TENANTS;
       process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
       let adapterRuns = 0;
       const adapter: Adapter = {
-        async *run(): AsyncIterable<SessionEvent> {
+        async run() {
           adapterRuns += 1;
+          return "finished";
         },
       };
       const { eventLogStore, pendingEventStore, sessionStore, router } =
@@ -464,6 +241,7 @@ describe("SessionRouter", () => {
           "session.status_idle",
         ]);
         expect(events.data[2]?.data).toMatchObject({
+          turnId: "turn_1_a1",
           error: { code: "managed_mcp_unavailable" },
         });
         expect((await router.recoverPendingEvents()).recovered).toEqual([]);
@@ -477,7 +255,7 @@ describe("SessionRouter", () => {
     });
 
     it("attributes durable model usage to the API key that queued the Turn", async () => {
-      const adapter = createMockAdapter([{
+      const adapter = new MockAdapter({ events: [{
         id: "evt_usage",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "span.model_request_end",
@@ -487,7 +265,7 @@ describe("SessionRouter", () => {
           cacheReadTokens: 32,
           cacheWriteTokens: 4,
         },
-      }]);
+      }] });
       const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps(adapter);
       const session = await sessionStore.create({
         tenantId: "tenant_1",
@@ -518,19 +296,19 @@ describe("SessionRouter", () => {
   describe("handleNewEvent - lifecycle events are router-owned (issue #83)", () => {
     it("persists one running event at Turn start and one idle event when its queue drains", async () => {
       // The router is the sole owner of lifecycle events: it emits one running
-      // at turn start and one idle when the queue drains. Adapters yield only
+      // at turn start and one idle when the queue drains. Adapters write only
       // content/errors. Before #83, adapters ALSO yielded running/idle, which
       // the router persisted as ordinary events → two of each per turn. This
-      // fake adapter yields content only (matching the post-fix adapters), so
+      // fake adapter writes content only (matching the post-fix adapters), so
       // the log must contain exactly one of each lifecycle event.
-      const adapter = createMockAdapter([
+      const adapter = new MockAdapter({ events: [
         {
           id: "evt_msg",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "hi" }],
         },
-      ]);
+      ] });
       const { eventLogStore, pendingEventStore, sessionStore, router } = createTestDeps(adapter);
 
       const session = await sessionStore.create({
@@ -559,14 +337,16 @@ describe("SessionRouter", () => {
     it("drains multiple pending messages in sequence", async () => {
       let callCount = 0;
       const adapter: Adapter = {
-        async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
           callCount++;
-          yield {
+          await write({
             id: `evt_${callCount}`,
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.message",
             content: [{ type: "text", text: `Reply ${callCount}` }],
-          };
+          });
+          return "finished";
         },
       };
 
@@ -636,7 +416,7 @@ describe("SessionRouter", () => {
         },
       ];
 
-      const adapter = createMockAdapter(events);
+      const adapter = new MockAdapter({ events });
       const { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, router } = createTestDeps(adapter);
 
       const session = await sessionStore.create({
@@ -696,29 +476,31 @@ describe("SessionRouter", () => {
       // so far, tagged `aborted` (issue #110). The router must forward that —
       // dropping it is what used to make interrupted output vanish silently.
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-          yield {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
+          await write({
             id: "evt_1",
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.message_stream_start",
-          };
-          yield {
+          });
+          await write({
             id: "evt_2",
             timestamp: "2024-01-01T00:00:01.000Z",
             type: "agent.message_chunk",
             text: "Half a th",
-          };
+          });
           await new Promise<void>((resolve) => {
             if (input.signal?.aborted) return resolve();
             input.signal?.addEventListener("abort", () => resolve(), { once: true });
           });
-          yield {
+          await write({
             id: "evt_3",
             timestamp: "2024-01-01T00:00:03.000Z",
             type: "agent.message",
             content: [{ type: "text", text: "Half a th" }],
             stopReason: "aborted",
-          } as SessionEvent;
+          } as SessionEvent);
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -758,52 +540,21 @@ describe("SessionRouter", () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
     });
 
-    it("persists and publishes only model usage emitted while an interrupted adapter settles", async () => {
+    it("persists and publishes the model usage an interrupted adapter records while it settles", async () => {
       let adapterStarted!: () => void;
       const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
           adapterStarted();
           await new Promise<void>((resolve) => {
             if (input.signal?.aborted) resolve();
             else input.signal?.addEventListener("abort", () => resolve(), { once: true });
           });
 
-          // Runtimes may flush buffered output while their native abort settles.
-          // None of it is durable after a user interrupt; only the provider's
-          // final accounting event survives.
-          yield {
-            id: "post_abort_stream",
-            timestamp: "2024-01-01T00:00:01.000Z",
-            type: "agent.message_stream_start",
-          };
-          yield {
-            id: "post_abort_chunk",
-            timestamp: "2024-01-01T00:00:02.000Z",
-            type: "agent.message_chunk",
-            text: "discard me",
-          };
-          yield {
-            id: "post_abort_tool",
-            timestamp: "2024-01-01T00:00:03.000Z",
-            type: "agent.tool_use",
-            toolUseId: "tool_after_abort",
-            name: "bash",
-            input: { command: "discard me" },
-          };
-          yield {
-            id: "post_abort_error",
-            timestamp: "2024-01-01T00:00:04.000Z",
-            type: "session.error",
-            error: { message: "discard me", code: "post_abort" },
-          };
-          yield {
-            id: "post_abort_message",
-            timestamp: "2024-01-01T00:00:05.000Z",
-            type: "agent.message",
-            content: [{ type: "text", text: "discard me" }],
-          };
-          yield {
+          // A runtime reports the provider's final accounting as its native
+          // abort settles; it lands until the Router revokes the entry.
+          await write({
             id: "post_abort_usage",
             timestamp: "2024-01-01T00:00:06.000Z",
             type: "span.model_request_end",
@@ -813,7 +564,8 @@ describe("SessionRouter", () => {
               cacheReadTokens: 60,
               cacheWriteTokens: 5,
             },
-          };
+          });
+          return "finished";
         },
       };
       const {
@@ -887,35 +639,26 @@ describe("SessionRouter", () => {
           cacheHitRate: 0.6,
         });
       expect(frames.filter((frame) => frame.includes("span.model_request_end"))).toHaveLength(1);
-      expect(frames.some((frame) => frame.includes("post_abort_chunk"))).toBe(false);
-      expect(frames.some((frame) => frame.includes("post_abort_tool"))).toBe(false);
-      expect(frames.some((frame) => frame.includes("post_abort_error"))).toBe(false);
-      expect(frames.some((frame) => frame.includes("post_abort_message"))).toBe(false);
     });
 
-    it("stops an interrupted drain on timeout without awaiting a hung iterator return", async () => {
+    it("closes the Turn of an adapter whose run() never settles once the drain timeout passes after an Interrupt", async () => {
       let adapterStarted!: () => void;
       const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
-      let iteratorReturnCalled = false;
+      let runs = 0;
+      const late: string[] = [];
+      let journal: AdapterInput["journal"] | undefined;
       const adapter: Adapter = {
-        run(): AsyncIterable<SessionEvent> {
-          return {
-            [Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
-              return {
-                next(): Promise<IteratorResult<SessionEvent>> {
-                  adapterStarted();
-                  return new Promise<IteratorResult<SessionEvent>>(() => {});
-                },
-                return(): Promise<IteratorResult<SessionEvent>> {
-                  iteratorReturnCalled = true;
-                  return new Promise<IteratorResult<SessionEvent>>(() => {});
-                },
-              };
-            },
-          };
+        async run(input: AdapterInput) {
+          if (++runs > 1) {
+            await journalWriter(input)({ id: "next_reply", timestamp: "2024-01-01T00:00:00.000Z", type: "agent.message", content: [{ type: "text", text: "next" }] });
+            return "finished";
+          }
+          journal = input.journal;
+          adapterStarted();
+          return new Promise<"finished">(() => {});
         },
       };
-      const { pendingEventStore, sessionStore, router } = createTestDeps(adapter, {
+      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter, {
         interruptedAdapterDrainTimeoutMs: 20,
       });
       const session = await sessionStore.create({
@@ -924,11 +667,13 @@ describe("SessionRouter", () => {
         agent: testAgent,
         workspaceId: "ws_interrupt_timeout",
       });
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "stop promptly" }] },
-        sessionThreadId: "sthr_primary",
-      });
+      for (const text of ["stop promptly", "then this"]) {
+        await pendingEventStore.enqueue(session.id, {
+          type: "user.message",
+          data: { content: [{ type: "text", text }] },
+          sessionThreadId: "sthr_primary",
+        });
+      }
 
       const processing = router.handleNewEvent(session.id, testAgent);
       await didStart;
@@ -943,61 +688,17 @@ describe("SessionRouter", () => {
       ]);
       if (settleTimeout) clearTimeout(settleTimeout);
       expect(outcome).toBe("settled");
-      expect(iteratorReturnCalled).toBe(true);
-    });
-
-    it("caps a synchronously noisy interrupted drain by event count", async () => {
-      let adapterStarted!: () => void;
-      const didStart = new Promise<void>((resolve) => { adapterStarted = resolve; });
-      let postAbortEvents = 0;
-      const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-          adapterStarted();
-          await new Promise<void>((resolve) => {
-            if (input.signal?.aborted) resolve();
-            else input.signal?.addEventListener("abort", () => resolve(), { once: true });
-          });
-          while (true) {
-            postAbortEvents++;
-            yield {
-              id: `noisy_${postAbortEvents}`,
-              timestamp: "2024-01-01T00:00:00.000Z",
-              type: "session.error",
-              error: { message: "discard me", code: "noisy_post_abort" },
-            };
-          }
-        },
-      };
-      const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter, {
-        interruptedAdapterDrainTimeoutMs: 1_000,
-        interruptedAdapterDrainMaxEvents: 3,
-      });
-      const session = await sessionStore.create({
-        tenantId: "tenant_1",
-        agentId: "agent_1",
-        agent: testAgent,
-        workspaceId: "ws_interrupt_event_cap",
-      });
-      await pendingEventStore.enqueue(session.id, {
-        type: "user.message",
-        data: { content: [{ type: "text", text: "stop noisy adapter" }] },
-        sessionThreadId: "sthr_primary",
-      });
-
-      const processing = router.handleNewEvent(session.id, testAgent);
-      await didStart;
-      router.interrupt(session.id);
-      await processing;
-
-      expect(postAbortEvents).toBe(3);
-      const events = await eventLogStore.getEvents(session.id, { limit: 100 });
-      expect(events.data.map((event) => event.type)).toEqual([
-        "user.message",
-        "session.status_running",
-        "session.turn_aborted",
-        "session.turn_completed",
-        "session.status_idle",
+      // The hung attempt lost its entry; the Session went on with the next input.
+      journal!.record({ id: "too_late", timestamp: "2024-01-01T00:00:00.000Z", type: "agent.message", content: [{ type: "text", text: "late" }] });
+      await journal!.flush().catch((error: Error) => { late.push(error.message); });
+      expect(late).toEqual(["Turn journal write entry revoked"]);
+      expect(await router.waitForIdle(1000)).toBe(true);
+      const types = (await eventLogStore.getEvents(session.id, { limit: 100 })).data.map((event) => event.type);
+      expect(types).toEqual([
+        "user.message", "session.status_running", "session.turn_aborted", "session.turn_completed",
+        "user.message", "session.status_running", "agent.message", "session.turn_completed", "session.status_idle",
       ]);
+      expect(await pendingEventStore.count(session.id)).toBe(0);
     });
 
     it("does not persist settlement usage when the Session is terminated", async () => {
@@ -1008,7 +709,8 @@ describe("SessionRouter", () => {
       let releaseSettlement!: () => void;
       const settlementGate = new Promise<void>((resolve) => { releaseSettlement = resolve; });
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
           adapterStarted();
           await new Promise<void>((resolve) => {
             if (input.signal?.aborted) resolve();
@@ -1016,7 +718,7 @@ describe("SessionRouter", () => {
           });
           abortObserved();
           await settlementGate;
-          yield {
+          await write({
             id: "usage_after_terminate",
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "span.model_request_end",
@@ -1026,7 +728,8 @@ describe("SessionRouter", () => {
               cacheReadTokens: 45,
               cacheWriteTokens: 0,
             },
-          };
+          });
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -1044,9 +747,8 @@ describe("SessionRouter", () => {
 
       const processing = router.handleNewEvent(session.id, testAgent);
       await didStart;
-      // AbortSignal.reason remains the original user-interrupt reason forever.
-      // A subsequent termination must still revoke the accounting drain before
-      // the delayed Adapter settlement is released.
+      // The Interrupt's abort has already fired. A subsequent termination must
+      // still revoke the entry before the delayed Adapter settlement is released.
       router.interrupt(session.id);
       await didObserveAbort;
       await sessionStore.terminate(session.id);
@@ -1087,7 +789,7 @@ describe("SessionRouter", () => {
         },
       ];
 
-      const adapter = createDelayedMockAdapter(events, 50);
+      const adapter = new MockAdapter({ events, delayMs: 50 });
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
 
       const session = await sessionStore.create({
@@ -1119,7 +821,7 @@ describe("SessionRouter", () => {
 
   describe("handleNewEvent - no-op when already running", () => {
     it("reports false when no Turn of this Session is running in this process", async () => {
-      const adapter = createDelayedMockAdapter([], 0);
+      const adapter = new MockAdapter({ events: [] });
       const { sessionStore, router } = createTestDeps(adapter);
       const session = await sessionStore.create({
         tenantId: "tenant_1",
@@ -1135,19 +837,21 @@ describe("SessionRouter", () => {
       // The other shape of Interrupt (issue #112): the assistant message is a
       // normal one and the only trace is a tool_use whose result never came.
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-          yield {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
+          await write({
             id: "evt_1",
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.tool_use",
             toolUseId: "tc_1",
             name: "exec",
             input: { command: "sleep 999" },
-          };
+          });
           await new Promise<void>((resolve) => {
             if (input.signal?.aborted) return resolve();
             input.signal?.addEventListener("abort", () => resolve(), { once: true });
           });
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -1181,8 +885,7 @@ describe("SessionRouter", () => {
     });
 
     it("leaves a completed Turn untouched — no turn_aborted, no synthetic result", async () => {
-      const adapter = createDelayedMockAdapter(
-        [
+      const adapter = new MockAdapter({ events: [
           {
             id: "evt_1",
             timestamp: "2024-01-01T00:00:00.000Z",
@@ -1205,9 +908,7 @@ describe("SessionRouter", () => {
             type: "agent.message",
             content: [{ type: "text", text: "One file." }],
           },
-        ],
-        1,
-      );
+        ], delayMs: 1 });
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
       const session = await sessionStore.create({
         tenantId: "tenant_1",
@@ -1233,21 +934,23 @@ describe("SessionRouter", () => {
     it("runs the next queued Turn after an Interrupt — the queue is not cleared", async () => {
       let run = 0;
       const adapter: Adapter = {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
           run++;
           if (run === 1) {
             await new Promise<void>((resolve) => {
               if (input.signal?.aborted) return resolve();
               input.signal?.addEventListener("abort", () => resolve(), { once: true });
             });
-            return;
+            return "finished";
           }
-          yield {
+          await write({
             id: `evt_${run}`,
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.message",
             content: [{ type: "text", text: "Second turn reply" }],
-          };
+          });
+          return "finished";
         },
       };
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
@@ -1294,7 +997,7 @@ describe("SessionRouter", () => {
         },
       ];
 
-      const adapter = createDelayedMockAdapter(events, 50);
+      const adapter = new MockAdapter({ events, delayMs: 50 });
       const { pendingEventStore, sessionStore, eventLogStore, router } = createTestDeps(adapter);
 
       const session = await sessionStore.create({
@@ -1336,7 +1039,7 @@ describe("SessionRouter", () => {
     ];
 
     async function runOneTurn() {
-      const adapter = createMockAdapter(streamingEvents);
+      const adapter = new MockAdapter({ events: streamingEvents });
       const deps = createTestDepsWithTurnStream(adapter);
       const session = await deps.sessionStore.create({
         tenantId: "tenant_1",
@@ -1355,13 +1058,15 @@ describe("SessionRouter", () => {
 
     it("isolates concurrent first Turns and does not reclaim another Session's active stream", async () => {
       const gates = new Map<string, { ready(): void; promise: Promise<void> }>();
-      const adapter: Adapter = { async *run(input) {
-        yield { id: "start", timestamp: "t", type: "agent.message_stream_start" };
-        yield { id: "chunk", timestamp: "t", type: "agent.message_chunk", text: input.sessionId };
+      const adapter: Adapter = { async run(input) {
+        const write = journalWriter(input);
+        await write({ id: "start", timestamp: "t", type: "agent.message_stream_start" });
+        await write({ id: "chunk", timestamp: "t", type: "agent.message_chunk", text: input.sessionId });
         const gate = gates.get(input.sessionId)!;
         gate.ready(); await gate.promise;
-        yield { id: "end", timestamp: "t", type: "agent.message_stream_end" };
-        yield { id: "message", timestamp: "t", type: "agent.message", content: [{ type: "text", text: input.sessionId }] };
+        await write({ id: "end", timestamp: "t", type: "agent.message_stream_end" });
+        await write({ id: "message", timestamp: "t", type: "agent.message", content: [{ type: "text", text: input.sessionId }] });
+        return "finished";
       } };
       const deps = createTestDepsWithTurnStream(adapter);
       const sessions = await Promise.all(["tenant-a", "tenant-b"].map(tenantId => deps.sessionStore.create({ tenantId, agentId: testAgent.id, agent: testAgent, workspaceId: "workspace" })));
@@ -1374,14 +1079,17 @@ describe("SessionRouter", () => {
       try {
         await Promise.all(ready);
         for (const session of sessions) {
-          expect(await deps.turnStreamStore.getActiveTurn(session.id)).toEqual({ turnId: "turn_1_a1", status: "running" });
-          const chunks = (await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1")).filter(delta => delta.type === "agent.message_chunk");
-          expect(chunks.map(delta => (delta.data as { text: string }).text)).toEqual([session.id]);
+          expect(await deps.turnStreamStore.getActiveTurn(session.id)).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
+          // A Delta is not awaited by the Adapter that emits it.
+          await vi.waitFor(async () => {
+            const chunks = (await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1")).filter(delta => delta.type === "agent.message_chunk");
+            expect(chunks.map(delta => (delta.data as { text: string }).text)).toEqual([session.id]);
+          });
         }
         releases[0](); await runs[0];
         expect(await deps.turnStreamStore.deltaCount(sessions[0].id, "turn_1_a1")).toBe(0);
         expect(await deps.turnStreamStore.deltaCount(sessions[1].id, "turn_1_a1")).toBeGreaterThan(0);
-        expect(await deps.turnStreamStore.getActiveTurn(sessions[1].id)).toEqual({ turnId: "turn_1_a1", status: "running" });
+        expect(await deps.turnStreamStore.getActiveTurn(sessions[1].id)).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
       } finally { releases.forEach(release => release()); await Promise.all(runs); }
     });
 
@@ -1432,7 +1140,7 @@ describe("SessionRouter", () => {
     });
 
     it("aligns each Complete Event to its own block without consuming extra seqs", async () => {
-      const adapter = createMockAdapter([
+      const adapter = new MockAdapter({ events: [
         { id: "s0", timestamp: "t", type: "agent.thinking_stream_start" },
         { id: "s1", timestamp: "t", type: "agent.thinking_chunk", text: "Why" },
         { id: "s2", timestamp: "t", type: "agent.thinking_stream_end" },
@@ -1474,7 +1182,7 @@ describe("SessionRouter", () => {
           type: "agent.message",
           content: [{ type: "text", text: "Done" }],
         },
-      ]);
+      ] });
       const deps = createTestDepsWithTurnStream(adapter);
       const session = await deps.sessionStore.create({
         tenantId: "tenant_1",
@@ -1507,14 +1215,14 @@ describe("SessionRouter", () => {
     });
 
     it("does not let an empty stream steal the next Complete Event's block", async () => {
-      const adapter = createMockAdapter([
+      const adapter = new MockAdapter({ events: [
         { id: "s0", timestamp: "t", type: "agent.thinking_stream_start" },
         { id: "s1", timestamp: "t", type: "agent.thinking_stream_end" },
         { id: "s2", timestamp: "t", type: "agent.thinking_stream_start" },
         { id: "s3", timestamp: "t", type: "agent.thinking_chunk", text: "Actual" },
         { id: "s4", timestamp: "t", type: "agent.thinking_stream_end" },
         { id: "s5", timestamp: "t", type: "agent.thinking", text: "Actual" },
-      ]);
+      ] });
       const deps = createTestDepsWithTurnStream(adapter);
       const session = await deps.sessionStore.create({
         tenantId: "tenant_1",
@@ -1555,18 +1263,20 @@ describe("SessionRouter", () => {
     it("marks the active turn running mid-flight so a reconnect can find it", async () => {
       // A slow adapter lets us observe the active-turn map while the turn runs.
       const slow: Adapter = {
-        async *run(): AsyncIterable<SessionEvent> {
-          yield { id: "s0", timestamp: "t", type: "agent.message_stream_start" };
-          yield { id: "s1", timestamp: "t", type: "agent.message_chunk", text: "Hel" };
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
+          await write({ id: "s0", timestamp: "t", type: "agent.message_stream_start" });
+          await write({ id: "s1", timestamp: "t", type: "agent.message_chunk", text: "Hel" });
           await new Promise((r) => setTimeout(r, 50));
-          yield { id: "s2", timestamp: "t", type: "agent.message_chunk", text: "lo" };
-          yield { id: "s3", timestamp: "t", type: "agent.message_stream_end" };
-          yield {
+          await write({ id: "s2", timestamp: "t", type: "agent.message_chunk", text: "lo" });
+          await write({ id: "s3", timestamp: "t", type: "agent.message_stream_end" });
+          await write({
             id: "s4",
             timestamp: "t",
             type: "agent.message",
             content: [{ type: "text", text: "Hello" }],
-          };
+          });
+          return "finished";
         },
       };
       const deps = createTestDepsWithTurnStream(slow);
@@ -1587,7 +1297,7 @@ describe("SessionRouter", () => {
       // Mid-turn: active turn is running and half-emitted deltas are buffered.
       await new Promise((r) => setTimeout(r, 20));
       const active = await deps.turnStreamStore.getActiveTurn(session.id);
-      expect(active).toEqual({ turnId: "turn_1_a1", status: "running" });
+      expect(active).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
       const midDeltas = await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1");
       expect(midDeltas.some((d) => d.type === "agent.message_chunk")).toBe(true);
 
@@ -1600,14 +1310,16 @@ describe("SessionRouter", () => {
     // Captures the model the adapter was invoked with for each run.
     function createModelCapturingAdapter(models: string[]): Adapter {
       return {
-        async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+        async run(input: AdapterInput) {
+          const write = journalWriter(input);
           models.push(input.agent.model);
-          yield {
+          await write({
             id: "evt_1",
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.message",
             content: [{ type: "text", text: "ok" }],
-          };
+          });
+          return "finished";
         },
       };
     }
@@ -1642,8 +1354,8 @@ describe("SessionRouter", () => {
 
     async function runOneTurn(
       router: SessionRouter,
-      sessionStore: InMemorySessionStore,
-      pendingEventStore: InMemoryPendingEventStore,
+      sessionStore: SessionStore,
+      pendingEventStore: PendingEventStore,
       sessionId: string,
       agent: Agent,
     ) {
@@ -1661,9 +1373,7 @@ describe("SessionRouter", () => {
     it("resolves the model from the Agent's current config, not the session snapshot", async () => {
       const models: string[] = [];
       const adapter = createModelCapturingAdapter(models);
-      const eventLogStore = new InMemoryEventLogStore();
-      const pendingEventStore = new InMemoryPendingEventStore();
-      const sessionStore = new InMemorySessionStore();
+      const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
       const eventStreamHub = new InProcessEventStreamHub();
       const agentStore = createFakeAgentStore({ ...testAgent });
 
@@ -1717,9 +1427,7 @@ describe("SessionRouter", () => {
     it("keeps a Loop-created Session on the Agent snapshot captured at dispatch", async () => {
       const models: string[] = [];
       const adapter = createModelCapturingAdapter(models);
-      const eventLogStore = new InMemoryEventLogStore();
-      const pendingEventStore = new InMemoryPendingEventStore();
-      const sessionStore = new InMemorySessionStore();
+      const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
       const eventStreamHub = new InProcessEventStreamHub();
       const agentStore = createFakeAgentStore({ ...testAgent });
       const router = new SessionRouter({

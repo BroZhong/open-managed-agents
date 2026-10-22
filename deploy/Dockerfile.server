@@ -32,12 +32,9 @@ COPY server/patches/ ./server/patches/
 # deploy/scripts/build-images.sh regenerates this block in a temporary
 # Dockerfile from the current workspace, preventing new packages from being
 # omitted while preserving the dependency-layer cache.
-COPY adapter/packages/claude-code/package.json ./adapter/packages/claude-code/
-COPY adapter/packages/codex/package.json ./adapter/packages/codex/
 COPY adapter/packages/core/package.json ./adapter/packages/core/
 COPY adapter/packages/mock/package.json ./adapter/packages/mock/
 COPY adapter/packages/pi-agent/package.json ./adapter/packages/pi-agent/
-COPY adapter/packages/runner/package.json ./adapter/packages/runner/
 COPY adapter/packages/tool-executor-local/package.json ./adapter/packages/tool-executor-local/
 
 COPY server/packages/api/package.json ./server/packages/api/

@@ -32,62 +32,100 @@ export interface PendingEventClaimRef {
 export interface PendingEventClaim extends PendingEventClaimRef {
   event: PendingEvent;
   expiresAt: Date;
+  /**
+   * An earlier generation accepted an Interrupt for this input. The input is
+   * still queued, so the Interrupt has not ended its Turn: the Runner that
+   * accepted it stopped first. Unlike this generation's own Interrupt, which
+   * {@link PendingEventStore.renewClaim} reports, it is read once here.
+   */
+  priorInterrupt: boolean;
+  /**
+   * How the claim before this one on the same input ended: its lease
+   * `expired` (the Runner holding it was lost) or its owner `released` it (a
+   * handoff, or a Turn left waiting). Null for the input's first claim. A
+   * claim with a predecessor takes over a Turn another attempt may have
+   * started.
+   */
+  previous: PendingEventClaimEnd | null;
 }
+
+/** How a claim on an input ended without acknowledging it. */
+export type PendingEventClaimEnd = "expired" | "released";
 
 export interface PendingEventFence extends PendingEventClaimRef {
   eventId: string;
 }
 
+/** What one heartbeat learns from renewing its claim. */
+export interface PendingEventRenewal {
+  /** False once the exact owner+generation no longer holds a live claim. */
+  renewed: boolean;
+  /** An Interrupt was accepted for the renewed generation (never an earlier one). */
+  interruptRequested: boolean;
+}
+
 export interface PendingEventStore {
-  /** Persist an Interrupt for the currently claimed input only. */
-  requestInterrupt?(sessionId: string): Promise<boolean>;
-  interruptRequested?(sessionId: string, eventId: string): Promise<boolean>;
+  /**
+   * Persist an Interrupt for the input whose Turn runs: the head a claim
+   * started and whose Turn has not completed, whether a Runner holds its
+   * claim now or it lapsed or was released. Its owner learns of it from the
+   * result of its next {@link renewClaim}; a claim taking the input over,
+   * from {@link PendingEventClaim.priorInterrupt}.
+   */
+  requestInterrupt(sessionId: string): Promise<boolean>;
   enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent>;
-  /** @deprecated Runtime drainers must use claim + fenced ack. */
-  dequeue(sessionId: string): Promise<PendingEvent | null>;
   peek(sessionId: string): Promise<PendingEvent | null>;
   /**
    * Atomically claim the FIFO head. A competing live claim returns null. An
    * expired claim starts a new monotonically fenced generation.
    */
-  claim?(sessionId: string, ownerId: string, leaseMs: number): Promise<PendingEventClaim | null>;
-  /** Extend only the exact, still-live owner+generation lease. */
-  renewClaim?(
+  claim(sessionId: string, ownerId: string, leaseMs: number): Promise<PendingEventClaim | null>;
+  /**
+   * Extend only the exact, still-live owner+generation lease, and report in
+   * the same round trip whether an Interrupt was accepted for it.
+   */
+  renewClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
-  ): Promise<boolean>;
+  ): Promise<PendingEventRenewal>;
   /** Read-only live-fence check around external storage availability checks. */
-  ownsClaim?(
+  ownsClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
   ): Promise<boolean>;
   /** Relinquish only the exact owner+generation claim. */
-  releaseClaim?(
+  releaseClaim(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
   ): Promise<boolean>;
   /**
-   * Remove the FIFO head. A claimed row requires the exact, unexpired fence;
-   * omitting claim is retained only for unclaimed legacy/test callers.
+   * Remove the claimed FIFO head without a Turn outcome. Requires the exact,
+   * unexpired fence: every executed input is claimed first.
    */
-  ack(sessionId: string, eventId: string, claim?: PendingEventClaimRef): Promise<boolean>;
+  ack(sessionId: string, eventId: string, claim: PendingEventClaimRef): Promise<boolean>;
   /**
    * Acknowledge an input with a durable turn_completed marker. Atomically
    * remove it and, only if the queue empties, commit Session idle + its Event.
-   * Production stores serialize this with ingress and fence the claimed head.
-   * Optional for legacy stores and narrow single-process test doubles.
+   * Serialized with ingress and fenced by the claimed head.
    */
-  ackCompletedTurn?(
+  ackCompletedTurn(
     sessionId: string,
     eventId: string,
     claim: PendingEventClaimRef,
   ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }>;
-  /** Session ids whose FIFO queues currently contain at least one event. */
-  listPendingSessionIds(): Promise<string[]>;
+  /**
+   * Session ids whose FIFO head {@link claim} would take now: no live claim
+   * holds it (never claimed, released, or its lease expired). A head under a
+   * live claim is not listed: its owner drains the rest of its queue, and the
+   * head is listed again once the owner's lease expires.
+   */
+  listClaimableSessionIds(): Promise<string[]>;
+  /** Whether the Session has a FIFO head that {@link claim} would take now. */
+  headClaimable(sessionId: string): Promise<boolean>;
   /** Discard every pending event for one Session (missing/terminated cleanup). */
   clear(sessionId: string): Promise<void>;
   count(sessionId: string): Promise<number>;
@@ -104,11 +142,8 @@ export interface PendingEventStore {
    * lease means the attempt that held it lost ownership and its Turn is being
    * torn down, so that input really is waiting to be executed by whoever claims
    * it next.
-   *
-   * Optional for the same reason as {@link claim}: narrow single-process test
-   * doubles need not implement it, and callers fall back to {@link count}.
    */
-  listUnclaimed?(sessionId: string, limit: number): Promise<PendingEvent[]>;
+  listUnclaimed(sessionId: string, limit: number): Promise<PendingEvent[]>;
 }
 
 /**

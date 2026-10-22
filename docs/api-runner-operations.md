@@ -24,9 +24,30 @@ and loads the shared Sandbox Secret. API alone requires user-login credentials.
 
 `PENDING_SCAN_INTERVAL_MS=5000`, `LOOP_POLL_INTERVAL_MS=15000`, and
 `SSE_CATCHUP_INTERVAL_MS=2000` are independent. Healthy wake hints normally allow
-claiming without waiting for a scan. PostgreSQL is the only pending queue and
-history authority. Redis contains disposable Deltas, active-Turn projections and
+claiming without waiting for a scan. A running Turn renews its claim every 10 s
+(30 s lease); the renewal also reports an accepted Interrupt. The API's `check`
+hint makes the owner renew at once, so an Interrupt takes effect within about a
+second while Redis is healthy and within 10 s without it. PostgreSQL is the only
+pending queue and history authority. Redis contains disposable Deltas, active-Turn projections and
 notifications. Outages lose temporary token animation, never committed answers.
+A Turn's Delta stream expires 30 minutes after its last append, so streams left
+behind by a lost Runner need no manual cleanup.
+
+Stopping a Runner (rollout, scale-down, `kubectl delete pod`) hands its running
+Turns to the other Runners (ADR-0021). On SIGTERM it stops scanning and claiming
+and asks each running Turn to stop before its next model request: a tool that is
+running finishes and keeps its result. A Turn still in a tool when
+`SHUTDOWN_GRACE_MS` (20 s) runs out is detached; its Sandbox process is not
+stopped, and the next owner tells the Agent that call's outcome is unknown. Each
+claim is released and another Runner takes the Turn over at once on the `wake`
+signal, or within one scan without Redis; the trace shows a `session.turn_resumed`
+with reason `released`. Releasing the claims may take up to 5 s after the grace
+period, so keep the Pod's termination grace period at the Kubernetes default of
+30 s or more. A handoff needs another Runner to continue the Turn: with a single
+Runner, the Turn continues when the replacement Pod is ready. On the test
+cluster's virtual kubelet, `kubectl delete pod --force --grace-period=0` still
+delivers SIGTERM, so it tests the handoff; to test a lost Runner (lease expiry,
+reason `expired`), kill the process with SIGKILL inside the container.
 
 The first split release uses one API and one Runner. `deploy/app/api-runner.yaml`
 provides separate ConfigMaps, Deployments, readiness probes and internal Services;
@@ -129,9 +150,10 @@ explicitly. The following commands are for the separately authorized release:
      --type merge -p '{"spec":{"selector":{"app":"oma-api"}}}'
    ```
 
-   SSE connections may disconnect and replay from PG. Wait for actual bridge-owned
-   Turns to settle before retiring the bridge Deployment. There is no newly added
-   stop-at-next-input mode. Observe PG claim owners and remaining pending work.
+   SSE connections may disconnect and replay from PG. A bridge or Runner of a
+   release with the shutdown handoff (ADR-0021) hands its running Turns to the
+   other Runners as it stops; wait for the Turns of an older one to settle before
+   retiring it. Observe PG claim owners and remaining pending work.
 8. Roll API and Runner images independently with the normal deployment process.
    Confirm updating API does not change Runner Pod UIDs or interrupt active Turns.
    Confirm separate image tags in the rendered manifest. Keep Web independent;
@@ -145,9 +167,10 @@ explicitly. The following commands are for the separately authorized release:
 Route the Service back to the **compatible bridge** and scale split roles down only
 under the existing Turn shutdown/recovery policy. Leave migration 0015 installed;
 it is additive. Do not roll readers back before ADR-0016 native-event support or
-mix pre-split processes with split Runners. A Runner exit may produce
-`recovery_required` or the existing partial-Turn recovery error; queued unstarted
-inputs remain durable. API rollbacks do not require Runner restarts.
+mix pre-split processes with split Runners. A Turn whose Runner exits is
+continued by the next Runner that claims its input (ADR-0021), at once when the
+Runner was stopped gracefully; queued unstarted inputs remain durable. API
+rollbacks do not require Runner restarts.
 
 Cleanup errors leave retryable rows. Lease loss is not execution settlement and
 does not request idle; native finite deadlines remain in force. Explicit termination
@@ -162,7 +185,8 @@ files and history survive termination.
 `node --import tsx`. Copy it into a stable Runner Pod and run `init` once with an
 absolute evidence-file path. It creates its own tenant and revokes each temporary
 API key. The default target is the public production URL; set `OMA_LIVE_BASE_URL`
-for an isolated staging API and `VERIFY_SCHEMA=oma_split_stage` for its database.
+for an isolated staging API and `VERIFY_SCHEMA=oma_split_stage` for its database
+(`VERIFY_SCHEMA=oma_test` with `https://agentry-test.welltop.tech/api` for the test environment).
 Do not point staging Runners at the production schema or Redis for fault injection.
 
 Run phases in order: `basic`, `real-start`, `real-finish`, `interrupt`,

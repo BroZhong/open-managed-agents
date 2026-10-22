@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMemoryStores, type MemoryStores } from "../src/index.js";
+import { createMemoryStores, InMemoryPendingEventStore, type MemoryStores } from "../src/index.js";
 
 describe("createMemoryStores", () => {
   let stores: MemoryStores;
@@ -15,7 +15,7 @@ describe("createMemoryStores", () => {
         name: "Test Agent",
         model: "gpt-4",
         system: "You are helpful.",
-        runtime: "claude-code",
+        runtime: "mock",
       });
       expect(agent.id).toBeDefined();
       expect(agent.name).toBe("Test Agent");
@@ -25,8 +25,8 @@ describe("createMemoryStores", () => {
     });
 
     it("lists agents by tenant", async () => {
-      await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
-      await stores.agentStore.create({ tenantId: "t2", name: "B", model: "m", system: "s", runtime: "codex" });
+      await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
+      await stores.agentStore.create({ tenantId: "t2", name: "B", model: "m", system: "s", runtime: "pi-agent" });
 
       const result = await stores.agentStore.list("t1");
       expect(result.data).toHaveLength(1);
@@ -34,13 +34,13 @@ describe("createMemoryStores", () => {
     });
 
     it("updates an agent", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const updated = await stores.agentStore.update(agent.id, { name: "B" });
       expect(updated?.name).toBe("B");
     });
 
     it("deletes an agent", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const deleted = await stores.agentStore.delete(agent.id);
       expect(deleted).toBe(true);
       expect(await stores.agentStore.getById(agent.id)).toBeNull();
@@ -49,7 +49,7 @@ describe("createMemoryStores", () => {
 
   describe("SessionStore", () => {
     it("creates and retrieves a session bound to a workspace", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
       expect(session.status).toBe("idle");
@@ -60,7 +60,7 @@ describe("createMemoryStores", () => {
     });
 
     it("excludes delegated children before pagination only when requested", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const input = { tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id };
       await stores.sessionStore.create({ ...input, delegation: {
@@ -78,7 +78,7 @@ describe("createMemoryStores", () => {
     });
 
     it("updates status without touching the workspace binding", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1", id: "bound" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
 
@@ -88,7 +88,7 @@ describe("createMemoryStores", () => {
     });
 
     it("terminates a session", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
 
@@ -99,7 +99,7 @@ describe("createMemoryStores", () => {
     });
 
     it("has no title until one is set, then setTitle persists it", async () => {
-      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "claude-code" });
+      const agent = await stores.agentStore.create({ tenantId: "t1", name: "A", model: "m", system: "s", runtime: "mock" });
       const ws = await stores.workspaceStore.create({ tenantId: "t1" });
       const session = await stores.sessionStore.create({ tenantId: "t1", agentId: agent.id, agent, workspaceId: ws.id });
       expect(session.title).toBeUndefined();
@@ -247,19 +247,20 @@ describe("createMemoryStores", () => {
   });
 
   describe("PendingEventStore", () => {
-    it("enqueues and dequeues in FIFO order", async () => {
+    it("claims and acknowledges in FIFO order", async () => {
       await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "first" }, sessionThreadId: "th1", apiKeyId: "key_1" });
       await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: { text: "second" }, sessionThreadId: "th1" });
 
-      const first = await stores.pendingEventStore.dequeue("s1");
-      expect(first?.data).toEqual({ text: "first" });
-      expect(first?.apiKeyId).toBe("key_1");
+      const first = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(first?.event.data).toEqual({ text: "first" });
+      expect(first?.event.apiKeyId).toBe("key_1");
+      expect(await stores.pendingEventStore.ack("s1", first!.event.id, first!)).toBe(true);
 
-      const second = await stores.pendingEventStore.dequeue("s1");
-      expect(second?.data).toEqual({ text: "second" });
+      const second = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(second?.event.data).toEqual({ text: "second" });
+      expect(await stores.pendingEventStore.ack("s1", second!.event.id, second!)).toBe(true);
 
-      const empty = await stores.pendingEventStore.dequeue("s1");
-      expect(empty).toBeNull();
+      expect(await stores.pendingEventStore.claim("s1", "host_a", 60_000)).toBeNull();
     });
 
     it("counts pending events", async () => {
@@ -297,7 +298,7 @@ describe("createMemoryStores", () => {
       expect(await stores.pendingEventStore.count("s1")).toBe(1);
     });
 
-    it("acknowledges only the peeked FIFO head", async () => {
+    it("acknowledges only the claimed FIFO head", async () => {
       const first = await stores.pendingEventStore.enqueue("s1", {
         type: "a",
         data: {},
@@ -309,8 +310,9 @@ describe("createMemoryStores", () => {
         sessionThreadId: "th1",
       });
 
-      expect(await stores.pendingEventStore.ack("s1", second.id)).toBe(false);
-      expect(await stores.pendingEventStore.ack("s1", first.id)).toBe(true);
+      const claim = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
+      expect(await stores.pendingEventStore.ack("s1", second.id, claim!)).toBe(false);
+      expect(await stores.pendingEventStore.ack("s1", first.id, claim!)).toBe(true);
       expect((await stores.pendingEventStore.peek("s1"))?.id).toBe(second.id);
     });
 
@@ -324,13 +326,84 @@ describe("createMemoryStores", () => {
       const first = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
       expect(first?.generation).toBe(1);
       expect(await stores.pendingEventStore.claim("s1", "host_b", 60_000)).toBeNull();
-      expect(await stores.pendingEventStore.ack("s1", event.id)).toBe(false);
+      expect(await stores.pendingEventStore.ack("s1", event.id, {
+        ownerId: "host_b",
+        generation: first!.generation,
+      })).toBe(false);
       expect(await stores.pendingEventStore.releaseClaim("s1", event.id, first!)).toBe(true);
 
       const second = await stores.pendingEventStore.claim("s1", "host_a", 60_000);
       expect(second?.generation).toBe(2);
-      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first!, 60_000)).toBe(false);
+      expect((await stores.pendingEventStore.renewClaim("s1", event.id, first!, 60_000)).renewed).toBe(false);
       expect(await stores.pendingEventStore.ack("s1", event.id, second!)).toBe(true);
+    });
+
+    it("D1/D4 reports to the next claim an Interrupt an earlier generation accepted, never one of its own", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      expect(first.priorInterrupt).toBe(false);
+      expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
+      await stores.pendingEventStore.releaseClaim("s1", event.id, first);
+
+      // The Interrupt first's Runner accepted but never applied reaches the takeover...
+      const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
+      expect(second.priorInterrupt).toBe(true);
+      // ...without interrupting it the way its own Interrupt does.
+      expect((await stores.pendingEventStore.renewClaim("s1", event.id, second, 60_000)).interruptRequested).toBe(false);
+      expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
+      expect((await stores.pendingEventStore.renewClaim("s1", event.id, second, 60_000)).interruptRequested).toBe(true);
+      await stores.pendingEventStore.releaseClaim("s1", event.id, second);
+
+      expect((await stores.pendingEventStore.claim("s1", "host_c", 60_000))!.priorInterrupt).toBe(true);
+    });
+
+    it("reports to each claim how the claim before it ended: none, expired or released", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 20))!;
+      expect(first.previous).toBeNull();
+      // The Runner holding it is lost: its lease runs out unrenewed.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
+      expect(second.previous).toBe("expired");
+      // A Runner that hands the input over releases its claim.
+      await stores.pendingEventStore.releaseClaim("s1", event.id, second);
+      expect((await stores.pendingEventStore.claim("s1", "host_c", 60_000))!.previous).toBe("released");
+    });
+
+    it("reports no earlier claim to the claim of the input queued behind an acknowledged one", async () => {
+      const done = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      expect(await stores.pendingEventStore.ack("s1", done.id, first)).toBe(true);
+      expect((await stores.pendingEventStore.claim("s1", "host_a", 60_000))!.previous).toBeNull();
+    });
+
+    it("D5 reports no Interrupt to the claim of the input queued behind the interrupted one", async () => {
+      const interrupted = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      await stores.pendingEventStore.requestInterrupt("s1");
+      expect(await stores.pendingEventStore.ack("s1", interrupted.id, first)).toBe(true);
+
+      expect((await stores.pendingEventStore.claim("s1", "host_a", 60_000))!.priorInterrupt).toBe(false);
+    });
+
+    it("reports an Interrupt through the renewal of the generation it was accepted for", async () => {
+      const event = await stores.pendingEventStore.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const first = (await stores.pendingEventStore.claim("s1", "host_a", 60_000))!;
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first, 60_000))
+        .toEqual({ renewed: true, interruptRequested: false });
+      expect(await stores.pendingEventStore.requestInterrupt("s1")).toBe(true);
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first, 60_000))
+        .toEqual({ renewed: true, interruptRequested: true });
+
+      // A later generation does not inherit the earlier generation's Interrupt.
+      await stores.pendingEventStore.releaseClaim("s1", event.id, first);
+      const second = (await stores.pendingEventStore.claim("s1", "host_b", 60_000))!;
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, second, 60_000))
+        .toEqual({ renewed: true, interruptRequested: false });
+      expect(await stores.pendingEventStore.renewClaim("s1", event.id, first, 60_000))
+        .toEqual({ renewed: false, interruptRequested: false });
     });
 
     it("rejects a durable append from an old pending fence", async () => {
@@ -358,13 +431,40 @@ describe("createMemoryStores", () => {
       })).rejects.toMatchObject({ code: "pending_event_claim_lost" });
     });
 
+    it("refuses to complete a Turn when standalone, since it cannot commit Session idle", async () => {
+      const standalone = new InMemoryPendingEventStore();
+      const event = await standalone.enqueue("s1", { type: "user.message", data: {}, sessionThreadId: "th1" });
+      const claim = await standalone.claim("s1", "host_a", 60_000);
+
+      await expect(standalone.ackCompletedTurn("s1", event.id, claim!)).rejects.toThrow("createMemoryStores");
+      expect(await standalone.count("s1")).toBe(1);
+    });
+
     it("lists and clears retained Session queues", async () => {
       await stores.pendingEventStore.enqueue("s2", { type: "a", data: {}, sessionThreadId: "th1" });
       await stores.pendingEventStore.enqueue("s1", { type: "a", data: {}, sessionThreadId: "th1" });
 
-      expect(await stores.pendingEventStore.listPendingSessionIds()).toEqual(["s1", "s2"]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds()).toEqual(["s1", "s2"]);
       await stores.pendingEventStore.clear("s1");
-      expect(await stores.pendingEventStore.listPendingSessionIds()).toEqual(["s2"]);
+      expect(await stores.pendingEventStore.listClaimableSessionIds()).toEqual(["s2"]);
+    });
+
+    it("lists only Sessions whose head no live claim holds: the owner drains the rest of its queue", async () => {
+      const pending = stores.pendingEventStore;
+      for (const id of ["live", "released", "expired", "unclaimed"]) {
+        await pending.enqueue(id, { type: "a", data: {}, sessionThreadId: "th1" });
+        await pending.enqueue(id, { type: "a", data: {}, sessionThreadId: "th1" });
+      }
+      await pending.claim("live", "host_a", 60_000);
+      const released = (await pending.claim("released", "host_a", 60_000))!;
+      await pending.releaseClaim("released", released.event.id, released);
+      await pending.claim("expired", "host_a", 1);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      expect(await pending.listClaimableSessionIds()).toEqual(["expired", "released", "unclaimed"]);
+      expect(await pending.headClaimable("live")).toBe(false);
+      for (const id of ["released", "expired", "unclaimed"]) expect(await pending.headClaimable(id)).toBe(true);
+      expect(await pending.headClaimable("empty")).toBe(false);
     });
   });
 

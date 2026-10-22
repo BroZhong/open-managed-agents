@@ -2,6 +2,16 @@
 
 ## Status
 
+The Router-side alignment in the Decision ("Router aligns each projected
+completion...") is revised by [ADR-0020](0020-turn-journal-single-write-entry.md):
+the Adapter writes the final blockIndex into each Delta and display block, and
+revoking the Adapter's write entry replaces Interrupt draining under a renewed
+fence.
+
+[ADR-0021](0021-resumed-turn.md): the results the Host writes for calls a lost
+Runner left without one are Host-generated results like recovered waits, and
+Pi replays them into the native chain when another Runner continues the Turn.
+
 Accepted. Amends ADR-0013/0014's dual native/display output persistence and
 extends ADR-0015. Existing histories are not rewritten. The console's display
 logic and event shapes remain unchanged.

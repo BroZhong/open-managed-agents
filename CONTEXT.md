@@ -28,7 +28,7 @@ existing production Agents and must be migrated before removal.
 ## Language
 
 **Agent**:
-A configured AI coding worker that can be used to create **Sessions**. An Agent has one runtime and may be configured to run as a **Sandboxed Agent**.
+A configured AI coding worker that can be used to create **Sessions**. An Agent has one runtime (`pi-agent`, or `mock` for tests) and may be configured to run as a **Sandboxed Agent**. Agents created with the retired `claude-code` or `codex` runtime are kept, but each of their Turns ends with an `unsupported_runtime` error.
 _Avoid_: bot, assistant, worker
 
 **Agent Fork**:
@@ -46,8 +46,10 @@ _Avoid_: chat, thread, run
 Session thinking intensity is an optional persisted override. An absent/null
 preference follows the current Agent on each new Turn; Loop Sessions retain
 their Agent snapshot. Changing it affects future Turns only, never another
-Session or the Agent itself. Explicit Delegation Execution settings and resumed
-wait checkpoints retain precedence. Pi adapts the preference to model capabilities.
+Session or the Agent itself; a **Resumed Turn** keeps the thinking its first
+attempt ran with. Explicit Delegation Execution settings and the
+configuration recorded by a resumed wait retain precedence. Pi adapts the
+preference to model capabilities.
 
 **Child Session**:
 A durable Session created by a parent's `Agent` tool. It belongs to the same configured Agent and Tenant, retains its creation parent Session/Turn/tool-use identity, and shares the Workspace and Sandbox binding by default. It does not copy the parent conversation. `childId` is the Session ID; `resume` submits a new Delegation Input to that same Child Session.
@@ -58,7 +60,7 @@ A durable task prompt accepted by `Agent`, either for a new Child Session or for
 _Avoid_: new Agent configuration, user message (its origin is delegation)
 
 **Delegation Execution**:
-The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; the Host assigns 500 steps by default to each execution, including resume. The parent cannot override the budget; budget exhaustion returns a status for the parent to decide whether to resume.
+The persistent association between one Delegation Input and its child Turn. It records effective configuration, status, input, calling identity, outcome and trace. The execution ID distinguishes initial delegation from later resumes of the same Child Session. A model step is one model request within an execution, not an OMA Turn; the Host assigns 500 steps by default to each execution, including resume. The parent cannot override the budget; budget exhaustion returns a status for the parent to decide whether to resume. Its child Turn resumes on another Runner like any **Resumed Turn**, keeping its step count and its slot of the parent's concurrency limit.
 _Avoid_: childId (the Child Session can contain multiple executions)
 
 **Delegation Result**:
@@ -70,7 +72,7 @@ An Agent-owned recurring instruction. On each due interval the Host creates a fr
 _Avoid_: cron job, scheduled Session (the Loop is the schedule; each occurrence creates a Session)
 
 **Turn**:
-One accepted input and the Agent execution that responds to it within a **Session**. The input can be a user message, a **Delegation Input**, or a claimed **Delegation Result**. A synchronous delegation waits within the original Turn; an asynchronous result may start a later Turn.
+One accepted input and the Agent execution that responds to it within a **Session**. The input can be a user message, a **Delegation Input**, or a claimed **Delegation Result**. A synchronous delegation waits within the original Turn; an asynchronous result may start a later Turn. A Turn is not bound to one Runner process; see **Resumed Turn**.
 _Avoid_: request, job, invocation
 
 A Turn's durable `session.turn_completed` Event ends that Turn independently of
@@ -93,8 +95,12 @@ _Avoid_: pending message, optimistic message, draft, backlog
 A **Turn** that ended because of an **Interrupt** rather than by the Agent finishing. Its output is kept and shown as it was left — recognizably cut short rather than presented as a finished answer — because a user who stopped an Agent still wants to see how far it got. What the Agent half-produced is history, but it is not treated as work the Agent stands behind: a later Turn continues from the last point the Agent actually completed.
 _Avoid_: failed Turn, cancelled Turn, error (an Interrupt is the user's intent, not a fault)
 
+**Resumed Turn**:
+A **Turn** that continues on another Runner after the Runner executing it stopped — a crash, restart or deployment. It keeps the same Turn, input, model and thinking; work it already committed is never executed again. Each tool call whose outcome was not committed is reported to the Agent as unknown: it may not have run, may have partly or fully completed, and a process it started may still be running, so the Agent inspects the current state before deciding whether to repeat it. Delegation tools report their durable delegation state instead. An Interrupt accepted before the Runner stopped still ends the Turn as an **Interrupted Turn**. After three consecutive takeovers without newly committed progress, the Turn ends with an error.
+_Avoid_: retry, rerun, replay (committed work is never repeated; only the Agent may choose to repeat an uncertain call)
+
 **Delta**:
-A transient increment of an Agent's output emitted while the current **Turn** is running. Deltas form a live projection of that Turn only: they are never part of a Session's durable history, are replaced by the corresponding complete event as it arrives, and are discarded if the Turn ends without one.
+A transient increment of an Agent's output emitted while the current **Turn** is running. Deltas form a live projection of that Turn only: they are never part of a Session's durable history, are replaced by the corresponding complete event as it arrives, and are discarded if the Turn ends without one or resumes on another Runner.
 _Avoid_: event, message, token (a Delta may contain text beyond one token)
 
 **Complete Event**:
@@ -246,8 +252,8 @@ ADR-0009 and ADR-0012.
 
 ## Session sharing
 
-Large tool results (at least 64 KiB of event JSON), including native Pi results
-and Delegation checkpoint copies, are stored as immutable OSS payloads. The event
+Large tool results (at least 64 KiB of event JSON), including native Pi results,
+are stored as immutable OSS payloads. The event
 journal keeps references; Host runtime reads restore the original data. Session
 history and SSE expose only metadata for these results. The console loads complete
 content only when expanded, without thumbnails. See ADR-0015 for the read contract

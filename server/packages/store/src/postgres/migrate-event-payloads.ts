@@ -3,7 +3,7 @@ import { EventPayloadCodec, eventPayloadRef, lazyEventData } from "../event-payl
 
 /** Bounded, resumable migration. Upload + read-back precede each conditional PG update. */
 export async function migrateEventPayloads(pool: Pool, codec: EventPayloadCodec, options: { apply?: boolean; sessionId?: string } = {}) {
-  const stats = { events: 0, checkpoints: 0, updated: 0, conflicts: 0, bytes: 0 };
+  const stats = { events: 0, updated: 0, conflicts: 0, bytes: 0 };
   let session = "", seq = 0;
   for (;;) {
     const page = await pool.query<{ session_id: string; seq: string; type: string; data: unknown }>(
@@ -25,27 +25,6 @@ export async function migrateEventPayloads(pool: Pool, codec: EventPayloadCodec,
       await codec.decode(session, encoded); // Hash/size verification, not merely PUT success.
       const changed = await pool.query("UPDATE events SET data=$1 WHERE session_id=$2 AND seq=$3 AND data=$4::jsonb",
         [JSON.stringify(encoded), session, seq, JSON.stringify(row.data)]);
-      if (changed.rowCount) stats.updated++; else stats.conflicts++;
-    }
-  }
-  let id = "";
-  for (;;) {
-    const page = await pool.query<{ id: string; record: { callerSessionId: string; checkpoint?: Record<string, unknown> } }>(
-      `SELECT id, record FROM delegation_waits WHERE id > $1 ${options.sessionId ? "AND record->>'callerSessionId'=$2" : ""} ORDER BY id LIMIT 25`,
-      [id, ...(options.sessionId ? [options.sessionId] : [])]);
-    if (!page.rows.length) break;
-    for (const row of page.rows) {
-      id = row.id;
-      const checkpoint = row.record.checkpoint;
-      if (!Array.isArray(checkpoint?.events)) continue;
-      const big = checkpoint.events.some(e => !eventPayloadRef(e) && eventPayloadRef(lazyEventData(e.type, e)));
-      if (!big) continue;
-      stats.checkpoints++;
-      if (!options.apply) continue;
-      const encoded = await codec.checkpoint(row.record.callerSessionId, checkpoint);
-      await codec.checkpoint(row.record.callerSessionId, encoded, true);
-      const changed = await pool.query("UPDATE delegation_waits SET record=$1 WHERE id=$2 AND record=$3::jsonb",
-        [JSON.stringify({ ...row.record, checkpoint: encoded }), id, JSON.stringify(row.record)]);
       if (changed.rowCount) stats.updated++; else stats.conflicts++;
     }
   }

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  adapterProcessEnvFromHost,
-  sandboxEnvPolicyFromHost,
-} from "../src/lib/sandbox-env.js";
+import { sandboxEnvPolicyFromHost } from "../src/lib/sandbox-env.js";
 
 describe("sandboxEnvPolicyFromHost", () => {
   it("makes the base Secret native defaults for every Agent without an allowlist", () => {
@@ -117,32 +114,6 @@ describe("sandboxEnvPolicyFromHost", () => {
       "requires DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL, " +
         "DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN, and " +
         "DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS",
-    );
-  });
-});
-
-describe("adapterProcessEnvFromHost", () => {
-  it("keeps ordinary adapter variables but removes sandbox-only deployment values", () => {
-    const hostEnv = {
-      PATH: "/usr/local/bin:/usr/bin",
-      OPENAI_API_KEY: "adapter-key-sentinel",
-      WORKSPACE_OSS_ACCESS_KEY_SECRET: "host-only-oss-secret",
-      WORKSPACE_OSS_STS_TOKEN: "host-only-oss-token",
-      OMA_PROVIDER_ENCRYPTION_KEY: "host-only-provider-encryption-key",
-      AUTO_STORY_AGENT_IDS: "agent_story",
-      AUTO_STORY_SANDBOX_ENV_JSON: '{"GEMINI_API_KEY":"story-key-sentinel"}',
-      DEFAULT_SANDBOX_VFS_TOKEN: "vfs-token-sentinel",
-      DEFAULT_SANDBOX_OPENGROVE_WW_BASE_URL: "https://ww.example.test",
-      DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN: "ww-token-sentinel",
-      DEFAULT_SANDBOX_OPENGROVE_WW_AGENT_IDS: "agent_story",
-    };
-
-    expect(adapterProcessEnvFromHost(hostEnv)).toEqual({
-      PATH: "/usr/local/bin:/usr/bin",
-      OPENAI_API_KEY: "adapter-key-sentinel",
-    });
-    expect(hostEnv.DEFAULT_SANDBOX_OPENGROVE_WW_ACCESS_TOKEN).toBe(
-      "ww-token-sentinel",
     );
   });
 });

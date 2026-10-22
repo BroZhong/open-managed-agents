@@ -16,6 +16,8 @@ For Pi SDK integration and Sandbox tool execution, ADR-0014 is authoritative;
 ADR-0013 retains the message fidelity and automatic compaction requirements.
 ADR-0015 externalizes large tool results to OSS and defines lazy event-data reads.
 ADR-0016 makes new Pi native entries authoritative and derives display events without duplicate durable content.
+For Turn persistence, ADR-0020 is authoritative: one TurnJournal per Turn attempt
+is the only write entry, and every native message is committed before Pi proceeds.
 For Host-managed MCP work, ADR-0006 is authoritative. For recurring Loop
 dispatch and its Session ownership semantics, ADR-0007 is authoritative.
 For Sandbox lifecycle, ADR-0019 is authoritative and supersedes ADR-0017: finite

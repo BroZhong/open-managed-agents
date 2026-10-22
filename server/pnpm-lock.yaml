@@ -138,15 +138,9 @@ importers:
 
   packages/redis:
     dependencies:
-      '@oma-server/store':
-        specifier: workspace:*
-        version: link:../store
       ioredis:
         specifier: ^5.4.0
         version: 5.11.1
-      nanoid:
-        specifier: ^5.1.11
-        version: 5.1.11
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -204,6 +198,9 @@ importers:
       '@oma-server/store-memory':
         specifier: workspace:*
         version: link:../store-memory
+      '@open-managed-agents/adapter-mock':
+        specifier: file:../../../adapter/packages/mock
+        version: file:../adapter/packages/mock
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19

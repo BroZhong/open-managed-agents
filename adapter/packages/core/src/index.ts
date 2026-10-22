@@ -18,6 +18,7 @@ export type {
   AgentContextUsageEvent,
   AgentCompactionEvent,
   AdapterExecution,
+  AdapterResume,
   DelegationInstruction,
   HostSubagentCapability,
   SubagentCallContext,
@@ -53,9 +54,10 @@ export type {
   StreamEvent,
   // Union
   SessionEvent,
+  DurableEvent,
 } from "./types.js";
 
-export type { Adapter } from "./interface.js";
+export type { Adapter, AdapterRunResult, TurnJournalPort } from "./interface.js";
 
 export type {
   ToolExecutor,

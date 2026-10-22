@@ -11,8 +11,7 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
   let activity: SandboxActivity;
   beforeEach(async () => {
     if (!harness) harness = await createPgTestHarness(); else await harness.reset();
-    const schema = process.env.PG_TEST_SCHEMA ?? 'oma_test';
-    if (!/^[a-z0-9_]+$/.test(schema)) throw new Error('Unsafe test schema');
+    const schema = harness.schema;
     const migration = await readFile(new URL('../../../../deploy/migrations/0020_native_sandbox_lifecycle.sql', import.meta.url), 'utf8');
     await harness.pool.query(migration.replaceAll('oma.', `${schema}.`));
     stores = await createPgStores(harness.pool, { ensureSchema: false });

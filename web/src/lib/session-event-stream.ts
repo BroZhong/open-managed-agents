@@ -7,7 +7,11 @@ export interface SessionEventStreamState {
   completedBlocks: ReadonlySet<string>;
   completedTurns: ReadonlySet<string>;
   seenDeltaKeys: ReadonlySet<string>;
-  latestDeltaBlock?: OutputBlockRef;
+  /**
+   * Block of the latest Delta, with the highest attempt seen for its Turn.
+   * Every active Delta belongs to this Turn and attempt.
+   */
+  latestDeltaBlock?: OutputBlockRef & { attempt: number };
 }
 
 export type SessionEventStreamAction =
@@ -37,6 +41,11 @@ const LIVE_PROJECTION_END_TYPES: ReadonlySet<string> = new Set([
   "session.status_idle",
   "session.status_terminated",
 ]);
+
+/** Claim generations start at 1; a Delta without one is the earliest attempt. */
+function attemptOf(delta: SessionDelta): number {
+  return delta.attempt ?? 0;
+}
 
 function deltaKey(delta: SessionDelta): string | undefined {
   return delta.deltaId === undefined ? undefined : `${delta.turnId}:${delta.deltaId}`;
@@ -146,6 +155,7 @@ export function parseSessionSseFrame(frame: string): ParsedSessionSseFrame | nul
       turnId: record.turnId,
       blockIndex: record.blockIndex,
       deltaId: typeof record.deltaId === "string" ? record.deltaId : undefined,
+      attempt: typeof record.attempt === "number" ? record.attempt : undefined,
     },
   };
 }
@@ -174,10 +184,17 @@ export function sessionEventStreamReducer(
       const key = outputBlockKey(action.delta);
       if (state.completedBlocks.has(key) || state.completedTurns.has(action.delta.turnId)) return state;
       const identity = deltaKey(action.delta);
-      const sameTurn =
-        state.latestDeltaBlock === undefined ||
-        state.latestDeltaBlock.turnId === action.delta.turnId;
-      const previousDeltaKeys = sameTurn ? state.seenDeltaKeys : new Set<string>();
+      const attempt = attemptOf(action.delta);
+      const latest = state.latestDeltaBlock;
+      const sameTurn = latest === undefined || latest.turnId === action.delta.turnId;
+      // Attempts of one input share the Turn and number their blocks after the
+      // committed ones, so a lost attempt's unfinished block and its
+      // successor's can share a blockIndex. Only the highest attempt is shown:
+      // a lower one still arriving is ignored, and a higher one discards what
+      // the lower one left unfinished, which no Complete Event will replace.
+      if (sameTurn && latest !== undefined && attempt < latest.attempt) return state;
+      const sameAttempt = sameTurn && (latest === undefined || latest.attempt === attempt);
+      const previousDeltaKeys = sameAttempt ? state.seenDeltaKeys : new Set<string>();
       if (identity !== undefined && previousDeltaKeys.has(identity)) {
         return state;
       }
@@ -189,18 +206,19 @@ export function sessionEventStreamReducer(
         ...state,
         // Complete Events replace only their aligned (turnId, blockIndex)
         // Delta block. A later block must not erase an earlier partial bubble.
-        activeDeltas: sameTurn
+        activeDeltas: sameAttempt
           ? [...state.activeDeltas, action.delta]
           : [action.delta],
         seenDeltaKeys,
         latestDeltaBlock: {
           turnId: action.delta.turnId,
-          blockIndex: sameTurn
+          blockIndex: sameAttempt
             ? Math.max(
-                state.latestDeltaBlock?.blockIndex ?? action.delta.blockIndex,
+                latest?.blockIndex ?? action.delta.blockIndex,
                 action.delta.blockIndex,
               )
             : action.delta.blockIndex,
+          attempt,
         },
       };
     }

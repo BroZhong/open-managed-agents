@@ -2,7 +2,8 @@ import { expect, it } from "vitest";
 import { BIG_RESULT_BYTES, createPgStores, EventPayloadCodec, PgEventLogStore } from "@oma-server/store";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
-import type { Adapter } from "@open-managed-agents/adapter-core";
+import type { Adapter, AdapterInput } from "@open-managed-agents/adapter-core";
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { createPgTestHarness } from "../../store/test/pg-harness.js";
 import { restorePiSession } from "../../../../adapter/packages/pi-agent/src/pi-context.js";
 
@@ -51,15 +52,17 @@ it("continues a Turn after persisting binary tool output instead of emitting ada
     const content = [{ type: "text" as const, text: "ELF\u0000binary" }];
     let executions = 0;
     const adapter: Adapter = {
-      async *run() {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         executions++;
         const timestamp = new Date().toISOString();
-        yield { id: "call", timestamp, type: "agent.tool_use", toolUseId: "bash1", name: "bash", input: { command: "head binary" } };
-        yield { id: "result", timestamp, type: "agent.tool_result", toolUseId: "bash1", content, isError: false };
-        yield { id: "native", timestamp, type: "agent.context_entry", sdk: "pi@0.83.0",
+        await write({ id: "call", timestamp, type: "agent.tool_use", toolUseId: "bash1", name: "bash", input: { command: "head binary" } });
+        await write({ id: "result", timestamp, type: "agent.tool_result", toolUseId: "bash1", content, isError: false });
+        await write({ id: "native", timestamp, type: "agent.context_entry", sdk: "pi@0.83.0",
           entry: { id: "native", parentId: null, type: "message", timestamp,
-            message: { role: "toolResult", toolCallId: "bash1", toolName: "bash", content, isError: false, timestamp: Date.now() } } };
-        yield { id: "finished", timestamp, type: "agent.message", content: [{ type: "text", text: "continued after binary output" }] };
+            message: { role: "toolResult", toolCallId: "bash1", toolName: "bash", content, isError: false, timestamp: Date.now() } } });
+        await write({ id: "finished", timestamp, type: "agent.message", content: [{ type: "text", text: "continued after binary output" }] });
+        return "finished";
       },
     };
     const router = new SessionRouter({ eventLogStore: stores.eventLogStore, pendingEventStore: stores.pendingEventStore,

@@ -1,47 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { AdapterInput, AgentToolResultEvent, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
+import type { AgentToolResultEvent, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
+import { runWithJournal, type InputWithoutJournal } from "@open-managed-agents/adapter-core/testing";
 import { PiAgentAdapter, type PiSessionLike, type SessionFactoryArgs } from "../src/pi-agent-adapter.js";
 
-function input(): AdapterInput { return { sessionId: "child", turnId: "turn", message: { role: "user", content: [{ type: "text", text: "task" }] }, history: [], agent: { model: "claude-sonnet-4-5", system: "test" } }; }
-async function collect(adapter: PiAgentAdapter, value: AdapterInput) { const out: SessionEvent[] = []; for await (const e of adapter.run(value)) out.push(e); return out; }
+function input(): InputWithoutJournal { return { sessionId: "child", turnId: "turn", message: { role: "user", content: [{ type: "text", text: "task" }] }, history: [], agent: { model: "claude-sonnet-4-5", system: "test" } }; }
+const collect = runWithJournal;
 function factory(run: (args: SessionFactoryArgs, emit: (e: AgentSessionEvent) => void) => Promise<void>, resume?: ReturnType<typeof vi.fn>) {
   return async (args: SessionFactoryArgs): Promise<PiSessionLike> => {
     let emit = (_e: AgentSessionEvent) => {};
-    return { subscribe(fn) { emit = fn; return () => {}; }, prompt: () => run(args, emit), ...(resume ? { continue: async () => { resume(args); } } : {}), abort() {}, dispose() {} };
+    return { subscribe(fn) { emit = fn; return () => {}; }, prompt: () => run(args, emit), ...(resume ? { continue: async () => { await resume(args); } } : {}), abort() {}, dispose() {} };
   };
 }
 const tool = (id: string): SessionEvent => ({ id: `use-${id}`, timestamp: "2026-01-01", type: "agent.tool_use", toolUseId: id, name: "Agent", input: { prompt: "child", run_in_background: false } });
 const result = (id: string): AgentToolResultEvent => ({ id: `result-${id}`, timestamp: "2026-01-01", type: "agent.tool_result", toolUseId: id, content: [{ type: "text", text: "completed" }] });
 
 describe("durable Pi execution seam", () => {
-  it("exposes the current tool request in a checkpoint before the async event consumer persists it", async () => {
-    let snapshot: SessionEvent[] = [];
-    const adapter = new PiAgentAdapter({ _sessionFactory: factory(async (args, emit) => {
-      emit({ type: "message_update", assistantMessageEvent: { type: "toolcall_end", contentIndex: 0, partial: { content: [] }, toolCall: { id: "wait-tool", name: "Agent", arguments: { prompt: "child" } } } } as unknown as AgentSessionEvent);
-      snapshot = args.checkpoint();
-    }) });
-    const value = input(); value.history = [tool("old"), result("old")];
-    const events = await collect(adapter, value);
-    expect(snapshot.filter(e => e.type === "agent.tool_use")).toEqual(events.filter(e => e.type === "agent.tool_use"));
-    expect(snapshot.some(e => (e as { toolUseId?: string }).toolUseId === "old")).toBe(false);
-    expect(snapshot.find(e => e.type === "agent.tool_use")).toMatchObject({ toolUseId: "wait-tool" });
-  });
   it("continues the original structured history exactly once without re-prompting or rerunning completed tools", async () => {
     const resume = vi.fn(); const prompt = vi.fn();
     const adapter = new PiAgentAdapter({ _sessionFactory: factory(prompt, resume) });
-    const value = input(); value.history = [tool("done"), result("done"), tool("wait")]; value.continuation = { toolResults: [result("done"), result("wait")] };
+    const value = input(); value.history = [tool("done"), result("done"), tool("wait"), result("wait")]; value.resume = { completedModelSteps: 2, blockBase: 2 };
     expect(await collect(adapter, value)).toEqual([]);
     expect(prompt).not.toHaveBeenCalled(); expect(resume).toHaveBeenCalledOnce();
     const history = resume.mock.calls[0][0].historyMessages;
     expect(history.filter((m: { role: string }) => m.role === "toolResult")).toHaveLength(2);
     expect(history.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "wait" });
-  });
-  it("refuses to continue while any original tool result remains pending", async () => {
-    const resume = vi.fn(); const adapter = new PiAgentAdapter({ _sessionFactory: factory(vi.fn(), resume) });
-    const value = input(); value.history = [tool("wait")]; value.continuation = { toolResults: [] };
-    expect(await collect(adapter, value)).toMatchObject([{ type: "session.error", error: { message: expect.stringContaining("pending tool calls") } }]);
-    expect(resume).not.toHaveBeenCalled();
   });
   it("counts model requests instead of OMA Turns and fails after the default 500 child steps", async () => {
     let requests = 0;
@@ -52,8 +35,9 @@ describe("durable Pi execution seam", () => {
   });
   it("retains the same Turn's consumed budget after recovery", async () => {
     let requests = 0;
-    const adapter = new PiAgentAdapter({ _sessionFactory: factory(async args => { for (;;) { await args.beforeModelStep(); requests++; } }) });
-    const value = input(); value.execution = { isChild: true, completedModelSteps: 499 }; value.toolExecutor = {} as ToolExecutor;
+    const loop = async (args: SessionFactoryArgs) => { for (;;) { await args.beforeModelStep(); requests++; } };
+    const adapter = new PiAgentAdapter({ _sessionFactory: factory(vi.fn(), vi.fn(loop)) });
+    const value = input(); value.execution = { isChild: true }; value.resume = { completedModelSteps: 499, blockBase: 0 }; value.toolExecutor = {} as ToolExecutor;
     await collect(adapter, value); expect(requests).toBe(1);
   });
   it.each(["executor", "mcp", "nested"])("fails closed when a child receives invalid %s capabilities", async mode => {

@@ -20,6 +20,7 @@ export type {
   Loop,
   LoopDispatch,
 } from "./types.js";
+export { RUNTIMES } from "./types.js";
 
 export {
   summarizeTokenUsage,
@@ -83,8 +84,10 @@ export type {
   PendingEvent,
   PendingEventEnqueueInput,
   PendingEventClaim,
+  PendingEventClaimEnd,
   PendingEventClaimRef,
   PendingEventFence,
+  PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
 export { PendingEventClaimLostError } from "./errors.js";

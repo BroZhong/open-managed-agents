@@ -181,6 +181,21 @@ describe("Conversation Delta projection", () => {
     expect(messages[0].role).toBe("user");
   });
 
+  it("leaves a Resumed Turn's takeover marker out of the conversation", () => {
+    const { messages } = processEventsToMessages([
+      userMessage,
+      {
+        seq: 11,
+        type: "session.turn_resumed",
+        data: { turnId: "turn_10_a1", generation: 2, reason: "expired", danglingToolUseIds: [] },
+        ts: "2026-07-11T00:00:02.000Z",
+      },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+  });
+
   it("shows the typing indicator only before the current Turn has any response", () => {
     expect(
       shouldShowTypingIndicator(

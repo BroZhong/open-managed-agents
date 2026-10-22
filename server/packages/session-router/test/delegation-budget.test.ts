@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
+import type { TurnJournal } from "../src/turn-journal.js";
 
 describe("Host delegation budget", () => {
   it.each([7, 500, 1000])("assigns the Host budget of %i to create and resume", async (maximum) => {
@@ -12,25 +13,27 @@ describe("Host delegation budget", () => {
     const claim = await stores.pendingEventStore.claim(parent.id, "host", 30_000);
     const coordinator = new DelegationCoordinator({
       store: stores.delegationStore, pending: stores.pendingEventStore,
-      sessions: stores.sessionStore, events: stores.eventLogStore,
-      wake() {}, publish() {}, maxSteps: maximum,
+      sessions: stores.sessionStore,
+      wake() {}, check() {}, maxSteps: maximum,
     });
-    const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal, effectiveConfig: { model: "provider/parent" } });
+    // Background delegations record nothing in the parent's journal.
+    const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal,
+      effectiveConfig: { model: "provider/parent" }, journal: {} as TurnJournal });
     expect(capability.maxModelSteps).toBe(maximum);
     const override = { prompt: "task", runInBackground: true, model: "untrusted/different-model" };
-    await expect(capability.delegate(override, { toolUseId: "model-override", checkpoint: [] }))
+    await expect(capability.delegate(override, { toolUseId: "model-override" }))
       .rejects.toThrow("Delegated model overrides are not supported");
 
     // Bypass Pi validation: the Host must independently reject budget overrides.
     for (const key of ["maxSteps", "max_steps"]) {
       const override = { prompt: "task", runInBackground: true, [key]: 6 };
-      await expect(capability.delegate(override, { toolUseId: key, checkpoint: [] }))
+      await expect(capability.delegate(override, { toolUseId: key }))
         .rejects.toThrow("Delegated budget overrides are not supported");
     }
     expect(await stores.delegationStore.list("tenant", parent.id)).toEqual([]);
-    await capability.delegate({ prompt: "task", runInBackground: true }, { toolUseId: "default", checkpoint: [] });
+    await capability.delegate({ prompt: "task", runInBackground: true }, { toolUseId: "default" });
     const initial = (await stores.delegationStore.list("tenant", parent.id))[0];
-    await capability.delegate({ prompt: "continue", runInBackground: true, resume: initial.childId }, { toolUseId: "resume", checkpoint: [] });
+    await capability.delegate({ prompt: "continue", runInBackground: true, resume: initial.childId }, { toolUseId: "resume" });
     const executions = await stores.delegationStore.list("tenant", parent.id);
     expect(executions).toHaveLength(2);
     expect(executions.every(execution => execution.maxSteps === maximum && execution.childId === initial.childId)).toBe(true);

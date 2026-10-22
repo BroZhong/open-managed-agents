@@ -1,195 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
-import { SessionRouter } from "../src/session-router.js";
+import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
+import { OUTCOME_UNKNOWN } from "../src/dangling-call-results.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import {
-  createMemoryStores,
-  InMemoryEventLogStore as DurableInMemoryEventLogStore,
-} from "@oma-server/store-memory";
+import { createMemoryStores } from "@oma-server/store-memory";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
-import type {
-  EventLogStore,
-  EventLogStoreAppendInput,
-  EventLogStoreGetEventsOpts,
-  PendingEventStore,
-  PendingEvent,
-  PendingEventEnqueueInput,
-  SessionStore,
-  SessionStoreCreateInput,
-  SessionStoreListOpts,
-  Session,
-  SessionStatus,
-  StoredEvent,
-  PaginatedResult,
-  Agent,
-} from "@oma-server/store";
+import type { PendingEventStore, Agent } from "@oma-server/store";
 import type {
   Adapter,
   AdapterInput,
   SessionEvent,
 } from "@open-managed-agents/adapter-core";
-
-// ─── Minimal in-memory stores (mirrors session-router.test.ts) ───────────────
-
-class InMemoryEventLogStore implements EventLogStore {
-  private events = new Map<string, StoredEvent[]>();
-  private seqCounters = new Map<string, number>();
-
-  async append(sessionId: string, event: EventLogStoreAppendInput): Promise<StoredEvent> {
-    const nextSeq = (this.seqCounters.get(sessionId) ?? 0) + 1;
-    this.seqCounters.set(sessionId, nextSeq);
-    const stored: StoredEvent = {
-      sessionId,
-      seq: nextSeq,
-      type: event.type,
-      data: event.data,
-      ts: new Date(),
-      sessionThreadId: event.sessionThreadId,
-    };
-    const list = this.events.get(sessionId) ?? [];
-    list.push(stored);
-    this.events.set(sessionId, list);
-    return stored;
-  }
-
-  async getEvents(
-    sessionId: string,
-    opts?: EventLogStoreGetEventsOpts,
-  ): Promise<PaginatedResult<StoredEvent>> {
-    const all = this.events.get(sessionId) ?? [];
-    const afterSeq = opts?.afterSeq ?? 0;
-    const limit = opts?.limit ?? 50;
-    const filtered = all.filter((e) => e.seq > afterSeq);
-    return { data: filtered.slice(0, limit), hasMore: filtered.length > limit };
-  }
-}
-
-class InMemoryPendingEventStore implements PendingEventStore {
-  private queues = new Map<string, PendingEvent[]>();
-  private nextId = 1;
-  duplicateListedSessions = false;
-  failNextAck = false;
-  /** Test-only queue boundary hook: runs after an empty head read is observed. */
-  onEmptyRead?: (sessionId: string) => Promise<void>;
-
-  private async notifyEmptyRead(sessionId: string): Promise<void> {
-    if (!this.onEmptyRead) return;
-    const hook = this.onEmptyRead;
-    this.onEmptyRead = undefined;
-    await hook(sessionId);
-  }
-
-  async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
-    const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
-      sessionId,
-      type: event.type,
-      data: event.data,
-      sessionThreadId: event.sessionThreadId,
-      arrivedAt: new Date(),
-    };
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push(pending);
-    this.queues.set(sessionId, queue);
-    return pending;
-  }
-
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    const next = queue.shift() ?? null;
-    if (!next) await this.notifyEmptyRead(sessionId);
-    return next;
-  }
-
-  async peek(sessionId: string): Promise<PendingEvent | null> {
-    const next = (this.queues.get(sessionId) ?? [])[0] ?? null;
-    if (!next) await this.notifyEmptyRead(sessionId);
-    return next;
-  }
-
-  async ack(sessionId: string, eventId: string): Promise<boolean> {
-    if (this.failNextAck) {
-      this.failNextAck = false;
-      throw new Error("simulated crash before pending acknowledgement");
-    }
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue[0]?.id !== eventId) return false;
-    queue.shift();
-    return true;
-  }
-
-  async listPendingSessionIds(): Promise<string[]> {
-    const ids = [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId);
-    return this.duplicateListedSessions ? [...ids, ...ids] : ids;
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    this.queues.delete(sessionId);
-  }
-
-  async count(sessionId: string): Promise<number> {
-    return (this.queues.get(sessionId) ?? []).length;
-  }
-}
-
-class InMemorySessionStore implements SessionStore {
-  private sessions: Session[] = [];
-  private nextId = 1;
-  failBeforeAdapterOnce = false;
-
-  async create(input: SessionStoreCreateInput): Promise<Session> {
-    const session: Session = {
-      id: `sess_${this.nextId++}`,
-      tenantId: input.tenantId,
-      agentId: input.agentId,
-      status: "idle",
-      agent: structuredClone(input.agent),
-      workspaceId: input.workspaceId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.sessions.push(session);
-    return session;
-  }
-
-  async getById(id: string): Promise<Session | null> {
-    return this.sessions.find((s) => s.id === id) ?? null;
-  }
-
-  async list(tenantId: string, opts?: SessionStoreListOpts): Promise<PaginatedResult<Session>> {
-    const limit = opts?.limit ?? 50;
-    const filtered = this.sessions.filter((s) => s.tenantId === tenantId);
-    return { data: filtered.slice(0, limit), hasMore: filtered.length > limit };
-  }
-
-  async updateStatus(id: string, status: SessionStatus): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = status;
-    session.updatedAt = new Date();
-    if (status === "running" && this.failBeforeAdapterOnce) {
-      this.failBeforeAdapterOnce = false;
-      throw new Error("simulated crash before adapter start");
-    }
-    return session;
-  }
-
-  async setTitle(id: string, title: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.title = title;
-    return session;
-  }
-
-  async terminate(id: string): Promise<Session | null> {
-    const session = this.sessions.find((s) => s.id === id);
-    if (!session) return null;
-    session.status = "terminated";
-    session.terminatedAt = new Date();
-    return session;
-  }
-}
+import { journalWriter } from "@open-managed-agents/adapter-mock";
 
 const testAgent: Agent = {
   id: "agent_1",
@@ -197,7 +18,7 @@ const testAgent: Agent = {
   name: "Test Agent",
   model: "claude-3",
   system: "You are helpful",
-  runtime: "claude-code",
+  runtime: "mock",
   // Opt out of the mandatory sandbox: this repro exercises the drain/abort flow
   // with no sandbox manager configured (issue #54 fail-loud path is not the SUT).
   sandbox: { enabled: false },
@@ -206,9 +27,7 @@ const testAgent: Agent = {
 };
 
 function makeDeps(adapter: Adapter) {
-  const eventLogStore = new InMemoryEventLogStore();
-  const pendingEventStore = new InMemoryPendingEventStore();
-  const sessionStore = new InMemorySessionStore();
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const router = new SessionRouter({
     eventLogStore,
@@ -218,6 +37,40 @@ function makeDeps(adapter: Adapter) {
     resolveAdapter: () => adapter,
   });
   return { eventLogStore, pendingEventStore, sessionStore, eventStreamHub, router };
+}
+
+/**
+ * A crashed process keeps its claim until the lease lapses. Short leases let a
+ * "restarted" Router take over within a test instead of after 30 seconds.
+ */
+const RESTART_LEASE = {
+  pendingClaimLeaseMs: 50,
+  pendingClaimRenewIntervalMs: 10,
+  pendingClaimRetryMinMs: 5,
+  pendingClaimRetryMaxMs: 10,
+} satisfies Partial<SessionRouterDeps>;
+
+/**
+ * A restarted Runner's pending scan finds a crashed attempt's input once its
+ * lease expires; a head under a live claim is its owner's (#234).
+ */
+const leaseExpiry = () => new Promise<void>((resolve) => setTimeout(resolve, RESTART_LEASE.pendingClaimLeaseMs + 10));
+
+/** Fresh store-memory stores plus a factory for Routers that model process restarts. */
+function makeRestartableDeps(adapter: Adapter) {
+  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
+  const eventStreamHub = new InProcessEventStreamHub();
+  const drainErrors: unknown[] = [];
+  const makeRouter = () => new SessionRouter({
+    eventLogStore,
+    pendingEventStore,
+    sessionStore,
+    eventStreamHub,
+    resolveAdapter: () => adapter,
+    onDrainError: ({ error }) => drainErrors.push(error),
+    ...RESTART_LEASE,
+  });
+  return { eventLogStore, pendingEventStore, sessionStore, makeRouter, drainErrors };
 }
 
 async function enqueueUser(
@@ -236,12 +89,11 @@ async function enqueueUser(
 
 /**
  * A realistic post-fix adapter: turn 1 hangs (its `prompt()` never settles,
- * modeled here as a run() that never emits its terminal event) UNTIL the router
- * aborts the turn — then it honors `input.signal` (Pi's native abort) and
- * completes. Turn 2 runs normally. Before the fix, the router never threaded the
- * per-turn signal into the adapter, so an interrupt could not reach a hung turn:
- * the `for await` in drainLoop only re-checks `aborted` on the NEXT event, which
- * never came, and `activeSessions` stayed locked forever.
+ * modeled here as a run() that does not settle) UNTIL the router aborts the
+ * turn — then it honors `input.signal` (Pi's native abort) and completes.
+ * Turn 2 runs normally. Before the fix, the router never threaded the per-turn
+ * signal into the adapter, so an interrupt could not reach a hung turn and
+ * `activeSessions` stayed locked forever.
  */
 function hangUntilAbortedAdapter(): {
   adapter: Adapter;
@@ -250,7 +102,8 @@ function hangUntilAbortedAdapter(): {
   let turn = 0;
   let settled: "resolved" | "pending" = "pending";
   const adapter: Adapter = {
-    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+    async run(input: AdapterInput) {
+      const write = journalWriter(input);
       turn++;
       if (turn === 1) {
         // The hung turn: block until the router's signal aborts. A real adapter
@@ -261,15 +114,16 @@ function hangUntilAbortedAdapter(): {
           input.signal?.addEventListener("abort", () => resolve(), { once: true });
         });
         settled = "resolved";
-        return; // turn 1 settles once aborted — no terminal event needed
+        return "finished"; // turn 1 settles once aborted, with nothing recorded
       }
       // Turn 2: a normal, quick reply that produces a new event.
-      yield {
+      await write({
         id: `evt_turn${turn}`,
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: `Reply ${turn}` }],
-      };
+      });
+      return "finished";
     },
   };
   return { adapter, turn1Settled: () => settled };
@@ -327,14 +181,16 @@ describe("REPRO 3c — drain handoff does not lose a wakeup", () => {
   it("drains a message accepted after the queue looked empty but before the active drain unlocked", async () => {
     let replies = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         replies++;
-        yield {
+        await write({
           id: `reply_${replies}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: `reply ${replies}` }],
-        };
+        });
+        return "finished";
       },
     };
     const { pendingEventStore, sessionStore, eventLogStore, router } = makeDeps(adapter);
@@ -346,12 +202,19 @@ describe("REPRO 3c — drain handoff does not lose a wakeup", () => {
     });
 
     await enqueueUser(pendingEventStore, session.id, "first");
-    pendingEventStore.onEmptyRead = async () => {
-      // This is the exact lost-wakeup window: dequeue has already decided the
-      // queue is empty, but handleNewEvent still sees this Session as active.
-      await enqueueUser(pendingEventStore, session.id, "arrived during handoff");
-      await router.handleNewEvent(session.id, testAgent);
-    };
+    const claim = pendingEventStore.claim.bind(pendingEventStore);
+    let arriveDuringHandoff = true;
+    vi.spyOn(pendingEventStore, "claim").mockImplementation(async (...args) => {
+      const claimed = await claim(...args);
+      if (!claimed && arriveDuringHandoff) {
+        arriveDuringHandoff = false;
+        // This is the exact lost-wakeup window: claim has already decided the
+        // queue is empty, but handleNewEvent still sees this Session as active.
+        await enqueueUser(pendingEventStore, session.id, "arrived during handoff");
+        await router.handleNewEvent(session.id, testAgent);
+      }
+      return claimed;
+    });
 
     await router.handleNewEvent(session.id, testAgent);
 
@@ -373,40 +236,30 @@ describe("REPRO 3c — drain handoff does not lose a wakeup", () => {
 
 describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   it("retries after a crash that committed the user Event but happened before pending acknowledgement", async () => {
-    const durableEvents = new DurableInMemoryEventLogStore();
-    let failAfterCommit = true;
-    const crashingEventStore: EventLogStore = {
-      async append(sessionId, event) {
-        const stored = await durableEvents.append(sessionId, event);
-        if (failAfterCommit && event.type === "user.message") {
-          failAfterCommit = false;
-          throw new Error("simulated crash after Event commit");
-        }
-        return stored;
-      },
-      getEvents: (sessionId, opts) => durableEvents.getEvents(sessionId, opts),
-    };
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let replies = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         replies++;
-        yield {
+        await write({
           id: `reply_${replies}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "recovered" }],
-        };
+        });
+        return "finished";
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore: crashingEventStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
+    const { eventLogStore, pendingEventStore, sessionStore, makeRouter, drainErrors } = makeRestartableDeps(adapter);
+    const append = eventLogStore.append.bind(eventLogStore);
+    let failAfterCommit = true;
+    vi.spyOn(eventLogStore, "append").mockImplementation(async (sessionId, event) => {
+      const stored = await append(sessionId, event);
+      if (failAfterCommit && event.type === "user.message") {
+        failAfterCommit = false;
+        throw new Error("simulated crash after Event commit");
+      }
+      return stored;
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",
@@ -416,13 +269,14 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     });
     await enqueueUser(pendingEventStore, session.id, "must survive");
 
-    await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
-      "simulated crash after Event commit",
-    );
+    // A failed write stops the attempt like a lost lease: reported, no terminal event.
+    await makeRouter().handleNewEvent(session.id, testAgent);
+    expect(drainErrors).toEqual([expect.objectContaining({ message: "simulated crash after Event commit" })]);
     // A new router models a fresh process after the crash. The accepted input
     // must still be pending even though its canonical Event already committed.
     expect(await pendingEventStore.count(session.id)).toBe(1);
 
+    await leaseExpiry();
     const recovery = await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -434,20 +288,22 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       discarded: [],
       failed: [],
     });
-    const stored = await durableEvents.getEvents(session.id, { limit: 100 });
+    const stored = await eventLogStore.getEvents(session.id, { limit: 100 });
     expect(stored.data.filter((event) => event.type === "user.message")).toHaveLength(1);
     expect(stored.data.filter((event) => event.type === "agent.message")).toHaveLength(1);
   });
 
   it("deduplicates Session ids and clears pending input for missing or terminated Sessions", async () => {
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
-        yield {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "ok" }],
-        };
+        });
+        return "finished";
       },
     };
     const { pendingEventStore, sessionStore, router } = makeDeps(adapter);
@@ -467,7 +323,11 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     await enqueueUser(pendingEventStore, valid.id, "valid");
     await enqueueUser(pendingEventStore, terminated.id, "discard terminated");
     await enqueueUser(pendingEventStore, "sess_missing", "discard missing");
-    pendingEventStore.duplicateListedSessions = true;
+    const listClaimableSessionIds = pendingEventStore.listClaimableSessionIds.bind(pendingEventStore);
+    vi.spyOn(pendingEventStore, "listClaimableSessionIds").mockImplementation(async () => {
+      const ids = await listClaimableSessionIds();
+      return [...ids, ...ids];
+    });
 
     const recovery = await router.recoverPendingEvents();
 
@@ -484,29 +344,21 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   });
 
   it("keeps input pending when the process dies before the Adapter starts, then executes it on restart", async () => {
-    const eventLogStore = new DurableInMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "recovered" }],
-        };
+        });
+        return "finished";
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
-    });
+    const { pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_1",
@@ -514,13 +366,23 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       workspaceId: "ws_test",
     });
     await enqueueUser(pendingEventStore, session.id, "survive pre-adapter crash");
-    sessionStore.failBeforeAdapterOnce = true;
+    const updateStatusIfClaimed = sessionStore.updateStatusIfClaimed.bind(sessionStore);
+    let failBeforeAdapter = true;
+    vi.spyOn(sessionStore, "updateStatusIfClaimed").mockImplementation(async (id, status, fence) => {
+      const updated = await updateStatusIfClaimed(id, status, fence);
+      if (status === "running" && failBeforeAdapter) {
+        failBeforeAdapter = false;
+        throw new Error("simulated crash before adapter start");
+      }
+      return updated;
+    });
 
     await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
       "simulated crash before adapter start",
     );
     expect(await pendingEventStore.count(session.id)).toBe(1);
 
+    await leaseExpiry();
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -529,29 +391,21 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
   });
 
   it("does not rerun or duplicate durable Events when completion committed before the ack crash", async () => {
-    const eventLogStore = new DurableInMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "complete once" }],
-        };
+        });
+        return "finished";
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
-    });
+    const { eventLogStore, pendingEventStore, sessionStore, makeRouter } = makeRestartableDeps(adapter);
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_1",
@@ -559,7 +413,9 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       workspaceId: "ws_test",
     });
     await enqueueUser(pendingEventStore, session.id, "complete before ack");
-    pendingEventStore.failNextAck = true;
+    vi.spyOn(pendingEventStore, "ackCompletedTurn").mockRejectedValueOnce(
+      new Error("simulated crash before pending acknowledgement"),
+    );
 
     await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
       "simulated crash before pending acknowledgement",
@@ -568,39 +424,36 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     const beforeRecovery = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(beforeRecovery.some((event) => event.type === "session.turn_completed")).toBe(true);
 
+    await leaseExpiry();
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
     });
     const afterRecovery = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(adapterRuns).toBe(1);
-    expect(afterRecovery).toEqual(beforeRecovery);
+    // Recovery only acknowledges: the Turn's durable Events are untouched and
+    // the one addition is the idle transition that acknowledgement commits.
+    expect(afterRecovery.slice(0, beforeRecovery.length)).toEqual(beforeRecovery);
+    expect(afterRecovery.slice(beforeRecovery.length).map((event) => event.type))
+      .toEqual(["session.status_idle"]);
   });
 
-  it("abandons a partial durable attempt without mixing output from a rerun", async () => {
-    const eventLogStore = new DurableInMemoryEventLogStore();
-    const pendingEventStore = new InMemoryPendingEventStore();
-    const sessionStore = new InMemorySessionStore();
-    const eventStreamHub = new InProcessEventStreamHub();
+  it("A10 completes a Turn whose final answer is durable without running it again", async () => {
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: `reply_${adapterRuns}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "durable once" }],
-        };
+        });
+        return "finished";
       },
     };
-    const makeRouter = () => new SessionRouter({
-      eventLogStore,
-      pendingEventStore,
-      sessionStore,
-      eventStreamHub,
-      resolveAdapter: () => adapter,
-    });
+    const { eventLogStore, pendingEventStore, sessionStore, makeRouter, drainErrors } = makeRestartableDeps(adapter);
     const session = await sessionStore.create({
       tenantId: "tenant_1",
       agentId: "agent_1",
@@ -618,13 +471,13 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       return append(sessionId, event);
     });
 
-    await expect(makeRouter().handleNewEvent(session.id, testAgent)).rejects.toThrow(
-      "simulated crash after durable output",
-    );
+    await makeRouter().handleNewEvent(session.id, testAgent);
+    expect(drainErrors).toEqual([expect.objectContaining({ message: "simulated crash after durable output" })]);
     const partial = (await eventLogStore.getEvents(session.id, { limit: 100 })).data;
     expect(partial.filter((event) => event.type === "agent.message")).toHaveLength(1);
     expect(partial.some((event) => event.type === "session.turn_completed")).toBe(false);
 
+    await leaseExpiry();
     await makeRouter().recoverPendingEvents();
     await vi.waitFor(async () => {
       expect(await pendingEventStore.count(session.id)).toBe(0);
@@ -635,16 +488,13 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
       "user.message",
       "session.status_running",
       "agent.message",
+      "session.turn_resumed",
       "session.turn_completed",
       "session.status_idle",
     ]) {
       expect(recovered.filter((event) => event.type === type), type).toHaveLength(1);
     }
-    expect(recovered.filter((event) =>
-      event.type === "session.error" &&
-      (event.data as { error?: { code?: string } }).error?.code ===
-        "recovery_partial_turn_aborted"
-    )).toHaveLength(1);
+    expect(recovered.filter((event) => event.type === "session.error")).toEqual([]);
   });
 
   it("schedules slow recovered Sessions without blocking startup and never starts two local drainers", async () => {
@@ -654,16 +504,18 @@ describe("REPRO 3d — pending promotion is crash-recoverable", () => {
     const adapterStarted = new Promise<void>((resolve) => { markStarted = resolve; });
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
         markStarted();
         await adapterGate;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "slow done" }],
-        };
+        });
+        return "finished";
       },
     };
     const { pendingEventStore, sessionStore, router } = makeDeps(adapter);
@@ -708,16 +560,18 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     const didStart = new Promise<void>((resolve) => { started = resolve; });
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
         started();
         await gate;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "once" }],
-        };
+        });
+        return "finished";
       },
     };
     const session = await stores.sessionStore.create({
@@ -752,7 +606,8 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await didStart;
     await hostB.handleNewEvent(session.id, testAgent);
     expect(adapterRuns).toBe(1);
-    expect(await hostB.waitForIdle(1)).toBe(false);
+    // B leaves the head to its owner: no claim retry while A's lease is live.
+    expect(await hostB.waitForIdle(0)).toBe(true);
 
     release();
     await first;
@@ -763,7 +618,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await expect(hostB.waitForIdle(100)).resolves.toBe(true);
   });
 
-  it("retries a conflicting live claim after expiry without requiring a new message", async () => {
+  it("leaves another Host's live claim to it, then takes the input over from the pending scan after expiry", async () => {
     const stores = createMemoryStores();
     const session = await stores.sessionStore.create({
       tenantId: "tenant_1",
@@ -779,14 +634,16 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await stores.pendingEventStore.claim!(session.id, "old_host", 30);
     let adapterRuns = 0;
     const adapter: Adapter = {
-      async *run(): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "recovered after expiry" }],
-        };
+        });
+        return "finished";
       },
     };
     const router = new SessionRouter({
@@ -802,11 +659,14 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
 
     await router.handleNewEvent(session.id, testAgent);
     expect(adapterRuns).toBe(0);
-    expect(await router.waitForIdle(1)).toBe(false);
-    // An interrupt on this Host has no local active turn; it must not cancel
-    // the recovery timer for the remote, live-but-doomed claim.
-    router.interrupt(session.id);
+    // No retry timer polls the live claim of another Host.
+    expect(await router.waitForIdle(0)).toBe(true);
+    expect(await router.recoverPendingEvents()).toEqual({ recovered: [], discarded: [], failed: [] });
 
+    // Once the old Host's lease expires, the pending scan lists the input
+    // again, without a new message.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect((await router.recoverPendingEvents()).recovered).toEqual([session.id]);
     await vi.waitFor(async () => {
       expect(adapterRuns).toBe(1);
       expect(await stores.pendingEventStore.count(session.id)).toBe(0);
@@ -826,13 +686,14 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     const realRenew = stores.pendingEventStore.renewClaim.bind(stores.pendingEventStore);
     let rejectHeartbeat = true;
     stores.pendingEventStore.renewClaim = async (...args) =>
-      rejectHeartbeat ? false : realRenew(...args);
+      rejectHeartbeat ? { renewed: false, interruptRequested: false } : realRenew(...args);
     const attemptTurnIds: string[] = [];
     let adapterRuns = 0;
     let firstStarted!: () => void;
     const firstDidStart = new Promise<void>((resolve) => { firstStarted = resolve; });
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
         attemptTurnIds.push(input.turnId);
         if (adapterRuns === 1) {
@@ -844,7 +705,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
           // A stale generation may still flush provider accounting while its
           // native abort settles. Lease loss is not a user interrupt, so this
           // old attempt must not be allowed to charge the Session.
-          yield {
+          await write({
             id: "stale_usage",
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "span.model_request_end",
@@ -854,15 +715,16 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
               cacheReadTokens: 50,
               cacheWriteTokens: 0,
             },
-          };
-          return;
+          });
+          return "finished";
         }
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "fresh attempt" }],
-        };
+        });
+        return "finished";
       },
     };
     const router = new SessionRouter({
@@ -894,7 +756,9 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
 
     rejectHeartbeat = false;
+    // The pending scan claims the input again once the lost lease expires.
     await vi.waitFor(async () => {
+      await router.recoverPendingEvents();
       expect(await stores.pendingEventStore.count(session.id)).toBe(0);
     });
     expect(adapterRuns).toBe(2);
@@ -928,8 +792,9 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
       sessionStore: stores.sessionStore,
       eventStreamHub: new InProcessEventStreamHub(),
       resolveAdapter: () => ({
-        async *run(): AsyncIterable<SessionEvent> {
+        async run() {
           adapterRuns++;
+          return "finished";
         },
       }),
     });
@@ -966,7 +831,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
         markLateRenew();
         await lateRenewGate;
       }
-      return false;
+      return { renewed: false, interruptRequested: false };
     };
 
     let markGen2Running!: () => void;
@@ -974,39 +839,41 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     let releaseGen2!: () => void;
     const gen2Gate = new Promise<void>((resolve) => { releaseGen2 = resolve; });
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
-        yield {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
+        await write({
           id: `start_${input.turnId}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message_stream_start",
-        };
-        yield {
+        });
+        await write({
           id: `chunk_${input.turnId}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message_chunk",
           text: input.turnId.endsWith("a1") ? "old" : "new",
-        };
+        });
         if (input.turnId.endsWith("a1")) {
-          yield {
+          await write({
             id: `end_${input.turnId}`,
             timestamp: "2024-01-01T00:00:00.000Z",
             type: "agent.message_stream_end",
-          };
-          return;
+          });
+          return "finished";
         }
         markGen2Running();
         await gen2Gate;
-        yield {
+        await write({
           id: `end_${input.turnId}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message_stream_end",
-        };
-        yield {
+        });
+        await write({
           id: "new_reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "new" }],
-        };
+        });
+        return "finished";
       },
     };
     const shared = {
@@ -1042,6 +909,8 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await turns.getActiveTurn(session.id)).toEqual({
       turnId: "turn_1_a2",
       status: "running",
+      inputSeq: 1,
+      generation: 2,
     });
     expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
 
@@ -1050,6 +919,8 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     expect(await turns.getActiveTurn(session.id)).toEqual({
       turnId: "turn_1_a2",
       status: "running",
+      inputSeq: 1,
+      generation: 2,
     });
     expect(await turns.deltaCount(session.id, "turn_1_a2")).toBeGreaterThan(0);
 
@@ -1060,7 +931,7 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
   });
 
-  it("repairs a durable tool_use without rerunning that attempt, then supplies a valid pair to the next turn", async () => {
+  it("A6 answers a durable tool_use as of unknown outcome and continues its Turn with a valid pair, and so does the next Turn", async () => {
     const stores = createMemoryStores();
     const session = await stores.sessionStore.create({
       tenantId: "tenant_1",
@@ -1111,17 +982,19 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     await stores.pendingEventStore.releaseClaim!(session.id, pending.id, firstClaim!);
 
     let adapterRuns = 0;
-    let nextHistory: SessionEvent[] = [];
+    const runs: AdapterInput[] = [];
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         adapterRuns++;
-        nextHistory = input.history;
-        yield {
-          id: "next_reply",
+        runs.push(input);
+        await write({
+          id: `reply_${adapterRuns}`,
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "history accepted" }],
-        };
+        });
+        return "finished";
       },
     };
     const router = new SessionRouter({
@@ -1134,29 +1007,32 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
 
     await router.handleNewEvent(session.id, testAgent);
-    expect(adapterRuns).toBe(0);
     const repaired = (await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data;
     const result = repaired.find((event) =>
       event.type === "agent.tool_result" &&
       (event.data as { toolUseId?: string }).toolUseId === "call_crashed"
     );
-    expect(result?.data).toMatchObject({ toolUseId: "call_crashed", isError: true });
+    expect(result?.data).toMatchObject({ toolUseId: "call_crashed", isError: true, turnId: "turn_1_a1",
+      content: [{ type: "text", text: OUTCOME_UNKNOWN }] });
     expect(repaired.filter((event) => event.type === "agent.tool_use")).toHaveLength(1);
+    expect(repaired.filter((event) => event.type === "session.error")).toEqual([]);
+    // The tool is not run again: the Turn continues from the call and its repair.
+    expect(adapterRuns).toBe(1);
+    expect(runs[0]).toMatchObject({ turnId: "turn_1_a1", resume: { completedModelSteps: 0, blockBase: 0 } });
+    const pairIn = (history: SessionEvent[]) => history.filter((event) =>
+      (event.type === "agent.tool_use" || event.type === "agent.tool_result") &&
+      (event as unknown as { toolUseId?: string }).toolUseId === "call_crashed"
+    ).map((event) => event.type);
+    expect(pairIn(runs[0].history)).toEqual(["agent.tool_use", "agent.tool_result"]);
 
     await enqueueUser(stores.pendingEventStore, session.id, "continue safely");
     await router.handleNewEvent(session.id, testAgent);
-    expect(adapterRuns).toBe(1);
-    const pair = nextHistory.filter((event) =>
-      (event.type === "agent.tool_use" || event.type === "agent.tool_result") &&
-      (event as unknown as { toolUseId?: string }).toolUseId === "call_crashed"
-    );
-    expect(pair.map((event) => event.type)).toEqual([
-      "agent.tool_use",
-      "agent.tool_result",
-    ]);
+    expect(adapterRuns).toBe(2);
+    expect(runs[1].resume).toBeUndefined();
+    expect(pairIn(runs[1].history)).toEqual(["agent.tool_use", "agent.tool_result"]);
   });
 
-  it("uses a new generation turnId and reclaims stale deltas before a safe retry", async () => {
+  it("A3 reruns an input its lost attempt left without output as the rerun's own Turn, leaving the lost Deltas to expire", async () => {
     const stores = createMemoryStores();
     const turns = new InMemoryTurnStreamStore();
     const session = await stores.sessionStore.create({
@@ -1191,10 +1067,11 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
       pendingFence: firstFence,
     });
     const oldTurnId = `turn_${promoted.seq}_a1`;
-    await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running" });
+    await turns.setActiveTurn(session.id, { turnId: oldTurnId, status: "running", inputSeq: promoted.seq, generation: 1 });
     await turns.appendDelta(session.id, {
       turnId: oldTurnId,
       blockIndex: 0,
+      attempt: 1,
       type: "agent.message_chunk",
       data: { text: "Hel" },
     });
@@ -1202,14 +1079,16 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
 
     let retryTurnId = "";
     const adapter: Adapter = {
-      async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+      async run(input: AdapterInput) {
+        const write = journalWriter(input);
         retryTurnId = input.turnId;
-        yield {
+        await write({
           id: "reply",
           timestamp: "2024-01-01T00:00:00.000Z",
           type: "agent.message",
           content: [{ type: "text", text: "Hello" }],
-        };
+        });
+        return "finished";
       },
     };
     const router = new SessionRouter({
@@ -1223,12 +1102,16 @@ describe("REPRO 3e — claimed turn ownership and attempt recovery", () => {
     });
 
     await router.handleNewEvent(session.id, testAgent);
+    // The lost attempt committed nothing naming its Turn, so the rerun's Turn
+    // is the input's, and the projection moved to it before it ended.
     expect(retryTurnId).toBe(`turn_${promoted.seq}_a2`);
-    expect(retryTurnId).not.toBe(oldTurnId);
-    expect(await turns.deltaCount(session.id, oldTurnId)).toBe(0);
     const output = (await stores.eventLogStore.getEvents(session.id, { limit: 100 })).data
       .find((event) => event.type === "agent.message");
     expect(output?.data).toMatchObject({ turnId: retryTurnId });
+    expect(await turns.getActiveTurn(session.id)).toBeNull();
+    // Only a completing Turn deletes its stream. Nothing reads the lost
+    // attempt's any more; its expiry frees it.
+    expect(await turns.deltaCount(session.id, oldTurnId)).toBe(1);
   });
 });
 
@@ -1248,14 +1131,16 @@ function historyCapturingAdapter(): {
 } {
   let captured: SessionEvent[] = [];
   const adapter: Adapter = {
-    async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+    async run(input: AdapterInput) {
+      const write = journalWriter(input);
       captured = input.history;
-      yield {
+      await write({
         id: "evt_reply",
         timestamp: "2024-01-01T00:00:00.000Z",
         type: "agent.message",
         content: [{ type: "text", text: "ok" }],
-      };
+      });
+      return "finished";
     },
   };
   return { adapter, seenHistory: () => captured };

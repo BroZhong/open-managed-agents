@@ -5,6 +5,7 @@ import {
   parseSessionSseFrame,
   sessionEventStreamReducer,
   sessionEventStreamUrl,
+  type SessionEventStreamState,
 } from "@/lib/session-event-stream";
 
 const userMessage: SessionEvent = {
@@ -231,25 +232,131 @@ describe("session event stream state", () => {
     ]);
   });
 
-  it("replaces a crashed attempt's partial Delta when a new claim generation starts", () => {
+  it("replaces a crashed attempt's partial Delta when the next attempt resumes its Turn", () => {
+    // Every attempt of the input keeps the Turn its first attempt started and
+    // appends to its stream; only the attempt tells them apart.
     let state = sessionEventStreamReducer(initialSessionEventStreamState, {
       type: "delta.received",
       delta: {
         ...delta("agent.message_chunk", "1-1", { text: "Hel" }),
         turnId: "turn_10_a1",
+        attempt: 1,
       },
     });
     state = sessionEventStreamReducer(state, {
       type: "delta.received",
       delta: {
-        ...delta("agent.message_chunk", "1-1", { text: "Hello" }),
-        turnId: "turn_10_a2",
+        ...delta("agent.message_chunk", "1-2", { text: "Hello" }),
+        turnId: "turn_10_a1",
+        attempt: 2,
       },
     });
 
     expect(state.activeDeltas).toMatchObject([
-      { turnId: "turn_10_a2", deltaId: "1-1", data: { text: "Hello" } },
+      { turnId: "turn_10_a1", attempt: 2, deltaId: "1-2", data: { text: "Hello" } },
     ]);
+  });
+});
+
+describe("Delta attempts of one Turn", () => {
+  const attempt = (n: number | undefined, type: string, deltaId: string, data: Record<string, unknown>, blockIndex = 0): SessionDelta =>
+    ({ ...delta(type, deltaId, data), blockIndex, ...(n === undefined ? {} : { attempt: n }) });
+  const receive = (state: SessionEventStreamState, ...deltas: SessionDelta[]) =>
+    deltas.reduce((next, item) => sessionEventStreamReducer(next, { type: "delta.received", delta: item }), state);
+  const committedThinking: SessionEvent = {
+    seq: 11,
+    type: "agent.thinking",
+    data: { text: "Plan", turnId: "turn_10", blockIndex: 0 },
+    ts: "2026-07-11T00:00:02.000Z",
+  };
+
+  it("drops a lost attempt's incomplete Deltas once a higher attempt streams the same Turn", () => {
+    let state = receive(initialSessionEventStreamState,
+      attempt(1, "agent.thinking_chunk", "1-1", { text: "Plan" }, 0),
+    );
+    state = sessionEventStreamReducer(state, { type: "event.received", event: committedThinking });
+    // Attempt 1 is lost while streaming block 1; attempt 2 numbers its first
+    // block after the committed one, so it streams block 1 again.
+    state = receive(state,
+      attempt(1, "agent.message_chunk", "1-2", { text: "Hel" }, 1),
+      attempt(1, "agent.message_chunk", "1-3", { text: "lo wor" }, 1),
+      attempt(2, "agent.message_chunk", "1-4", { text: "Hi" }, 1),
+    );
+
+    expect(state.events).toEqual([committedThinking]);
+    expect(state.activeDeltas).toMatchObject([
+      { attempt: 2, blockIndex: 1, deltaId: "1-4", data: { text: "Hi" } },
+    ]);
+  });
+
+  it("ignores a lower attempt's Deltas that arrive after a higher attempt took over the Turn", () => {
+    const state = receive(initialSessionEventStreamState,
+      attempt(2, "agent.message_chunk", "1-4", { text: "Hi" }, 1),
+      // The lost Runner's last publications, and its Redis entries on replay.
+      attempt(1, "agent.message_chunk", "1-3", { text: "lo wor" }, 1),
+      attempt(1, "agent.thinking_chunk", "1-5", { text: "stale" }, 2),
+      attempt(2, "agent.message_chunk", "1-6", { text: " there" }, 1),
+    );
+
+    expect(state.activeDeltas.map(({ attempt, deltaId }) => ({ attempt, deltaId }))).toEqual([
+      { attempt: 2, deltaId: "1-4" },
+      { attempt: 2, deltaId: "1-6" },
+    ]);
+  });
+
+  it("keeps only the highest attempt of a Delta snapshot that holds two attempts", () => {
+    const resumed = attempt(2, "agent.message_chunk", "1-3", { text: "Hi" }, 1);
+    const state = sessionEventStreamReducer(initialSessionEventStreamState, {
+      type: "deltas.loaded",
+      deltas: [
+        attempt(1, "agent.message_chunk", "1-1", { text: "Hel" }, 1),
+        attempt(1, "agent.message_chunk", "1-2", { text: "lo" }, 1),
+        resumed,
+      ],
+    });
+
+    expect(state.activeDeltas).toEqual([resumed]);
+  });
+
+  it("counts a Delta without attempt as the earliest attempt", () => {
+    const unversioned = attempt(undefined, "agent.message_chunk", "1-1", { text: "old Runner" });
+    const resumed = attempt(1, "agent.message_chunk", "1-2", { text: "resumed" });
+
+    expect(receive(initialSessionEventStreamState, unversioned, resumed).activeDeltas).toEqual([resumed]);
+    expect(receive(initialSessionEventStreamState, resumed, unversioned).activeDeltas).toEqual([resumed]);
+  });
+
+  it("projects a Turn streamed by one attempt exactly as a Turn without attempts", () => {
+    const stream = (n: number | undefined) => [
+      attempt(n, "agent.thinking_chunk", "1-1", { text: "Plan" }, 0),
+      attempt(n, "agent.message_chunk", "1-2", { text: "Hel" }, 1),
+      attempt(n, "agent.message_chunk", "1-3", { text: "lo" }, 1),
+    ];
+    const project = (n: number | undefined) => {
+      let state = receive(initialSessionEventStreamState, ...stream(n));
+      state = sessionEventStreamReducer(state, { type: "event.received", event: committedThinking });
+      return state.activeDeltas.map(({ attempt: _attempt, ...rest }) => rest);
+    };
+
+    expect(project(1)).toEqual(project(undefined));
+    expect(project(1)).toMatchObject([
+      { blockIndex: 1, deltaId: "1-2", data: { text: "Hel" } },
+      { blockIndex: 1, deltaId: "1-3", data: { text: "lo" } },
+    ]);
+  });
+
+  it("still replaces only the completed block of the highest attempt with its Complete Event", () => {
+    let state = receive(initialSessionEventStreamState,
+      attempt(1, "agent.message_chunk", "1-1", { text: "lost" }, 1),
+      attempt(2, "agent.message_chunk", "1-2", { text: "Answer" }, 1),
+      attempt(2, "agent.tool_use_input_stream_start", "1-3", { toolUseId: "tool_1", name: "read" }, 2),
+    );
+    state = sessionEventStreamReducer(state, {
+      type: "event.received",
+      event: { seq: 12, type: "agent.message", data: { content: [{ type: "text", text: "Answer" }], turnId: "turn_10", blockIndex: 1 }, ts: "2026-07-11T00:00:03.000Z" },
+    });
+
+    expect(state.activeDeltas).toMatchObject([{ attempt: 2, blockIndex: 2, deltaId: "1-3" }]);
   });
 });
 
@@ -279,6 +386,17 @@ describe("parseSessionSseFrame", () => {
     });
     if (!parsed || parsed.kind !== "delta") throw new Error("expected Delta frame");
     expect("seq" in parsed.delta).toBe(false);
+  });
+
+  it("reads the attempt of a Delta frame, and leaves it unset when the frame has none", () => {
+    const frame = (fields: Record<string, unknown>) => parseSessionSseFrame(
+      `event: agent.message_chunk\ndata: ${JSON.stringify({ text: "Hi", turnId: "turn_10", blockIndex: 1, deltaId: "1-4", ...fields })}`,
+    );
+
+    expect(frame({ attempt: 2 })).toMatchObject({ kind: "delta", delta: { turnId: "turn_10", blockIndex: 1, attempt: 2 } });
+    const unversioned = frame({});
+    if (unversioned?.kind !== "delta") throw new Error("expected Delta frame");
+    expect(unversioned.delta.attempt).toBeUndefined();
   });
 
   it("parses an id-bearing frame as a durable event with its original seq", () => {

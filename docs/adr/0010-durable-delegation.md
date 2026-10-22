@@ -7,6 +7,17 @@ for controlled Sandbox lifecycle management. Execution resource-use leases still
 fence work, but expiry is not evidence that remote execution has stopped and
 cannot authorize reclamation of a managed binding.
 
+#239 amends §4: a wait no longer carries a checkpoint of Complete Events. Each
+native message is committed before Pi runs its tools, so the event log already
+holds the history the checkpoint duplicated.
+
+[ADR-0021](0021-resumed-turn.md) supersedes §7 and revises §4: a Turn whose
+Runner was lost continues on another Runner; a call whose outcome was not
+committed is reported to the Agent as unknown instead of ending the Turn, and
+the Host answers every dangling call before the Turn continues. A Child
+execution whose owner was lost or handed it over continues in the same Turn
+under the claim that takes it over, in the slot it holds (#252).
+
 Accepted. Supersedes ADR-0006's plugin delegation, shared parent ToolExecutor,
 private usage bridge and parent-scoped child lifetime. Retains ADR-0002/0003's
 Host/Adapter boundary and ADR-0009's concurrent Workspace write semantics.
@@ -49,7 +60,10 @@ The in-memory store is a development/test implementation, not crash durability.
 Child Delegation Inputs enter the ordinary pending input queue and are driven
 by the Session Router. A Child Session executes one Turn at a time. Parent child
 concurrency defaults to four; excess inputs remain durable and queued. A parent
-waiting for a result does not occupy a child execution slot.
+waiting for a result does not occupy a child execution slot. A queued child does
+not poll for a slot (#234): the execution that ends and frees one wakes its
+queued siblings, and the pending scan covers a lost wake. A running execution
+holds its slot until it ends, also while its owner is lost (#252).
 
 Each accepted Delegation Input snapshots the calling parent Turn's resolved
 provider/model, including on resume, and pins it through queueing and recovery.
@@ -100,10 +114,10 @@ use the same rule. `get_subagent_result(wait=false)` reads immediately, while
 `wait=true` waits on the selected execution, including while it is queued.
 
 A wait stores the original parent Turn, calling tool ID, selected execution and
-a structured checkpoint of current-Turn Complete Events. The Adapter captures
-these events synchronously before invoking the Host capability, closing the
-race where the tool callback runs before the Router consumes its event queue.
-Checkpoint events retain their IDs and are idempotently restored to history.
+the parent Turn's effective model and thinking. It stores no events: the
+Adapter commits each native message, including the requesting tool call, before
+Pi runs its tools, so the event log is the only source of resumed history.
+Waits saved with an earlier event checkpoint are not replayed.
 
 The Host retains the original pending input and Turn identity through waiting.
 On recovery it commits the result for the original tool, reconstructs complete

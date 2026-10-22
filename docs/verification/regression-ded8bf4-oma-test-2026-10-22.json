@@ -1,0 +1,1395 @@
+{
+ "generatedAt": "2026-10-22T06:40Z",
+ "image": "oma-server/oma-web ded8bf42b530 (t255 ded8bf4)",
+ "fixesUnderTest": {
+  "bc43162": "no pool-after-end drain error for a Turn detached at the handoff deadline",
+  "ded8bf4": "no PendingLeaseLostError after a normally completed Turn",
+  "4100c35": "in-memory store only, no live check"
+ },
+ "A_releaseVerifier": {
+  "tenant": "split-release-1792648436037",
+  "phases": [
+   {
+    "phase": "init",
+    "start": "2026-10-22T05:53:54.3NZ",
+    "end": "2026-10-22T05:53:56Z",
+    "exit": 0
+   },
+   {
+    "phase": "basic",
+    "start": "2026-10-22T05:53:56.3NZ",
+    "end": "2026-10-22T05:53:58Z",
+    "exit": 0
+   },
+   {
+    "phase": "real-start",
+    "start": "2026-10-22T05:53:58.3NZ",
+    "end": "2026-10-22T05:54:10Z",
+    "exit": 0
+   },
+   {
+    "phase": "real-finish",
+    "start": "2026-10-22T05:54:10.3NZ",
+    "end": "2026-10-22T05:55:03Z",
+    "exit": 0
+   },
+   {
+    "phase": "interrupt",
+    "start": "2026-10-22T05:55:03.3NZ",
+    "end": "2026-10-22T05:55:23Z",
+    "exit": 0
+   },
+   {
+    "phase": "delegation-sync",
+    "start": "2026-10-22T05:55:23.3NZ",
+    "end": "2026-10-22T05:55:57Z",
+    "exit": 0
+   },
+   {
+    "phase": "delegation-async",
+    "start": "2026-10-22T05:55:57.3NZ",
+    "end": "2026-10-22T05:56:22Z",
+    "exit": 0
+   },
+   {
+    "phase": "loop",
+    "start": "2026-10-22T05:56:22.3NZ",
+    "end": "2026-10-22T05:56:24Z",
+    "exit": 0
+   },
+   {
+    "phase": "terminate",
+    "start": "2026-10-22T05:56:24.3NZ",
+    "end": "2026-10-22T05:56:26Z",
+    "exit": 0
+   },
+   {
+    "phase": "active-terminate",
+    "start": "2026-10-22T05:56:26.3NZ",
+    "end": "2026-10-22T05:56:37Z",
+    "exit": 0
+   },
+   {
+    "phase": "cleanup",
+    "start": "2026-10-22T05:56:37.3NZ",
+    "end": "2026-10-22T05:56:39Z",
+    "exit": 0
+   }
+  ],
+  "checks": 26,
+  "failed": 0,
+  "pass": true,
+  "evidence": "evidence/p3/release/"
+ },
+ "B_resumedTurnVerifier": {
+  "tenant": "resume-1792648664617",
+  "checks": 42,
+  "failed": 0,
+  "cases": {
+   "kill": {
+    "session": "sess_g3Z1a8mCQwQNCKdmFvlfc",
+    "takeoverMsFromMark": 31059,
+    "handoffGapMs": null,
+    "outcome": {
+     "unknown": true,
+     "isError": true
+    },
+    "fileLater": "STARTDONE"
+   },
+   "handoff": {
+    "session": "sess_QoY7i0W5y8wOBesFsG74e",
+    "takeoverMsFromMark": 12889,
+    "handoffGapMs": 29,
+    "outcome": {
+     "unknown": false,
+     "isError": false
+    },
+    "fileLater": null
+   },
+   "detach": {
+    "session": "sess_ObCJ9m1a_cw_CtHS8YxON",
+    "takeoverMsFromMark": 21689,
+    "handoffGapMs": null,
+    "outcome": {
+     "unknown": true,
+     "isError": true
+    },
+    "fileLater": "STARTDONE"
+   },
+   "big": {
+    "session": "sess_SfhCp3ZELElJwoWENOezE",
+    "takeoverMsFromMark": null,
+    "handoffGapMs": null,
+    "outcome": null,
+    "fileLater": null
+   }
+  },
+  "disruptions": [
+   {
+    "name": "kill",
+    "sessionId": "sess_g3Z1a8mCQwQNCKdmFvlfc",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T05:58:08.068Z",
+    "owner": "oma-runner-54cb55469c-dgfcw",
+    "ownerLastFlush": "2026-10-22T13:58:07.766365845+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_jQMVq8RCj8E9yPu3-PsG0",
+     "sess_LbvYHkpW-xN99My83rhHH",
+     "sess_Y3LUlCFzK7L5ZmCqFxPAl",
+     "sess_3X4zFFh4pXY3s3hkjOAhC",
+     "sess_E67pyWSvet-tDaFL1VVuq",
+     "sess_iwNJfDkfo9IxH9aU0hIc0",
+     "sess_fFVqTYH3cTFSflxS22S3Z",
+     "sess_g3Z1a8mCQwQNCKdmFvlfc"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54cb55469c-dgfcw",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     },
+     {
+      "name": "oma-runner-54cb55469c-w7k8j",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T05:58:10.240Z",
+    "action": "kill9",
+    "at": "2026-10-22T05:58:10.907Z",
+    "pid": "11",
+    "ok": true,
+    "secondsFromStartPhase": 13
+   },
+   {
+    "name": "handoff",
+    "sessionId": "sess_QoY7i0W5y8wOBesFsG74e",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T05:59:45.274Z",
+    "owner": "oma-runner-54cb55469c-w7k8j",
+    "ownerLastFlush": "2026-10-22T13:59:45.164968666+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_g3Z1a8mCQwQNCKdmFvlfc",
+     "sess_QoY7i0W5y8wOBesFsG74e"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54cb55469c-dgfcw",
+      "ready": true,
+      "deleting": false,
+      "restarts": 1
+     },
+     {
+      "name": "oma-runner-54cb55469c-w7k8j",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T05:59:47.386Z",
+    "action": "delete",
+    "at": "2026-10-22T05:59:47.386Z",
+    "ok": true,
+    "secondsFromStartPhase": 13
+   },
+   {
+    "name": "detach",
+    "sessionId": "sess_ObCJ9m1a_cw_CtHS8YxON",
+    "startPhaseExit": 0,
+    "startDone": "2026-10-22T06:01:32.063Z",
+    "owner": "oma-runner-54cb55469c-dgfcw",
+    "ownerLastFlush": "2026-10-22T14:01:31.538060745+08:00",
+    "sessionsFlushingOnOwnerLast180s": [
+     "sess_QoY7i0W5y8wOBesFsG74e",
+     "sess_ObCJ9m1a_cw_CtHS8YxON"
+    ],
+    "runnerPods": [
+     {
+      "name": "oma-runner-54cb55469c-dgfcw",
+      "ready": true,
+      "deleting": false,
+      "restarts": 1
+     },
+     {
+      "name": "oma-runner-54cb55469c-xmnpf",
+      "ready": true,
+      "deleting": false,
+      "restarts": 0
+     }
+    ],
+    "markExit": 0,
+    "markedAt": "2026-10-22T06:01:34.291Z",
+    "action": "delete",
+    "at": "2026-10-22T06:01:34.291Z",
+    "ok": true,
+    "secondsFromStartPhase": 13
+   }
+  ],
+  "evidence": "evidence/p3/resumed/"
+ },
+ "C_storyboard": {
+  "runs": [
+   {
+    "run": "10",
+    "session": "sess_n8ZZuOyqkGm3ZAD3RJZDd",
+    "window": "fault",
+    "durS": 962,
+    "shots": 47,
+    "children": 3,
+    "execs": 3,
+    "model": 95,
+    "tools": 119,
+    "expired": 2,
+    "released": 5,
+    "unknown": 1,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "11",
+    "session": "sess_YdtwJt8xEeC518UvccoZE",
+    "window": "fault",
+    "durS": 702,
+    "shots": 48,
+    "children": 3,
+    "execs": 3,
+    "model": 75,
+    "tools": 90,
+    "expired": 2,
+    "released": 1,
+    "unknown": 0,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "12",
+    "session": "sess__f3wEj36qAzO8hMNLIaJF",
+    "window": "fault",
+    "durS": 842,
+    "shots": 47,
+    "children": 3,
+    "execs": 3,
+    "model": 97,
+    "tools": 123,
+    "expired": 2,
+    "released": 3,
+    "unknown": 0,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "13",
+    "session": "sess_na1k9GPayd6y3LiLqfcQJ",
+    "window": "fault",
+    "durS": 900,
+    "shots": 46,
+    "children": 3,
+    "execs": 4,
+    "model": 100,
+    "tools": 120,
+    "expired": 2,
+    "released": 4,
+    "unknown": 0,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "14",
+    "session": "sess_jx1vP3nQE0ibrPlFvJ81h",
+    "window": "fault",
+    "durS": 755,
+    "shots": 45,
+    "children": 3,
+    "execs": 4,
+    "model": 80,
+    "tools": 101,
+    "expired": 2,
+    "released": 3,
+    "unknown": 0,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "15",
+    "session": "sess_NA2tREZkpcr2sfFvHqjNu",
+    "window": "fault",
+    "durS": 683,
+    "shots": 46,
+    "children": 3,
+    "execs": 4,
+    "model": 76,
+    "tools": 94,
+    "expired": 2,
+    "released": 2,
+    "unknown": 2,
+    "rejectedAgentCalls": 1,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "16",
+    "session": "sess_iMruglBpt7TRFrCHkLuhJ",
+    "window": "baseline",
+    "durS": 573,
+    "shots": 45,
+    "children": 3,
+    "execs": 3,
+    "model": 72,
+    "tools": 90,
+    "expired": 0,
+    "released": 0,
+    "unknown": 0,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   },
+   {
+    "run": "17",
+    "session": "sess_cbjH2j0MayLmgA4mxYZOL",
+    "window": "baseline",
+    "durS": 614,
+    "shots": 44,
+    "children": 3,
+    "execs": 3,
+    "model": 69,
+    "tools": 91,
+    "expired": 0,
+    "released": 0,
+    "unknown": 0,
+    "rejectedAgentCalls": 0,
+    "business": true,
+    "resume": true,
+    "failed": []
+   }
+  ],
+  "disruptions": [
+   {
+    "action": "kill9",
+    "at": "2026-10-22T06:08:34.403Z",
+    "pod": "oma-runner-54cb55469c-n6qdp",
+    "pid": "7",
+    "markers": [
+     {
+      "run": "lh-20261022-11",
+      "kind": "root",
+      "session": "sess_YdtwJt8xEeC518UvccoZE",
+      "seq": 79,
+      "ts": "2026-10-22T06:08:55.388Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 21.0
+     },
+     {
+      "run": "lh-20261022-15",
+      "kind": "root",
+      "session": "sess_NA2tREZkpcr2sfFvHqjNu",
+      "seq": 121,
+      "ts": "2026-10-22T06:08:55.388Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 21.0
+     },
+     {
+      "run": "lh-20261022-12",
+      "kind": "root",
+      "session": "sess__f3wEj36qAzO8hMNLIaJF",
+      "seq": 108,
+      "ts": "2026-10-22T06:08:55.409Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 21.0
+     },
+     {
+      "run": "lh-20261022-14",
+      "kind": "root",
+      "session": "sess_jx1vP3nQE0ibrPlFvJ81h",
+      "seq": 142,
+      "ts": "2026-10-22T06:08:55.462Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 21.1
+     },
+     {
+      "run": "lh-20261022-13",
+      "kind": "root",
+      "session": "sess_na1k9GPayd6y3LiLqfcQJ",
+      "seq": 134,
+      "ts": "2026-10-22T06:08:55.464Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 21.1
+     },
+     {
+      "run": "lh-20261022-15",
+      "kind": "child",
+      "session": "sess_7H1Rn16g_nUJcox3nnbdl",
+      "seq": 45,
+      "ts": "2026-10-22T06:08:57.160Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 2,
+      "latencyS": 22.8
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "child",
+      "session": "sess_dvJwUs8UIdJ76qYJgo3EI",
+      "seq": 123,
+      "ts": "2026-10-22T06:09:00.378Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 26.0
+     },
+     {
+      "run": "lh-20261022-13",
+      "kind": "child",
+      "session": "sess_PEE-vdCognqsIbrzeUGH9",
+      "seq": 118,
+      "ts": "2026-10-22T06:09:02.162Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 0,
+      "latencyS": 27.8
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "root",
+      "session": "sess_n8ZZuOyqkGm3ZAD3RJZDd",
+      "seq": 136,
+      "ts": "2026-10-22T06:09:05.397Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 1,
+      "latencyS": 31.0
+     },
+     {
+      "run": "lh-20261022-14",
+      "kind": "child",
+      "session": "sess_W4uYLWFycovBjQiOZ6FN9",
+      "seq": 105,
+      "ts": "2026-10-22T06:09:05.400Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 0,
+      "latencyS": 31.0
+     },
+     {
+      "run": "lh-20261022-11",
+      "kind": "child",
+      "session": "sess_bt-r9342XpP3ulvbgdGGk",
+      "seq": 92,
+      "ts": "2026-10-22T06:09:05.406Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 0,
+      "latencyS": 31.0
+     },
+     {
+      "run": "lh-20261022-12",
+      "kind": "child",
+      "session": "sess_kGEaIWbpTh6fd5afib_ap",
+      "seq": 136,
+      "ts": "2026-10-22T06:09:05.411Z",
+      "generation": 2,
+      "reason": "expired",
+      "dangling": 0,
+      "latencyS": 31.0
+     }
+    ],
+    "latencyS": {
+     "min": 21.0,
+     "max": 31.0,
+     "median": 24.4
+    },
+    "reasons": {
+     "expired": 12
+    },
+    "note": null,
+    "reason": null
+   },
+   {
+    "action": "decision",
+    "at": "2026-10-22T06:13:18Z",
+    "pod": null,
+    "pid": null,
+    "markers": null,
+    "latencyS": null,
+    "reasons": null,
+    "note": "After the kill -9, the restarted process on the killed Pod n6qdp (owner f501f204) took over 10 of 12 Turns; the other Runner xmnpf (d18c6ba3) held only one running child (run 11 DP). To make sure running Turns with Sandbox activity are still running at the 20 s handoff deadline (the bc43162 detach path), the graceful delete targets n6qdp (6 roots + 5 running children; its current process is not the one that was killed). xmnpf is gracefully replaced by the rollout restart.",
+    "reason": null
+   },
+   {
+    "action": "delete",
+    "at": "2026-10-22T06:13:20.094Z",
+    "pod": "oma-runner-54cb55469c-n6qdp",
+    "pid": null,
+    "markers": [
+     {
+      "run": "lh-20261022-14",
+      "kind": "child",
+      "session": "sess_Q8znglt1Hx7s5OLjgr7DI",
+      "seq": 101,
+      "ts": "2026-10-22T06:13:28.856Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 8.8
+     },
+     {
+      "run": "lh-20261022-15",
+      "kind": "root",
+      "session": "sess_NA2tREZkpcr2sfFvHqjNu",
+      "seq": 141,
+      "ts": "2026-10-22T06:13:41.801Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 21.7
+     },
+     {
+      "run": "lh-20261022-12",
+      "kind": "root",
+      "session": "sess__f3wEj36qAzO8hMNLIaJF",
+      "seq": 129,
+      "ts": "2026-10-22T06:13:41.859Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "child",
+      "session": "sess_-tHWmFxiE5mCH3PTWCBWM",
+      "seq": 88,
+      "ts": "2026-10-22T06:13:41.865Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-11",
+      "kind": "root",
+      "session": "sess_YdtwJt8xEeC518UvccoZE",
+      "seq": 100,
+      "ts": "2026-10-22T06:13:41.868Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-13",
+      "kind": "root",
+      "session": "sess_na1k9GPayd6y3LiLqfcQJ",
+      "seq": 154,
+      "ts": "2026-10-22T06:13:41.881Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-14",
+      "kind": "root",
+      "session": "sess_jx1vP3nQE0ibrPlFvJ81h",
+      "seq": 169,
+      "ts": "2026-10-22T06:13:41.891Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "root",
+      "session": "sess_n8ZZuOyqkGm3ZAD3RJZDd",
+      "seq": 190,
+      "ts": "2026-10-22T06:13:41.902Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-12",
+      "kind": "child",
+      "session": "sess_Trzs23zXFGZgA2kVKHTsl",
+      "seq": 116,
+      "ts": "2026-10-22T06:13:41.924Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-13",
+      "kind": "child",
+      "session": "sess_IxxlZCK5ACShj93LKju3p",
+      "seq": 116,
+      "ts": "2026-10-22T06:13:41.932Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 21.8
+     },
+     {
+      "run": "lh-20261022-15",
+      "kind": "child",
+      "session": "sess_HxYVvcUMw7i1WDl8R4r7O",
+      "seq": 86,
+      "ts": "2026-10-22T06:13:41.949Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 21.9
+     }
+    ],
+    "latencyS": {
+     "min": 8.8,
+     "max": 21.9,
+     "median": 21.8
+    },
+    "reasons": {
+     "released": 11
+    },
+    "note": null,
+    "reason": null
+   },
+   {
+    "action": "rollout",
+    "at": "2026-10-22T06:17:35.399Z",
+    "pod": null,
+    "pid": null,
+    "markers": [
+     {
+      "run": "lh-20261022-14",
+      "kind": "child",
+      "session": "sess_zr30ZtzIq-HOT204aqCpa",
+      "seq": 109,
+      "ts": "2026-10-22T06:18:33.818Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 58.4
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "child",
+      "session": "sess_X42j8exFBf2zKLqO03xN7",
+      "seq": 3,
+      "ts": "2026-10-22T06:18:35.235Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 59.8
+     },
+     {
+      "run": "lh-20261022-12",
+      "kind": "root",
+      "session": "sess__f3wEj36qAzO8hMNLIaJF",
+      "seq": 227,
+      "ts": "2026-10-22T06:19:20.787Z",
+      "generation": 4,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 105.4
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "child",
+      "session": "sess_X42j8exFBf2zKLqO03xN7",
+      "seq": 88,
+      "ts": "2026-10-22T06:19:21.180Z",
+      "generation": 3,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 105.8
+     },
+     {
+      "run": "lh-20261022-13",
+      "kind": "child",
+      "session": "sess_rMv4yhr3p3c5nRGWUJPiX",
+      "seq": 70,
+      "ts": "2026-10-22T06:19:21.979Z",
+      "generation": 2,
+      "reason": "released",
+      "dangling": 0,
+      "latencyS": 106.6
+     },
+     {
+      "run": "lh-20261022-13",
+      "kind": "root",
+      "session": "sess_na1k9GPayd6y3LiLqfcQJ",
+      "seq": 202,
+      "ts": "2026-10-22T06:19:39.555Z",
+      "generation": 4,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 124.2
+     },
+     {
+      "run": "lh-20261022-10",
+      "kind": "root",
+      "session": "sess_n8ZZuOyqkGm3ZAD3RJZDd",
+      "seq": 222,
+      "ts": "2026-10-22T06:19:39.579Z",
+      "generation": 4,
+      "reason": "released",
+      "dangling": 1,
+      "latencyS": 124.2
+     }
+    ],
+    "latencyS": {
+     "min": 58.4,
+     "max": 124.2,
+     "median": 105.8
+    },
+    "reasons": {
+     "released": 7
+    },
+    "note": null,
+    "reason": null
+   },
+   {
+    "action": "skip-optional-kill9",
+    "at": "2026-10-22T06:20:32Z",
+    "pod": null,
+    "pid": null,
+    "markers": null,
+    "latencyS": null,
+    "reasons": null,
+    "note": null,
+    "reason": "phase-3 plan has one kill -9 only"
+   }
+  ],
+  "deleteTargetDeviation": "graceful delete targeted n6qdp (the Pod restarted by kill -9, now holding 6 roots + 5 running children) instead of the other Runner xmnpf (1 running child), to make sure running Turns with Sandbox activity were still running at the 20 s deadline; 4 running children (sess_-tHWmFxiE5mCH3PTWCBWM, sess_Trzs23zXFGZgA2kVKHTsl, sess_IxxlZCK5ACShj93LKju3p, sess_HxYVvcUMw7i1WDl8R4r7O) were detached at 06:13:41.8Z. xmnpf was gracefully replaced (and also detached Turns at its deadline) in the rollout.",
+  "outcomeUnknown": [
+   {
+    "session": "sess_dvJwUs8UIdJ76qYJgo3EI",
+    "toolUseId": "call_00_ET_tMgMcKYsYycxSVKuZyPZ0069",
+    "resultSeq": 124,
+    "tool": "bash",
+    "input": "cd /home/user/workspace && python3 /tmp/gen_director_notes.py && python3 /skills/script-to-dp/scripts/validate_director_notes.py /home/user/workspace/outputs/lh-20261022-10/director_notes.json; echo \"EXIT=$?\"",
+    "rerunSeqs": [],
+    "nextCalls": [
+     {
+      "seq": 130,
+      "name": "bash",
+      "input": "ls -la /home/user/workspace/outputs/lh-20261022-10/ 2>&1; echo \"---\"; ls -la /tmp/gen_director_notes.py"
+     },
+     {
+      "seq": 138,
+      "name": "bash",
+      "input": "cd /home/user/workspace && python3 /skills/script-to-dp/scripts/validate_director_notes.py /home/user/workspace/outputs/lh-20261022-10/director_notes.json; echo"
+     },
+     {
+      "seq": 146,
+      "name": "bash",
+      "input": "ls -la /skills/ 2>&1; echo ---; ls -la /skills/script-to-dp/ 2>&1"
+     }
+    ],
+    "run": "lh-20261022-10"
+   },
+   {
+    "session": "sess_7H1Rn16g_nUJcox3nnbdl",
+    "toolUseId": "call_00_ET_BHJTl6iLnWdzydWmPRyk3143",
+    "resultSeq": 46,
+    "tool": "read",
+    "input": "{\"path\":\"/skills/script-to-dp/references/beat-system.md\"}",
+    "rerunSeqs": [
+     60
+    ],
+    "nextCalls": [
+     {
+      "seq": 53,
+      "name": "bash",
+      "input": "ls -la /home/user/workspace/outputs/lh-20261022-15/ 2>&1; echo \"---\"; ls /home/user/workspace/inputs/EP29/"
+     },
+     {
+      "seq": 60,
+      "name": "read",
+      "input": "{\"path\":\"/skills/script-to-dp/references/beat-system.md\"}"
+     },
+     {
+      "seq": 67,
+      "name": "read",
+      "input": "{\"path\":\"/home/user/workspace/inputs/EP29/00-brief.md\"}"
+     }
+    ],
+    "run": "lh-20261022-15"
+   },
+   {
+    "session": "sess_7H1Rn16g_nUJcox3nnbdl",
+    "toolUseId": "call_01_ET_skF5VBt97A1MRTyyN9x10774",
+    "resultSeq": 47,
+    "tool": "read",
+    "input": "{\"path\":\"/home/user/workspace/inputs/EP29/00-brief.md\"}",
+    "rerunSeqs": [
+     67
+    ],
+    "nextCalls": [
+     {
+      "seq": 53,
+      "name": "bash",
+      "input": "ls -la /home/user/workspace/outputs/lh-20261022-15/ 2>&1; echo \"---\"; ls /home/user/workspace/inputs/EP29/"
+     },
+     {
+      "seq": 60,
+      "name": "read",
+      "input": "{\"path\":\"/skills/script-to-dp/references/beat-system.md\"}"
+     },
+     {
+      "seq": 67,
+      "name": "read",
+      "input": "{\"path\":\"/home/user/workspace/inputs/EP29/00-brief.md\"}"
+     }
+    ],
+    "run": "lh-20261022-15"
+   }
+  ],
+  "repeatedBashCommands": [
+   {
+    "run": "lh-20261022-10",
+    "session": "sess_X42j8exFBf2zKLqO03xN7",
+    "seqs": [
+     83,
+     101
+    ],
+    "takeoverBetween": [
+     88
+    ],
+    "command": "cd /home/user/workspace/outputs/lh-20261022-10 && python3 _build_formatter.py"
+   },
+   {
+    "run": "lh-20261022-10",
+    "session": "sess_-tHWmFxiE5mCH3PTWCBWM",
+    "seqs": [
+     154,
+     208
+    ],
+    "takeoverBetween": [],
+    "command": "cd /home/user/workspace/outputs/lh-20261022-10 && python3 _check_dp.py"
+   },
+   {
+    "run": "lh-20261022-10",
+    "session": "sess_dvJwUs8UIdJ76qYJgo3EI",
+    "seqs": [
+     138,
+     161
+    ],
+    "takeoverBetween": [],
+    "command": "cd /home/user/workspace && python3 /skills/script-to-dp/scripts/validate_director_notes.py /home/user/workspace/outputs/lh-20261022-10/direc"
+   },
+   {
+    "run": "lh-20261022-12",
+    "session": "sess_kGEaIWbpTh6fd5afib_ap",
+    "seqs": [
+     149,
+     256
+    ],
+    "takeoverBetween": [],
+    "command": "cd /skills/script-to-dp && python3 scripts/validate_director_notes.py /home/user/workspace/outputs/lh-20261022-12/director_notes.json; echo "
+   },
+   {
+    "run": "lh-20261022-15",
+    "session": "sess_7H1Rn16g_nUJcox3nnbdl",
+    "seqs": [
+     100,
+     173
+    ],
+    "takeoverBetween": [],
+    "command": "cd /home/user/workspace && python3 /skills/script-to-dp/scripts/validate_director_notes.py /home/user/workspace/outputs/lh-20261022-15/direc"
+   }
+  ],
+  "previousOwnerWritesAfterTakeover": {
+   "byLogTimestamp": 4,
+   "bySeq": 0,
+   "explanation": "The 2 rollout cases (sess_X42j8exFBf2zKLqO03xN7 marker seq 88, sess_rMv4yhr3p3c5nRGWUJPiX marker seq 70) show old-Pod flushes ~0.1 s after the marker by Pod clocks, but the rows they wrote are seq 86-87 and 68-69, i.e. committed BEFORE the markers; event ts is the writer Pod clock (event-log-store.ts: const ts = new Date()), and xmnpf ran >=0.10 s ahead of 9btwz."
+  },
+  "conflictChecks": {
+   "markers": 30,
+   "duplicateTakeoverGeneration": 0,
+   "executions": 27,
+   "executionsCompleted": 27,
+   "duplicateExecutionPerAgentCall": 0,
+   "rejectedAgentCallsByToolValidation": 1,
+   "pendingLeft": 0,
+   "sessionErrors": 0
+  },
+  "evidence": "evidence/p3/collected/, evidence/p3/analysis.json, evidence/p3/db/claim-samples.jsonl, evidence/p3/disruptions.jsonl"
+ },
+ "D_logAudit": {
+  "pods": {
+   "oma-runner-54cb55469c-dgfcw": 144,
+   "oma-runner-54cb55469c-l9lhf": 13,
+   "oma-runner-54cb55469c-xmnpf": 902,
+   "oma-runner-54cb55469c-n6qdp": 979,
+   "oma-runner-8cdc558bf-g8c97": 1124,
+   "oma-runner-54cb55469c-w7k8j": 17,
+   "oma-runner-8cdc558bf-9btwz": 2130
+  },
+  "blockCounts": {
+   "runner listening on http://localhost:3001": 8,
+   "claim_lost": 1,
+   "Received SIGTERM; stopping HTTP and handing active Turns to ": 5,
+   "Graceful shutdown detached the Turns still running after 200": 3
+  },
+  "poolAfterEnd": 0,
+  "leaseLost": 0,
+  "claimLost": 1,
+  "claimLostDetail": [
+   {
+    "pod": "oma-runner-54cb55469c-dgfcw",
+    "ts": "2026-10-22T13:56:34.168102412+08:00",
+    "kind": "claim_lost",
+    "head": "Runner drain failed: {",
+    "sessionId": "sess_fFVqTYH3cTFSflxS22S3Z",
+    "error": "PendingEventClaimLostError: Pending event claim lost: sess_fFVqTYH3cTFSflxS22S3Z/DCWd2zacrdkOHNXQo95Xi owner=host_013b9846-6972-4ae1-90f7-5c9f4108e346 generation=1",
+    "lines": 14,
+    "context": {
+     "tenant": "split-release-1792648436037",
+     "verifierPhase": "active-terminate",
+     "turnCompleted": [],
+     "userMessageAt": "2026-10-22T05:56:27.817Z",
+     "statusTerminatedAt": "2026-10-22T05:56:33.957Z",
+     "source": "Supabase MCP read-only SQL on oma_test.events"
+    },
+    "secondsAfterOwnTurnCompleted": null
+   }
+  ],
+  "otherErrorLikeLines": 0,
+  "evidence": "evidence/p3/log-audit.json, evidence/p3/logwatch/, evidence/p3/runner-logs/"
+ },
+ "E_metrics": {
+  "journalFlush": {
+   "window": "13:53:00-14:31:00 CST (A-C; before the other test first input at 14:31:54)",
+   "all": {
+    "n": 2600,
+    "p50": 4.9,
+    "p90": 13.2,
+    "p99": 26.7,
+    "max": 340.7,
+    "errors": 1
+   },
+   "lt64KiB": {
+    "n": 2588,
+    "p50": 4.9,
+    "p90": 13.1,
+    "p99": 25.8,
+    "max": 340.7,
+    "errors": 1
+   },
+   "ge64KiB": {
+    "n": 12,
+    "p50": 16.3,
+    "p90": 37.4,
+    "p99": 50.5,
+    "max": 50.5,
+    "errors": 0
+   },
+   "sessions": 46
+  },
+  "storyboardFlushTestSessions": {
+   "n": 2455,
+   "p50": 4.9,
+   "p90": 13.1,
+   "p99": 25.8,
+   "max": 340.7,
+   "errors": 0,
+   "maxBytes": 111950
+  },
+  "db": {
+   "wholeWindow": {
+    "from": "2026-10-22T13:53:04.743663+08:00",
+    "to": "2026-10-22T14:32:06.288488+08:00",
+    "seconds": 2342,
+    "delta": {
+     "agent_files": {
+      "seq": 0,
+      "idx": 341,
+      "ins": 0,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     },
+     "agents": {
+      "seq": 0,
+      "idx": 161,
+      "ins": 4,
+      "upd": 2,
+      "hot": 2,
+      "del": 0
+     },
+     "api_keys": {
+      "seq": 0,
+      "idx": 1973,
+      "ins": 27,
+      "upd": 26,
+      "hot": 25,
+      "del": 0
+     },
+     "delegation_commands": {
+      "seq": 1032,
+      "idx": 0,
+      "ins": 0,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     },
+     "delegation_environments": {
+      "seq": 0,
+      "idx": 1243,
+      "ins": 21,
+      "upd": 157,
+      "hot": 157,
+      "del": 0
+     },
+     "delegation_executions": {
+      "seq": 0,
+      "idx": 4294,
+      "ins": 29,
+      "upd": 131,
+      "hot": 0,
+      "del": 0
+     },
+     "delegation_lock": {
+      "seq": 0,
+      "idx": 381,
+      "ins": 0,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     },
+     "delegation_resource_uses": {
+      "seq": 329,
+      "idx": 234,
+      "ins": 62,
+      "upd": 150,
+      "hot": 146,
+      "del": 61
+     },
+     "delegation_waits": {
+      "seq": 0,
+      "idx": 3916,
+      "ins": 28,
+      "upd": 28,
+      "hot": 0,
+      "del": 0
+     },
+     "event_counters": {
+      "seq": 0,
+      "idx": 13028,
+      "ins": 47,
+      "upd": 4288,
+      "hot": 4281,
+      "del": 0
+     },
+     "events": {
+      "seq": 8,
+      "idx": 5660,
+      "ins": 4288,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     },
+     "loops": {
+      "seq": 0,
+      "idx": 362,
+      "ins": 1,
+      "upd": 2,
+      "hot": 1,
+      "del": 0
+     },
+     "pending_events": {
+      "seq": 19444,
+      "idx": 1118,
+      "ins": 52,
+      "upd": 1283,
+      "hot": 1281,
+      "del": 51
+     },
+     "session_cleanup": {
+      "seq": 11,
+      "idx": 978,
+      "ins": 14,
+      "upd": 14,
+      "hot": 0,
+      "del": 0
+     },
+     "sessions": {
+      "seq": 29,
+      "idx": 22807,
+      "ins": 47,
+      "upd": 240,
+      "hot": 136,
+      "del": 0
+     },
+     "skills": {
+      "seq": 1,
+      "idx": 1256,
+      "ins": 19,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     },
+     "users": {
+      "seq": 11,
+      "idx": 0,
+      "ins": 0,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     },
+     "workspaces": {
+      "seq": 1160,
+      "idx": 26,
+      "ins": 13,
+      "upd": 0,
+      "hot": 0,
+      "del": 0
+     }
+    },
+    "attribution": "A (release verifier tenant split-release-1792648436037, 13:53:56-13:56:39), B (tenant resume-1792648664617, 13:57:44-14:03:59), C (this tenant, runs 10-17, 14:04:34-14:31:00). From 14:30:14 another test in this tenant (agent_M794Gt4iPwX-ZblaA_lW2) uploaded 19 Skills and created Sessions; agents/skills/workspaces/sessions inserts after that are not ours. The last pending_events row (sess_VaXduJkjA_akScsqR-qx_) is theirs."
+   },
+   "storyboardWindow": {
+    "from": "2026-10-22T14:04:25.116793+08:00",
+    "to": "2026-10-22T14:32:06.288488+08:00",
+    "pendingEventsUpdates": 1203,
+    "inputs": 35,
+    "inputsByKind": {
+     "root": 8,
+     "child": 27
+    },
+    "claimedInputSeconds": 10967,
+    "updatesPerInput": 34.4,
+    "expectedHeartbeatsAt10s": 1097,
+    "updatesPerExpectedHeartbeat": 1.1,
+    "note": "Includes 30 takeovers and their claim/release updates; the other test contributed one claimed input for about 12 s before the after-sample."
+   }
+  },
+  "heartbeatWindows": [
+   {
+    "from": "C-start",
+    "to": "pre-kill9",
+    "seconds": 217,
+    "deltaUpdates": 125,
+    "avgLiveClaims": 5.5,
+    "updatesPerClaimPer10s": 1.05
+   },
+   {
+    "from": "pre-kill9",
+    "to": "post-kill9",
+    "seconds": 94,
+    "deltaUpdates": 84,
+    "avgLiveClaims": 11.5,
+    "updatesPerClaimPer10s": 0.78
+   },
+   {
+    "from": "post-kill9",
+    "to": "pre-delete",
+    "seconds": 196,
+    "deltaUpdates": 245,
+    "avgLiveClaims": 12.0,
+    "updatesPerClaimPer10s": 1.04
+   },
+   {
+    "from": "pre-delete",
+    "to": "post-delete",
+    "seconds": 94,
+    "deltaUpdates": 127,
+    "avgLiveClaims": 12.0,
+    "updatesPerClaimPer10s": 1.13
+   },
+   {
+    "from": "post-delete",
+    "to": "pre-rollout",
+    "seconds": 160,
+    "deltaUpdates": 196,
+    "avgLiveClaims": 10.5,
+    "updatesPerClaimPer10s": 1.16
+   },
+   {
+    "from": "pre-rollout",
+    "to": "post-rollout",
+    "seconds": 196,
+    "deltaUpdates": 173,
+    "avgLiveClaims": 6.0,
+    "updatesPerClaimPer10s": 1.47
+   },
+   {
+    "from": "post-rollout",
+    "to": "after",
+    "seconds": 704,
+    "deltaUpdates": 253,
+    "avgLiveClaims": 2.0,
+    "updatesPerClaimPer10s": 1.8
+   }
+  ],
+  "resourcePeaks": {
+   "oma-api-79b6cbf44c-pxr5h": {
+    "cpu_m": 97.0,
+    "mem_Mi": 187.0
+   },
+   "oma-runner-54cb55469c-n6qdp": {
+    "cpu_m": 778.0,
+    "mem_Mi": 772.0
+   },
+   "oma-runner-54cb55469c-xmnpf": {
+    "cpu_m": 600.0,
+    "mem_Mi": 810.0
+   },
+   "redis-6db9fb4575-nmqfs": {
+    "cpu_m": 111.0,
+    "mem_Mi": 60.0
+   },
+   "oma-runner-54cb55469c-l9lhf": {
+    "cpu_m": 44.0,
+    "mem_Mi": 209.0
+   },
+   "oma-runner-8cdc558bf-g8c97": {
+    "cpu_m": 639.0,
+    "mem_Mi": 382.0
+   },
+   "oma-runner-8cdc558bf-9btwz": {
+    "cpu_m": 636.0,
+    "mem_Mi": 454.0
+   }
+  },
+  "runnerPods": {
+   "oma-runner-54cb55469c-n6qdp": {
+    "firstSeen": "2026-10-22T06:04:23.678Z",
+    "lastSeen": "2026-10-22T06:13:53.813Z",
+    "notReadySamples": 2,
+    "maxRestarts": 1,
+    "lastTermination": {
+     "reason": "Error",
+     "exitCode": 137,
+     "finishedAt": "2026-10-22T06:08:34Z"
+    },
+    "samples": 39
+   },
+   "oma-runner-54cb55469c-xmnpf": {
+    "firstSeen": "2026-10-22T06:04:23.678Z",
+    "lastSeen": "2026-10-22T06:19:41.568Z",
+    "notReadySamples": 0,
+    "maxRestarts": 0,
+    "lastTermination": null,
+    "samples": 61
+   },
+   "oma-runner-54cb55469c-l9lhf": {
+    "firstSeen": "2026-10-22T06:13:23.804Z",
+    "lastSeen": "2026-10-22T06:18:41.557Z",
+    "notReadySamples": 4,
+    "maxRestarts": 0,
+    "lastTermination": null,
+    "samples": 21
+   },
+   "oma-runner-8cdc558bf-g8c97": {
+    "firstSeen": "2026-10-22T06:17:41.544Z",
+    "lastSeen": "2026-10-22T06:33:41.911Z",
+    "notReadySamples": 4,
+    "maxRestarts": 0,
+    "lastTermination": null,
+    "samples": 65
+   },
+   "oma-runner-8cdc558bf-9btwz": {
+    "firstSeen": "2026-10-22T06:18:41.557Z",
+    "lastSeen": "2026-10-22T06:33:41.911Z",
+    "notReadySamples": 3,
+    "maxRestarts": 0,
+    "lastTermination": null,
+    "samples": 61
+   }
+  }
+ },
+ "F_otherTenantsAndCleanup": {
+  "preDisruptionChecks": [
+   {
+    "label": "pre-B-kill",
+    "at": "2026-10-22T13:57:50.810671+08:00",
+    "active_all": null,
+    "pending": null
+   },
+   {
+    "label": "pre-B-handoff",
+    "at": "2026-10-22T13:59:27.471888+08:00",
+    "active_all": null,
+    "pending": null
+   },
+   {
+    "label": "pre-B-detach",
+    "at": "2026-10-22T14:01:15.099044+08:00",
+    "active_all": null,
+    "pending": null
+   }
+  ],
+  "storyboardPreDisruption": "pre-kill9 14:08:02, pre-delete 14:12:51, pre-rollout 14:17:06: other_active=null",
+  "cleanup": {
+   "source": "Supabase MCP execute_sql, read-only, schema oma_test",
+   "at": "2026-10-22T14:37:35.557046+08:00",
+   "storyboardSessions": {
+    "terminated": 32
+   },
+   "verifierTenantSessions": {
+    "terminated": 14
+   },
+   "pendingMine": 0,
+   "runningMine": 0,
+   "resourceUsesMine": 0,
+   "sandboxBindingsMine": 0,
+   "cleanupPendingMine": 0,
+   "apiKey": {
+    "id": "apikey_0xcQp2Pzg_SpjOIR44jC4",
+    "revoked": true,
+    "postRevokeGet": 401
+   },
+   "global": {
+    "pendingAll": 87,
+    "runningOrWaitingAll": 85,
+    "owner": "all belong to another test in the same tenant (agent_M794Gt4iPwX-ZblaA_lW2 'FreeCanvas · 错峰200与续做验收 · 20261022', started 14:30:14 CST, after the last disruption); not touched"
+   },
+   "runners": "2/2 Ready oma-server:ded8bf42b530 (oma-runner-8cdc558bf-9btwz, -g8c97)"
+  }
+ },
+ "findings": [
+  {
+   "severity": "info",
+   "title": "Event ts across Runners can run backwards against seq",
+   "detail": "event ts is the writing Runner clock; xmnpf was >=0.10 s ahead of 9btwz (sess_X42j8exFBf2zKLqO03xN7 seq 86/87 ts 06:19:21.285/.291 vs marker seq 88 ts 06:19:21.180). Order by seq, not ts."
+  },
+  {
+   "severity": "low",
+   "title": "Interrupted Turn records workspace_storage_error",
+   "detail": "release verifier interrupt phase sess_jQMVq8RCj8E9yPu3-PsG0: seq 20 session.turn_aborted, seq 21 session.error workspace_storage_error, seq 22 turn_completed; same pattern in the 11:00 release verifier run (sess_t4mHn7oz-OMIvxz56yqJT). Verifier checks pass; the error text (file save status unconfirmed) is misleading after an Interrupt."
+  },
+  {
+   "severity": "info",
+   "title": "Active termination logs a claim-lost drain error",
+   "detail": "sess_fFVqTYH3cTFSflxS22S3Z (active-terminate phase) terminated 05:56:33.957Z; 0.21 s later dgfcw logs Runner drain failed: PendingEventClaimLostError and one journal flush with error. Expected fence refusal, but it is logged at error level."
+  }
+ ]
+}

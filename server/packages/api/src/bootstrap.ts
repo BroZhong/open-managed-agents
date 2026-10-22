@@ -75,6 +75,7 @@ export async function startHost(role: HostRole): Promise<void> {
     modelProviderService: modelProviders,
     thinkingOptions: (tenant, model) => modelProviders.thinkingOptions(tenant, model, managedOptions),
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
+    checkSession: sessionId => signals.publish({ sessionId, kind: "check" }),
     sseCatchupIntervalMs: Number(process.env.SSE_CATCHUP_INTERVAL_MS ?? 2000),
   }));
   const healthPath = role === "runner" ? "" : (process.env.API_BASE_PATH ?? "").replace(/\/$/, "");
@@ -91,7 +92,7 @@ export async function startHost(role: HostRole): Promise<void> {
   });
   const shutdown = createGracefulShutdown({
     server, stopBackgroundWork: () => execution?.stop() ?? Promise.resolve(),
-    waitForIdle: ms => execution?.router.waitForIdle(ms) ?? Promise.resolve(true),
+    handOff: ms => execution?.router.handOff(ms) ?? Promise.resolve(true),
     timeoutMs: Number(process.env.SHUTDOWN_GRACE_MS ?? 20_000),
     closeResources: async () => { eventStreamHub.close(); signals.close(); redis.disconnect(); await pool.end(); },
   });

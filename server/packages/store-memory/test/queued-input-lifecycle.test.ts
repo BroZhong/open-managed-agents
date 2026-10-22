@@ -66,7 +66,7 @@ describe("Queued Input lifecycle", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect((await store.listUnclaimed("s1", 20)).map((e) => e.id)).toEqual([event.id]);
     // And the stale owner can no longer renew or acknowledge it.
-    expect(await store.renewClaim("s1", event.id, claim!, 1_000)).toBe(false);
+    expect((await store.renewClaim("s1", event.id, claim!, 1_000)).renewed).toBe(false);
     expect(await store.ack("s1", event.id, claim!)).toBe(false);
   });
 });

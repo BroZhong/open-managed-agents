@@ -5,7 +5,7 @@ import type { SessionSignals } from "@oma-server/redis";
 /** Notifications accelerate work; the independent PG scan guarantees discovery. */
 export class RunnerDispatch {
   private timer?: ReturnType<typeof setInterval>;
-  private unsubscribe?: () => void;
+  private stopped = false;
   private scanning?: Promise<void>;
   private cleaning?: Promise<void>;
   private lastScan = 0;
@@ -20,8 +20,13 @@ export class RunnerDispatch {
   private get interval() { return this.deps.scanIntervalMs ?? 5000; }
   get ready(): boolean { return Date.now() - this.lastScan < Math.max(30_000, this.interval * 3); }
   async start(): Promise<void> {
-    this.unsubscribe = this.deps.signals.subscribe(signal => {
-      if (signal.kind === "wake") this.wake(signal.sessionId);
+    // Subscribed until the signals close: a Runner shutting down still runs
+    // its Turns until the handoff deadline, and acts on their check hints.
+    this.deps.signals.subscribe(signal => {
+      if (signal.kind === "wake" && !this.stopped) this.wake(signal.sessionId);
+      // Not deduplicated like wakes: a drain started from a wake holds its
+      // Session in `waking` for the whole Turn, and the owner must still check.
+      if (signal.kind === "check") this.deps.router.checkNow(signal.sessionId);
     });
     await this.scan();
     this.timer = setInterval(() => { void this.scan(); }, this.interval);
@@ -52,8 +57,9 @@ export class RunnerDispatch {
       .finally(() => { this.scanning = undefined; });
     return this.scanning;
   }
+  /** Stop claiming input: no more pending scans, and wakes are ignored (#254). */
   async stop(): Promise<void> {
-    this.unsubscribe?.();
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     await this.scanning;
     await this.cleaning;

@@ -2,6 +2,16 @@
 
 ## Status
 
+The commit barrier in "Commit barrier and failure" is revised by
+[ADR-0020](0020-turn-journal-single-write-entry.md): every native message, not
+only a compaction, is committed before Pi proceeds, through the Turn attempt's
+journal instead of `persistContext`. The compaction entry remains commit evidence.
+ADR-0020 also moves `agent.context_start` to right before prompting.
+
+[ADR-0021](0021-resumed-turn.md) revises "without adding automatic recovery of
+uncertain executions": a Turn whose Runner was lost continues, and each call
+whose outcome was not committed is reported to the Agent as unknown.
+
 Implementation superseded by [ADR-0014](0014-public-pi-sdk-boundary.md): public
 SDK hooks, temporary import bridge and Adapter request gate replace the patch.
 The durability and replay requirements below remain applicable.

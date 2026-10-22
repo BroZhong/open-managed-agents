@@ -1,11 +1,15 @@
 import type {
   Adapter,
   AdapterInput,
+  AdapterRunResult,
+  DurableEvent,
   SessionEvent,
+  StreamEvent,
 } from "@open-managed-agents/adapter-core";
 import {
   generateEventId,
   generateTimestamp,
+  isStreamEvent,
 } from "@open-managed-agents/adapter-core";
 
 export interface MockAdapterOptions {
@@ -73,6 +77,70 @@ function buildDefaultEvents(): SessionEvent[] {
   ];
 }
 
+/** Complete Event types that replace each kind of stream block. */
+const COMPLETE_TYPES_BY_STREAM_START: Readonly<Record<string, readonly string[]>> = {
+  "agent.message_stream_start": ["agent.message"],
+  "agent.thinking_stream_start": ["agent.thinking"],
+  "agent.tool_use_input_stream_start": ["agent.tool_use", "agent.mcp_tool_use"],
+};
+
+/**
+ * Numbers a run's output blocks from the Host's base (ADR-0020), by the
+ * rules the Router applied before Adapters owned alignment: each stream start
+ * opens the next block, a Delta belongs to the latest started block, and a
+ * Complete Event takes the latest unclaimed start of its kind (of its own
+ * call, for a tool argument stream).
+ */
+class StreamBlocks {
+  private current: number;
+  private readonly open: Array<{ blockIndex: number; types: readonly string[]; toolUseId?: string }> = [];
+
+  constructor(blockBase: number) {
+    this.current = blockBase - 1;
+  }
+
+  delta(event: StreamEvent): number {
+    const types = COMPLETE_TYPES_BY_STREAM_START[event.type];
+    if (types) {
+      this.current++;
+      this.open.push({ blockIndex: this.current, types,
+        ...(event.type === "agent.tool_use_input_stream_start" ? { toolUseId: event.toolUseId } : {}) });
+    }
+    return Math.max(0, this.current);
+  }
+
+  complete<T extends DurableEvent>(event: T): T {
+    const toolUseId = "toolUseId" in event ? event.toolUseId : undefined;
+    for (let i = this.open.length - 1; i >= 0; i--) {
+      const block = this.open[i]!;
+      if (!block.types.includes(event.type)) continue;
+      if (block.toolUseId !== undefined && block.toolUseId !== toolUseId) continue;
+      this.open.splice(i, 1);
+      // Only the streamed block types matched above carry a blockIndex.
+      return { ...event, blockIndex: block.blockIndex } as T;
+    }
+    return event;
+  }
+}
+
+/**
+ * Writes one Adapter run's events through its Turn journal, in order: each
+ * Delta on its numbered block, each Complete Event aligned with its stream
+ * block and durable before the next event is written; a failed write rejects.
+ * The mock writes its script with it; a hand-written test Adapter can write
+ * its events the same way.
+ */
+export function journalWriter(
+  { journal, resume }: Pick<AdapterInput, "journal" | "resume">,
+): (event: SessionEvent) => Promise<void> {
+  const blocks = new StreamBlocks(resume?.blockBase ?? 0);
+  return async (event) => {
+    if (isStreamEvent(event)) return journal.delta(event, blocks.delta(event));
+    journal.record(blocks.complete(event));
+    await journal.flush();
+  };
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -86,17 +154,20 @@ export class MockAdapter implements Adapter {
     this.delayMs = options?.delayMs ?? 0;
   }
 
-  async *run(_input: AdapterInput): AsyncIterable<SessionEvent> {
+  async run(input: AdapterInput): Promise<AdapterRunResult> {
     const events =
       this.customEvents !== undefined
         ? this.customEvents
         : buildDefaultEvents();
-
+    const write = journalWriter(input);
     for (let i = 0; i < events.length; i++) {
-      if (i > 0 && this.delayMs > 0) {
-        await delay(this.delayMs);
-      }
-      yield events[i]!;
+      if (i > 0 && this.delayMs > 0) await delay(this.delayMs);
+      // An Interrupt ends the script; the Host ends the Turn.
+      if (input.signal?.aborted) break;
+      // A failed write rejects run(); the Host stops the attempt on the
+      // journal's failure itself (ADR-0020).
+      await write(events[i]!);
     }
+    return "finished";
   }
 }

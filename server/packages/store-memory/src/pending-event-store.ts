@@ -3,9 +3,9 @@ import type {
   PendingEvent,
   PendingEventClaim,
   PendingEventClaimRef,
-  PendingEventStore,
   PendingEventIngressStore,
   PendingEventEnqueueInput,
+  PendingEventRenewal,
 } from "@oma-server/store";
 
 interface ClaimState {
@@ -15,48 +15,62 @@ interface ClaimState {
   interruptGeneration?: number;
 }
 
+/**
+ * Commits the Session side of a completed Turn (completion marker check, idle
+ * status and its Event) synchronously with queue removal. Owned by the Session
+ * and Event Log stores, so only {@link createMemoryStores} can provide it.
+ */
+type CompleteTurn = (sessionId: string, eventId: string, queueEmpty: boolean) => {
+  accepted: boolean; idleEvent?: StoredEvent;
+};
+
+/** An input {@link InMemoryPendingEventStore.removeById} took out of its queue, with its claim. */
+export interface RemovedPendingEvent { event: PendingEvent; claim?: ClaimState }
+
+const idPrefix = "pending_";
+const enqueueOrder = (eventId: string) => Number(eventId.slice(idPrefix.length));
+
+const unboundCompleteTurn: CompleteTurn = () => {
+  throw new Error("A standalone InMemoryPendingEventStore cannot complete Turns; use createMemoryStores()");
+};
+
 export class InMemoryPendingEventStore implements PendingEventIngressStore {
   private queues: Map<string, PendingEvent[]> = new Map();
   private claims: Map<string, ClaimState> = new Map();
   private nextId = 1;
 
-  ackCompletedTurn?: PendingEventStore["ackCompletedTurn"];
-
   constructor(
     private readonly isSessionActive: (sessionId: string) => Promise<boolean> = async () => true,
-    completeTurn?: (sessionId: string, eventId: string, queueEmpty: boolean) => {
-      accepted: boolean; idleEvent?: StoredEvent;
-    },
-  ) {
-    if (completeTurn) this.ackCompletedTurn = async (sessionId, eventId, claim) => {
-      // No await between ownership validation, lifecycle commit and removal.
-      // All three stores change in the same JavaScript turn.
-      if (!this.canAcknowledge(sessionId, eventId, claim)) return { acknowledged: false };
-      const result = completeTurn(sessionId, eventId, this.queues.get(sessionId)!.length === 1);
-      if (!result.accepted) return { acknowledged: false };
-      this.queues.get(sessionId)!.shift();
-      this.claims.delete(eventId);
-      return { acknowledged: true, ...(result.idleEvent ? { idleEvent: result.idleEvent } : {}) };
-    };
+    private readonly completeTurn: CompleteTurn = unboundCompleteTurn,
+  ) {}
+
+  async ackCompletedTurn(
+    sessionId: string,
+    eventId: string,
+    claim: PendingEventClaimRef,
+  ): Promise<{ acknowledged: boolean; idleEvent?: StoredEvent }> {
+    // No await between ownership validation, lifecycle commit and removal.
+    // All three stores change in the same JavaScript turn.
+    if (!this.canAcknowledge(sessionId, eventId, claim)) return { acknowledged: false };
+    const result = this.completeTurn(sessionId, eventId, this.queues.get(sessionId)!.length === 1);
+    if (!result.accepted) return { acknowledged: false };
+    this.queues.get(sessionId)!.shift();
+    this.claims.delete(eventId);
+    return { acknowledged: true, ...(result.idleEvent ? { idleEvent: result.idleEvent } : {}) };
   }
 
   async requestInterrupt(sessionId: string): Promise<boolean> {
     const event = this.queues.get(sessionId)?.[0];
     const claim = event ? this.claims.get(event.id) : undefined;
-    if (!claim?.ownerId || claim.expiresAtMs <= Date.now()) return false;
+    // A Turn runs once a claim started it, also while no Runner holds it.
+    if (!claim || claim.generation === 0) return false;
     claim.interruptGeneration = claim.generation;
     return true;
   }
 
-  async interruptRequested(sessionId: string, eventId: string): Promise<boolean> {
-    return this.queues.get(sessionId)?.[0]?.id === eventId &&
-      this.claims.get(eventId)?.interruptGeneration !== undefined &&
-      this.claims.get(eventId)?.interruptGeneration === this.claims.get(eventId)?.generation;
-  }
-
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
+      id: `${idPrefix}${this.nextId++}`,
       sessionId,
       type: event.type,
       data: event.data,
@@ -82,16 +96,6 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     return inserted;
   }
 
-  async dequeue(sessionId: string): Promise<PendingEvent | null> {
-    const queue = this.queues.get(sessionId) ?? [];
-    if (queue.length === 0) return null;
-    const head = queue[0]!;
-    if (this.claims.get(head.id)?.ownerId) return null;
-    queue.shift();
-    this.claims.delete(head.id);
-    return head;
-  }
-
   async peek(sessionId: string): Promise<PendingEvent | null> {
     const queue = this.queues.get(sessionId) ?? [];
     return queue[0] ?? null;
@@ -111,6 +115,8 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     };
     const live = current.ownerId !== undefined && current.expiresAtMs > now;
     if (live) return null;
+    // A released claim drops its owner; an expired one keeps it. Generation 0 never had one.
+    const previous = current.generation === 0 ? null : current.ownerId === undefined ? "released" as const : "expired" as const;
     current.generation++;
     current.ownerId = ownerId;
     current.expiresAtMs = now + leaseMs;
@@ -120,6 +126,8 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       ownerId,
       generation: current.generation,
       expiresAt: new Date(current.expiresAtMs),
+      priorInterrupt: current.interruptGeneration !== undefined && current.interruptGeneration < current.generation,
+      previous,
     };
   }
 
@@ -128,11 +136,12 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     eventId: string,
     claim: PendingEventClaimRef,
     leaseMs: number,
-  ): Promise<boolean> {
+  ): Promise<PendingEventRenewal> {
     if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
       throw new RangeError("pending event leaseMs must be a positive finite number");
     }
-    if ((this.queues.get(sessionId) ?? [])[0]?.id !== eventId) return false;
+    const lost = { renewed: false, interruptRequested: false };
+    if ((this.queues.get(sessionId) ?? [])[0]?.id !== eventId) return lost;
     const current = this.claims.get(eventId);
     const now = Date.now();
     if (
@@ -141,10 +150,10 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       current.generation !== claim.generation ||
       current.expiresAtMs <= now
     ) {
-      return false;
+      return lost;
     }
     current.expiresAtMs = now + leaseMs;
-    return true;
+    return { renewed: true, interruptRequested: current.interruptGeneration === current.generation };
   }
 
   async releaseClaim(
@@ -184,7 +193,7 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
   async ack(
     sessionId: string,
     eventId: string,
-    claim?: PendingEventClaimRef,
+    claim: PendingEventClaimRef,
   ): Promise<boolean> {
     if (!this.canAcknowledge(sessionId, eventId, claim)) return false;
     this.queues.get(sessionId)!.shift();
@@ -192,19 +201,26 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
     return true;
   }
 
-  private canAcknowledge(sessionId: string, eventId: string, claim?: PendingEventClaimRef): boolean {
+  private canAcknowledge(sessionId: string, eventId: string, claim: PendingEventClaimRef): boolean {
     if (this.queues.get(sessionId)?.[0]?.id !== eventId) return false;
     const current = this.claims.get(eventId);
-    if (!current?.ownerId) return !claim;
-    return Boolean(claim && current.ownerId === claim.ownerId &&
+    return Boolean(current?.ownerId && current.ownerId === claim.ownerId &&
       current.generation === claim.generation && current.expiresAtMs > Date.now());
   }
 
-  async listPendingSessionIds(): Promise<string[]> {
-    return [...this.queues.entries()]
-      .filter(([, queue]) => queue.length > 0)
-      .map(([sessionId]) => sessionId)
-      .sort();
+  async listClaimableSessionIds(): Promise<string[]> {
+    return [...this.queues.keys()].filter((sessionId) => this.isHeadClaimable(sessionId)).sort();
+  }
+
+  async headClaimable(sessionId: string): Promise<boolean> {
+    return this.isHeadClaimable(sessionId);
+  }
+
+  private isHeadClaimable(sessionId: string): boolean {
+    const head = this.queues.get(sessionId)?.[0];
+    if (!head) return false;
+    const claim = this.claims.get(head.id);
+    return !claim?.ownerId || claim.expiresAtMs <= Date.now();
   }
 
   async clear(sessionId: string): Promise<void> {
@@ -231,15 +247,29 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       })
       .slice(0, limit);
   }
-  /** Internal rollback boundary for the in-memory delegation transaction. */
+  /** Internal copy and replacement of the whole store state; tests lapse claims with them. */
   snapshotState() { return structuredClone({ queues: this.queues, claims: this.claims, nextId: this.nextId }); }
   restoreState(state: ReturnType<InMemoryPendingEventStore["snapshotState"]>): void { this.queues = state.queues; this.claims = state.claims; this.nextId = state.nextId; }
-  async removeById(sessionId: string, eventId: string, onlyUnclaimed = false): Promise<boolean> {
+  /** Internal write for the in-memory delegation transaction; {@link restoreRemoved} undoes it. */
+  removeById(sessionId: string, eventId: string, onlyUnclaimed = false): RemovedPendingEvent | null {
     const queue = this.queues.get(sessionId) ?? [];
     const index = queue.findIndex((event) => event.id === eventId);
     const claim = this.claims.get(eventId);
-    if (index < 0 || (onlyUnclaimed && claim?.ownerId && claim.expiresAtMs > Date.now())) return false;
-    queue.splice(index, 1); this.claims.delete(eventId); return true;
+    if (index < 0 || (onlyUnclaimed && claim?.ownerId && claim.expiresAtMs > Date.now())) return null;
+    const [event] = queue.splice(index, 1); this.claims.delete(eventId);
+    return { event, ...(claim ? { claim } : {}) };
+  }
+  /**
+   * Puts an input {@link removeById} took back where it was, with its claim.
+   * A queue is in enqueue order, so the input goes before every input
+   * enqueued after it, those others enqueued meanwhile included.
+   */
+  restoreRemoved(sessionId: string, removed: RemovedPendingEvent): void {
+    const queue = this.queues.get(sessionId) ?? [];
+    const later = queue.findIndex((event) => enqueueOrder(event.id) > enqueueOrder(removed.event.id));
+    queue.splice(later < 0 ? queue.length : later, 0, removed.event);
+    this.queues.set(sessionId, queue);
+    if (removed.claim) this.claims.set(removed.event.id, removed.claim);
   }
 
 }

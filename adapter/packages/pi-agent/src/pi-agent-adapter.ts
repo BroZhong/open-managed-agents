@@ -20,15 +20,18 @@ import type {
 import type {
   Adapter,
   AdapterInput,
-  SessionEvent,
+  AdapterRunResult,
+  DurableEvent,
+  SessionErrorEvent,
   SkillDescriptor,
   DelegationInstruction,
 } from "@open-managed-agents/adapter-core";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import type { Message, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { Api, Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
   generateEventId,
   generateTimestamp,
+  isStreamEvent,
   SANDBOX_WORKSPACE_ROOT,
 } from "@open-managed-agents/adapter-core";
 import { buildCustomTools } from "./custom-tools.js";
@@ -56,14 +59,14 @@ export interface PiSessionLike {
   nativeContext?: boolean;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: PromptOptions): Promise<void>;
-  /** Continue the original Turn after its durable pending tool results are supplied. */
+  /** Continue a resumed Turn from its history, whose tool calls all have durable results. */
   continue?(): Promise<void>;
   /**
    * Pi's native "Abort current operation and wait for agent to become idle"
    * (issue #84). We call it when `input.signal` fires so a user interrupt can
    * unwedge a turn whose tool exec never returns: aborting settles `prompt()`,
-   * which closes the EventQueue and lets the `for await` end naturally. This is
-   * a pure reuse of Pi's own cancel — no timeout/watchdog is introduced.
+   * so run() settles too. This is a pure reuse of Pi's own cancel — no
+   * timeout/watchdog is introduced.
    */
   abort(): Promise<void> | void;
   dispose(): Promise<void> | void;
@@ -122,10 +125,16 @@ export interface SessionFactoryArgs {
    * the factory args so the adapter-seam test can assert them directly.
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
-  checkpoint(): SessionEvent[];
-  emitContext(event: SessionEvent): void;
+  /** Record a native context event through the Turn journal, aligned with its Deltas. */
+  emitContext(event: DurableEvent): void;
   compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
+  /**
+   * Asked at the model request gate, once everything recorded is durable:
+   * true when the Host has asked the Turn to stop (#254). The session then
+   * sends no request and settles; the run returns "stopped".
+   */
+  stopBeforeRequest(): boolean;
 }
 
 /**
@@ -284,11 +293,24 @@ export class PiAgentAdapter implements Adapter {
     this.sessionFactory = options?._sessionFactory;
   }
 
-  async *run(input: AdapterInput): AsyncIterable<SessionEvent> {
+  async run(input: AdapterInput): Promise<AdapterRunResult> {
     // The router is the sole owner of session.status_running/idle (issue #83):
     // it knows the whole drain-wave boundary, while this adapter sees only one
     // turn. Emitting them here too doubled every turn's lifecycle events. The
-    // adapter now yields only real content/errors.
+    // adapter records only real content/errors, all through the Turn journal.
+    const { journal } = input;
+    // Set once Pi stopped at a model request gate at the Host's request.
+    let stopped = false;
+    const record = (event: DurableEvent) => {
+      // What Pi produces as it unwinds from the stop (the request it never
+      // sent, ending as aborted) is not the Agent's output: the Turn goes on
+      // from what is committed, on another Runner.
+      if (stopped) return;
+      // The Host ends an Interrupted Turn with turn_aborted. The error the
+      // interrupt causes in Pi is not the Agent's output.
+      if (event.type === "session.error" && input.signal?.aborted) return;
+      journal.record(event);
+    };
     let session: PiSessionLike | undefined;
     try {
       const promptText = input.message.content
@@ -303,8 +325,8 @@ export class PiAgentAdapter implements Adapter {
       // than being flattened into the prompt string. Empty on the first turn.
       if (input.execution?.isChild && !input.toolExecutor) throw new Error("Child execution requires its own managed ToolExecutor");
       if (input.execution?.isChild && (input.subagents || input.agent.mcpServers?.length)) throw new Error("Child executions cannot inherit delegation or MCP capabilities");
-      const history = continuationHistory(input);
-      const historyMessages = eventLogToAgentMessages(history);
+      const resume = input.resume;
+      const historyMessages = eventLogToAgentMessages(input.history);
 
       // Resolve custom models and auth through the same Pi runtime used by
       // this Turn. Catalog refresh belongs to deployment; avoid network
@@ -327,22 +349,19 @@ export class PiAgentAdapter implements Adapter {
       const hasToolExecutor = input.toolExecutor !== undefined;
       const resourceLoaderOptions = buildResourceLoaderOptions(input.agent);
 
-      const queue = new EventQueue<SessionEvent>();
+      const blockBase = resume?.blockBase ?? 0;
+      if (!Number.isInteger(blockBase) || blockBase < 0) throw new Error("resume.blockBase must be a non-negative integer");
       const translator = new PiEventTranslator(input.agent.mcpServers?.map(({ name }) => name) ?? []);
-      const checkpointEvents: SessionEvent[] = [];
-      const streamAlignment = new PiStreamAlignment();
+      const streamAlignment = new PiStreamAlignment(blockBase);
       const maxSteps = input.execution?.maxModelSteps ?? (input.execution?.isChild ? 500 : undefined);
       if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 1000)) throw new Error("maxModelSteps must be an integer between 1 and 1000");
-      let steps = input.execution?.completedModelSteps ?? 0;
-      if (!Number.isInteger(steps) || steps < 0) throw new Error("completedModelSteps must be a non-negative integer");
+      let steps = resume?.completedModelSteps ?? 0;
+      if (!Number.isInteger(steps) || steps < 0) throw new Error("resume.completedModelSteps must be a non-negative integer");
       let budgetExceeded = false;
       session = await this.createSession({
         input, prompt, historyMessages, model, thinkingLevel, modelRuntime, hasToolExecutor, resourceLoaderOptions,
-        checkpoint: () => structuredClone(checkpointEvents),
         emitContext(event) {
-          event = streamAlignment.attach(event);
-          checkpointEvents.push(event);
-          queue.push(event);
+          record(streamAlignment.align(event));
         },
         compactionInfo: () => translator.activeCompaction,
         async beforeModelStep() {
@@ -354,28 +373,30 @@ export class PiAgentAdapter implements Adapter {
           steps++;
           return await input.execution?.steering?.takePending() ?? [];
         },
+        stopBeforeRequest() {
+          if (input.stopRequest?.aborted) stopped = true;
+          return stopped;
+        },
       });
-      // Translate synchronously, before a following tool execute callback can
-      // register a durable wait. The snapshot and emitted events share IDs.
+      // Translate synchronously, so what the commit barrier flushes at a
+      // native message boundary is current.
       const unsubscribe = session.subscribe((event) => {
         const observed = event.type === "compaction_end" && !event.result && input.signal?.aborted
           ? { ...event, aborted: true } : event;
         for (const translated of translator.processEvent(observed)) {
-          streamAlignment.observe(translated);
+          const blockIndex = streamAlignment.observe(translated);
           if (session!.nativeContext && PI_DISPLAY_TYPES.has(translated.type)) continue;
-          if (!translated.type.includes("_stream_") && !translated.type.endsWith("_chunk")) checkpointEvents.push(translated);
-          queue.push(translated);
+          if (isStreamEvent(translated)) { if (!stopped) journal.delta(translated, blockIndex!); }
+          else record(blockIndex === undefined ? translated : { ...translated, blockIndex } as typeof translated);
         }
       });
 
       // Wire the router's per-turn abort signal to Pi's native cancel (issue
       // #84). Without this, a hung turn (a tool exec that never returns, so
-      // prompt() never settles and no further event arrives) locks the session
-      // forever — the drain loop only re-checks `aborted` when the next event
-      // comes. Calling `session.abort()` settles prompt(), which closes the
-      // EventQueue above, so the `for await` ends naturally. We reuse Pi's own
-      // cancel rather than inventing a watchdog. Wired AFTER subscribe() so an
-      // abort's resulting agent_end reaches the queue. If the signal already
+      // prompt() never settles) would keep run() pending forever. Calling
+      // `session.abort()` settles prompt(), so run() settles too. We reuse Pi's
+      // own cancel rather than inventing a watchdog. Wired AFTER subscribe() so
+      // an abort's resulting events are still translated. If the signal already
       // fired, abort immediately; otherwise register a one-shot listener removed
       // in the finally so a completed turn leaves nothing attached.
       const signal = input.signal;
@@ -392,47 +413,31 @@ export class PiAgentAdapter implements Adapter {
       }
 
       try {
-        if (signal?.aborted) return;
+        if (signal?.aborted) return "finished";
         // Fire the turn. prompt() resolves after Pi has finished the whole
         // operation, including automatic retries and overflow compaction /
-        // continuation; output arrives via the subscription. A rejection here
-        // (bad model, no auth, ...) is surfaced through the queue so it becomes
-        // a single session.error rather than an uncaught throw.
-        const operation = input.continuation
+        // continuation; output went to the journal as it happened. A rejection
+        // (bad model, no auth, a failed barrier, ...) becomes a single
+        // session.error rather than an uncaught throw.
+        await (resume
           ? (session.continue ? session.continue() : Promise.reject(new Error("Pi session does not support structured continuation")))
-          : session.prompt(prompt);
-        operation.then(
-          () => {
-            // Close on the next tick so any events synchronously following the
-            // prompt settlement are enqueued first. Buffered events still drain
-            // before iteration completes.
-            queue.closeSoon();
-          },
-          (error: unknown) => {
-            queue.fail(error instanceof Error ? error : new Error(String(error)));
-          },
-        );
-
-        for await (const event of queue) yield event;
-        if (budgetExceeded) {
-          yield { id: generateEventId(), timestamp: generateTimestamp(), type: "session.error", error: { message: `Model step budget exhausted (${maxSteps})`, code: "model_step_budget_exhausted" } };
-        } else {
-          for (const e of translator.finalize()) {
-            if (!session.nativeContext || !PI_DISPLAY_TYPES.has(e.type)) yield e;
-          }
-        }
+          : session.prompt(prompt));
+        const closing: SessionErrorEvent[] = budgetExceeded
+          ? [{ id: generateEventId(), timestamp: generateTimestamp(), type: "session.error", error: { message: `Model step budget exhausted (${maxSteps})`, code: "model_step_budget_exhausted" } }]
+          : translator.finalize();
+        for (const event of closing) record(event);
       } finally {
         unsubscribe();
         if (signal) signal.removeEventListener("abort", onAbort);
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      yield {
+      record({
         id: generateEventId(),
         timestamp: generateTimestamp(),
         type: "session.error",
         error: { message: msg, code: msg.startsWith("Model step budget exhausted") ? "model_step_budget_exhausted" : "pi_agent_error" },
-      } as SessionEvent;
+      });
     } finally {
       try {
         await session?.dispose();
@@ -440,6 +445,8 @@ export class PiAgentAdapter implements Adapter {
         // dispose() must never mask the real outcome of the run.
       }
     }
+    // The Host writes what was recorded last as it closes the attempt.
+    return stopped ? "stopped" : "finished";
   }
 
   private async createSession(args: SessionFactoryArgs): Promise<PiSessionLike> {
@@ -451,7 +458,7 @@ export class PiAgentAdapter implements Adapter {
     // built-in fs/bash tools ("builtin") and register custom tools that proxy
     // into the executor (ADR-0002 §2). When absent, keep Pi's default tools.
     const customTools = args.input.toolExecutor
-      ? [...buildCustomTools(args.input.toolExecutor), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents, args.checkpoint) : [])]
+      ? [...buildCustomTools(args.input.toolExecutor), ...(args.input.subagents && !args.input.execution?.isChild ? buildSubagentTools(args.input.subagents) : [])]
       : undefined;
 
     const agentDir = getAgentDir();
@@ -499,13 +506,18 @@ export class PiAgentAdapter implements Adapter {
       // Replay durable native identities into Pi's own context builder (ADR-0013).
       // The import bridge removes its temporary JSONL. Its Session id preserves
       // provider cache routing affinity across Turns.
-      const sessionManager = restorePiSession(continuationHistory(args.input), cwd, derivePiSessionId(args.input.sessionId));
+      const sessionManager = restorePiSession(args.input.history, cwd, derivePiSessionId(args.input.sessionId));
       // Ownership must survive auth failure, compaction, or process loss before
       // Pi appends the prompted user message. Display input is not native input.
-      args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
-        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId });
+      // A session that never started wrote no native entry of this Turn, so its
+      // input stays a display message that later Turns replay.
+      // It also names what this attempt runs with: the Turn's later attempts run with the same.
+      const { provider, id } = args.model as Model<Api>;
+      const claimInput = () => args.emitContext({ id: generateEventId(), timestamp: generateTimestamp(), type: "agent.context_start",
+        sdk: "pi@0.83.0", turnId: args.input.turnId, inputEventId: args.input.inputEventId,
+        model: `${provider}/${id}`, thinking: args.thinkingLevel });
       const journal = new PiContextJournal({ manager: sessionManager, input: args.input,
-        emit: args.emitContext, checkpoint: args.checkpoint, compactionInfo: args.compactionInfo });
+        emit: args.emitContext, compactionInfo: args.compactionInfo });
 
       const resourceLoader = new DefaultResourceLoader({
         cwd,
@@ -569,11 +581,26 @@ export class PiAgentAdapter implements Adapter {
           turnId: args.input.turnId, ...snapshot });
       };
       const continueSession = installContinuation(session);
+      // Agent listeners are awaited in registration order, after AgentSession's
+      // own listener appended the native entry. Tools and the next model request
+      // therefore start only after this message is durable.
+      session.agent.subscribe(async event => { if (event.type === "message_end") await journal.flush(); });
       const streamFunction = withGatewayErrors(session.agent.streamFunction);
       session.agent.streamFunction = async (model, context, options) => {
         // Also gates native summary requests, which bypass transformContext.
         await journal.ready();
         captureContextUsage();
+        // What was recorded so far, this snapshot included, is durable first.
+        await journal.flush();
+        // A stop the Host asked for takes effect here and nowhere else
+        // (#254): at message_end the results of parallel tools still running
+        // could not be committed. Pi aborts the request it was about to send,
+        // so it neither retries nor compacts, and the session settles.
+        if (args.stopBeforeRequest()) {
+          session.abortCompaction();
+          session.agent.abort();
+          throw new Error("Stopped at the Host's request before the next model request");
+        }
         return streamFunction(model, context, options);
       };
       const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
@@ -626,11 +653,15 @@ export class PiAgentAdapter implements Adapter {
           });
         },
         async prompt(text, options) {
+          claimInput();
           try { await active.prompt(text, options); await journal.ready(); }
+          catch (error) { throw journal.failure ?? error; }
           finally { journal.capture(); captureContextUsage(); }
         },
         async continue() {
+          claimInput();
           try { await continueSession(); await journal.ready(); }
+          catch (error) { throw journal.failure ?? error; }
           finally { journal.capture(); captureContextUsage(); }
         },
         abort() {
@@ -672,93 +703,4 @@ export class PiAgentAdapter implements Adapter {
       throw error;
     }
   }
-}
-
-/**
- * A minimal single-consumer async queue that bridges a push-based listener to
- * a pull-based async iterable. Values pushed before the consumer is ready are
- * buffered; the consumer awaits when the buffer is empty. `close()` ends the
- * iteration cleanly; `fail()` makes the iteration reject; `closeSoon()` closes
- * only if nothing else closes/fails first on the next tick (used as a safety
- * net so a promptless turn cannot hang).
- */
-class EventQueue<T> implements AsyncIterable<T> {
-  private buffer: T[] = [];
-  private resolvers: Array<(result: IteratorResult<T>) => void> = [];
-  private rejectors: Array<(error: unknown) => void> = [];
-  private closed = false;
-  private error: unknown;
-
-  push(value: T): void {
-    if (this.closed) return;
-    const resolve = this.resolvers.shift();
-    if (resolve) {
-      this.rejectors.shift();
-      resolve({ value, done: false });
-    } else {
-      this.buffer.push(value);
-    }
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    while (this.resolvers.length > 0) {
-      const resolve = this.resolvers.shift()!;
-      this.rejectors.shift();
-      resolve({ value: undefined as never, done: true });
-    }
-  }
-
-  /** Close on the next tick unless already closed/failed (safety net). */
-  closeSoon(): void {
-    setTimeout(() => this.close(), 0);
-  }
-
-  fail(error: unknown): void {
-    if (this.closed) return;
-    this.error = error;
-    this.closed = true;
-    while (this.rejectors.length > 0) {
-      const reject = this.rejectors.shift()!;
-      this.resolvers.shift();
-      reject(error);
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: (): Promise<IteratorResult<T>> => {
-        if (this.buffer.length > 0) {
-          return Promise.resolve({ value: this.buffer.shift()!, done: false });
-        }
-        if (this.error !== undefined) {
-          const err = this.error;
-          this.error = undefined;
-          return Promise.reject(err);
-        }
-        if (this.closed) {
-          return Promise.resolve({ value: undefined as never, done: true });
-        }
-        return new Promise<IteratorResult<T>>((resolve, reject) => {
-          this.resolvers.push(resolve);
-          this.rejectors.push(reject);
-        });
-      },
-    };
-  }
-}
-
-function continuationHistory(input: AdapterInput): SessionEvent[] {
-  if (!input.continuation) return input.history;
-  const history = [...input.history];
-  const completed = new Set(history.filter(e => e.type === "agent.tool_result" || e.type === "agent.mcp_tool_result").map(e => (e as {toolUseId: string}).toolUseId));
-  const pending = new Set(history.filter(e => e.type === "agent.tool_use" || e.type === "agent.mcp_tool_use").map(e => (e as {toolUseId: string}).toolUseId).filter(id => !completed.has(id)));
-  for (const result of input.continuation.toolResults) {
-    if (completed.has(result.toolUseId)) continue;
-    if (!pending.has(result.toolUseId)) throw new Error(`Continuation result has no pending tool call: ${result.toolUseId}`);
-    history.push(result); pending.delete(result.toolUseId); completed.add(result.toolUseId);
-  }
-  if (pending.size) throw new Error(`Continuation requires durable results for pending tool calls: ${[...pending].join(", ")}`);
-  return history;
 }

@@ -15,10 +15,6 @@ type EnvironmentRow = { sandbox_id: string | null; reclaiming: boolean; creation
 export class PgDelegationStore extends TransactionalDelegationStore {
   private readonly environmentQueues = new Map<string, Promise<void>>();
   constructor(private readonly pool: Pool, private readonly payloads?: EventPayloadCodec) { super(); }
-  private async checkpointRecord<R extends DelegationRecord>(record: R, decode: boolean): Promise<R> {
-    if (!this.payloads || !("checkpoint" in record)) return record;
-    return { ...record, checkpoint: await this.payloads.checkpoint(record.callerSessionId, record.checkpoint, decode) };
-  }
   protected override async terminatedExecutionIds(sessionId: string | undefined, limit: number): Promise<string[]> {
     const result = await this.pool.query<{ id: string }>(`SELECT execution.id FROM delegation_executions execution
       JOIN sessions child ON child.id = execution.record->>'childId'
@@ -75,10 +71,9 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     const result = await this.pool.query<{ record: DelegationCommand }>("SELECT record FROM delegation_commands WHERE record->>'executionId' = $1 ORDER BY record->>'createdAt', id", [executionId]);
     return result.rows.map((row) => row.record);
   }
-  override async listWaits(parentSessionId: string, parentPendingEventId: string, options?: { checkpoint: "reference" }) {
+  override async listWaits(parentSessionId: string, parentPendingEventId: string) {
     const result = await this.pool.query<{ record: DelegationWait }>("SELECT record FROM delegation_waits WHERE record->>'callerSessionId' = $1 AND record->>'parentPendingEventId' = $2", [parentSessionId, parentPendingEventId]);
-    return options?.checkpoint === "reference" ? result.rows.map(row => row.record)
-      : Promise.all(result.rows.map((row) => this.checkpointRecord(row.record, true)));
+    return result.rows.map((row) => row.record);
   }
   protected async transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -104,12 +99,15 @@ export class PgDelegationStore extends TransactionalDelegationStore {
         pending,
         read: async <R extends DelegationRecord>(table: DelegationTable, filters: Record<string, string> = {}) => {
           const params: unknown[] = [];
-          const predicates = Object.entries(filters).map(([key, value]) => { params.push(key, value); return `record ->> $${params.length - 1} = $${params.length}`; });
+          const predicates = Object.entries(filters).map(([key, value]) => {
+            // Executions and commands are stored under their own id: use the key, not a record scan.
+            if (key === "id" && (table === "executions" || table === "commands")) { params.push(value); return `id = $${params.length}`; }
+            params.push(key, value); return `record ->> $${params.length - 1} = $${params.length}`;
+          });
           const rows = await client.query<{ record: R }>(`SELECT record FROM ${tables[table]}${predicates.length ? ` WHERE ${predicates.join(" AND ")}` : ""}`, params);
-          // Transactional state transitions do not inspect checkpoint bytes.
           return rows.rows.map((row) => row.record);
         },
-        put: async (table, id, record) => { await client.query(`INSERT INTO ${tables[table]} (id, record) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET record = EXCLUDED.record`, [id, JSON.stringify(await this.checkpointRecord(record, false))]); },
+        put: async (table, id, record) => { await client.query(`INSERT INTO ${tables[table]} (id, record) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET record = EXCLUDED.record`, [id, JSON.stringify(record)]); },
         remove: async (table, id) => { await client.query(`DELETE FROM ${tables[table]} WHERE id = $1`, [id]); },
         removePending: async (sessionId, eventId, onlyUnclaimed) => {
           const rows = await client.query(`DELETE FROM pending_events WHERE session_id = $1 AND id = $2${onlyUnclaimed ? " AND (claim_owner IS NULL OR claim_expires_at <= clock_timestamp())" : ""}`, [sessionId, eventId]);
