@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PendingEventClaimLostError, type StoredEvent } from "@oma-server/store";
+import type { StoredEvent } from "@oma-server/store";
 import { bash, describeWrite, eventsOfInput, execute, expectResumed, INTERRUPTED_PREFIX, OUTCOME_UNKNOWN_PREFIX, rowOf, sweep, text, usePiSettings, writesOf,
   type Block, type ModelRequest, type Outcome, type Scenario } from "./harness.js";
 
@@ -92,16 +92,20 @@ describe("G8 a parent Session is terminated while its child's Runner is lost", (
     expect(outcome.log.slice(logAtTermination.length).map((event) => event.type)).toEqual(["subagent.result"]);
     for (const session of outcome.sessions) expect(await outcome.stores.pendingEventStore.count(session.id)).toBe(0);
     expect((await outcome.stores.sessionStore.getById(outcome.sessionId))?.status).toBe("terminated");
-    // The parent's Runner learned of the termination as a lost lease and stopped.
-    expect(outcome.errors.map(({ runner, error }) => [runner, (error as Error).name])).toEqual([[0, "PendingLeaseLostError"]]);
+    // The parent's Runner learned of the termination as a lost lease and
+    // stopped: termination stopping it is no drain failure.
+    expect(outcome.errors).toEqual([]);
     expect(outcome.disposals).not.toEqual([]);
   });
 });
 
 describe("G6 the Session is terminated while the takeover runs its Turn", () => {
-  /** The takeover's own stop: its next write finds the claim gone, so it stops like a lost lease. */
+  /**
+   * The takeover's own stop: its next write finds the claim gone, so it stops
+   * like a lost lease. Termination stopping it is no drain failure.
+   */
   const expectStoppedTakeover = (outcome: Outcome) => {
-    expect(outcome.errors).toEqual([expect.objectContaining({ runner: 1, error: expect.any(PendingEventClaimLostError) })]);
+    expect(outcome.errors).toEqual([]);
     // The takeover had marked itself and answered the dangling call; it wrote no terminal event.
     const types = outcome.log.map((event) => event.type);
     expect(types).toContain("session.turn_resumed");

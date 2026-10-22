@@ -412,6 +412,19 @@ export class SessionRouter {
     this.onDrainError?.({ sessionId, error });
   }
 
+  /**
+   * Termination deletes the Session's input, so the attempt of a Session the
+   * API terminated finds its claim gone at its next write or heartbeat. That
+   * is termination stopping it, not a failure. Any other loss is reported.
+   */
+  private async reportAttemptFailure(sessionId: string, error: unknown): Promise<void> {
+    if (error instanceof PendingEventClaimLostError || error instanceof PendingLeaseLostError) {
+      const session = await this.sessionStore.getById(sessionId).catch(() => undefined);
+      if (session?.status === "terminated") return;
+    }
+    this.reportDrainError(sessionId, error);
+  }
+
   private clearClaimRetry(sessionId: string): void {
     const timer = this.claimRetryTimers.get(sessionId);
     if (timer) clearTimeout(timer);
@@ -1222,10 +1235,12 @@ export class SessionRouter {
       else signal.addEventListener("abort", forwardOuterAbort, { once: true });
       let markStopped!: () => void;
       const attemptStopped = new Promise<void>((resolve) => { markStopped = resolve; });
+      // The failure that stopped the attempt, reported once it has ended.
+      let failure: { error: unknown } | undefined;
       const stopOnFailure = (error: unknown) => {
         // A write failing after the stop is its consequence, not news.
         if (stopped) return;
-        this.reportDrainError(sessionId, error);
+        failure = { error };
         stopAttempt(error);
       };
       // Every durable write of this attempt goes through its one journal.
@@ -1715,6 +1730,7 @@ export class SessionRouter {
           signal.removeEventListener("abort", forwardOuterAbort);
           if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
           if (activeRun.detach === detach) activeRun.detach = undefined;
+          if (failure) await this.reportAttemptFailure(sessionId, failure.error);
           // Released, not left to expire: the next claim learns the Turn was
           // handed over, which no takeover limit counts, and need not wait.
           if (handedOff) await this.pendingEventStore.releaseClaim(sessionId, pendingEvent.id, pendingFence);

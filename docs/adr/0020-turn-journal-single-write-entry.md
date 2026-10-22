@@ -123,11 +123,15 @@ A lost lease, a failed journal write, the Session's termination and a
 Turn signal aborted at once, the heartbeat stops, no terminal event is written
 and the input stays pending, for the next claim to handle by the recovery rules
 in force. The Router does not wait for the Adapter. A lost lease and a failed
-write are reported through `onDrainError`; `handleNewEvent` does not reject for
-them. Termination stops the attempt even after an Interrupt has already fired
-the Turn signal. A stopped attempt's Sandbox executor refuses every command,
-including the cancellation the aborted signal makes Pi send: this Runner does
-not stop a tool that is still running (ADR-0014).
+write are reported through `onDrainError` once the attempt has ended;
+`handleNewEvent` does not reject for them. A claim lost because the Session was
+terminated is not reported: termination deletes the input, so a Runner whose
+Session the API terminated finds out at its next write or heartbeat, and that
+is termination stopping the attempt. Termination stops the attempt even after
+an Interrupt has already fired the Turn signal. A stopped attempt's Sandbox
+executor refuses every command, including the cancellation the aborted signal
+makes Pi send: this Runner does not stop a tool that is still running
+(ADR-0014).
 
 ### Every native message is committed before Pi proceeds
 

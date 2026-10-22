@@ -532,6 +532,61 @@ describe("an Adapter that writes through its journal entry", () => {
   });
 });
 
+describe("a Turn attempt whose claim is gone", () => {
+  /**
+   * Another process takes the claim away while the Adapter runs. The attempt
+   * finds out through its next write or, if it writes nothing, its heartbeat.
+   */
+  async function loseClaim(take: (h: Awaited<ReturnType<typeof harness>>) => Promise<void>, by: "write" | "heartbeat") {
+    let wrote!: () => void;
+    const first = new Promise<void>((resolve) => { wrote = resolve; });
+    let taken!: () => void;
+    const gone = new Promise<void>((resolve) => { taken = resolve; });
+    const h = await harness({ async run(input) {
+      const write = journalWriter(input);
+      await write(text("before"));
+      wrote();
+      await gone;
+      if (by === "write") await write(text("after")).catch(() => {});
+      await aborted(input.signal!);
+      return "finished";
+    } });
+    const router = h.makeRouter({ pendingClaimRenewIntervalMs: 20 });
+    await h.enqueue();
+    const processing = router.handleNewEvent(h.session.id, h.agent);
+    await first;
+    await take(h);
+    taken();
+    await processing;
+    await sleep(20);
+    return h;
+  }
+
+  it.each(["write", "heartbeat"] as const)("reports nothing when the Session was terminated by another process (found by its %s)", async (by) => {
+    const h = await loseClaim(async (h) => {
+      // The API's DELETE: PostgreSQL's terminate also deletes the Session's input, in one transaction.
+      await h.stores.sessionStore.terminate(h.session.id);
+      await h.stores.pendingEventStore.clear(h.session.id);
+    }, by);
+
+    // Termination stopped the attempt; that is no drain failure.
+    expect(h.errors).toEqual([]);
+    const types = (await h.log()).map((stored) => stored.type);
+    expect(types.filter((type) => type === "agent.message")).toHaveLength(1);
+    expect(types).not.toContain("session.turn_completed");
+  });
+
+  it("reports the lost claim when the Session is still active", async () => {
+    const h = await loseClaim(async (h) => {
+      // Another Runner holds the claim now.
+      vi.spyOn(h.stores.pendingEventStore, "ownsClaim").mockResolvedValue(false);
+    }, "write");
+
+    expect(h.errors.map((error) => (error as Error).name)).toEqual(["PendingEventClaimLostError"]);
+    expect((await h.log()).map((stored) => stored.type)).not.toContain("session.turn_completed");
+  });
+});
+
 describe("Deltas of a Turn attempt", () => {
   /** The Delta frames an SSE subscriber that asked for chunks receives, as parsed data. */
   function watchDeltas(hub: InProcessEventStreamHub, sessionId: string): Array<Record<string, unknown>> {
