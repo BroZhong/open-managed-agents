@@ -13,6 +13,11 @@ Skills were equipped **by reference**: `Agent.skills` held Library Skill ids, an
 
 ## Decision
 
+> **Revised by [ADR-0022](0022-skill-bundles.md):** equipping no longer copies
+> files. The new Agent Skill row references the Library Skill's current Skill
+> Bundle, which is immutable. Ownership, `source_skill_id` and independence are
+> unchanged: an edit on either side creates a new bundle for that side only.
+
 Equipping a Library Skill onto an Agent **forks** it: the Host snapshots the Library Skill's files into a new **Agent Skill** (its own `skill_id`, `owner_type=agent`, `owner_id=<agentId>`, `source_skill_id=<libraryId>`). `Agent.skills` holds Agent Skill ids, not Library Skill ids.
 
 - Library and fork are independent after equip. Editing the Library Skill does not propagate; editing the fork on the Agent page does not touch the Library.
@@ -26,11 +31,17 @@ Equipping a Library Skill onto an Agent **forks** it: the Host snapshots the Lib
 
 ## Consequences
 
+> **Revised by [ADR-0022](0022-skill-bundles.md):** storage grows with Skill
+> versions, not with equips; the third point below no longer holds.
+
 - Deleting a Library Skill no longer affects already-equipped Agents — the dangling-reference class of bug is structurally gone.
 - Library edits after equip do **not** reach Agents; re-equipping is the way to pull in Library changes. This is a deliberate trade of "stay in sync" for "edit safely in isolation."
 - Storage grows with equips (one copy per Agent per Skill) rather than one shared Library copy.
 
 ## Agent Forks
+
+> **Revised by [ADR-0022](0022-skill-bundles.md):** each copied Skill is a new
+> row referencing its source's Skill Bundle; no Skill files are copied.
 
 Forking an Agent copies its current Agent Skills, rather than equipping fresh
 copies from the Library. Each copied Skill has a new ID and the new Agent as

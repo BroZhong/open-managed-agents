@@ -2,6 +2,12 @@
 
 ## Status
 
+> **Superseded in part by [ADR-0022](0022-skill-bundles.md):** sections 3 and 4
+> (Read-only Projection, Provision Source and the projection of Skills). The
+> statement below that Skills Read-only Projections remain accepted no longer
+> holds: equipped Skills are immutable Skill Bundles in OSS, installed into the
+> Sandbox only when the Agent's Skill Set version changes.
+
 The fixed-lifetime orphan assumption below is superseded for controlled bindings
 by [ADR-0017](0017-sandbox-idle-reclamation.md): unknown execution retains its
 Sandbox without a gateway deadline; only confirmed idle state permits reclamation.
@@ -41,10 +47,21 @@ The Pi tools themselves use Pi's own `create*ToolDefinition(cwd, {operations})` 
 
 ### 3. Two orthogonal kinds of sandbox content
 
+> **Superseded by [ADR-0022](0022-skill-bundles.md).** The Workspace half was
+> already superseded by ADR-0008. The Read-only Projection and its pluggable
+> Provision Source are replaced by the Skill Install of the Agent's Skill Set:
+> no per-Turn projection and no pluggable source. Retained: Skills live at
+> `/skills`, outside the Workspace, and are never written back.
+
 - **Workspace** — two-way. Hydrated into `/home/user`, writable, synced back to the **Workspace Store** (content-hash push + baseline-diff delete). The **Baseline** is per-sandbox-instance and private to the Store.
 - **Read-only Projection** — one-way, downward only, **never synced**. Equipped Skills, a code repo, a dataset. Projected into a path *outside* `/home/user` (e.g. `/skills`, `/repo`) so the sync scan never mistakes it for a user artifact. Its source is a pluggable **Provision Source** (S3 today; git/tarball later). Content flows S3 → sandbox directly, never routed through the Host — the Host supplies only coordinates.
 
 ### 4. Skills must be projected into the sandbox
+
+> **Superseded in its mechanism by [ADR-0022](0022-skill-bundles.md).** The
+> conclusion stands: the `read` tool is mapped into the Sandbox, so Skills must
+> be in the Sandbox. They now arrive by Skill Install instead of as a Read-only
+> Projection.
 
 Because the Pi adapter runs with `noTools: "builtin"` and custom tools, Pi's prompt tells the model to *load a Skill's file with the `read` tool* rather than inlining Skill bodies. That `read` tool is mapped into the sandbox. So a Skill left on the Host is unreadable — Skills **must** be projected into the sandbox as a Read-only Projection. (This is opposite to FastClaw, whose read tool is not sandbox-mapped, so it keeps Skills on the Host.)
 

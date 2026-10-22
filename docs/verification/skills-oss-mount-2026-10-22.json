@@ -1,0 +1,282 @@
+{
+  "probe": "skillprobe-20261022144523",
+  "template": "oma-scale-test-20261021",
+  "startedAt": "2026-10-22T06:48:55.895Z",
+  "steps": [
+    {
+      "at": "2026-10-22T06:48:56.558Z",
+      "step": "baseline:created",
+      "sandboxId": "sandbox-system--oma-scale-test-20261021-j2fvp",
+      "createMs": 523,
+      "storageAuth": [
+        {
+          "provider": "agentry-oss-rw",
+          "subPath": "skillprobe-20261022144523/ws_probe"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-22T06:48:56.756Z",
+      "step": "baseline:mounts",
+      "uid": 1000,
+      "skills": {
+        "path": "/skills",
+        "realpath": "/skills",
+        "mounts": []
+      },
+      "workspace": {
+        "path": "/home/user/workspace",
+        "realpath": "/run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0",
+        "mounts": [
+          {
+            "opts": "rw,nosuid,nodev,relatime",
+            "fstype": "fuse.ossfs",
+            "super": "rw,user_id=0,group_id=0,allow_other"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-10-22T06:48:57.247Z",
+      "step": "target:created",
+      "sandboxId": "sandbox-system--oma-scale-test-20261021-xrmxc",
+      "createMs": 335,
+      "storageAuth": [
+        {
+          "provider": "agentry-oss-rw",
+          "subPath": "skillprobe-20261022144523/ws_probe"
+        },
+        {
+          "provider": "agentry-skills-ro",
+          "subPath": "skillprobe-20261022144523/agents/agent_probe/skills"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-22T06:48:57.512Z",
+      "step": "target:mounts",
+      "uid": 1000,
+      "skills": {
+        "path": "/skills",
+        "realpath": "/run/csi/mount-root/oss/e8484deb34dfee28571a7930700a472e",
+        "mounts": [
+          {
+            "opts": "ro,nosuid,nodev,relatime",
+            "fstype": "fuse.ossfs",
+            "super": "ro,user_id=0,group_id=0,allow_other"
+          }
+        ]
+      },
+      "workspace": {
+        "path": "/home/user/workspace",
+        "realpath": "/run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0",
+        "mounts": [
+          {
+            "opts": "rw,nosuid,nodev,relatime",
+            "fstype": "fuse.ossfs",
+            "super": "rw,user_id=0,group_id=0,allow_other"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-10-22T06:49:17.623Z",
+      "step": "target:integrity",
+      "files": 323,
+      "expected": 323,
+      "mismatch": [],
+      "extra": [],
+      "skills": 19,
+      "firstSkillMdMs": 37.3,
+      "walkMs": 2294.8,
+      "readAllMs": 7455.4,
+      "rereadAllMs": 9612.9,
+      "all19SkillMdMs": 625.2
+    },
+    {
+      "at": "2026-10-22T06:49:17.906Z",
+      "step": "target:write-denied",
+      "create": "EROFS",
+      "overwrite": "EROFS",
+      "delete": "EROFS",
+      "mkdir": "EROFS",
+      "rename": "EROFS",
+      "chmod": "EROFS",
+      "rmtree": "EROFS",
+      "workspace-write": "ALLOWED",
+      "skill_md_intact": true
+    },
+    {
+      "at": "2026-10-22T06:49:17.989Z",
+      "step": "target:root-check",
+      "sudo_exit": 0,
+      "sudo_err": ""
+    },
+    {
+      "at": "2026-10-22T06:49:21.689Z",
+      "step": "target:exec",
+      "mount_help_ms_rc": [
+        [
+          187,
+          0
+        ],
+        [
+          135.3,
+          0
+        ],
+        [
+          129.6,
+          0
+        ]
+      ],
+      "local_help_ms_rc": [
+        [
+          40.6,
+          0
+        ],
+        [
+          42.6,
+          0
+        ],
+        [
+          40,
+          0
+        ]
+      ],
+      "mount_import_ms": [
+        "402.8",
+        "215.3",
+        "198.7"
+      ],
+      "local_import_ms": [
+        "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/tmp/s/scripts/duration_calculator.py\", line 23, in <module>\n    from episode_timing import TimingError, apply_timeline, validate_batch, load as load_timing\nModuleNotFoundError: No module named 'episode_timing'\n",
+        "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/tmp/s/scripts/duration_calculator.py\", line 23, in <module>\n    from episode_timing import TimingError, apply_timeline, validate_batch, load as load_timing\nModuleNotFoundError: No module named 'episode_timing'\n",
+        "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/tmp/s/scripts/duration_calculator.py\", line 23, in <module>\n    from episode_timing import TimingError, apply_timeline, validate_batch, load as load_timing\nModuleNotFoundError: No module named 'episode_timing'\n"
+      ],
+      "pycache_written_on_mount": false
+    },
+    {
+      "at": "2026-10-22T06:49:22.277Z",
+      "step": "target:visibility-modify",
+      "visibleAfterS": 0,
+      "visible": true
+    },
+    {
+      "at": "2026-10-22T06:49:22.558Z",
+      "step": "target:visibility-add",
+      "visibleAfterS": 0,
+      "visible": true
+    },
+    {
+      "at": "2026-10-22T06:52:23.005Z",
+      "step": "target:visibility-delete",
+      "visibleAfterS": 180.1,
+      "visible": false
+    },
+    {
+      "at": "2026-10-22T06:52:23.714Z",
+      "step": "credential-only:created",
+      "sandboxId": "sandbox-system--oma-scale-test-20261021-kvm4w",
+      "createMs": 548,
+      "storageAuth": [
+        {
+          "provider": "agentry-oss-rw",
+          "subPath": "skillprobe-20261022144523/ws_probe"
+        },
+        {
+          "provider": "agentry-skills-ro",
+          "subPath": "skillprobe-20261022144523/agents/agent_empty/skills"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-22T06:52:23.965Z",
+      "step": "credential-only:mounts",
+      "uid": 1000,
+      "skills": {
+        "path": "/skills",
+        "realpath": "/run/csi/mount-root/oss/e8484deb34dfee28571a7930700a472e",
+        "mounts": [
+          {
+            "opts": "rw,nosuid,nodev,relatime",
+            "fstype": "fuse.ossfs",
+            "super": "rw,user_id=0,group_id=0,allow_other"
+          }
+        ]
+      },
+      "workspace": {
+        "path": "/home/user/workspace",
+        "realpath": "/run/csi/mount-root/oss/230b90426d30d6f7a905b59d76d731b0",
+        "mounts": [
+          {
+            "opts": "rw,nosuid,nodev,relatime",
+            "fstype": "fuse.ossfs",
+            "super": "rw,user_id=0,group_id=0,allow_other"
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-10-22T06:52:24.094Z",
+      "step": "credential-only:write",
+      "listing": [],
+      "write": "EPERM",
+      "visible_locally": false
+    },
+    {
+      "at": "2026-10-22T06:52:29.740Z",
+      "step": "credential-only:oss-objects",
+      "listing": [
+        "Object Number is: 0"
+      ]
+    },
+    {
+      "at": "2026-10-22T06:52:29.803Z",
+      "step": "sandbox-killed",
+      "sandboxId": "sandbox-system--oma-scale-test-20261021-j2fvp"
+    },
+    {
+      "at": "2026-10-22T06:52:29.831Z",
+      "step": "sandbox-killed",
+      "sandboxId": "sandbox-system--oma-scale-test-20261021-xrmxc"
+    },
+    {
+      "at": "2026-10-22T06:52:29.865Z",
+      "step": "sandbox-killed",
+      "sandboxId": "sandbox-system--oma-scale-test-20261021-kvm4w"
+    }
+  ],
+  "finishedAt": "2026-10-22T06:52:29.866Z",
+  "deleteVisibility": {
+    "deletedAt": "2026-10-22T06:53:53.451Z",
+    "sandbox": "sandbox-system--oma-scale-test-20261021-vvm58",
+    "transitions": [
+      {
+        "t": 0.1,
+        "state": {
+          "/skills/vfs/scripts/http_json.py": "FileNotFoundError:2",
+          "/skills/vfs/scripts/report_event.py": "FileNotFoundError:2",
+          "/skills/script-to-dp": "dir:0"
+        }
+      },
+      {
+        "t": 897.8,
+        "state": {
+          "/skills/vfs/scripts/http_json.py": "FileNotFoundError:2",
+          "/skills/vfs/scripts/report_event.py": "FileNotFoundError:2",
+          "/skills/script-to-dp": "FileNotFoundError:2"
+        }
+      }
+    ]
+  },
+  "cleanup": {
+    "probeSandboxesLeft": 0,
+    "probePrefixRemainingKeys": 0,
+    "warmPool": "oma-scale-test-20261021 5/5"
+  },
+  "configApplied": [
+    "CredentialProvider sandbox-system/agentry-skills-ro",
+    "AgentRole sandbox-system/agentry-skills-storage",
+    "AgentRoleBinding sandbox-system/agentry-skills-storage"
+  ]
+}

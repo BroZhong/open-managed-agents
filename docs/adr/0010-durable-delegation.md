@@ -57,6 +57,10 @@ The in-memory store is a development/test implementation, not crash durability.
 
 ### 2. One scheduler and independent capabilities
 
+> **Note ([ADR-0022](0022-skill-bundles.md)):** "Sandbox projections" below are
+> now the Skill Install shared through the Child's environment binding; Skill
+> bodies are still read in the Sandbox.
+
 Child Delegation Inputs enter the ordinary pending input queue and are driven
 by the Session Router. A Child Session executes one Turn at a time. Parent child
 concurrency defaults to four; excess inputs remain durable and queued. A parent

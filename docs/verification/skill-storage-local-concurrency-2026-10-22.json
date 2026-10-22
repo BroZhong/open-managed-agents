@@ -1,0 +1,4739 @@
+{
+  "schemaVersion": 1,
+  "title": "本地 Skill Storage 并发读取复现 HTTP 544",
+  "createdAt": "2026-10-21T18:39:28.819344+00:00",
+  "timezone": "Asia/Shanghai",
+  "result": "Reproduced matching HTTP 544 DatabaseTimeout in two GET bursts at actual peak HTTP concurrency 800; LIST at 800 passed this single burst.",
+  "scope": {
+    "bucket": "workspace-test",
+    "fixture": {
+      "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "skills": [
+        "skill_04CrGaGXAUXKpBBJeQwJN",
+        "skill_5NLflCWsEHrZIDK7LRtfO",
+        "skill_7n428Lj41tSF2Zvs4zn3G",
+        "skill_OslfyzNig3Dw0c-omR1pt",
+        "skill_OkC6GtpM5vrnHxr5Y7Reh",
+        "skill_cuJtUzdn5tAGp1hxHp3tR",
+        "skill_30froYmu86Xo5Hnu8_mgo",
+        "skill_EQuQNscy1vQT7niRvxPQC",
+        "skill_k1NaczSfm4FvvQHfFFMVk",
+        "skill_zwihh8EGPiCgI_VrbdeS9",
+        "skill_tYyCJAsCbXqVhbdPHt0Jd",
+        "skill_ZhB1EMRrGfrEsw1ig2_8o",
+        "skill_7qakdXvO80zZQWwVAnrah",
+        "skill_rOUJVdRLD-39SbfQnz3nQ",
+        "skill_PN5r1rzvqo9jazHwFiO8s",
+        "skill_lFaeTsLlOKErBsK3Gi0_6",
+        "skill_pnQt9w6Jiy19Dn5ZNQNNt",
+        "skill_zVRQ8_M9GGE0ybWO5N9kJ",
+        "skill_xqXv9l6SYTOSE5e8zkhTB"
+      ],
+      "bucket": "workspace-test",
+      "transport": "Local Python HTTP to the verified public endpoint of the same Supabase instance; original Runner used its VPC endpoint"
+    },
+    "supabaseInstanceId": "ra-lvyt8wkxiid4a76",
+    "rdsInstanceId": "pgm-uf6fh394661t62gb",
+    "productionOmaTasks": 0,
+    "allOmaTasks": 0,
+    "databaseWrites": 0,
+    "storageWrites": 0,
+    "newSessions": 0,
+    "newSandboxes": 0,
+    "redirectsAllowed": false,
+    "retries": 0,
+    "transport": "Local to verified same Supabase instance public HTTP endpoint; original Runner used VPC endpoint; shared underlying database."
+  },
+  "method": {
+    "operations": [
+      "GET object/workspace-test/<tenant>/skills/<skill>/SKILL.md",
+      "POST object/list/workspace-test with read-only Skill-specific prefix"
+    ],
+    "uniqueSkills": 19,
+    "asyncClient": "aiohttp 3.9.3",
+    "phase1Concurrency": [
+      8,
+      20,
+      40,
+      80,
+      160,
+      200,
+      400,
+      800
+    ],
+    "requestsPerPhase1Batch": "2 * concurrency",
+    "plannedConcurrency1600Executed": false,
+    "repeatGetConcurrency": 800,
+    "controlListConcurrency": 800,
+    "stopPolicy": "Stop dispatch on first error, drain requests already sent; no cancellations/retries. Original matrix observes stop after body drain, confirmation/control observe at headers.",
+    "contentValidation": "Nonempty GET body SHA-256 matches the initial baseline for its Skill; list JSON contains SKILL.md.",
+    "rawSuccessfulBodiesPersisted": false,
+    "phase1HarnessSha256": "b8b32c644ff67813a3e20f6a6812c891278775a66911ff32aac52b7652e7b7a4",
+    "confirmationHarnessSha256": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f"
+  },
+  "totals": {
+    "batches": 22,
+    "completedRequests": 8084,
+    "httpStatuses": {
+      "200": 7814,
+      "544": 270
+    },
+    "categories": {
+      "ok": 7814,
+      "storage_http_error": 270
+    },
+    "notStarted": 425,
+    "retries": 0,
+    "clientErrors": 0
+  },
+  "fixedErrorBody": {
+    "statusCode": "544",
+    "code": "DatabaseTimeout",
+    "error": "DatabaseTimeout",
+    "message": "The connection to the database timed out"
+  },
+  "fixedErrorBodySha256": "d1ae3379578770aedf1f36c48dacd939b140c01b4771cd91206a5d0d304c89a5",
+  "errorRequests": {
+    "get-c800": {
+      "count": 79,
+      "allBodiesMatchFixedErrorSha256": true,
+      "requestIndices": [
+        680,
+        684,
+        686,
+        691,
+        692,
+        693,
+        698,
+        702,
+        704,
+        727,
+        730,
+        732,
+        1143,
+        1144,
+        1145,
+        1146,
+        1148,
+        1150,
+        1152,
+        1155,
+        1156,
+        1159,
+        1160,
+        1163,
+        1164,
+        1165,
+        1166,
+        1167,
+        1168,
+        1169,
+        1170,
+        1171,
+        1174,
+        1175,
+        1177,
+        1178,
+        1179,
+        1180,
+        1182,
+        1183,
+        1186,
+        1187,
+        1188,
+        1193,
+        1194,
+        1196,
+        1231,
+        1239,
+        1240,
+        1243,
+        1244,
+        1245,
+        1247,
+        1248,
+        1249,
+        1250,
+        1262,
+        1263,
+        1264,
+        1265,
+        1266,
+        1267,
+        1268,
+        1269,
+        1390,
+        1391,
+        1406,
+        1407,
+        1408,
+        1409,
+        1410,
+        1411,
+        1412,
+        1413,
+        1414,
+        1415,
+        1422,
+        1423,
+        1424
+      ],
+      "requestIdHeaderFormat": "oma-read-repro-get-c800-{index}",
+      "requestIdAcceptedByServerVerified": false
+    },
+    "confirm-get-c800": {
+      "count": 191,
+      "allBodiesMatchFixedErrorSha256": true,
+      "requestIndices": [
+        390,
+        392,
+        398,
+        401,
+        402,
+        405,
+        406,
+        407,
+        409,
+        410,
+        414,
+        415,
+        416,
+        418,
+        419,
+        420,
+        421,
+        422,
+        423,
+        425,
+        426,
+        427,
+        428,
+        430,
+        431,
+        432,
+        433,
+        434,
+        436,
+        437,
+        438,
+        439,
+        440,
+        441,
+        442,
+        444,
+        445,
+        446,
+        447,
+        448,
+        449,
+        452,
+        453,
+        454,
+        455,
+        456,
+        457,
+        459,
+        460,
+        461,
+        462,
+        463,
+        464,
+        465,
+        466,
+        467,
+        470,
+        471,
+        472,
+        473,
+        474,
+        475,
+        476,
+        477,
+        478,
+        479,
+        480,
+        481,
+        482,
+        484,
+        485,
+        486,
+        487,
+        488,
+        489,
+        490,
+        491,
+        492,
+        495,
+        496,
+        497,
+        498,
+        499,
+        501,
+        502,
+        503,
+        504,
+        505,
+        506,
+        507,
+        508,
+        509,
+        510,
+        511,
+        512,
+        514,
+        515,
+        517,
+        518,
+        519,
+        520,
+        521,
+        522,
+        523,
+        524,
+        525,
+        526,
+        527,
+        528,
+        529,
+        530,
+        533,
+        534,
+        535,
+        536,
+        537,
+        538,
+        539,
+        540,
+        541,
+        543,
+        544,
+        545,
+        547,
+        548,
+        551,
+        552,
+        553,
+        554,
+        556,
+        557,
+        564,
+        565,
+        566,
+        567,
+        579,
+        614,
+        615,
+        623,
+        626,
+        643,
+        644,
+        647,
+        649,
+        652,
+        653,
+        654,
+        656,
+        657,
+        658,
+        659,
+        660,
+        661,
+        665,
+        667,
+        672,
+        673,
+        675,
+        676,
+        679,
+        682,
+        686,
+        695,
+        748,
+        750,
+        751,
+        753,
+        754,
+        756,
+        763,
+        766,
+        767,
+        769,
+        770,
+        772,
+        777,
+        778,
+        780,
+        786,
+        788,
+        789,
+        791,
+        792,
+        794,
+        795,
+        796,
+        799,
+        814,
+        819,
+        820,
+        821
+      ],
+      "requestIdHeaderFormat": "oma-read-repro-confirm-get-c800-{index}",
+      "requestIdAcceptedByServerVerified": false
+    }
+  },
+  "batches": [
+    {
+      "label": "baseline-get",
+      "startedAt": "2026-10-21T18:32:10.619221+00:00",
+      "endedAt": "2026-10-21T18:32:11.354839+00:00",
+      "kind": "get",
+      "configuredConcurrency": 1,
+      "actualPeakHttpInFlight": 1,
+      "requestedCount": 19,
+      "started": 19,
+      "completed": 19,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.736,
+      "observedCompletionRatePerSecond": 25.83,
+      "statuses": {
+        "200": 19
+      },
+      "categories": {
+        "ok": 19
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 19,
+        "min": 24.88,
+        "p50": 30.61,
+        "p95": 86.32,
+        "max": 86.32
+      },
+      "headersMs": {
+        "n": 19,
+        "min": 23.67,
+        "p50": 30.15,
+        "p95": 73.97,
+        "max": 73.97
+      },
+      "responseWaitMs": {
+        "n": 19,
+        "min": 23.2,
+        "p50": 29.6,
+        "p95": 73.47,
+        "max": 73.47
+      },
+      "connectorQueueMs": {
+        "n": 19,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 35,
+        "min": 0.14,
+        "p50": 1.09,
+        "p95": 2.74,
+        "max": 2.95
+      },
+      "totalBytes": 312197,
+      "connectionsReused": 18,
+      "clientCpuSeconds": 0.032,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "baseline-list",
+      "startedAt": "2026-10-21T18:32:21.264908+00:00",
+      "endedAt": "2026-10-21T18:32:21.556342+00:00",
+      "kind": "list",
+      "configuredConcurrency": 1,
+      "actualPeakHttpInFlight": 1,
+      "requestedCount": 19,
+      "started": 19,
+      "completed": 19,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.291,
+      "observedCompletionRatePerSecond": 65.2,
+      "statuses": {
+        "200": 19
+      },
+      "categories": {
+        "ok": 19
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 19,
+        "min": 12.81,
+        "p50": 13.74,
+        "p95": 31.72,
+        "max": 31.72
+      },
+      "headersMs": {
+        "n": 19,
+        "min": 12.71,
+        "p50": 13.7,
+        "p95": 31.65,
+        "max": 31.65
+      },
+      "responseWaitMs": {
+        "n": 19,
+        "min": 12.42,
+        "p50": 13.5,
+        "p95": 19.04,
+        "max": 19.04
+      },
+      "connectorQueueMs": {
+        "n": 19,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 14,
+        "min": 0.14,
+        "p50": 0.91,
+        "p95": 1.09,
+        "max": 1.09
+      },
+      "totalBytes": 26090,
+      "connectionsReused": 18,
+      "clientCpuSeconds": 0.015,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c8",
+      "startedAt": "2026-10-21T18:32:42.542143+00:00",
+      "endedAt": "2026-10-21T18:32:42.839323+00:00",
+      "kind": "get",
+      "configuredConcurrency": 8,
+      "actualPeakHttpInFlight": 8,
+      "requestedCount": 16,
+      "started": 16,
+      "completed": 16,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.297,
+      "observedCompletionRatePerSecond": 53.84,
+      "statuses": {
+        "200": 16
+      },
+      "categories": {
+        "ok": 16
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 16,
+        "min": 68.34,
+        "p50": 135.1,
+        "p95": 223.32,
+        "max": 223.32
+      },
+      "headersMs": {
+        "n": 16,
+        "min": 28.08,
+        "p50": 135.06,
+        "p95": 223.31,
+        "max": 223.31
+      },
+      "responseWaitMs": {
+        "n": 16,
+        "min": 27.89,
+        "p50": 122.01,
+        "p95": 210.83,
+        "max": 210.83
+      },
+      "connectorQueueMs": {
+        "n": 16,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 14,
+        "min": 0.2,
+        "p50": 1.07,
+        "p95": 5.44,
+        "max": 5.44
+      },
+      "totalBytes": 290816,
+      "connectionsReused": 8,
+      "clientCpuSeconds": 0.013,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c8",
+      "startedAt": "2026-10-21T18:32:44.055324+00:00",
+      "endedAt": "2026-10-21T18:32:44.372610+00:00",
+      "kind": "list",
+      "configuredConcurrency": 8,
+      "actualPeakHttpInFlight": 8,
+      "requestedCount": 16,
+      "started": 16,
+      "completed": 16,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.317,
+      "observedCompletionRatePerSecond": 50.43,
+      "statuses": {
+        "200": 16
+      },
+      "categories": {
+        "ok": 16
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 16,
+        "min": 29.99,
+        "p50": 166.96,
+        "p95": 209.66,
+        "max": 209.66
+      },
+      "headersMs": {
+        "n": 16,
+        "min": 29.93,
+        "p50": 166.94,
+        "p95": 209.62,
+        "max": 209.62
+      },
+      "responseWaitMs": {
+        "n": 16,
+        "min": 17.74,
+        "p50": 166.69,
+        "p95": 195.91,
+        "max": 195.91
+      },
+      "connectorQueueMs": {
+        "n": 16,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 15,
+        "min": 0.18,
+        "p50": 1.05,
+        "p95": 5.34,
+        "max": 5.34
+      },
+      "totalBytes": 19376,
+      "connectionsReused": 8,
+      "clientCpuSeconds": 0.013,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c20",
+      "startedAt": "2026-10-21T18:32:45.526491+00:00",
+      "endedAt": "2026-10-21T18:32:45.998335+00:00",
+      "kind": "get",
+      "configuredConcurrency": 20,
+      "actualPeakHttpInFlight": 20,
+      "requestedCount": 40,
+      "started": 40,
+      "completed": 40,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.472,
+      "observedCompletionRatePerSecond": 84.78,
+      "statuses": {
+        "200": 40
+      },
+      "categories": {
+        "ok": 40
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 40,
+        "min": 54.38,
+        "p50": 195.51,
+        "p95": 341.89,
+        "max": 360.82
+      },
+      "headersMs": {
+        "n": 40,
+        "min": 54.34,
+        "p50": 195.01,
+        "p95": 341.17,
+        "max": 341.86
+      },
+      "responseWaitMs": {
+        "n": 40,
+        "min": 42.27,
+        "p50": 194.87,
+        "p95": 327.4,
+        "max": 327.7
+      },
+      "connectorQueueMs": {
+        "n": 40,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 22,
+        "min": 0.08,
+        "p50": 0.81,
+        "p95": 5.74,
+        "max": 10.02
+      },
+      "totalBytes": 691766,
+      "connectionsReused": 20,
+      "clientCpuSeconds": 0.031,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c20",
+      "startedAt": "2026-10-21T18:32:47.165247+00:00",
+      "endedAt": "2026-10-21T18:32:47.289467+00:00",
+      "kind": "list",
+      "configuredConcurrency": 20,
+      "actualPeakHttpInFlight": 20,
+      "requestedCount": 40,
+      "started": 40,
+      "completed": 40,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.124,
+      "observedCompletionRatePerSecond": 322.08,
+      "statuses": {
+        "200": 40
+      },
+      "categories": {
+        "ok": 40
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 40,
+        "min": 16.65,
+        "p50": 43.73,
+        "p95": 60.27,
+        "max": 60.33
+      },
+      "headersMs": {
+        "n": 40,
+        "min": 16.61,
+        "p50": 43.7,
+        "p95": 60.24,
+        "max": 60.25
+      },
+      "responseWaitMs": {
+        "n": 40,
+        "min": 16.05,
+        "p50": 26.78,
+        "p95": 60.11,
+        "max": 60.14
+      },
+      "connectorQueueMs": {
+        "n": 40,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 6,
+        "min": 0.07,
+        "p50": 0.54,
+        "p95": 1.08,
+        "max": 1.08
+      },
+      "totalBytes": 55301,
+      "connectionsReused": 20,
+      "clientCpuSeconds": 0.019,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c40",
+      "startedAt": "2026-10-21T18:32:48.450697+00:00",
+      "endedAt": "2026-10-21T18:32:49.154762+00:00",
+      "kind": "get",
+      "configuredConcurrency": 40,
+      "actualPeakHttpInFlight": 40,
+      "requestedCount": 80,
+      "started": 80,
+      "completed": 80,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.704,
+      "observedCompletionRatePerSecond": 113.69,
+      "statuses": {
+        "200": 80
+      },
+      "categories": {
+        "ok": 80
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 80,
+        "min": 52.13,
+        "p50": 299.82,
+        "p95": 523.41,
+        "max": 605.94
+      },
+      "headersMs": {
+        "n": 80,
+        "min": 50.28,
+        "p50": 297.36,
+        "p95": 515.4,
+        "max": 605.12
+      },
+      "responseWaitMs": {
+        "n": 80,
+        "min": 34.8,
+        "p50": 296.52,
+        "p95": 498.81,
+        "max": 588.82
+      },
+      "connectorQueueMs": {
+        "n": 80,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 32,
+        "min": 0.13,
+        "p50": 1.2,
+        "p95": 6.35,
+        "max": 8.63
+      },
+      "totalBytes": 1326068,
+      "connectionsReused": 40,
+      "clientCpuSeconds": 0.079,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c40",
+      "startedAt": "2026-10-21T18:32:51.013143+00:00",
+      "endedAt": "2026-10-21T18:32:51.575563+00:00",
+      "kind": "list",
+      "configuredConcurrency": 40,
+      "actualPeakHttpInFlight": 40,
+      "requestedCount": 80,
+      "started": 80,
+      "completed": 80,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.562,
+      "observedCompletionRatePerSecond": 142.25,
+      "statuses": {
+        "200": 80
+      },
+      "categories": {
+        "ok": 80
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 80,
+        "min": 41.6,
+        "p50": 289.45,
+        "p95": 460.5,
+        "max": 544.97
+      },
+      "headersMs": {
+        "n": 80,
+        "min": 41.49,
+        "p50": 289.41,
+        "p95": 460.47,
+        "max": 544.96
+      },
+      "responseWaitMs": {
+        "n": 80,
+        "min": 24.28,
+        "p50": 288.62,
+        "p95": 442.61,
+        "max": 525.19
+      },
+      "connectorQueueMs": {
+        "n": 80,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 27,
+        "min": 0.06,
+        "p50": 0.79,
+        "p95": 1.27,
+        "max": 1.55
+      },
+      "totalBytes": 108921,
+      "connectionsReused": 40,
+      "clientCpuSeconds": 0.045,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c80",
+      "startedAt": "2026-10-21T18:32:52.728011+00:00",
+      "endedAt": "2026-10-21T18:32:54.127866+00:00",
+      "kind": "get",
+      "configuredConcurrency": 80,
+      "actualPeakHttpInFlight": 80,
+      "requestedCount": 160,
+      "started": 160,
+      "completed": 160,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 1.4,
+      "observedCompletionRatePerSecond": 114.31,
+      "statuses": {
+        "200": 160
+      },
+      "categories": {
+        "ok": 160
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 160,
+        "min": 52.93,
+        "p50": 607.33,
+        "p95": 1124.99,
+        "max": 1237.48
+      },
+      "headersMs": {
+        "n": 160,
+        "min": 52.88,
+        "p50": 604.8,
+        "p95": 1124.87,
+        "max": 1237.45
+      },
+      "responseWaitMs": {
+        "n": 160,
+        "min": 33.81,
+        "p50": 604.06,
+        "p95": 1106.45,
+        "max": 1216.03
+      },
+      "connectorQueueMs": {
+        "n": 160,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 67,
+        "min": 0.06,
+        "p50": 0.74,
+        "p95": 1.63,
+        "max": 4.06
+      },
+      "totalBytes": 2614892,
+      "connectionsReused": 80,
+      "clientCpuSeconds": 0.136,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c80",
+      "startedAt": "2026-10-21T18:32:55.291722+00:00",
+      "endedAt": "2026-10-21T18:32:55.687361+00:00",
+      "kind": "list",
+      "configuredConcurrency": 80,
+      "actualPeakHttpInFlight": 80,
+      "requestedCount": 160,
+      "started": 160,
+      "completed": 160,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.396,
+      "observedCompletionRatePerSecond": 404.46,
+      "statuses": {
+        "200": 160
+      },
+      "categories": {
+        "ok": 160
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 160,
+        "min": 56.47,
+        "p50": 184.14,
+        "p95": 288.1,
+        "max": 302.14
+      },
+      "headersMs": {
+        "n": 160,
+        "min": 56.44,
+        "p50": 184.11,
+        "p95": 288.08,
+        "max": 301.98
+      },
+      "responseWaitMs": {
+        "n": 160,
+        "min": 35.27,
+        "p50": 162.39,
+        "p95": 287.87,
+        "max": 301.86
+      },
+      "connectorQueueMs": {
+        "n": 160,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 19,
+        "min": 0.08,
+        "p50": 0.74,
+        "p95": 1.19,
+        "max": 1.19
+      },
+      "totalBytes": 217603,
+      "connectionsReused": 80,
+      "clientCpuSeconds": 0.067,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c160",
+      "startedAt": "2026-10-21T18:32:56.839896+00:00",
+      "endedAt": "2026-10-21T18:32:59.810401+00:00",
+      "kind": "get",
+      "configuredConcurrency": 160,
+      "actualPeakHttpInFlight": 160,
+      "requestedCount": 320,
+      "started": 320,
+      "completed": 320,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 2.97,
+      "observedCompletionRatePerSecond": 107.73,
+      "statuses": {
+        "200": 320
+      },
+      "categories": {
+        "ok": 320
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 320,
+        "min": 121.31,
+        "p50": 1236.96,
+        "p95": 2513.34,
+        "max": 2714.91
+      },
+      "headersMs": {
+        "n": 320,
+        "min": 121.15,
+        "p50": 1235.29,
+        "p95": 2512.05,
+        "max": 2714.89
+      },
+      "responseWaitMs": {
+        "n": 320,
+        "min": 69.34,
+        "p50": 1197.97,
+        "p95": 2457.11,
+        "max": 2662.07
+      },
+      "connectorQueueMs": {
+        "n": 320,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 128,
+        "min": 0.04,
+        "p50": 1.07,
+        "p95": 10.12,
+        "max": 94.92
+      },
+      "totalBytes": 5285968,
+      "connectionsReused": 160,
+      "clientCpuSeconds": 0.226,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c160",
+      "startedAt": "2026-10-21T18:33:00.986669+00:00",
+      "endedAt": "2026-10-21T18:33:02.091061+00:00",
+      "kind": "list",
+      "configuredConcurrency": 160,
+      "actualPeakHttpInFlight": 160,
+      "requestedCount": 320,
+      "started": 320,
+      "completed": 320,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 1.104,
+      "observedCompletionRatePerSecond": 289.8,
+      "statuses": {
+        "200": 320
+      },
+      "categories": {
+        "ok": 320
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 320,
+        "min": 83.5,
+        "p50": 363.2,
+        "p95": 679.78,
+        "max": 972.74
+      },
+      "headersMs": {
+        "n": 320,
+        "min": 83.43,
+        "p50": 363.16,
+        "p95": 679.75,
+        "max": 972.71
+      },
+      "responseWaitMs": {
+        "n": 320,
+        "min": 50.85,
+        "p50": 325.04,
+        "p95": 679.64,
+        "max": 972.61
+      },
+      "connectorQueueMs": {
+        "n": 320,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 51,
+        "min": 0.09,
+        "p50": 1.06,
+        "p95": 2.5,
+        "max": 22.88
+      },
+      "totalBytes": 436816,
+      "connectionsReused": 160,
+      "clientCpuSeconds": 0.157,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c200",
+      "startedAt": "2026-10-21T18:33:03.253068+00:00",
+      "endedAt": "2026-10-21T18:33:06.549100+00:00",
+      "kind": "get",
+      "configuredConcurrency": 200,
+      "actualPeakHttpInFlight": 200,
+      "requestedCount": 400,
+      "started": 400,
+      "completed": 400,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 3.296,
+      "observedCompletionRatePerSecond": 121.37,
+      "statuses": {
+        "200": 400
+      },
+      "categories": {
+        "ok": 400
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 400,
+        "min": 110.6,
+        "p50": 1399.21,
+        "p95": 1677.44,
+        "max": 1764.52
+      },
+      "headersMs": {
+        "n": 400,
+        "min": 110.57,
+        "p50": 1396.39,
+        "p95": 1668.03,
+        "max": 1720.09
+      },
+      "responseWaitMs": {
+        "n": 400,
+        "min": 78.76,
+        "p50": 1386.87,
+        "p95": 1643.35,
+        "max": 1696.48
+      },
+      "connectorQueueMs": {
+        "n": 400,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 135,
+        "min": 0.1,
+        "p50": 1.11,
+        "p95": 19.29,
+        "max": 56.38
+      },
+      "totalBytes": 6618151,
+      "connectionsReused": 200,
+      "clientCpuSeconds": 0.28,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c200",
+      "startedAt": "2026-10-21T18:33:08.074269+00:00",
+      "endedAt": "2026-10-21T18:33:09.919281+00:00",
+      "kind": "list",
+      "configuredConcurrency": 200,
+      "actualPeakHttpInFlight": 200,
+      "requestedCount": 400,
+      "started": 400,
+      "completed": 400,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 1.845,
+      "observedCompletionRatePerSecond": 216.82,
+      "statuses": {
+        "200": 400
+      },
+      "categories": {
+        "ok": 400
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 400,
+        "min": 399.99,
+        "p50": 748.15,
+        "p95": 974.44,
+        "max": 1251.01
+      },
+      "headersMs": {
+        "n": 400,
+        "min": 399.84,
+        "p50": 748.11,
+        "p95": 974.38,
+        "max": 1250.99
+      },
+      "responseWaitMs": {
+        "n": 400,
+        "min": 109.93,
+        "p50": 682.71,
+        "p95": 969.27,
+        "max": 1094.52
+      },
+      "connectorQueueMs": {
+        "n": 400,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 49,
+        "min": 0.29,
+        "p50": 3.42,
+        "p95": 93.32,
+        "max": 251.59
+      },
+      "totalBytes": 550284,
+      "connectionsReused": 200,
+      "clientCpuSeconds": 0.293,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c400",
+      "startedAt": "2026-10-21T18:33:11.479261+00:00",
+      "endedAt": "2026-10-21T18:33:19.015447+00:00",
+      "kind": "get",
+      "configuredConcurrency": 400,
+      "actualPeakHttpInFlight": 400,
+      "requestedCount": 800,
+      "started": 800,
+      "completed": 800,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 7.532,
+      "observedCompletionRatePerSecond": 106.21,
+      "statuses": {
+        "200": 800
+      },
+      "categories": {
+        "ok": 800
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 800,
+        "min": 278.7,
+        "p50": 2666.72,
+        "p95": 7159.95,
+        "max": 7244.73
+      },
+      "headersMs": {
+        "n": 800,
+        "min": 278.64,
+        "p50": 2658.03,
+        "p95": 7159.89,
+        "max": 7244.72
+      },
+      "responseWaitMs": {
+        "n": 800,
+        "min": 86.67,
+        "p50": 2631.66,
+        "p95": 7014.73,
+        "max": 7042.44
+      },
+      "connectorQueueMs": {
+        "n": 800,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 244,
+        "min": 0.05,
+        "p50": 1.09,
+        "p95": 8.8,
+        "max": 1740.68
+      },
+      "totalBytes": 13179646,
+      "connectionsReused": 400,
+      "clientCpuSeconds": 0.657,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "list-c400",
+      "startedAt": "2026-10-21T18:33:21.175180+00:00",
+      "endedAt": "2026-10-21T18:33:25.583777+00:00",
+      "kind": "list",
+      "configuredConcurrency": 400,
+      "actualPeakHttpInFlight": 400,
+      "requestedCount": 800,
+      "started": 800,
+      "completed": 800,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 4.408,
+      "observedCompletionRatePerSecond": 181.47,
+      "statuses": {
+        "200": 800
+      },
+      "categories": {
+        "ok": 800
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 800,
+        "min": 491.05,
+        "p50": 2327.59,
+        "p95": 2924.6,
+        "max": 2935.71
+      },
+      "headersMs": {
+        "n": 800,
+        "min": 490.96,
+        "p50": 2327.53,
+        "p95": 2924.58,
+        "max": 2935.68
+      },
+      "responseWaitMs": {
+        "n": 800,
+        "min": 115.45,
+        "p50": 2009.12,
+        "p95": 2660.72,
+        "max": 2670.54
+      },
+      "connectorQueueMs": {
+        "n": 800,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 70,
+        "min": 0.08,
+        "p50": 1.09,
+        "p95": 105.27,
+        "max": 1948.07
+      },
+      "totalBytes": 1098901,
+      "connectionsReused": 400,
+      "clientCpuSeconds": 0.604,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "get-c800",
+      "startedAt": "2026-10-21T18:33:27.132049+00:00",
+      "endedAt": "2026-10-21T18:33:39.442786+00:00",
+      "kind": "get",
+      "configuredConcurrency": 800,
+      "actualPeakHttpInFlight": 800,
+      "requestedCount": 1600,
+      "started": 1600,
+      "completed": 1600,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": "http_544",
+      "elapsedSeconds": 12.31,
+      "observedCompletionRatePerSecond": 129.98,
+      "statuses": {
+        "200": 1521,
+        "544": 79
+      },
+      "categories": {
+        "ok": 1521,
+        "storage_http_error": 79
+      },
+      "errorCodes": {
+        "DatabaseTimeout": 79
+      },
+      "latencyMs": {
+        "n": 1600,
+        "min": 479.6,
+        "p50": 4886.93,
+        "p95": 9417.56,
+        "max": 10802.15
+      },
+      "headersMs": {
+        "n": 1600,
+        "min": 465.39,
+        "p50": 4880.37,
+        "p95": 9408.4,
+        "max": 10800.63
+      },
+      "responseWaitMs": {
+        "n": 1600,
+        "min": 219.21,
+        "p50": 4847.67,
+        "p95": 9209.5,
+        "max": 10549.62
+      },
+      "connectorQueueMs": {
+        "n": 1600,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 570,
+        "min": 0.04,
+        "p50": 1.07,
+        "p95": 2.93,
+        "max": 117.66
+      },
+      "totalBytes": 24839914,
+      "connectionsReused": 800,
+      "clientCpuSeconds": 1.397,
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "recovery-get",
+      "startedAt": "2026-10-21T18:34:17.095383+00:00",
+      "endedAt": "2026-10-21T18:34:17.178578+00:00",
+      "kind": "get",
+      "configuredConcurrency": 1,
+      "actualPeakHttpInFlight": 1,
+      "requestedCount": 1,
+      "started": 1,
+      "completed": 1,
+      "attemptsFinished": 1,
+      "httpHeadersSent": 1,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.083,
+      "observedCompletionRatePerSecond": 12.02,
+      "statuses": {
+        "200": 1
+      },
+      "categories": {
+        "ok": 1
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 1,
+        "min": 73.1,
+        "p50": 73.1,
+        "p95": 73.1,
+        "max": 73.1
+      },
+      "headersMs": {
+        "n": 1,
+        "min": 52.59,
+        "p50": 52.59,
+        "p95": 52.59,
+        "max": 52.59
+      },
+      "responseWaitMs": {
+        "n": 1,
+        "min": 41.51,
+        "p50": 41.51,
+        "p95": 41.51,
+        "max": 41.51
+      },
+      "connectorQueueMs": {
+        "n": 1,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 4,
+        "min": 0.3,
+        "p50": 1.08,
+        "p95": 1.09,
+        "max": 1.09
+      },
+      "totalBytes": 62014,
+      "connectionsReused": 0,
+      "clientCpuSeconds": 0.003,
+      "runtime": {
+        "aiohttp": "3.9.3",
+        "harnessSha256": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f"
+      },
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "confirm-get-c800",
+      "startedAt": "2026-10-21T18:34:20.330486+00:00",
+      "endedAt": "2026-10-21T18:34:29.011430+00:00",
+      "kind": "get",
+      "configuredConcurrency": 800,
+      "actualPeakHttpInFlight": 800,
+      "requestedCount": 1600,
+      "started": 1175,
+      "completed": 1175,
+      "attemptsFinished": 1175,
+      "httpHeadersSent": 1175,
+      "notStarted": 425,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": "http_544",
+      "elapsedSeconds": 8.68,
+      "observedCompletionRatePerSecond": 135.36,
+      "statuses": {
+        "200": 984,
+        "544": 191
+      },
+      "categories": {
+        "ok": 984,
+        "storage_http_error": 191
+      },
+      "errorCodes": {
+        "DatabaseTimeout": 191
+      },
+      "latencyMs": {
+        "n": 1175,
+        "min": 504.97,
+        "p50": 4482.83,
+        "p95": 6730.78,
+        "max": 7622.39
+      },
+      "headersMs": {
+        "n": 1175,
+        "min": 504.05,
+        "p50": 4478.5,
+        "p95": 6727.51,
+        "max": 7622.36
+      },
+      "responseWaitMs": {
+        "n": 1175,
+        "min": 317.08,
+        "p50": 4413.96,
+        "p95": 6502.13,
+        "max": 7379.51
+      },
+      "connectorQueueMs": {
+        "n": 1175,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 404,
+        "min": 0.05,
+        "p50": 1.08,
+        "p95": 2.48,
+        "max": 106.93
+      },
+      "totalBytes": 16307414,
+      "connectionsReused": 375,
+      "clientCpuSeconds": 1.059,
+      "runtime": {
+        "aiohttp": "3.9.3",
+        "harnessSha256": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f"
+      },
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "control-list-c800",
+      "startedAt": "2026-10-21T18:37:19.680362+00:00",
+      "endedAt": "2026-10-21T18:37:26.707698+00:00",
+      "kind": "list",
+      "configuredConcurrency": 800,
+      "actualPeakHttpInFlight": 800,
+      "requestedCount": 1600,
+      "started": 1600,
+      "completed": 1600,
+      "attemptsFinished": 1600,
+      "httpHeadersSent": 1600,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 7.024,
+      "observedCompletionRatePerSecond": 227.79,
+      "statuses": {
+        "200": 1600
+      },
+      "categories": {
+        "ok": 1600
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 1600,
+        "min": 187.37,
+        "p50": 1002.38,
+        "p95": 6411.11,
+        "max": 6858.68
+      },
+      "headersMs": {
+        "n": 1600,
+        "min": 187.3,
+        "p50": 1002.33,
+        "p95": 6411.07,
+        "max": 6858.64
+      },
+      "responseWaitMs": {
+        "n": 1600,
+        "min": 187.09,
+        "p50": 1001.97,
+        "p95": 6223.22,
+        "max": 6666.51
+      },
+      "connectorQueueMs": {
+        "n": 1600,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 297,
+        "min": 0.04,
+        "p50": 1.08,
+        "p95": 9.53,
+        "max": 233.4
+      },
+      "totalBytes": 2196121,
+      "connectionsReused": 800,
+      "clientCpuSeconds": 0.939,
+      "runtime": {
+        "aiohttp": "3.9.3",
+        "harnessSha256": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f"
+      },
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "final-recovery-get",
+      "startedAt": "2026-10-21T18:37:38.550645+00:00",
+      "endedAt": "2026-10-21T18:37:39.205618+00:00",
+      "kind": "get",
+      "configuredConcurrency": 1,
+      "actualPeakHttpInFlight": 1,
+      "requestedCount": 19,
+      "started": 19,
+      "completed": 19,
+      "attemptsFinished": 19,
+      "httpHeadersSent": 19,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.655,
+      "observedCompletionRatePerSecond": 29.01,
+      "statuses": {
+        "200": 19
+      },
+      "categories": {
+        "ok": 19
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 19,
+        "min": 22.42,
+        "p50": 29.3,
+        "p95": 75.64,
+        "max": 75.64
+      },
+      "headersMs": {
+        "n": 19,
+        "min": 22.35,
+        "p50": 28.38,
+        "p95": 47.6,
+        "max": 47.6
+      },
+      "responseWaitMs": {
+        "n": 19,
+        "min": 21.81,
+        "p50": 27.88,
+        "p95": 42.87,
+        "max": 42.87
+      },
+      "connectorQueueMs": {
+        "n": 19,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 31,
+        "min": 0.13,
+        "p50": 1.09,
+        "p95": 3.21,
+        "max": 4.47
+      },
+      "totalBytes": 312197,
+      "connectionsReused": 18,
+      "clientCpuSeconds": 0.031,
+      "runtime": {
+        "aiohttp": "3.9.3",
+        "harnessSha256": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f"
+      },
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    },
+    {
+      "label": "final-recovery-list",
+      "startedAt": "2026-10-21T18:37:42.508554+00:00",
+      "endedAt": "2026-10-21T18:37:42.883401+00:00",
+      "kind": "list",
+      "configuredConcurrency": 1,
+      "actualPeakHttpInFlight": 1,
+      "requestedCount": 19,
+      "started": 19,
+      "completed": 19,
+      "attemptsFinished": 19,
+      "httpHeadersSent": 19,
+      "notStarted": 0,
+      "cancelled": 0,
+      "retries": 0,
+      "stopReason": null,
+      "elapsedSeconds": 0.375,
+      "observedCompletionRatePerSecond": 50.7,
+      "statuses": {
+        "200": 19
+      },
+      "categories": {
+        "ok": 19
+      },
+      "errorCodes": {},
+      "latencyMs": {
+        "n": 19,
+        "min": 10.81,
+        "p50": 12.15,
+        "p95": 104.78,
+        "max": 104.78
+      },
+      "headersMs": {
+        "n": 19,
+        "min": 10.77,
+        "p50": 12.1,
+        "p95": 104.58,
+        "max": 104.58
+      },
+      "responseWaitMs": {
+        "n": 19,
+        "min": 10.58,
+        "p50": 11.91,
+        "p95": 104.23,
+        "max": 104.23
+      },
+      "connectorQueueMs": {
+        "n": 19,
+        "min": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "eventLoopLagMs": {
+        "n": 18,
+        "min": 0.18,
+        "p50": 1.0,
+        "p95": 1.18,
+        "max": 1.18
+      },
+      "totalBytes": 26090,
+      "connectionsReused": 18,
+      "clientCpuSeconds": 0.016,
+      "runtime": {
+        "aiohttp": "3.9.3",
+        "harnessSha256": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f"
+      },
+      "scope": {
+        "bucket": "workspace-test",
+        "agentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+        "skillCount": 19,
+        "transport": "local-to-same-instance-public-endpoint",
+        "redirectsAllowed": false,
+        "writes": 0,
+        "omaTasks": 0
+      }
+    }
+  ],
+  "databaseWindows": {
+    "get-c800": {
+      "label": "get-c800",
+      "loadWindow": {
+        "startedAt": "2026-10-21T18:33:27.132049+00:00",
+        "endedAt": "2026-10-21T18:33:39.442786+00:00",
+        "concurrency": 800,
+        "requestedCount": 1600,
+        "started": 1600,
+        "completed": 1600,
+        "notStarted": 0,
+        "cancelled": 0,
+        "httpStatus": {
+          "200": 1521,
+          "544": 79
+        }
+      },
+      "http544Window": {
+        "count": 79,
+        "firstResponseAt": "2026-10-21T18:33:36.170917+00:00",
+        "lastResponseAt": "2026-10-21T18:33:36.671654+00:00",
+        "firstRequestAt": "2026-10-21T18:33:27.253853+00:00"
+      },
+      "samples": [
+        {
+          "at": "2026-10-22T02:33:23.870554+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 399
+        },
+        {
+          "at": "2026-10-22T02:33:25.559293+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 20,
+            "idle in transaction": 1
+          },
+          "storageIdleInTransaction": 1,
+          "storageIdle": 20,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 1
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 20
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            }
+          ],
+          "observerQueryMs": 36
+        },
+        {
+          "at": "2026-10-22T02:33:27.576338+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 8,
+            "idle in transaction": 13
+          },
+          "storageIdleInTransaction": 13,
+          "storageIdle": 8,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 13
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 8
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 13
+            }
+          ],
+          "observerQueryMs": 59
+        },
+        {
+          "at": "2026-10-22T02:33:29.550635+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 8,
+            "idle in transaction": 13
+          },
+          "storageIdleInTransaction": 13,
+          "storageIdle": 8,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 13
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 8
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 13
+            }
+          ],
+          "observerQueryMs": 23
+        },
+        {
+          "at": "2026-10-22T02:33:31.567744+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 92,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 7,
+            "idle in transaction": 14
+          },
+          "storageIdleInTransaction": 14,
+          "storageIdle": 7,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 14
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 7
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 14
+            }
+          ],
+          "observerQueryMs": 61
+        },
+        {
+          "at": "2026-10-22T02:33:33.558052+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 92,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 5,
+            "idle in transaction": 16
+          },
+          "storageIdleInTransaction": 16,
+          "storageIdle": 5,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 16
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 5
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 16
+            }
+          ],
+          "observerQueryMs": 26
+        },
+        {
+          "at": "2026-10-22T02:33:35.561789+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 6,
+            "idle in transaction": 15
+          },
+          "storageIdleInTransaction": 15,
+          "storageIdle": 6,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 15
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 6
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 15
+            }
+          ],
+          "observerQueryMs": 27
+        },
+        {
+          "at": "2026-10-22T02:33:37.568976+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 3,
+            "idle in transaction": 18
+          },
+          "storageIdleInTransaction": 18,
+          "storageIdle": 3,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 18
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 3
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 18
+            }
+          ],
+          "observerQueryMs": 58
+        },
+        {
+          "at": "2026-10-22T02:33:39.566420+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 92,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 35
+        },
+        {
+          "at": "2026-10-22T02:33:41.567658+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 90,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 27
+        },
+        {
+          "at": "2026-10-22T02:33:43.574520+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 90,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 35
+        }
+      ],
+      "peakWithinLoad": {
+        "globalConnections": 93,
+        "storageConnections": 21,
+        "storageActive": 0,
+        "storageIdleInTransaction": 18,
+        "storageIdle": 8,
+        "storageLockWaiting": 0,
+        "storageBlocked": 0,
+        "storageStateHidden": 0,
+        "storageLongestActiveSeconds": 0.0,
+        "observerQueryMs": 61
+      },
+      "peakTransactionAgeSeconds": null,
+      "peakIdleTransactionStateAgeSeconds": null,
+      "sampleCountWithinLoad": 6,
+      "sourceDbSnapshot": {
+        "sha256": "d3343de4061595b49a997bb3914747dafc65da88228ebde661bc80c3a0480db9",
+        "bytes": 583049,
+        "samples": 222
+      },
+      "limitations": [
+        "DB snapshots at 2 seconds (v1) or 1 second (v2) may miss shorter query peaks. Storage idle DB sessions cannot be equated with free client-side pool resources. No Storage in-process inUse/acquire queue metrics are available.",
+        "Reads only pg_stat_activity counts/state/waits and blocking-pid count; no query text, body, object identifiers, or credentials."
+      ],
+      "sources": [
+        "/private/tmp/oma-skill-read-repro-20261022/get-c800.summary.json",
+        "/private/tmp/oma-skill-read-repro-20261022/get-c800.rows.json",
+        "/private/tmp/oma-skill-read-repro-20261022/db-observations.jsonl"
+      ]
+    },
+    "confirm-get-c800": {
+      "label": "confirm-get-c800",
+      "loadWindow": {
+        "startedAt": "2026-10-21T18:34:20.330486+00:00",
+        "endedAt": "2026-10-21T18:34:29.011430+00:00",
+        "concurrency": 800,
+        "requestedCount": 1600,
+        "started": 1175,
+        "completed": 1175,
+        "notStarted": 425,
+        "cancelled": 0,
+        "httpStatus": {
+          "200": 984,
+          "544": 191
+        }
+      },
+      "http544Window": {
+        "count": 191,
+        "firstResponseAt": "2026-10-21T18:34:25.088448+00:00",
+        "lastResponseAt": "2026-10-21T18:34:25.477515+00:00",
+        "firstRequestAt": "2026-10-21T18:34:20.405412+00:00"
+      },
+      "samples": [
+        {
+          "at": "2026-10-22T02:34:15.610487+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 92,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 30
+        },
+        {
+          "at": "2026-10-22T02:34:17.606286+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 21
+        },
+        {
+          "at": "2026-10-22T02:34:19.613879+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 33
+        },
+        {
+          "at": "2026-10-22T02:34:21.631953+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 17,
+            "idle": 4
+          },
+          "storageIdleInTransaction": 17,
+          "storageIdle": 4,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 17
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 4
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 17
+            }
+          ],
+          "observerQueryMs": 44
+        },
+        {
+          "at": "2026-10-22T02:34:23.614175+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 17,
+            "idle": 4
+          },
+          "storageIdleInTransaction": 17,
+          "storageIdle": 4,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 17
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 4
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 17
+            }
+          ],
+          "observerQueryMs": 29
+        },
+        {
+          "at": "2026-10-22T02:34:25.622670+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 18,
+            "idle": 3
+          },
+          "storageIdleInTransaction": 18,
+          "storageIdle": 3,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 18
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 3
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 18
+            }
+          ],
+          "observerQueryMs": 33
+        },
+        {
+          "at": "2026-10-22T02:34:27.635819+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 16,
+            "idle": 5
+          },
+          "storageIdleInTransaction": 16,
+          "storageIdle": 5,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {
+            "None": 16
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 5
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 16
+            }
+          ],
+          "observerQueryMs": 58
+        },
+        {
+          "at": "2026-10-22T02:34:29.617682+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 24
+        },
+        {
+          "at": "2026-10-22T02:34:31.652413+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 62
+        },
+        {
+          "at": "2026-10-22T02:34:33.642931+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 46
+        }
+      ],
+      "peakWithinLoad": {
+        "globalConnections": 91,
+        "storageConnections": 21,
+        "storageActive": 0,
+        "storageIdleInTransaction": 18,
+        "storageIdle": 5,
+        "storageLockWaiting": 0,
+        "storageBlocked": 0,
+        "storageStateHidden": 0,
+        "storageLongestActiveSeconds": 0.0,
+        "observerQueryMs": 58
+      },
+      "peakTransactionAgeSeconds": null,
+      "peakIdleTransactionStateAgeSeconds": null,
+      "sampleCountWithinLoad": 4,
+      "sourceDbSnapshot": {
+        "sha256": "d3343de4061595b49a997bb3914747dafc65da88228ebde661bc80c3a0480db9",
+        "bytes": 583049,
+        "samples": 222
+      },
+      "limitations": [
+        "DB snapshots at 2 seconds (v1) or 1 second (v2) may miss shorter query peaks. Storage idle DB sessions cannot be equated with free client-side pool resources. No Storage in-process inUse/acquire queue metrics are available.",
+        "Reads only pg_stat_activity counts/state/waits and blocking-pid count; no query text, body, object identifiers, or credentials."
+      ],
+      "sources": [
+        "/private/tmp/oma-skill-read-repro-20261022/confirm-get-c800.summary.json",
+        "/private/tmp/oma-skill-read-repro-20261022/confirm-get-c800.rows.json",
+        "/private/tmp/oma-skill-read-repro-20261022/db-observations.jsonl"
+      ]
+    },
+    "control-list-c800": {
+      "label": "control-list-c800",
+      "loadWindow": {
+        "startedAt": "2026-10-21T18:37:19.680362+00:00",
+        "endedAt": "2026-10-21T18:37:26.707698+00:00",
+        "concurrency": 800,
+        "requestedCount": 1600,
+        "started": 1600,
+        "completed": 1600,
+        "notStarted": 0,
+        "cancelled": 0,
+        "httpStatus": {
+          "200": 1600
+        }
+      },
+      "http544Window": {
+        "count": 0,
+        "firstResponseAt": null,
+        "lastResponseAt": null,
+        "firstRequestAt": null
+      },
+      "samples": [
+        {
+          "at": "2026-10-22T02:37:15.332140+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 68,
+          "storageConnections": 1,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 1
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 1,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            }
+          ],
+          "observerQueryMs": 20
+        },
+        {
+          "at": "2026-10-22T02:37:16.346644+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 70,
+          "storageConnections": 1,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 1
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 1,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            }
+          ],
+          "observerQueryMs": 32
+        },
+        {
+          "at": "2026-10-22T02:37:17.341779+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 69,
+          "storageConnections": 1,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 1
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 1,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            }
+          ],
+          "observerQueryMs": 29
+        },
+        {
+          "at": "2026-10-22T02:37:18.342669+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 69,
+          "storageConnections": 1,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 1
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 1,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            }
+          ],
+          "observerQueryMs": 26
+        },
+        {
+          "at": "2026-10-22T02:37:19.340682+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 69,
+          "storageConnections": 1,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 1
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 1,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            }
+          ],
+          "observerQueryMs": 18
+        },
+        {
+          "at": "2026-10-22T02:37:20.351078+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 89,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 18,
+            "idle": 3
+          },
+          "storageIdleInTransaction": 18,
+          "storageIdle": 3,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.049,
+          "storageLongestIdleTransactionStateSeconds": 0.037,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 5,
+            "SEARCH": 5,
+            "BEGIN": 8
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 3
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 8
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 5
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 5
+            }
+          ],
+          "observerQueryMs": 33
+        },
+        {
+          "at": "2026-10-22T02:37:21.347285+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 89,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 17,
+            "idle": 4
+          },
+          "storageIdleInTransaction": 17,
+          "storageIdle": 4,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.035,
+          "storageLongestIdleTransactionStateSeconds": 0.026,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 16,
+            "BEGIN": 1
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 4
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 16
+            }
+          ],
+          "observerQueryMs": 27
+        },
+        {
+          "at": "2026-10-22T02:37:22.350744+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 16,
+            "idle": 5
+          },
+          "storageIdleInTransaction": 16,
+          "storageIdle": 5,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.129,
+          "storageLongestIdleTransactionStateSeconds": 0.023,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 7,
+            "SEARCH": 2,
+            "BEGIN": 7
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 5
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 7
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 2
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 7
+            }
+          ],
+          "observerQueryMs": 25
+        },
+        {
+          "at": "2026-10-22T02:37:23.349829+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 89,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 14,
+            "idle": 7
+          },
+          "storageIdleInTransaction": 14,
+          "storageIdle": 7,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.039,
+          "storageLongestIdleTransactionStateSeconds": 0.033,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 7,
+            "SEARCH": 1,
+            "BEGIN": 6
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 7
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 6
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 7
+            }
+          ],
+          "observerQueryMs": 22
+        },
+        {
+          "at": "2026-10-22T02:37:24.351324+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 90,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 19,
+            "idle": 2
+          },
+          "storageIdleInTransaction": 19,
+          "storageIdle": 2,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.038,
+          "storageLongestIdleTransactionStateSeconds": 0.031,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 10,
+            "SEARCH": 6,
+            "BEGIN": 3
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 2
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 3
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 6
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 10
+            }
+          ],
+          "observerQueryMs": 22
+        },
+        {
+          "at": "2026-10-22T02:37:25.356314+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 90,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 5,
+            "idle": 16
+          },
+          "storageIdleInTransaction": 5,
+          "storageIdle": 16,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.039,
+          "storageLongestIdleTransactionStateSeconds": 0.034,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 4,
+            "SEARCH": 1
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 16
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 1
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 4
+            }
+          ],
+          "observerQueryMs": 27
+        },
+        {
+          "at": "2026-10-22T02:37:26.381833+08:00",
+          "inLoadWindow": true,
+          "globalConnections": 88,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle in transaction": 6,
+            "idle": 15
+          },
+          "storageIdleInTransaction": 6,
+          "storageIdle": 15,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": 0.072,
+          "storageLongestIdleTransactionStateSeconds": 0.068,
+          "idleTransactionLastQueryClasses": {
+            "SET_CONTEXT": 2,
+            "SEARCH": 2,
+            "BEGIN": 2
+          },
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 15
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 2
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 2
+            },
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 2
+            }
+          ],
+          "observerQueryMs": 69
+        },
+        {
+          "at": "2026-10-22T02:37:27.380930+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 88,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 45
+        },
+        {
+          "at": "2026-10-22T02:37:28.361885+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 88,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 26
+        },
+        {
+          "at": "2026-10-22T02:37:29.388137+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 88,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 49
+        },
+        {
+          "at": "2026-10-22T02:37:30.369662+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 87,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 28
+        },
+        {
+          "at": "2026-10-22T02:37:31.382328+08:00",
+          "inLoadWindow": false,
+          "globalConnections": 90,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageStateCounts": {
+            "idle": 21
+          },
+          "storageIdleInTransaction": 0,
+          "storageIdle": 21,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "storageLongestTransactionSeconds": null,
+          "storageLongestIdleTransactionStateSeconds": null,
+          "idleTransactionLastQueryClasses": {},
+          "storageWaitEvents": [
+            {
+              "type": "Client",
+              "event": "ClientRead",
+              "connections": 21
+            }
+          ],
+          "observerQueryMs": 37
+        }
+      ],
+      "peakWithinLoad": {
+        "globalConnections": 91,
+        "storageConnections": 21,
+        "storageActive": 0,
+        "storageIdleInTransaction": 19,
+        "storageIdle": 16,
+        "storageLockWaiting": 0,
+        "storageBlocked": 0,
+        "storageStateHidden": 0,
+        "storageLongestActiveSeconds": 0.0,
+        "observerQueryMs": 69
+      },
+      "peakTransactionAgeSeconds": 0.129,
+      "peakIdleTransactionStateAgeSeconds": 0.068,
+      "sampleCountWithinLoad": 7,
+      "sourceDbSnapshot": {
+        "sha256": "d3343de4061595b49a997bb3914747dafc65da88228ebde661bc80c3a0480db9",
+        "bytes": 583049,
+        "samples": 222
+      },
+      "limitations": [
+        "DB snapshots at 2 seconds (v1) or 1 second (v2) may miss shorter query peaks. Storage idle DB sessions cannot be equated with free client-side pool resources. No Storage in-process inUse/acquire queue metrics are available.",
+        "Reads only pg_stat_activity counts/state/waits and blocking-pid count; no query text, body, object identifiers, or credentials."
+      ],
+      "sources": [
+        "/private/tmp/oma-skill-read-repro-20261022/control-list-c800.summary.json",
+        "/private/tmp/oma-skill-read-repro-20261022/control-list-c800.rows.json",
+        "/private/tmp/oma-skill-read-repro-20261022/db-observations.jsonl"
+      ]
+    }
+  },
+  "offlineAnalysis": {
+    "analysisType": "offline_http_read_burst_review",
+    "createdAt": "2026-10-21T18:35:23.914850+00:00",
+    "networkRequestsByAnalysis": 0,
+    "quantileMethod": "nearest rank: sorted[ceil(p*n)-1]; may differ from runner summary floor(p*n)",
+    "latencyDefinitions": {
+      "headersMs": "client request call through response headers; includes connect, remote processing, and network",
+      "responseWaitMs": "headers sent through response headers; still includes remote/network wait",
+      "bodyDrainMsDerived": "max(0, elapsedMs - headersMs); includes drain/validation/hash; already buffered bytes may predate headers return",
+      "cpuSingleCoreEquivalentPct": "process user+system CPU / wall time * 100; does not prove no short scheduling pauses"
+    },
+    "runs": [
+      {
+        "label": "baseline-get",
+        "sourceSha256": {
+          "baseline-get.summary.json": "ef7604b1042409f9f959659acea8dd52c9aeb4d926a830ac5ef06fdad8aeda94",
+          "baseline-get.rows.json": "ee8853c1a451faaf52bdca857f276233f5d4e7361c178770f4f52df36c6a63f1"
+        },
+        "startedAt": "2026-10-21T18:32:10.619221+00:00",
+        "endedAt": "2026-10-21T18:32:11.354839+00:00",
+        "kind": "get",
+        "configuredConcurrency": 1,
+        "actualPeakHttpInFlight": 1,
+        "plannedRequests": 19,
+        "attemptsFinished": 19,
+        "httpHeadersSentInstrumented": null,
+        "httpResponsesObserved": 19,
+        "notStarted": 0,
+        "statuses": {
+          "200": 19
+        },
+        "categories": {
+          "ok": 19
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 0.736,
+        "clientCpuSeconds": 0.032,
+        "cpuSingleCoreEquivalentPct": 4.35,
+        "eventLoopLagMs": {
+          "n": 35,
+          "min": 0.14,
+          "p50": 1.09,
+          "p95": 2.74,
+          "max": 2.95
+        },
+        "connectorQueueMs": {
+          "n": 19,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 312197,
+        "perStatus": {
+          "200": {
+            "count": 19,
+            "headersMs": {
+              "n": 19,
+              "min": 23.67,
+              "p50": 30.15,
+              "p95": 73.97,
+              "max": 73.97
+            },
+            "totalMs": {
+              "n": 19,
+              "min": 24.88,
+              "p50": 30.61,
+              "p95": 86.32,
+              "max": 86.32
+            },
+            "bodyDrainMsDerived": {
+              "n": 19,
+              "min": 0.03,
+              "p50": 0.64,
+              "p95": 21.35,
+              "max": 21.35
+            },
+            "responseWaitMs": {
+              "n": 19,
+              "min": 23.2,
+              "p50": 29.6,
+              "p95": 73.47,
+              "max": 73.47
+            },
+            "connectMs": {
+              "n": 19,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 11.51,
+              "max": 11.51
+            },
+            "bytes": {
+              "n": 19,
+              "min": 1771.0,
+              "p50": 8137.0,
+              "p95": 62014.0,
+              "max": 62014.0
+            },
+            "connectionReusedCount": 18,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      },
+      {
+        "label": "baseline-list",
+        "sourceSha256": {
+          "baseline-list.summary.json": "e4e33e1761ca2c96b597c8145ff262e135a75ba52acd30e0ad32c909db83981b",
+          "baseline-list.rows.json": "7157febe3db6490424c5b114c39fcdc2d885f02cd7154bf02061857def58703c"
+        },
+        "startedAt": "2026-10-21T18:32:21.264908+00:00",
+        "endedAt": "2026-10-21T18:32:21.556342+00:00",
+        "kind": "list",
+        "configuredConcurrency": 1,
+        "actualPeakHttpInFlight": 1,
+        "plannedRequests": 19,
+        "attemptsFinished": 19,
+        "httpHeadersSentInstrumented": null,
+        "httpResponsesObserved": 19,
+        "notStarted": 0,
+        "statuses": {
+          "200": 19
+        },
+        "categories": {
+          "ok": 19
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 0.291,
+        "clientCpuSeconds": 0.015,
+        "cpuSingleCoreEquivalentPct": 5.15,
+        "eventLoopLagMs": {
+          "n": 14,
+          "min": 0.14,
+          "p50": 0.91,
+          "p95": 1.09,
+          "max": 1.09
+        },
+        "connectorQueueMs": {
+          "n": 19,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 26090,
+        "perStatus": {
+          "200": {
+            "count": 19,
+            "headersMs": {
+              "n": 19,
+              "min": 12.71,
+              "p50": 13.7,
+              "p95": 31.65,
+              "max": 31.65
+            },
+            "totalMs": {
+              "n": 19,
+              "min": 12.81,
+              "p50": 13.74,
+              "p95": 31.72,
+              "max": 31.72
+            },
+            "bodyDrainMsDerived": {
+              "n": 19,
+              "min": 0.04,
+              "p50": 0.05,
+              "p95": 0.18,
+              "max": 0.18
+            },
+            "responseWaitMs": {
+              "n": 19,
+              "min": 12.42,
+              "p50": 13.5,
+              "p95": 19.04,
+              "max": 19.04
+            },
+            "connectMs": {
+              "n": 19,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 11.26,
+              "max": 11.26
+            },
+            "bytes": {
+              "n": 19,
+              "min": 515.0,
+              "p50": 927.0,
+              "p95": 5274.0,
+              "max": 5274.0
+            },
+            "connectionReusedCount": 18,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      },
+      {
+        "label": "get-c400",
+        "sourceSha256": {
+          "get-c400.summary.json": "5b6ff1389e17eafec6e81be83ba2368ce2a14bc709f9c54d18a6f3832f9cd351",
+          "get-c400.rows.json": "dfcd62972b246e519d6067d87e5230a914831211864459ebfd860006bfafb948"
+        },
+        "startedAt": "2026-10-21T18:33:11.479261+00:00",
+        "endedAt": "2026-10-21T18:33:19.015447+00:00",
+        "kind": "get",
+        "configuredConcurrency": 400,
+        "actualPeakHttpInFlight": 400,
+        "plannedRequests": 800,
+        "attemptsFinished": 800,
+        "httpHeadersSentInstrumented": null,
+        "httpResponsesObserved": 800,
+        "notStarted": 0,
+        "statuses": {
+          "200": 800
+        },
+        "categories": {
+          "ok": 800
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 7.532,
+        "clientCpuSeconds": 0.657,
+        "cpuSingleCoreEquivalentPct": 8.72,
+        "eventLoopLagMs": {
+          "n": 244,
+          "min": 0.05,
+          "p50": 1.09,
+          "p95": 8.8,
+          "max": 1740.68
+        },
+        "connectorQueueMs": {
+          "n": 800,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 13179646,
+        "perStatus": {
+          "200": {
+            "count": 800,
+            "headersMs": {
+              "n": 800,
+              "min": 278.64,
+              "p50": 2656.95,
+              "p95": 7159.3,
+              "max": 7244.72
+            },
+            "totalMs": {
+              "n": 800,
+              "min": 278.7,
+              "p50": 2666.35,
+              "p95": 7159.37,
+              "max": 7244.73
+            },
+            "bodyDrainMsDerived": {
+              "n": 800,
+              "min": 0.01,
+              "p50": 0.08,
+              "p95": 24.53,
+              "max": 90.35
+            },
+            "responseWaitMs": {
+              "n": 800,
+              "min": 86.67,
+              "p50": 2623.91,
+              "p95": 7013.2,
+              "max": 7042.44
+            },
+            "connectMs": {
+              "n": 800,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 199.38,
+              "max": 202.98
+            },
+            "bytes": {
+              "n": 800,
+              "min": 1771.0,
+              "p50": 8137.0,
+              "p95": 62014.0,
+              "max": 62014.0
+            },
+            "connectionReusedCount": 400,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      },
+      {
+        "label": "list-c400",
+        "sourceSha256": {
+          "list-c400.summary.json": "4d0e3f81f5293447560f20ec846e5174fe32fd53e997a2facacee41b38bf52c9",
+          "list-c400.rows.json": "3b2fdd4f714fdeb046418e19d9584039795ea598069191346362ab322324af94"
+        },
+        "startedAt": "2026-10-21T18:33:21.175180+00:00",
+        "endedAt": "2026-10-21T18:33:25.583777+00:00",
+        "kind": "list",
+        "configuredConcurrency": 400,
+        "actualPeakHttpInFlight": 400,
+        "plannedRequests": 800,
+        "attemptsFinished": 800,
+        "httpHeadersSentInstrumented": null,
+        "httpResponsesObserved": 800,
+        "notStarted": 0,
+        "statuses": {
+          "200": 800
+        },
+        "categories": {
+          "ok": 800
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 4.408,
+        "clientCpuSeconds": 0.604,
+        "cpuSingleCoreEquivalentPct": 13.7,
+        "eventLoopLagMs": {
+          "n": 70,
+          "min": 0.08,
+          "p50": 1.09,
+          "p95": 105.27,
+          "max": 1948.07
+        },
+        "connectorQueueMs": {
+          "n": 800,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 1098901,
+        "perStatus": {
+          "200": {
+            "count": 800,
+            "headersMs": {
+              "n": 800,
+              "min": 490.96,
+              "p50": 1239.71,
+              "p95": 2924.46,
+              "max": 2935.68
+            },
+            "totalMs": {
+              "n": 800,
+              "min": 491.05,
+              "p50": 1239.73,
+              "p95": 2924.49,
+              "max": 2935.71
+            },
+            "bodyDrainMsDerived": {
+              "n": 800,
+              "min": 0.01,
+              "p50": 0.04,
+              "p95": 0.5,
+              "max": 32.22
+            },
+            "responseWaitMs": {
+              "n": 800,
+              "min": 115.45,
+              "p50": 1239.52,
+              "p95": 2660.37,
+              "max": 2670.54
+            },
+            "connectMs": {
+              "n": 800,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 372.75,
+              "max": 376.13
+            },
+            "bytes": {
+              "n": 800,
+              "min": 515.0,
+              "p50": 927.0,
+              "p95": 5274.0,
+              "max": 5274.0
+            },
+            "connectionReusedCount": 400,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      },
+      {
+        "label": "get-c800",
+        "sourceSha256": {
+          "get-c800.summary.json": "0b5c6f55922239a2830bd7b259f64a00be6b8f4d63f0df78523aef147982ae62",
+          "get-c800.rows.json": "b63e5f2eaf317f596c85220350e4d56efcbc4f924d9a953b4e0bd1edbd5e6c09"
+        },
+        "startedAt": "2026-10-21T18:33:27.132049+00:00",
+        "endedAt": "2026-10-21T18:33:39.442786+00:00",
+        "kind": "get",
+        "configuredConcurrency": 800,
+        "actualPeakHttpInFlight": 800,
+        "plannedRequests": 1600,
+        "attemptsFinished": 1600,
+        "httpHeadersSentInstrumented": null,
+        "httpResponsesObserved": 1600,
+        "notStarted": 0,
+        "statuses": {
+          "200": 1521,
+          "544": 79
+        },
+        "categories": {
+          "ok": 1521,
+          "storage_http_error": 79
+        },
+        "http544RateAmongAttemptsPct": 4.9375,
+        "elapsedSeconds": 12.31,
+        "clientCpuSeconds": 1.397,
+        "cpuSingleCoreEquivalentPct": 11.35,
+        "eventLoopLagMs": {
+          "n": 570,
+          "min": 0.04,
+          "p50": 1.07,
+          "p95": 2.93,
+          "max": 117.66
+        },
+        "connectorQueueMs": {
+          "n": 1600,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": "http_544",
+        "totalBytes": 24839914,
+        "perStatus": {
+          "200": {
+            "count": 1521,
+            "headersMs": {
+              "n": 1521,
+              "min": 465.39,
+              "p50": 4877.65,
+              "p95": 9419.37,
+              "max": 10800.63
+            },
+            "totalMs": {
+              "n": 1521,
+              "min": 479.6,
+              "p50": 4880.39,
+              "p95": 9420.28,
+              "max": 10802.15
+            },
+            "bodyDrainMsDerived": {
+              "n": 1521,
+              "min": 0.01,
+              "p50": 0.87,
+              "p95": 23.91,
+              "max": 236.73
+            },
+            "responseWaitMs": {
+              "n": 1521,
+              "min": 219.21,
+              "p50": 4808.47,
+              "p95": 9211.79,
+              "max": 10549.62
+            },
+            "connectMs": {
+              "n": 1521,
+              "min": 0.0,
+              "p50": 188.54,
+              "p95": 239.53,
+              "max": 251.56
+            },
+            "bytes": {
+              "n": 1521,
+              "min": 1771.0,
+              "p50": 8137.0,
+              "p95": 62014.0,
+              "max": 62014.0
+            },
+            "connectionReusedCount": 733,
+            "distinctSkillIndexCount": 19
+          },
+          "544": {
+            "count": 79,
+            "headersMs": {
+              "n": 79,
+              "min": 3058.88,
+              "p50": 5196.78,
+              "p95": 9015.91,
+              "max": 9302.32
+            },
+            "totalMs": {
+              "n": 79,
+              "min": 3058.89,
+              "p50": 5196.82,
+              "p95": 9015.92,
+              "max": 9302.33
+            },
+            "bodyDrainMsDerived": {
+              "n": 79,
+              "min": 0.01,
+              "p50": 0.02,
+              "p95": 0.07,
+              "max": 0.19
+            },
+            "responseWaitMs": {
+              "n": 79,
+              "min": 3058.69,
+              "p50": 5196.55,
+              "p95": 8827.38,
+              "max": 9098.02
+            },
+            "connectMs": {
+              "n": 79,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 189.87,
+              "max": 204.17
+            },
+            "bytes": {
+              "n": 79,
+              "min": 124.0,
+              "p50": 124.0,
+              "p95": 124.0,
+              "max": 124.0
+            },
+            "connectionReusedCount": 67,
+            "distinctSkillIndexCount": 19,
+            "databaseTimeoutCodeCount": 79,
+            "knownFixedMessageCount": 79,
+            "firstHeadersObservedOffsetMs": 9038.64
+          }
+        }
+      },
+      {
+        "label": "confirm-get-c800",
+        "sourceSha256": {
+          "confirm-get-c800.summary.json": "1295c818545b1bb91ca79153e6fe2e55727ab3b218afdeeecea28df050a6a586",
+          "confirm-get-c800.rows.json": "4a10cab73069e1f8993123df7e4b8ea55f0734a0043abf45f301e5d93de76e51"
+        },
+        "startedAt": "2026-10-21T18:34:20.330486+00:00",
+        "endedAt": "2026-10-21T18:34:29.011430+00:00",
+        "kind": "get",
+        "configuredConcurrency": 800,
+        "actualPeakHttpInFlight": 800,
+        "plannedRequests": 1600,
+        "attemptsFinished": 1175,
+        "httpHeadersSentInstrumented": 1175,
+        "httpResponsesObserved": 1175,
+        "notStarted": 425,
+        "statuses": {
+          "200": 984,
+          "544": 191
+        },
+        "categories": {
+          "ok": 984,
+          "storage_http_error": 191
+        },
+        "http544RateAmongAttemptsPct": 16.2553,
+        "elapsedSeconds": 8.68,
+        "clientCpuSeconds": 1.059,
+        "cpuSingleCoreEquivalentPct": 12.2,
+        "eventLoopLagMs": {
+          "n": 404,
+          "min": 0.05,
+          "p50": 1.08,
+          "p95": 2.48,
+          "max": 106.93
+        },
+        "connectorQueueMs": {
+          "n": 1175,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": "http_544",
+        "totalBytes": 16307414,
+        "perStatus": {
+          "200": {
+            "count": 984,
+            "headersMs": {
+              "n": 984,
+              "min": 504.05,
+              "p50": 4193.21,
+              "p95": 6832.15,
+              "max": 7622.36
+            },
+            "totalMs": {
+              "n": 984,
+              "min": 504.97,
+              "p50": 4198.06,
+              "p95": 6840.62,
+              "max": 7622.39
+            },
+            "bodyDrainMsDerived": {
+              "n": 984,
+              "min": 0.01,
+              "p50": 0.92,
+              "p95": 24.44,
+              "max": 48.09
+            },
+            "responseWaitMs": {
+              "n": 984,
+              "min": 317.08,
+              "p50": 4041.45,
+              "p95": 6603.9,
+              "max": 7379.51
+            },
+            "connectMs": {
+              "n": 984,
+              "min": 0.0,
+              "p50": 158.78,
+              "p95": 231.75,
+              "max": 244.17
+            },
+            "bytes": {
+              "n": 984,
+              "min": 1771.0,
+              "p50": 8137.0,
+              "p95": 62014.0,
+              "max": 62014.0
+            },
+            "connectionReusedCount": 371,
+            "distinctSkillIndexCount": 19
+          },
+          "544": {
+            "count": 191,
+            "headersMs": {
+              "n": 191,
+              "min": 3027.53,
+              "p50": 4842.52,
+              "p95": 4958.73,
+              "max": 5033.42
+            },
+            "totalMs": {
+              "n": 191,
+              "min": 3027.54,
+              "p50": 4842.55,
+              "p95": 4958.76,
+              "max": 5033.55
+            },
+            "bodyDrainMsDerived": {
+              "n": 191,
+              "min": 0.01,
+              "p50": 0.03,
+              "p95": 0.13,
+              "max": 1.68
+            },
+            "responseWaitMs": {
+              "n": 191,
+              "min": 3026.79,
+              "p50": 4624.43,
+              "p95": 4779.28,
+              "max": 4810.38
+            },
+            "connectMs": {
+              "n": 191,
+              "min": 0.0,
+              "p50": 164.41,
+              "p95": 242.15,
+              "max": 244.32
+            },
+            "bytes": {
+              "n": 191,
+              "min": 124.0,
+              "p50": 124.0,
+              "p95": 124.0,
+              "max": 124.0
+            },
+            "connectionReusedCount": 4,
+            "distinctSkillIndexCount": 19,
+            "databaseTimeoutCodeCount": 191,
+            "knownFixedMessageCount": 191,
+            "firstHeadersObservedOffsetMs": 4757.89
+          }
+        }
+      },
+      {
+        "label": "control-list-c800",
+        "sourceSha256": {
+          "control-list-c800.summary.json": "384276cc8a5b4f20fd3ab3ce9dfc4796408595d3bc05a703cf012fbfe85b3626",
+          "control-list-c800.rows.json": "aa2b37022167ca17b8ca0b15022cdf8d2a50adafe7cd20d7555d86bebbec0a3f"
+        },
+        "startedAt": "2026-10-21T18:37:19.680362+00:00",
+        "endedAt": "2026-10-21T18:37:26.707698+00:00",
+        "kind": "list",
+        "configuredConcurrency": 800,
+        "actualPeakHttpInFlight": 800,
+        "plannedRequests": 1600,
+        "attemptsFinished": 1600,
+        "httpHeadersSentInstrumented": 1600,
+        "httpResponsesObserved": 1600,
+        "notStarted": 0,
+        "statuses": {
+          "200": 1600
+        },
+        "categories": {
+          "ok": 1600
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 7.024,
+        "clientCpuSeconds": 0.939,
+        "cpuSingleCoreEquivalentPct": 13.37,
+        "eventLoopLagMs": {
+          "n": 297,
+          "min": 0.04,
+          "p50": 1.08,
+          "p95": 9.53,
+          "max": 233.4
+        },
+        "connectorQueueMs": {
+          "n": 1600,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 2196121,
+        "perStatus": {
+          "200": {
+            "count": 1600,
+            "headersMs": {
+              "n": 1600,
+              "min": 187.3,
+              "p50": 1002.29,
+              "p95": 6410.67,
+              "max": 6858.64
+            },
+            "totalMs": {
+              "n": 1600,
+              "min": 187.37,
+              "p50": 1002.32,
+              "p95": 6410.68,
+              "max": 6858.68
+            },
+            "bodyDrainMsDerived": {
+              "n": 1600,
+              "min": 0.01,
+              "p50": 0.04,
+              "p95": 0.78,
+              "max": 73.38
+            },
+            "responseWaitMs": {
+              "n": 1600,
+              "min": 187.09,
+              "p50": 1001.85,
+              "p95": 6223.17,
+              "max": 6666.51
+            },
+            "connectMs": {
+              "n": 1600,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 228.49,
+              "max": 250.75
+            },
+            "bytes": {
+              "n": 1600,
+              "min": 515.0,
+              "p50": 927.0,
+              "p95": 5274.0,
+              "max": 5274.0
+            },
+            "connectionReusedCount": 800,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      },
+      {
+        "label": "final-recovery-get",
+        "sourceSha256": {
+          "final-recovery-get.summary.json": "396873ee3fb46c7b1f843b00b054815ceb3f4cec2c94bc98baa877f446110440",
+          "final-recovery-get.rows.json": "a66b73e9261689724ca9789a05a3e9036955bccf9c317832ecb9454ab90a7aa8"
+        },
+        "startedAt": "2026-10-21T18:37:38.550645+00:00",
+        "endedAt": "2026-10-21T18:37:39.205618+00:00",
+        "kind": "get",
+        "configuredConcurrency": 1,
+        "actualPeakHttpInFlight": 1,
+        "plannedRequests": 19,
+        "attemptsFinished": 19,
+        "httpHeadersSentInstrumented": 19,
+        "httpResponsesObserved": 19,
+        "notStarted": 0,
+        "statuses": {
+          "200": 19
+        },
+        "categories": {
+          "ok": 19
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 0.655,
+        "clientCpuSeconds": 0.031,
+        "cpuSingleCoreEquivalentPct": 4.73,
+        "eventLoopLagMs": {
+          "n": 31,
+          "min": 0.13,
+          "p50": 1.09,
+          "p95": 3.21,
+          "max": 4.47
+        },
+        "connectorQueueMs": {
+          "n": 19,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 312197,
+        "perStatus": {
+          "200": {
+            "count": 19,
+            "headersMs": {
+              "n": 19,
+              "min": 22.35,
+              "p50": 28.38,
+              "p95": 47.6,
+              "max": 47.6
+            },
+            "totalMs": {
+              "n": 19,
+              "min": 22.42,
+              "p50": 29.3,
+              "p95": 75.64,
+              "max": 75.64
+            },
+            "bodyDrainMsDerived": {
+              "n": 19,
+              "min": 0.04,
+              "p50": 0.1,
+              "p95": 28.04,
+              "max": 28.04
+            },
+            "responseWaitMs": {
+              "n": 19,
+              "min": 21.81,
+              "p50": 27.88,
+              "p95": 42.87,
+              "max": 42.87
+            },
+            "connectMs": {
+              "n": 19,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 10.54,
+              "max": 10.54
+            },
+            "bytes": {
+              "n": 19,
+              "min": 1771.0,
+              "p50": 8137.0,
+              "p95": 62014.0,
+              "max": 62014.0
+            },
+            "connectionReusedCount": 18,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      },
+      {
+        "label": "final-recovery-list",
+        "sourceSha256": {
+          "final-recovery-list.summary.json": "07d8eec0bbb7d617de7bb9dcc0a16bd62578b67b6e31a0f575380223e0d4dd1e",
+          "final-recovery-list.rows.json": "b73a7a455d32da2cd0cc75159296245564ed09c99bdcbe801bb4a6115011b941"
+        },
+        "startedAt": "2026-10-21T18:37:42.508554+00:00",
+        "endedAt": "2026-10-21T18:37:42.883401+00:00",
+        "kind": "list",
+        "configuredConcurrency": 1,
+        "actualPeakHttpInFlight": 1,
+        "plannedRequests": 19,
+        "attemptsFinished": 19,
+        "httpHeadersSentInstrumented": 19,
+        "httpResponsesObserved": 19,
+        "notStarted": 0,
+        "statuses": {
+          "200": 19
+        },
+        "categories": {
+          "ok": 19
+        },
+        "http544RateAmongAttemptsPct": 0.0,
+        "elapsedSeconds": 0.375,
+        "clientCpuSeconds": 0.016,
+        "cpuSingleCoreEquivalentPct": 4.27,
+        "eventLoopLagMs": {
+          "n": 18,
+          "min": 0.18,
+          "p50": 1.0,
+          "p95": 1.18,
+          "max": 1.18
+        },
+        "connectorQueueMs": {
+          "n": 19,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 0.0,
+          "max": 0.0
+        },
+        "stopReason": null,
+        "totalBytes": 26090,
+        "perStatus": {
+          "200": {
+            "count": 19,
+            "headersMs": {
+              "n": 19,
+              "min": 10.77,
+              "p50": 12.1,
+              "p95": 104.58,
+              "max": 104.58
+            },
+            "totalMs": {
+              "n": 19,
+              "min": 10.81,
+              "p50": 12.15,
+              "p95": 104.78,
+              "max": 104.78
+            },
+            "bodyDrainMsDerived": {
+              "n": 19,
+              "min": 0.03,
+              "p50": 0.05,
+              "p95": 0.71,
+              "max": 0.71
+            },
+            "responseWaitMs": {
+              "n": 19,
+              "min": 10.58,
+              "p50": 11.91,
+              "p95": 104.23,
+              "max": 104.23
+            },
+            "connectMs": {
+              "n": 19,
+              "min": 0.0,
+              "p50": 0.0,
+              "p95": 10.35,
+              "max": 10.35
+            },
+            "bytes": {
+              "n": 19,
+              "min": 515.0,
+              "p50": 927.0,
+              "p95": 5274.0,
+              "max": 5274.0
+            },
+            "connectionReusedCount": 18,
+            "distinctSkillIndexCount": 19
+          }
+        }
+      }
+    ],
+    "findings": {
+      "established": [
+        "Both GET C800 runs reached measured peak 800 HTTP in-flight and received actual HTTP 544 DatabaseTimeout responses, with zero client_error categories.",
+        "Connector queue was zero for these runs; event-loop p95 delay was below 3 ms and maximum below 118 ms, much smaller than multi-second response waits.",
+        "GET C800 timeout bodies were tiny and drained quickly; the dominant measured latency preceded response headers.",
+        "The confirmation failure rate denominator is 1175 actual attempts, not 1600 planned requests; 425 requests were not started."
+      ],
+      "notEstablished": [
+        "Which internal DatabaseTimeout branch fired: Knex acquire timeout, pg connection timeout, or PostgreSQL 57014 query cancellation.",
+        "Whether pool size, slow SQL, DB/service/proxy queuing, storage backend access, or another service-side factor is the root cause.",
+        "HTTP in-flight is not the number of occupied DB connections.",
+        "The post-header drain measurement alone does not isolate all object transfer time, since data may already be buffered before headers become observable.",
+        "Public endpoint results are not a latency-equivalent replay of the Runner private-network path."
+      ],
+      "limitations": [
+        "GET C400 and LIST C400 had observed maximum event-loop stalls of about 1.74 s and 1.95 s respectively, so the full ramp cannot be described as completely free of client scheduling effects.",
+        "Each run is a bounded burst, not a sustained capacity test.",
+        "v1 first run and revised confirmation differ in stop timing; compare actual completed requests and per-request measurements, not planned counts alone."
+      ]
+    },
+    "finalRecovery": {
+      "getResponses200": 19,
+      "getDistinctSkills": 19,
+      "getContentMatchesBaseline": true,
+      "listResponses200": 19,
+      "authFileRemovedObserved": true
+    },
+    "updatedAt": "2026-10-21T18:38:26.493032+00:00",
+    "getVsListInterpretation": {
+      "supports": [
+        "Under these bounded local/public-path bursts, GET C800 reproduced DatabaseTimeout in two runs; LIST C800 completed all 1600 requests with HTTP 200 and measured peak 800 in-flight.",
+        "The failure is workload/path dependent in these observations; the client can issue and finish 1600 LIST requests at the same configured/measured peak without local errors.",
+        "The 19 final GETs matched original baseline hashes and all 19 final LISTs succeeded, supporting recovery for these tested objects at low concurrency."
+      ],
+      "doesNotSupport": [
+        "LIST success does not prove absence of DB or service queuing: LIST C800 header p95 was about 6.41 seconds.",
+        "Cannot conclude that the object download holds a DB connection; ordinary v1.48.9 GET metadata transactions commit before backend getObject.",
+        "Cannot attribute GET failures specifically to OSS, SQL, local pool size, PG global capacity, or exact internal DatabaseTimeout branch without server evidence.",
+        "Cannot claim C800 is a deterministic failure threshold, nor extrapolate these bursts to sustained throughput/capacity.",
+        "The two GET failure percentages are not a controlled trend: stop timing and actual request counts differ; service state and run ordering were not randomized.",
+        "Local public-path reproduction confirms this error can occur independently of Agent task orchestration, but does not prove it is the identical internal cause of the earlier Runner private-path failures."
+      ],
+      "recommendations": [
+        "Report the GET/LIST contrast and exact actual denominators as a reproduction result, not a root-cause finding.",
+        "Correlate the recorded request IDs/timestamps with Storage original errors, SQLSTATE, effective pool settings, and acquire/query timing before changing pool capacity.",
+        "Retain LIST high tail latency as an observation even though no request failed; report low-concurrency recovery and verified hashes separately."
+      ]
+    }
+  },
+  "limitations": [
+    "Same HTTP error does not prove the same internal cause as the earlier Runner failure.",
+    "Public HTTP path differs from the original private VPC path.",
+    "Repeated reads of 19 SKILL.md files and directory listings do not model every file or mixed production workload.",
+    "Concurrency is actual outstanding HTTP requests, not QPS, distinct Skills, or SQL connections. Completion rate is not a controlled offered request rate.",
+    "Short bursts and two failing GET runs do not establish an exact sustainable capacity limit.",
+    "Storage connection count 21 is an observation, not a verified pool-size setting.",
+    "2-second GET DB samples and 1-second LIST samples can miss short peaks. GET transaction age was not captured.",
+    "LIST idle-in-transaction sample age was short, so state counts alone do not prove a connection leak.",
+    "The C400 batches had material local event-loop pauses; do not interpret the whole matrix as a clean capacity benchmark.",
+    "No current-run RDS CPU series, Storage pool queues, worker resources, raw exception/SQLSTATE, or S3 timings were captured."
+  ],
+  "cleanup": {
+    "loadCompleted": true,
+    "httpSessionsClosed": true,
+    "temporaryStorageCredentialDeleted": true,
+    "dbObserverStopFilePresent": true,
+    "runtimeOrInfrastructureChanges": false,
+    "dbObserverStopped": true,
+    "dbConnectorDisconnected": true
+  },
+  "sourceEvidenceSha256": {
+    "baseline-get.rows.json": "ee8853c1a451faaf52bdca857f276233f5d4e7361c178770f4f52df36c6a63f1",
+    "baseline-get.summary.json": "ef7604b1042409f9f959659acea8dd52c9aeb4d926a830ac5ef06fdad8aeda94",
+    "baseline-list.rows.json": "7157febe3db6490424c5b114c39fcdc2d885f02cd7154bf02061857def58703c",
+    "baseline-list.summary.json": "e4e33e1761ca2c96b597c8145ff262e135a75ba52acd30e0ad32c909db83981b",
+    "confirm-get-c800.rows.json": "4a10cab73069e1f8993123df7e4b8ea55f0734a0043abf45f301e5d93de76e51",
+    "confirm-get-c800.summary.json": "1295c818545b1bb91ca79153e6fe2e55727ab3b218afdeeecea28df050a6a586",
+    "control-list-c800.rows.json": "aa2b37022167ca17b8ca0b15022cdf8d2a50adafe7cd20d7555d86bebbec0a3f",
+    "control-list-c800.summary.json": "384276cc8a5b4f20fd3ab3ce9dfc4796408595d3bc05a703cf012fbfe85b3626",
+    "final-recovery-get.rows.json": "a66b73e9261689724ca9789a05a3e9036955bccf9c317832ecb9454ab90a7aa8",
+    "final-recovery-get.summary.json": "396873ee3fb46c7b1f843b00b054815ceb3f4cec2c94bc98baa877f446110440",
+    "final-recovery-list.rows.json": "b73a7a455d32da2cd0cc75159296245564ed09c99bdcbe801bb4a6115011b941",
+    "final-recovery-list.summary.json": "07d8eec0bbb7d617de7bb9dcc0a16bd62578b67b6e31a0f575380223e0d4dd1e",
+    "fixture.json": "a53888efcb2e397736dfb6ba21cc3e33d3b6e0dbba51b5febbc4782edb3729cc",
+    "get-c160.rows.json": "07e56fe26763f44469999ff9de794980b7424c4ba6f3eb2a7dd25cce81492b85",
+    "get-c160.summary.json": "f921215069a8464995a895647cc315721e8688b6fa4efb1a23dc1da3f6b5c17d",
+    "get-c20.rows.json": "4f7d6c2bda125d0ccc73effae77eaf29d7019aadfcd3320a325bd7276ecf37f7",
+    "get-c20.summary.json": "80bda66f95d8cc377f0accbb2d8c3d2490f8edbe46f867fc035c2614094ea08f",
+    "get-c200.rows.json": "9a1703ed3632825aac41a4b638d658c0db8d546a1907bd423518b0a9c478d707",
+    "get-c200.summary.json": "9b1bde3829e3ea6480cc19f5db24e06ebf3853c0fd9ebffeb403d9de112a9e44",
+    "get-c40.rows.json": "bfcbea2833cb88ee1256f11d23c2ffa3b485282b39107c37b710441082fc65da",
+    "get-c40.summary.json": "a442b74aeff27ae9d4b0b67867926ddbd3531b4e6f3305cf52dbc82a32edce88",
+    "get-c400.rows.json": "dfcd62972b246e519d6067d87e5230a914831211864459ebfd860006bfafb948",
+    "get-c400.summary.json": "5b6ff1389e17eafec6e81be83ba2368ce2a14bc709f9c54d18a6f3832f9cd351",
+    "get-c8.rows.json": "352912745b64c9767d828941d8af336d1eb1ebdc933002ecccd9f74430866393",
+    "get-c8.summary.json": "e854e7a3497dd1614faea34bff63947000e2aab997aa6ba2a71d1b61c08f1a7a",
+    "get-c80.rows.json": "07aa9e3ebc564727313c299cdbe9e02cd3962a4ccc7df802ef4cf068279a38e5",
+    "get-c80.summary.json": "414e7a949948f113df8cbd07241eb7b2811b23e765d5352b12f197b56f9dbb35",
+    "get-c800.rows.json": "b63e5f2eaf317f596c85220350e4d56efcbc4f924d9a953b4e0bd1edbd5e6c09",
+    "get-c800.summary.json": "0b5c6f55922239a2830bd7b259f64a00be6b8f4d63f0df78523aef147982ae62",
+    "list-c160.rows.json": "4139c1052a00558461e69dd522480b369128ba4d0cb6ab9c9c6dd0c9b41ff0fc",
+    "list-c160.summary.json": "ea646547f639e2f94c7bb3c7d98aeee422cf7b0d9ed7216cbab32d7b13164c92",
+    "list-c20.rows.json": "4deee74a140ce0b39c93aea5b79a168f1c774d12231cc0be82c2b1902748aa20",
+    "list-c20.summary.json": "af200d45a306200f1df1ec642e2aa5409e7a01fd1059cb3cd963479066cfae71",
+    "list-c200.rows.json": "80aa9fde42ee470571d3f31e1f20a9612772f073c35e963328bf7cbbd0a934c5",
+    "list-c200.summary.json": "f0ec9ed0459a9aec8a0586898f285e1638c5a1343ab6a66e0c5ac9e2f858935b",
+    "list-c40.rows.json": "a511204df138ecd36e8a0ee1333fd1565d80b0750626c44f9cd35fd2845b4a98",
+    "list-c40.summary.json": "8fc54902fc945e9cf5cdaf76a06ad8058821d0210bb990062dbeffccd1a9d146",
+    "list-c400.rows.json": "3b2fdd4f714fdeb046418e19d9584039795ea598069191346362ab322324af94",
+    "list-c400.summary.json": "4d0e3f81f5293447560f20ec846e5174fe32fd53e997a2facacee41b38bf52c9",
+    "list-c8.rows.json": "1c1e7b98089329955405f8b9b10dd1358ce24a7868ab77e8e85fcfef84df37d1",
+    "list-c8.summary.json": "babbe6f10c2bdac15067466dec6072f04830f285a1403307da5f46b577d86e59",
+    "list-c80.rows.json": "0742a75213e601831b2b4aeb51308b08d684066d49bcc6186ed9601db4b946dd",
+    "list-c80.summary.json": "e374cef49b108400b6a6450dc94faeee944939bc9a49ca22ccb157c59a252a3d",
+    "read-burst-matrix-v1.py": "b8b32c644ff67813a3e20f6a6812c891278775a66911ff32aac52b7652e7b7a4",
+    "read-burst.py": "7684fd26d2d462df45e1ce50e29523172a8609f8d412fee8fe35fb481b87320f",
+    "recovery-get.rows.json": "37702b138e37ddf2d52d570afb683e7173c01740bb15fb2009a23dbabe309db7",
+    "recovery-get.summary.json": "5b31c321b513049ca38a24f8cf1d06d97ad985371bd3222bae1ba4d9ca264eec",
+    "run-matrix.py": "6ed2fd96616c0158d88cf7a1189b800e51e77394edbc262ef3b90107bf256133",
+    "db-final-analysis.json": "b257d4801a0ccd712ee5289167e156a5f4ae3f8e7a79d99c9e77c4447150d658"
+  },
+  "privateEvidenceDirectory": "/private/tmp/oma-skill-read-repro-20261022",
+  "databaseAnalysis": {
+    "generatedAtUtc": "2026-10-21T18:38:56.777283+00:00",
+    "scope": {
+      "instance": "ra-lvyt8wkxiid4a76",
+      "rdsInstance": "pgm-uf6fh394661t62gb",
+      "database": "supabase_db",
+      "storageRole": "supabase_storage_admin",
+      "loadBucket": "workspace-test",
+      "loadAgentId": "agent_tdpcn95CKCCQzEAa5SBGz",
+      "loadSkillCount": 19,
+      "loadTransport": "local-to-same-instance-public-endpoint",
+      "dbObservationMethod": "Supabase connector SELECT of pg_stat_activity counts, state/waits, aggregate ages and fixed query classification; no business queries or mutations",
+      "dbObserverIdentity": "supabase_admin",
+      "businessLoadOwnedByParent": true,
+      "observerSentStorageLoad": false
+    },
+    "observation": {
+      "path": "/private/tmp/oma-skill-read-repro-20261022/db-observations.jsonl",
+      "sha256": "d3343de4061595b49a997bb3914747dafc65da88228ebde661bc80c3a0480db9",
+      "bytes": 583049,
+      "samples": 222,
+      "validSamples": 222,
+      "queryErrorSamples": 0,
+      "phases": [
+        {
+          "queryVersion": 1,
+          "sampleCount": 119,
+          "firstDbAtUtc": "2026-10-21T18:31:37.645463+00:00",
+          "lastDbAtUtc": "2026-10-21T18:35:35.714794+00:00",
+          "targetIntervalSeconds": 2
+        },
+        {
+          "queryVersion": 2,
+          "sampleCount": 103,
+          "firstDbAtUtc": "2026-10-21T18:36:03.245085+00:00",
+          "lastDbAtUtc": "2026-10-21T18:37:45.395559+00:00",
+          "targetIntervalSeconds": 1
+        }
+      ],
+      "maxIntervalSeconds": 27.530291,
+      "maxIntervalReason": "A deliberate sampler upgrade between GET and LIST control added last-query class and transaction/state ages; no load window crossed this upgrade.",
+      "allStorageStatesVisible": true
+    },
+    "allObservedPeaks": {
+      "storageConnections": 21,
+      "storageActive": 0,
+      "storageIdleInTransaction": 19,
+      "storageLockWaiting": 0,
+      "storageBlocked": 0,
+      "globalConnections": 94
+    },
+    "loadWindows": {
+      "get-c800": {
+        "loadWindow": {
+          "startedAt": "2026-10-21T18:33:27.132049+00:00",
+          "endedAt": "2026-10-21T18:33:39.442786+00:00",
+          "concurrency": 800,
+          "requestedCount": 1600,
+          "started": 1600,
+          "completed": 1600,
+          "notStarted": 0,
+          "cancelled": 0,
+          "httpStatus": {
+            "200": 1521,
+            "544": 79
+          }
+        },
+        "http544Window": {
+          "count": 79,
+          "firstResponseAt": "2026-10-21T18:33:36.170917+00:00",
+          "lastResponseAt": "2026-10-21T18:33:36.671654+00:00",
+          "firstRequestAt": "2026-10-21T18:33:27.253853+00:00"
+        },
+        "peakWithinLoad": {
+          "globalConnections": 93,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageIdleInTransaction": 18,
+          "storageIdle": 8,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "observerQueryMs": 61
+        },
+        "peakTransactionAgeSeconds": null,
+        "peakIdleTransactionStateAgeSeconds": null,
+        "sampleCountWithinLoad": 6
+      },
+      "confirm-get-c800": {
+        "loadWindow": {
+          "startedAt": "2026-10-21T18:34:20.330486+00:00",
+          "endedAt": "2026-10-21T18:34:29.011430+00:00",
+          "concurrency": 800,
+          "requestedCount": 1600,
+          "started": 1175,
+          "completed": 1175,
+          "notStarted": 425,
+          "cancelled": 0,
+          "httpStatus": {
+            "200": 984,
+            "544": 191
+          }
+        },
+        "http544Window": {
+          "count": 191,
+          "firstResponseAt": "2026-10-21T18:34:25.088448+00:00",
+          "lastResponseAt": "2026-10-21T18:34:25.477515+00:00",
+          "firstRequestAt": "2026-10-21T18:34:20.405412+00:00"
+        },
+        "peakWithinLoad": {
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageIdleInTransaction": 18,
+          "storageIdle": 5,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "observerQueryMs": 58
+        },
+        "peakTransactionAgeSeconds": null,
+        "peakIdleTransactionStateAgeSeconds": null,
+        "sampleCountWithinLoad": 4
+      },
+      "control-list-c800": {
+        "loadWindow": {
+          "startedAt": "2026-10-21T18:37:19.680362+00:00",
+          "endedAt": "2026-10-21T18:37:26.707698+00:00",
+          "concurrency": 800,
+          "requestedCount": 1600,
+          "started": 1600,
+          "completed": 1600,
+          "notStarted": 0,
+          "cancelled": 0,
+          "httpStatus": {
+            "200": 1600
+          }
+        },
+        "http544Window": {
+          "count": 0,
+          "firstResponseAt": null,
+          "lastResponseAt": null,
+          "firstRequestAt": null
+        },
+        "peakWithinLoad": {
+          "globalConnections": 91,
+          "storageConnections": 21,
+          "storageActive": 0,
+          "storageIdleInTransaction": 19,
+          "storageIdle": 16,
+          "storageLockWaiting": 0,
+          "storageBlocked": 0,
+          "storageStateHidden": 0,
+          "storageLongestActiveSeconds": 0.0,
+          "observerQueryMs": 69
+        },
+        "peakTransactionAgeSeconds": 0.129,
+        "peakIdleTransactionStateAgeSeconds": 0.068,
+        "sampleCountWithinLoad": 7
+      }
+    },
+    "listControlTransactionClassification": {
+      "lastQueryClasses": {
+        "SET_CONTEXT": {
+          "peakConnectionsInSnapshot": 16,
+          "snapshotsPresent": 7
+        },
+        "SEARCH": {
+          "peakConnectionsInSnapshot": 6,
+          "snapshotsPresent": 6
+        },
+        "BEGIN": {
+          "peakConnectionsInSnapshot": 8,
+          "snapshotsPresent": 6
+        }
+      },
+      "peakTransactionAgeSeconds": 0.129,
+      "peakIdleTransactionStateAgeSeconds": 0.068,
+      "interpretation": "Only BEGIN, SET_CONTEXT and SEARCH were observed while idle in transaction. Sampled transaction ages were at most 129 ms and idle-state ages at most 68 ms; these states do not establish long transactions or a connection leak."
+    },
+    "recovery": {
+      "httpChecks": {
+        "final-recovery-get": {
+          "startedAt": "2026-10-21T18:37:38.550645+00:00",
+          "endedAt": "2026-10-21T18:37:39.205618+00:00",
+          "configuredConcurrency": 1,
+          "started": 19,
+          "completed": 19,
+          "statuses": {
+            "200": 19
+          },
+          "errorCodes": {},
+          "retries": 0,
+          "latencyMs": {
+            "n": 19,
+            "min": 22.42,
+            "p50": 29.3,
+            "p95": 75.64,
+            "max": 75.64
+          }
+        },
+        "final-recovery-list": {
+          "startedAt": "2026-10-21T18:37:42.508554+00:00",
+          "endedAt": "2026-10-21T18:37:42.883401+00:00",
+          "configuredConcurrency": 1,
+          "started": 19,
+          "completed": 19,
+          "statuses": {
+            "200": 19
+          },
+          "errorCodes": {},
+          "retries": 0,
+          "latencyMs": {
+            "n": 19,
+            "min": 10.81,
+            "p50": 12.15,
+            "p95": 104.78,
+            "max": 104.78
+          }
+        }
+      },
+      "finalDbAtUtc": "2026-10-21T18:37:45.395559+00:00",
+      "finalStorageState": [
+        {
+          "role": "supabase_storage_admin",
+          "state": "idle",
+          "active": 0,
+          "wait_event": "ClientRead",
+          "captured_at": "2026-10-22T02:37:45.395687+08:00",
+          "connections": 21,
+          "lock_waiting": 0,
+          "state_hidden": 0,
+          "observer_role": "supabase_admin",
+          "wait_event_type": "Client",
+          "last_query_class": null,
+          "blocked_connections": 0,
+          "longest_active_seconds": null,
+          "longest_transaction_seconds": null,
+          "longest_idle_transaction_state_seconds": null
+        }
+      ],
+      "finalGlobalConnections": 89
+    },
+    "cleanup": {
+      "observerStoppedAtUtc": "2026-10-21T18:37:45.474Z",
+      "stopReason": "Parent created STOP-DB-OBSERVER; loop exited on sentinel with code 85.",
+      "connectorDisconnected": true,
+      "connectorDisconnectResult": "Successfully disconnected from instance ra-lvyt8wkxiid4a76",
+      "temporaryLoadAuthFileAbsent": true,
+      "testPodFallbackSamplerActive": false
+    },
+    "supportedConclusions": [
+      "The same Storage backend returned DatabaseTimeout HTTP544 in two independent local GET bursts with concurrency 800, without OMA sessions or Sandbox creation.",
+      "No sampled global database connection pressure, Storage SQL lock waiting or blocked Storage connection coincided with these bursts. Storage connections reached 21; this is an observed count, not a verified pool configuration limit.",
+      "The LIST control at concurrency 800 completed all 1600 requests successfully. The subsequent low-concurrency GET/LIST checks both succeeded on all 19 Skills.",
+      "GET and LIST behaved differently at the same configured concurrency, narrowing investigation toward their Storage request paths or per-path resource use, without proving a specific root cause."
+    ],
+    "limitations": [
+      "The load used the same instance public endpoint; the original OMA workload used its VPC endpoint, so network path and request mix differ.",
+      "DB active=0 in samples does not mean no SQL executed; short statements can finish between 1-2 second samples.",
+      "Storage process-local pool maximum, pending acquisition queue, in-use resources, service CPU/event-loop state and original error SQLSTATE/stack were not exposed. Cannot conclude pool too small or slow SQL solely from HTTP544.",
+      "GET bursts were observed before query-class/age sampling was enabled. GET idle-in-transaction counts do not establish transaction duration or where the GET path stopped.",
+      "Shared instance global totals include unrelated workloads. Classification counts are snapshot presences/peaks, not distinct requests.",
+      "The read-only test application role lacked visibility into other roles; its exploratory baseline is excluded. Production business data, SQL text/parameters, HTTP bodies and credentials are not in this summary."
+    ],
+    "sources": [
+      "/private/tmp/oma-skill-read-repro-20261022/db-observations.jsonl",
+      "/private/tmp/oma-skill-read-repro-20261022/observer-query-v2.sql",
+      "/private/tmp/oma-skill-read-repro-20261022/get-c800.db-window.json",
+      "/private/tmp/oma-skill-read-repro-20261022/confirm-get-c800.db-window.json",
+      "/private/tmp/oma-skill-read-repro-20261022/control-list-c800.db-window.json",
+      "/private/tmp/oma-skill-read-repro-20261022/get-c800.summary.json",
+      "/private/tmp/oma-skill-read-repro-20261022/confirm-get-c800.summary.json",
+      "/private/tmp/oma-skill-read-repro-20261022/control-list-c800.summary.json",
+      "/private/tmp/oma-skill-read-repro-20261022/final-recovery-get.summary.json",
+      "/private/tmp/oma-skill-read-repro-20261022/final-recovery-list.summary.json"
+    ]
+  }
+}

@@ -10,6 +10,14 @@ clarification, not a claim that the platform was fixed.
 
 ## Decision
 
+> **Revised by [ADR-0022](0022-skill-bundles.md):** "refreshes Skills" below
+> becomes "verifies the Skill Set version each Turn and installs it when it
+> changed"; an unchanged Skill Set on the same Sandbox costs no OSS or Sandbox
+> call, and the model request no longer waits for the install. Mount
+> verification, the finite lifetime requirements, cold pure chat staying cold
+> and "no business operation executes until preparation and binding persistence
+> succeed" are retained.
+
 Pi remains in the Runner. The platform owns the only resource lifetime:
 
 - First tool use creates with 24h running timeout, `onTimeout: pause`, automatic

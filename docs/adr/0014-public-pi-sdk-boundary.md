@@ -33,6 +33,9 @@ supersedes #226/#229's original release dependency on the #228 fallback. See
 
 ### Native tools run in the Sandbox
 
+> **Note ([ADR-0022](0022-skill-bundles.md)):** "Skill projections" below are
+> now the Skill Install at `/skills`; they remain usable inside the Sandbox.
+
 Host registers the seven tools through `customTools` and disables built-ins.
 It reuses public factory schema, argument preparation and prompt metadata, but
 provides its own `execute` and file-free renderers. Each execute sends a JSON

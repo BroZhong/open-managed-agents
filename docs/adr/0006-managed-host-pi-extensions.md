@@ -2,6 +2,11 @@
 
 ## Status
 
+> **Note ([ADR-0022](0022-skill-bundles.md)):** Skill bodies now reach the
+> Sandbox by Skill Install instead of per-Turn projection. The rule in the
+> Context and §5 that Skill bodies exist only in the Sandbox, read at
+> `/skills/<name>/SKILL.md`, is unchanged.
+
 Accepted. Amends ADR-0002 and ADR-0003 for a narrow class of managed Pi
 extensions; all filesystem, command, and workspace operations remain governed by
 ADR-0002 and ADR-0005. ADR-0010 supersedes the former plugin-based
