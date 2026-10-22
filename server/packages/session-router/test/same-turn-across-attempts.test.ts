@@ -34,7 +34,7 @@ type Script = (input: AdapterInput, write: ReturnType<typeof journalWriter>, att
  * Runner is lost the way a killed process is: its lease stops renewing and it
  * never claims again, but what it committed stays.
  */
-async function harness(script: Script) {
+async function harness(script: Script, { delegations = true }: { delegations?: boolean } = {}) {
   const stores = createMemoryStores();
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test",
     runtime: "pi-agent", sandbox: { enabled: false } });
@@ -59,7 +59,7 @@ async function harness(script: Script) {
   const errors: unknown[] = [];
   const hub = new InProcessEventStreamHub();
   const runner = (ownerId: string, turnStreamStore: TurnStreamStore = turns) => new SessionRouter({
-    ...stores, eventStreamHub: hub, turnStreamStore, resolveAdapter: () => adapter,
+    ...stores, ...(delegations ? {} : { delegationStore: undefined }), eventStreamHub: hub, turnStreamStore, resolveAdapter: () => adapter,
     pendingClaimOwnerId: ownerId, pendingClaimLeaseMs: 100, pendingClaimRenewIntervalMs: 30,
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
     onDrainError: ({ error }) => errors.push(error),
@@ -133,6 +133,25 @@ describe("every attempt of an input continues the Turn its first attempt started
     expect((await h.ofType("session.turn_completed")).map((stored) => stored.data))
       .toEqual([expect.objectContaining({ turnId: "turn_1_a1" })]);
     expect(log.at(-1)?.type).toBe("session.status_idle");
+  });
+
+  it("A7 a Router without delegations keys the Adapter's events by their ids: the takeover's events never collide with the lost attempt's", async () => {
+    const h = await harness(lostMidTool, { delegations: false });
+    await h.enqueue("A");
+    const first = h.runner("runner-a");
+    const draining = first.handleNewEvent(h.session.id, h.agent);
+    await until(async () => (await h.ofType("agent.tool_use")).length === 1);
+    await h.lose("runner-a", draining);
+
+    await h.takeOver("runner-b");
+
+    expect(h.attempts).toEqual(["turn_1_a1", "turn_1_a1"]);
+    // The lost attempt's call and the takeover's answer are both in the log, each once.
+    expect((await h.ofType("agent.tool_use")).map((stored) => stored.data)).toEqual([expect.objectContaining({ toolUseId: "call_1" })]);
+    expect((await h.ofType("agent.message")).map((stored) => stored.data))
+      .toEqual([expect.objectContaining({ content: [{ type: "text", text: "checked" }], turnId: "turn_1_a1" })]);
+    expect(await h.ofType("session.error")).toEqual([]);
+    expect((await h.log()).at(-1)?.type).toBe("session.status_idle");
   });
 
   it("A15 lost during an MCP call: its unknown result names the server the call named", async () => {

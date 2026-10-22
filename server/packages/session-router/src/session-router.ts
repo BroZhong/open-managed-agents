@@ -1620,10 +1620,10 @@ export class SessionRouter {
         continue;
       }
 
-      let durableEventIndex = 0;
       // Every Adapter event is stamped with its Turn and Child Session caller
-      // and keyed once, so the journal writes and publishes it once. The
-      // Adapter has given each its final blockIndex (ADR-0020).
+      // and keyed by its id, so the journal writes and publishes it once and
+      // no attempt's event takes another's key. The Adapter has given each
+      // its final blockIndex (ADR-0020).
       const durableForms = new Map<string, { event: JournalEvent; key: string }>();
       attemptWrites.fromAdapter = (event) => {
         const known = durableForms.get(event.id);
@@ -1636,11 +1636,7 @@ export class SessionRouter {
         } : { ...event, turnId };
         const durable = {
           event: { type: completeEvent.type, data: completeEvent, apiKeyId: pendingEvent.apiKeyId },
-          key: this.turnKey(
-            pendingEvent.id,
-            this.delegations || event.type === "agent.context_start" || event.type === "agent.context_entry" || event.type === "agent.context_usage" || event.type === "agent.compaction"
-              ? `event:${event.id}` : `event:${durableEventIndex++}`,
-          ),
+          key: this.turnKey(pendingEvent.id, `event:${event.id}`),
         };
         durableForms.set(event.id, durable);
         return durable;
