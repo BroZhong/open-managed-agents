@@ -45,7 +45,7 @@ describe("Agents with an unsupported runtime", () => {
     expect(retiredEvents.map(event => event.type)).toEqual([
       "user.message", "session.status_running", "session.error", "session.turn_completed", "session.status_idle",
     ]);
-    expect(retiredEvents[2]?.data).toEqual({ error: {
+    expect(retiredEvents[2]?.data).toEqual({ turnId: "turn_1_a1", error: {
       code: "unsupported_runtime", message: 'Agent runtime "codex" is not supported',
     } });
     expect(await stores.pendingEventStore.count(retired.id)).toBe(0);

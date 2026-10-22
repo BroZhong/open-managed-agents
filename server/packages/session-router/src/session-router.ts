@@ -936,16 +936,16 @@ export class SessionRouter {
   private async checkWorkspace(
     journal: TurnJournal,
     sandbox: SandboxSession,
-    idempotencyKey: string,
+    pendingEventId: string,
+    turnId: string,
   ): Promise<void> {
     try {
       await sandbox.checkWorkspace();
     } catch {
-      const error = {
+      this.recordTurnError(journal, pendingEventId, turnId, "workspace_storage_check", {
         message: "Workspace storage could not be checked. The answer is retained; file save status is unconfirmed. Retry the file operation or check the Workspace before continuing.",
         code: "workspace_storage_error",
-      };
-      journal.record({ type: "session.error", data: { error } }, idempotencyKey);
+      });
       await journal.flush();
     }
   }
@@ -1001,6 +1001,21 @@ export class SessionRouter {
   }
 
   /**
+   * Record an error the Router writes itself. It names its Turn as the
+   * Adapter's events do, so the Turn's own reads (a Child execution's trace,
+   * a console grouping by Turn) include it.
+   */
+  private recordTurnError(
+    journal: TurnJournal,
+    pendingEventId: string,
+    turnId: string,
+    phase: string,
+    error: { code: string; message?: string },
+  ): void {
+    journal.record({ type: "session.error", data: { turnId, error } }, this.turnKey(pendingEventId, phase));
+  }
+
+  /**
    * Record a result for each tool call that has none, and the error that ends
    * its Turn. Each result is keyed by its call, so a repair a lost attempt
    * already wrote is not written twice.
@@ -1032,10 +1047,7 @@ export class SessionRouter {
         `recovery_tool_result:${encodeURIComponent(call.toolUseId)}`,
       ));
     }
-    if (error) {
-      journal.record({ type: "session.error", data: { turnId, error: { code: error.code, message: error.message } } },
-        this.turnKey(pendingEventId, error.phase));
-    }
+    if (error) this.recordTurnError(journal, pendingEventId, turnId, error.phase, { code: error.code, message: error.message });
   }
 
   /**
@@ -1398,10 +1410,10 @@ export class SessionRouter {
       // run it again.
       const adapter = this.resolveAdapter(currentAgent.runtime);
       if (!adapter) {
-        journal.record({ type: "session.error", data: { error: {
+        this.recordTurnError(journal, pendingEvent.id, turnId, "unsupported_runtime", {
           code: "unsupported_runtime",
           message: `Agent runtime "${currentAgent.runtime}" is not supported`,
-        } } }, this.turnKey(pendingEvent.id, "unsupported_runtime"));
+        });
         await this.endTurnStream(sessionId, turnId, projectionWriter);
         if (!await this.completeTurn(
           journal,
@@ -1424,8 +1436,7 @@ export class SessionRouter {
             "Agent is sandboxed but no sandbox manager is available (SANDBOX_ENABLED / E2B config missing)",
           code: "sandbox_unavailable",
         };
-        journal.record({ type: "session.error", data: { error } },
-          this.turnKey(pendingEvent.id, "sandbox_unavailable"));
+        this.recordTurnError(journal, pendingEvent.id, turnId, "sandbox_unavailable", error);
         // Mirror the normal turn-end housekeeping so the transient stream/active
         // turn record don't leak, then move on to the next pending event (the
         // drain loop falls through to the idle transition when the queue empties).
@@ -1497,8 +1508,7 @@ export class SessionRouter {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
             code: "sandbox_prepare_failed",
           };
-          journal.record({ type: "session.error", data: { error: refreshError } },
-            this.turnKey(pendingEvent.id, "sandbox_prepare_failed"));
+          this.recordTurnError(journal, pendingEvent.id, turnId, "sandbox_prepare_failed", refreshError);
           await this.endTurnStream(sessionId, turnId, projectionWriter);
           if (!await this.completeTurn(
             journal,
@@ -1597,8 +1607,7 @@ export class SessionRouter {
           message: "A managed MCP connection is unavailable for this Tenant",
           code: "managed_mcp_unavailable",
         };
-        journal.record({ type: "session.error", data: { error: managedMcpError } },
-          this.turnKey(pendingEvent.id, "managed_mcp_unavailable"));
+        this.recordTurnError(journal, pendingEvent.id, turnId, "managed_mcp_unavailable", managedMcpError);
         await this.endTurnStream(sessionId, turnId, projectionWriter);
         if (!await this.completeTurn(
           journal,
@@ -1675,8 +1684,7 @@ export class SessionRouter {
       if (failure) {
         // Signal anything the failed runtime left behind, as an abort would.
         turnController.abort(failure.error);
-        journal.record({ type: "session.error", data: { error: { message: String(failure.error), code: "adapter_error" } } },
-          this.turnKey(pendingEvent.id, "adapter_error"));
+        this.recordTurnError(journal, pendingEvent.id, turnId, "adapter_error", { message: String(failure.error), code: "adapter_error" });
         await journal.flush();
       }
 
@@ -1714,8 +1722,7 @@ export class SessionRouter {
       }
 
       if (sandbox) {
-        await this.checkWorkspace(journal, sandbox,
-          this.turnKey(pendingEvent.id, "workspace_storage_check"));
+        await this.checkWorkspace(journal, sandbox, pendingEvent.id, turnId);
       }
 
       // Fence again before changing global Turn state after the storage check.

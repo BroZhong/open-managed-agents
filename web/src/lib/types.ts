@@ -101,7 +101,8 @@ export interface SessionTurnAbortedEvent extends SessionEvent {
 
 export interface SessionErrorEvent extends SessionEvent {
   type: "session.error";
-  data: { error: { message: string; code?: string } };
+  /** The Turn the error ends; logs written before errors named it lack it. */
+  data: { turnId?: string; error: { message: string; code?: string } };
 }
 
 export interface AgentToolUseInputStreamStartEvent extends SessionEvent {

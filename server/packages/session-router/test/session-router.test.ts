@@ -241,6 +241,7 @@ describe("SessionRouter", () => {
           "session.status_idle",
         ]);
         expect(events.data[2]?.data).toMatchObject({
+          turnId: "turn_1_a1",
           error: { code: "managed_mcp_unavailable" },
         });
         expect((await router.recoverPendingEvents()).recovered).toEqual([]);

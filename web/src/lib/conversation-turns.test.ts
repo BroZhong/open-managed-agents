@@ -58,6 +58,21 @@ it.each(["session.turn_aborted", "session.error"])("does not treat %s as success
   expect(result[0].completed).toBe(false);
 });
 
+it("keeps an error the Router wrote in the Turn it names, whether or not the Agent answered first", () => {
+  const result = turns([
+    event(1, 0, "user.message", { content: [] }), event(2, 1, "session.status_running"),
+    event(3, 2, "session.error", { turnId: "turn_1_a1", error: { code: "sandbox_prepare_failed", message: "Sandbox preparation failed" } }),
+    event(4, 3, "session.turn_completed", { turnId: "turn_1_a1" }),
+    event(5, 10, "user.message", { content: [] }), event(6, 11, "session.status_running"), answer(7, 12, "turn_5_a1"),
+    event(8, 13, "session.error", { turnId: "turn_5_a1", error: { code: "workspace_storage_error", message: "Workspace storage could not be checked." } }),
+    event(9, 14, "session.turn_completed", { turnId: "turn_5_a1" }), event(10, 15, "session.status_idle"),
+  ]);
+  expect(result.map((turn) => ({ turnId: turn.turnId, completed: turn.completed, responses: turn.responses.map((message) => message.role) }))).toEqual([
+    { turnId: "turn_1_a1", completed: false, responses: ["error"] },
+    { turnId: "turn_5_a1", completed: false, responses: ["assistant", "error"] },
+  ]);
+});
+
 it("keeps an instruction inside its current Turn and tolerates missing timestamps", () => {
   const result = turns([
     { seq: 1, type: "delegation.input", ts: "", data: { prompt: "Task" } },
