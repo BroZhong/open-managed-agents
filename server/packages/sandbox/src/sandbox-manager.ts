@@ -11,7 +11,7 @@ import { SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.
 import type { SandboxClient } from "./sandbox-client.js";
 import type { InstalledSkillSet, SandboxActivity, SandboxLifecycleStore, SkillBundleStore } from '@oma-server/store';
 import { setTimeout as delay } from 'node:timers/promises';
-import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillSet } from "./skill-install.js";
+import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
   assertWorkspaceMountSpec,
   workspaceMountMetadata,
@@ -83,6 +83,29 @@ export interface SandboxEnvironmentBinding {
   recordSkillsInstalled?(installed: InstalledSkillSet): Promise<boolean>;
 }
 
+/** Told of each Skill Install a session runs for a Turn, which records them (ADR-0022). */
+export interface SkillInstallObserver {
+  /** An install of `skills` starts: the binding does not record them for its Sandbox. */
+  started(skills: SkillSet): void;
+  /**
+   * It ended: with its report, or with its error, a SkillInstallError, or
+   * the Turn signal's reason when the Turn cancelled it.
+   */
+  ended(outcome: { report: SkillInstallReport } | { error: unknown }): void;
+}
+
+/** What a Turn hands the preparation of its session. */
+export interface PrepareOptions {
+  /**
+   * The Turn's signal. Aborting it cancels an install still running for the
+   * Turn: it is not retried, the binding records nothing, and the Turn's
+   * operations waiting for it reject with the signal's reason.
+   */
+  signal?: AbortSignal;
+  /** Told of every install the session runs until the next prepare, a cold Sandbox's included. */
+  skillInstalls?: SkillInstallObserver;
+}
+
 export interface SandboxSession {
   executionSettled?(): boolean;
   readonly fileSystem: ToolFileSystem;
@@ -91,11 +114,15 @@ export interface SandboxSession {
   writeFile(path: string, content: string): Promise<void>;
   list(globOrDir?: string): Promise<FileListEntry[]>;
   /**
-   * Recheck an existing mount and install `skills` unless the binding records
-   * them for this Sandbox; cold sessions stay cold and install on creation.
-   * A failed install rejects with a SkillInstallError.
+   * Recheck an existing mount and decide whether the Sandbox must install
+   * `skills`: it does unless the binding records them for this Sandbox.
+   * Resolves once that is known, a skipped install fully prepared; an install
+   * runs on beside the Turn (ADR-0022). Every operation waits for it, so none
+   * runs before it succeeded, and its failure (a SkillInstallError) or
+   * cancellation fails each of them until the next prepare. Cold sessions
+   * stay cold and install on creation, before their first operation.
    */
-  prepare(skills?: SkillSet): Promise<void>;
+  prepare(skills?: SkillSet, options?: PrepareOptions): Promise<void>;
   /** Availability check only: never scans files or claims all open handles were saved. */
   checkWorkspace(): Promise<void>;
   /** Close execution resources. Completed writes already belong to the Workspace. */
@@ -155,6 +182,13 @@ class SandboxSessionImpl implements SandboxSession {
   private uncertainTurn = false;
   private creationUnconfirmed = false;
   private recovering?: Promise<void>;
+  /** The Turn the session was last prepared for. */
+  private turn: PrepareOptions = {};
+  /**
+   * The install prepare() left running. Operations wait for it; once it
+   * failed or was cancelled, they rethrow its error until the next prepare.
+   */
+  private installing?: Promise<void>;
 
   constructor(
     private readonly deps: SandboxManagerDeps,
@@ -295,11 +329,13 @@ class SandboxSessionImpl implements SandboxSession {
     if (id) await this.finishPreparation(id);
   }
 
-  async prepare(skills: SkillSet = this.skills): Promise<void> {
+  async prepare(skills: SkillSet = this.skills, options: PrepareOptions = {}): Promise<void> {
     this.assertOpen();
     if (this.ensuring) await this.ensuring;
     if (this.recovering) await this.recovering;
     this.skills = skills;
+    this.turn = options;
+    this.installing = undefined;
     this.prepared = false;
     this.uncertainTurn = false;
     const refresh = async (id: string | null, creationPending = false) => {
@@ -316,7 +352,14 @@ class SandboxSessionImpl implements SandboxSession {
       return { sandboxId: id, value: id };
     };
     const id = await this.withPreparationLock(refresh);
-    if (id) await this.finishPreparation(id);
+    if (!id) return;
+    // Reconnecting, verifying the mount and deciding the install block the
+    // Turn as before; the install itself runs beside it (ADR-0022).
+    const install = await this.beginInstall(id);
+    if (!install) { this.markPrepared(id); return; }
+    this.installing = install.settled.then(() => this.markPrepared(id));
+    // Each operation rethrows a failure; until one asks, it is not unhandled.
+    this.installing.catch(() => {});
   }
   /** Reattach an existing Sandbox under binding coordination: its mount is verified again. */
   private async attach(id: string, connect = true): Promise<void> {
@@ -327,15 +370,36 @@ class SandboxSessionImpl implements SandboxSession {
     this.sandboxId = id;
   }
   /**
-   * Make the verified Sandbox hold the current Skill Set, outside binding
-   * coordination: the install holds no database lock or pooled client, and
-   * the binding records it by its own compare-and-set. Usable only after.
+   * Make the verified Sandbox hold the current Skill Set and mark it usable:
+   * a cold Sandbox's creation and recovery, on behalf of an operation that
+   * waits for both.
    */
   private async finishPreparation(id: string): Promise<void> {
-    // The install is one promise per binding. Preparation waits for it here;
-    // #268 starts inference first and lets the first tool call await it.
-    await this.skillInstaller.ensure(this.binding?.id ?? this.binding ?? this, this.skillLedger(),
-      { sandboxId: id, tenantId: this.spec.tenantId }, this.skills);
+    await (await this.beginInstall(id))?.settled;
+    this.markPrepared(id);
+  }
+  /**
+   * Decide whether the verified Sandbox must install the current Skill Set
+   * and start installing it, outside binding coordination: the install holds
+   * no database lock or pooled client, and the binding records it by its own
+   * compare-and-set. Resolves undefined when nothing is to be installed,
+   * otherwise the install, which the Turn's observer hears about.
+   */
+  private async beginInstall(id: string): Promise<{ settled: Promise<void> } | undefined> {
+    const { signal, skillInstalls } = this.turn;
+    const skills = this.skills;
+    let started = false;
+    const pending = await this.skillInstaller.begin(this.binding?.id ?? this.binding ?? this, this.skillLedger(),
+      { sandboxId: id, tenantId: this.spec.tenantId }, skills, {
+        signal, onStart: () => { started = true; skillInstalls?.started(skills); },
+      });
+    if (!pending) return undefined;
+    return { settled: pending.settled.then(
+      (report) => { if (started && report) skillInstalls?.ended({ report }); },
+      (error: unknown) => { if (started) skillInstalls?.ended({ error }); throw error; },
+    ) };
+  }
+  private markPrepared(id: string): void {
     this.assertOpen();
     this.sandboxId = id;
     this.prepared = true;
@@ -417,6 +481,8 @@ class SandboxSessionImpl implements SandboxSession {
   private async ensure(): Promise<string> {
     this.assertOpen();
     if (this.recovering) await this.recovering;
+    // No business operation runs before the Turn's install succeeded.
+    if (this.installing) await this.installing;
     if (this.creationUnconfirmed) throw new Error('Sandbox creation or binding commit is unconfirmed; automatic replacement is disabled');
     if (this.prepared && this.sandboxId) return this.sandboxId;
     if (!this.ensuring) this.ensuring = this.ensurePrepared().finally(() => { this.ensuring = undefined; });

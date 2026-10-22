@@ -6,7 +6,7 @@ import type {
 import { PendingEventClaimLostError, presentContextData, presentEvent } from "@oma-server/store";
 import type {
   AdapterExecution, AgentToolResultEvent, HostSubagentCapability,
-  SubagentCallContext, ToolExecutor, ToolFileSystem,
+  SubagentCallContext,
 } from "@open-managed-agents/adapter-core";
 import type { JournalEvent, TurnJournal } from "./turn-journal.js";
 import type { DanglingCallResolver, RepairResult } from "./dangling-call-results.js";
@@ -406,31 +406,6 @@ export function outcomeFromEvents(execution: DelegationExecution, events: Stored
     // Commentary before a failed prompt is not a successful final answer.
     output: status === "completed" ? (last?.content ?? []).filter((block) => block.type === "text").map((block) => block.text ?? "").join("\n") : "",
     trace: { sessionId: execution.childId, turnId: execution.turnId },
-  };
-}
-
-/**
- * A fresh capability per Turn; stale owners cannot start new Sandbox work.
- * The fence only refuses to start commands, it never cancels a running one:
- * stopping a tool is its owner's decision, sent through the tool's own
- * protocol (Pi asks its wrapper to abort with SIGTERM). Killing the command
- * would stop only the wrapper and leave Pi's bash process group running.
- */
-export function fencedExecutor(executor: ToolExecutor, assertOwner: () => Promise<void>): ToolExecutor {
-  const fs = executor.fileSystem;
-  const guardedFs = fs && Object.fromEntries(Object.keys(fs).map((key) => [key, async (...args: unknown[]) => {
-    await assertOwner();
-    return (fs[key as keyof ToolFileSystem] as (...args: unknown[]) => unknown)(...args);
-  }])) as unknown as ToolFileSystem | undefined;
-  return {
-    fileSystem: guardedFs,
-    async *exec(command, options) {
-      await assertOwner();
-      yield* executor.exec(command, options);
-    },
-    readFile: async (path) => { await assertOwner(); return executor.readFile(path); },
-    writeFile: async (path, content) => { await assertOwner(); return executor.writeFile(path, content); },
-    list: async (path) => { await assertOwner(); return executor.list(path); },
   };
 }
 

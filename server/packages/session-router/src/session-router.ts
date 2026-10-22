@@ -42,10 +42,12 @@ import type {
   UserMessage,
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
-import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
+import { DelegationCoordinator, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
-import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type RepairOutcome, type ResumeFacts, type Takeover } from "./plan-resume.js";
-import { repairResult, type DanglingCallResolver } from "./dangling-call-results.js";
+import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts, type Takeover } from "./plan-resume.js";
+import { repairResult, type DanglingCallResolver, type RepairCause } from "./dangling-call-results.js";
+import { skillsInstallFailedText, turnExecutor } from "./turn-executor.js";
+import { INSTALL_ATTEMPT_STOPPED, SkillInstallSpans, skillInstallKey, unendedSkillInstalls, type SkillInstallEndData } from "./skill-install-spans.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -1012,7 +1014,7 @@ export class SessionRouter {
     pendingEventId: string,
     turnId: string,
     repairs: readonly DanglingToolCall[],
-    outcome: RepairOutcome,
+    outcome: RepairCause,
     error?: RecoveryError,
   ): Promise<void> {
     for (const call of repairs) {
@@ -1063,14 +1065,44 @@ export class SessionRouter {
   }
 
   /**
+   * End the attempt's Turn because the Skill Install a Sandbox operation
+   * waited for failed (ADR-0022): stop the synchronous children it waits on,
+   * tell every call left without a result that it was not executed, and
+   * record the install's error. The repairs read the Turn's output from the
+   * log, so the caller has flushed what the attempt recorded.
+   */
+  private async failTurnOnSkillInstall(
+    journal: TurnJournal,
+    session: Session,
+    pendingEventId: string,
+    promotedSeq: number,
+    turnId: string,
+    pendingFence: PendingEventFence,
+    error: SkillInstallError,
+  ): Promise<void> {
+    await this.delegations?.interruptChildren(session, turnId, pendingFence);
+    const turnEvents = (await this.readAllEvents(session.id)).filter((event) => event.seq > promotedSeq);
+    await this.recordRepairs(journal, session.id, pendingEventId, turnId, danglingToolCalls(turnEvents),
+      { notExecuted: skillsInstallFailedText(error) });
+    this.recordTurnError(journal, pendingEventId, turnId, "skills_install_failed", { code: "skills_install_failed", message: error.message });
+  }
+
+  /**
    * Mark that this attempt continues a Turn another claim held, before it
    * writes anything else of the Turn. One marker per takeover: a lost
-   * takeover's marker stays, and the next claim writes its own.
+   * takeover's marker stays, and the next claim writes its own. A Skill
+   * Install the stopped attempt left without an end span gets one now: that
+   * attempt no longer waits for it, whatever it did (ADR-0022).
    */
-  private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number, takeover: Takeover | undefined): void {
+  private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number,
+    takeover: Takeover | undefined, events: readonly StoredEvent[]): void {
     if (!takeover) return;
     journal.record({ type: "session.turn_resumed", data: { turnId, generation, ...takeover } },
       this.turnKey(pendingEventId, `turn_resumed:${generation}`));
+    for (const start of unendedSkillInstalls(events)) {
+      const end: SkillInstallEndData = { ...start, outcome: "aborted", reason: INSTALL_ATTEMPT_STOPPED };
+      journal.record({ type: "span.skills_install_end", data: end }, this.turnKey(pendingEventId, skillInstallKey(start.installId, "end")));
+    }
   }
 
   /**
@@ -1225,6 +1257,11 @@ export class SessionRouter {
         failure = { error };
         stopAttempt(error);
       };
+      // The spans of the Skill Installs the attempt's Sandbox runs, once it is
+      // prepared, and the failed install a Sandbox operation waited for: it
+      // ends the Turn (ADR-0022).
+      let skillInstalls: SkillInstallSpans | undefined;
+      let installFailure: SkillInstallError | undefined;
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
@@ -1237,6 +1274,8 @@ export class SessionRouter {
       const stopAttempt = (reason: unknown): void => {
         if (stopped) return;
         stopped = true;
+        // The next attempt ends the spans of installs this one leaves running.
+        skillInstalls?.close();
         journal.revokeAdapter();
         stopHeartbeat();
         turnController.abort(reason);
@@ -1289,6 +1328,9 @@ export class SessionRouter {
       // marker is written and its input acknowledged. False once the attempt
       // lost its claim on the way.
       const endTurn = async (endedTurnId: string): Promise<boolean> => {
+        // An install still running ends inside the Turn: its end span precedes
+        // the Turn's end, and a complete install is recorded on the binding.
+        await skillInstalls?.settled();
         await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
         lastOwnedTurn = projectionWriter;
         return this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, endedTurnId, pendingFence);
@@ -1350,7 +1392,7 @@ export class SessionRouter {
           (await this.delegationStore.listCommands(started.id)).some((command) => command.kind === "interrupt" && command.status !== "not_applied");
         const executionPlan = planResume({ ...facts, execution: { ...started, interruptRequested } });
         if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
-          this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
+          this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover, facts.events);
           await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
             executionPlan.repairOutcome, executionPlan.error);
           if (!await endTurn(executionPlan.turnId)) return;
@@ -1359,7 +1401,7 @@ export class SessionRouter {
         if (executionPlan.kind !== "acknowledge") plan = executionPlan;
       }
 
-      this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover);
+      this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover, facts.events);
       if (plan.kind === "complete") {
         if (plan.cause === "interrupted" && delegationExecution) {
           // The parent's Interrupt takes effect now, after the takeover marker:
@@ -1488,11 +1530,21 @@ export class SessionRouter {
           const skills = skillSetOf(equippedSkills.map(({ bundle }) => bundle));
           sandbox = this.sandboxFor(sessionId, session, currentAgent, skills);
           activitySandbox = sandbox;
-          // The Skill Set is computed per attempt: a Resumed Turn installs the current one.
-          await sandbox?.prepare(skills);
+          skillInstalls = new SkillInstallSpans({ turnId, generation: claim.generation, write: (event, keySegment) => {
+            journal.record(event, this.turnKey(pendingEvent.id, keySegment));
+            // Written at once, so the stream shows it live; a failed write
+            // stops the attempt through the journal.
+            journal.flush().catch(() => {});
+          } });
+          // The Skill Set is computed per attempt: a Resumed Turn installs the
+          // current one. Preparation verifies the mount and decides the
+          // install; the install runs beside inference, and the first Sandbox
+          // operation waits for it (ADR-0022).
+          await sandbox?.prepare(skills, { signal: turnController.signal, skillInstalls });
           if (stopped) return;
         } catch (error) {
-          // A failed Skill Install names its stage; its reason carries no URL.
+          // Deciding the install can fail (reading the binding's record); its
+          // stage names that, and its reason carries no URL.
           const code = error instanceof SkillInstallError ? "skills_install_failed" : "sandbox_prepare_failed";
           const refreshError = {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
@@ -1530,7 +1582,17 @@ export class SessionRouter {
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox && this.delegations ? fencedExecutor(sandbox, assertExecutionOwner) : sandbox,
+          sandbox && turnExecutor(sandbox, {
+            ...(this.delegations ? { assertOwner: assertExecutionOwner } : {}),
+            // The first operation to find the install failed ends the Turn:
+            // the Adapter run is aborted and the Turn closed with its error.
+            // A Turn already stopping or interrupted ends as it would anyway.
+            skillInstallFailed: (error) => {
+              if (installFailure || turnController.signal.aborted) return;
+              installFailure = error;
+              turnController.abort(error);
+            },
+          }),
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,
@@ -1646,6 +1708,13 @@ export class SessionRouter {
       // An Adapter stops before the Turn finishes only at the Host's request,
       // a handoff (#254): the Turn goes to the next claim as it stands.
       if (outcome && "result" in outcome && outcome.result === "stopped") { handedOff = true; return; }
+      // The Skill Install a Sandbox operation waited for failed: the operation
+      // did not run, and the Turn ends with the install's error.
+      if (installFailure) {
+        await this.failTurnOnSkillInstall(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence, installFailure);
+        if (!await endTurn(turnId)) return;
+        continue;
+      }
       const interrupted = turnController.signal.aborted;
       // A rejection after an abort is how the abort ended the run, not a failure.
       const failure = outcome && "error" in outcome && !interrupted ? outcome : undefined;
@@ -1655,6 +1724,11 @@ export class SessionRouter {
         this.recordTurnError(journal, pendingEvent.id, turnId, "adapter_error", { message: String(failure.error), code: "adapter_error" });
         await journal.flush();
       }
+      // A Turn that made no Sandbox operation never waited for its install,
+      // but its end does, whatever came of it: a failure is recorded only in
+      // the install's end span, the binding records nothing, and the next
+      // Turn installs again (ADR-0022). An aborted Turn cancelled it.
+      await skillInstalls?.settled();
 
       // A temporary Adapter return cannot finish a Turn that still owns a
       // durable wait. Reclaim the same input and continue from the event log.
@@ -1712,6 +1786,7 @@ export class SessionRouter {
             await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
           }
         } finally {
+          skillInstalls?.close();
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);
           if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
