@@ -13,21 +13,36 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   protected transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
     const perform = async () => {
       const snapshot = { records: structuredClone(this.records), sessions: this.sessions.snapshotState(), pending: this.pending.snapshotState(), events: this.events.snapshotState() };
+      // A rollback restores the stores as the transaction found them, which
+      // also undoes whatever others wrote while it ran: a claim taken, an
+      // input queued, a lease that lapsed. Only a transaction that wrote has
+      // anything to undo; one that failed its fence first restores nothing.
+      let wrote = false;
+      const writing = <A extends unknown[], R>(write: (...args: A) => R) => (...args: A): R => { wrote = true; return write(...args); };
+      const pending = new Proxy(this.pending, { get: (target, property) => {
+        const value = Reflect.get(target, property, target) as unknown;
+        if (typeof value !== "function") return value;
+        const method = (value as (...args: unknown[]) => unknown).bind(target);
+        return property === "ownsClaim" ? method : writing(method);
+      } });
       const tx: DelegationTransaction = {
-        sessions: this.sessions,
-        pending: this.pending,
+        sessions: { create: writing((input) => this.sessions.create(input)), getById: (id) => this.sessions.getById(id) },
+        pending,
         read: async <R extends DelegationRecord>(table: DelegationTable, filters: Record<string, string> = {}) => [...(this.records.get(table)?.values() ?? [])].filter((record) => Object.entries(filters).every(([key, value]) => (record as unknown as Record<string, unknown>)[key] === value)).map((record) => structuredClone(record) as R),
-        put: async (table, id, record) => { const values = this.records.get(table) ?? new Map(); values.set(id, structuredClone(record)); this.records.set(table, values); },
-        remove: async (table, id) => { this.records.get(table)?.delete(id); },
-        removePending: (sessionId, eventId, onlyUnclaimed) => this.pending.removeById(sessionId, eventId, onlyUnclaimed),
-        append: (sessionId, event) => this.events.append(sessionId, event),
+        put: writing(async (table, id, record) => { const values = this.records.get(table) ?? new Map(); values.set(id, structuredClone(record)); this.records.set(table, values); }),
+        remove: writing(async (table, id) => { this.records.get(table)?.delete(id); }),
+        removePending: writing((sessionId, eventId, onlyUnclaimed) => this.pending.removeById(sessionId, eventId, onlyUnclaimed)),
+        append: writing((sessionId, event) => this.events.append(sessionId, event)),
         assertWorkspaceNotDeleted: async (tenantId, workspaceId) => {
           if ((await this.workspaces.getById(tenantId, workspaceId))?.deletedAt) throw new Error("Workspace has been deleted");
         },
         assertFence: async (sessionId, fence) => { const session = await this.sessions.getById(sessionId); if (!session || session.status === "terminated" || !await this.pending.ownsClaim(sessionId, fence.eventId, fence)) delegationFenceLost(sessionId, fence); },
       };
       try { return await work(tx); }
-      catch (error) { this.records = snapshot.records; this.sessions.restoreState(snapshot.sessions); this.pending.restoreState(snapshot.pending); this.events.restoreState(snapshot.events); throw error; }
+      catch (error) {
+        if (wrote) { this.records = snapshot.records; this.sessions.restoreState(snapshot.sessions); this.pending.restoreState(snapshot.pending); this.events.restoreState(snapshot.events); }
+        throw error;
+      }
     };
     const result = this.queue.then(perform, perform);
     this.queue = result.then(() => {}, () => {});
