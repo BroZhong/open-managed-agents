@@ -143,8 +143,9 @@ Skill file read/write are full UTF-8 text operations; read refuses binary files
 (fonts, images, invalid UTF-8). Skill upload and download preserve arbitrary
 bytes. Root SKILL.md can be written, updating metadata through the Host parser;
 it cannot be renamed or deleted by CLI. Nested SKILL.md is ordinary text. Rename
-checks source existence; same-path is a no-op. Other renames copy then delete,
-so failure may leave two copies. Skill file delete is idempotent for absent
+checks source existence; same-path is a no-op. Every Skill write, rename or
+delete publishes one new version of the whole Skill, so a failure changes
+nothing; a concurrent edit returns a version conflict to retry. Skill file delete is idempotent for absent
 files in an existing Skill. Skill export is not an atomic snapshot and
 preserves unrelated local files.
 

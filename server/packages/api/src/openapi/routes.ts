@@ -680,7 +680,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "uploadSkillFiles",
     summary: "Upload files into a Skill",
     description:
-      "Upload one file field or repeated files fields of any type into an existing Skill, the same form as the Workspace upload. For one file, path may name the exact target. Otherwise each uploaded filename, which may carry a folder path, is joined to destDir. Files are stored byte for byte and replace any file at the same path, keeping its mode. The whole upload publishes one new version, based on the version it read: if another edit published a version in the meantime, it returns 409 skill_version_conflict and changes nothing. Uploading the root SKILL.md refreshes the Skill name and description. A Skill holds at most 50 MB uncompressed. .pyc files and __pycache__ directories are never stored in a Skill; an upload containing one returns 400 invalid_skill_file and changes nothing.",
+      "Upload one file field or repeated files fields of any type into an existing Skill, the same form as the Workspace upload. For one file, path may name the exact target. Otherwise each uploaded filename, which may carry a folder path, is joined to destDir. Files are stored byte for byte and replace any file at the same path, keeping its mode. The whole upload publishes one new version, based on the version it read: if another edit published a version in the meantime, it returns 409 skill_version_conflict and changes nothing. Uploading the root SKILL.md refreshes the Skill name and description. A Skill holds at most 50 MB uncompressed. .pyc files and __pycache__ directories are never stored in a Skill: like a folder upload, they are left out and listed in skipped; an upload containing nothing else returns 400 invalid_skill_file and changes nothing.",
     tags: ["Skills/Files"],
     request: {
       params: idParams,
@@ -706,10 +706,10 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     },
     responses: {
       200: jsonResponse(
-        z.object({ data: z.array(PathResultSchema) }),
+        z.object({ data: z.array(PathResultSchema), skipped: z.array(z.string()).describe("Uploaded paths left out as compiled Python (.pyc or __pycache__)") }),
         "Stored file paths",
       ),
-      400: errorResponse("Invalid multipart body or target path, or compiled Python (invalid_skill_file)"),
+      400: errorResponse("Invalid multipart body or target path, or only compiled Python (invalid_skill_file)"),
       404: errorResponse("Skill not found"),
       409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
       413: errorResponse("The Skill would exceed 50 MB uncompressed (skill_bundle_too_large)"),

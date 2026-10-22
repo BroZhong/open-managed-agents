@@ -134,7 +134,7 @@ for (const noun of ["workspace", "skill"] as const) {
           : undefined;
     files.push({
       path: `${noun} file ${action}`,
-      description: `${action} a ${noun} text file. ${skill ? "Binary files are refused by read; skill download and skill upload keep their bytes. Root SKILL.md may only be written." : "Writes replace contents without a Session lock."} ${action === "rename" ? "Copy then delete is non-atomic; preflight cannot prevent concurrent overwrites." : action === "delete" ? "No file recovery API." : ""}`,
+      description: `${action} a ${noun} text file. ${skill ? "Binary files are refused by read; skill download and skill upload keep their bytes. Root SKILL.md may only be written." : "Writes replace contents without a Session lock."} ${action === "rename" ? (skill ? "Publishes one new Skill version; a concurrent edit returns a version conflict." : "Copy then delete is non-atomic; preflight cannot prevent concurrent overwrites.") : action === "delete" ? "No file recovery API." : ""}`,
       flags: {
         ...id(noun),
         path:

@@ -23,10 +23,9 @@ interface SkillRow {
   source_skill_id: string | null;
   created_at: Date | null;
   updated_at: Date;
-  /** Absent on a schema predating the bundle migration. */
-  bundle_sha256?: string | null;
+  bundle_sha256: string | null;
   /** BIGINT: node-postgres returns it as a string. */
-  bundle_size?: string | number | null;
+  bundle_size: string | number | null;
 }
 
 function rowToSkill(row: SkillRow): Skill {
@@ -40,7 +39,7 @@ function rowToSkill(row: SkillRow): Skill {
     sourceSkillId: row.source_skill_id ?? null,
     createdAt: row.created_at == null ? null : new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
-    bundleSha256: row.bundle_sha256 ?? null,
+    bundleSha256: row.bundle_sha256,
     bundleSize: row.bundle_size == null ? null : Number(row.bundle_size),
   };
 }

@@ -1,4 +1,4 @@
-import { attachmentDisposition, packSkillBundle, resolveArtifactContentType } from "@oma-server/store";
+import { attachmentDisposition, isFilteredSkillPath, packSkillBundle, resolveArtifactContentType } from "@oma-server/store";
 import { publicSkill } from "../lib/public-projection.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
@@ -42,8 +42,9 @@ const SKILL_MD = "SKILL.md";
  *
  * Files are bytes on every route (ADR-0022): `files/upload` adds files of any
  * type to an existing Skill, `files/content` reads text inline and binary
- * files as metadata, and `files/raw` returns a file's bytes. An edit that
- * targets compiled Python is rejected with 400 (see `SkillVersions.commit`).
+ * files as metadata, and `files/raw` returns a file's bytes. Like a folder
+ * upload, `files/upload` leaves compiled Python out and reports it as skipped;
+ * a write or rename that targets it is rejected with 400 (see `SkillVersions.commit`).
  */
 export function skillRoutes(
   skillStore: SkillStore,
@@ -257,11 +258,16 @@ export function skillRoutes(
     const upload = await readUploadForm(c.req);
     if (!upload.ok) return c.json({ error: upload.error }, 400);
     const incoming = new Map<string, Uint8Array>();
+    const skipped: string[] = [];
     for (const { path: target, file } of upload.files) {
       const path = safePath(target);
       if (!path) return c.json({ error: "Invalid file path" }, 400);
+      if (isFilteredSkillPath(path)) { skipped.push(path); continue; }
       // Bytes, never text(): decoding corrupts fonts and other binary files.
       incoming.set(path, new Uint8Array(await file.arrayBuffer()));
+    }
+    if (!incoming.size) {
+      return c.json({ error: "Nothing to upload: .pyc files and __pycache__ directories are left out of every Skill version", code: "invalid_skill_file" }, 400);
     }
     const base = await versions.checkout(skill);
     const modes = new Map(base.files.map((file) => [file.path, file.mode]));
@@ -273,7 +279,7 @@ export function skillRoutes(
     const metadata = skillMd ? skillMdMetadata(SKILL_MD, new TextDecoder().decode(skillMd), skill.name) : {};
     const updated = await versions.commit(base, files, metadata);
     if (!updated) return c.json({ error: "Not found" }, 404);
-    return c.json({ data: [...incoming.keys()].map((path) => ({ path })) });
+    return c.json({ data: [...incoming.keys()].map((path) => ({ path })), skipped });
   });
 
   // PUT /v1/skills/:id/files/content — write (create or overwrite) one text

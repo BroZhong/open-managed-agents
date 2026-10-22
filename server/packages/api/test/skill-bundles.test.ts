@@ -278,7 +278,7 @@ describe("binary files in an existing Skill (#269)", () => {
     const skill = await env.seed();
     const res = await uploadInto(env.app, skill.id, [{ name: "Regular.ttf", body: TTF }], { path: "assets/Regular.ttf" });
     expect(res.status, await res.clone().text()).toBe(200);
-    expect(await res.json()).toEqual({ data: [{ path: "assets/Regular.ttf" }] });
+    expect(await res.json()).toEqual({ data: [{ path: "assets/Regular.ttf" }], skipped: [] });
     expect((await env.filesOf(skill.id)).sha256).not.toBe(skill.bundleSha256);
 
     const raw = await env.app.request(`/v1/skills/${skill.id}/files/raw?path=assets/Regular.ttf`);
@@ -367,13 +367,12 @@ describe("binary files in an existing Skill (#269)", () => {
     expect(await read("zeros.bin")).toEqual({ path: "zeros.bin", binary: true, size: 16, contentType: "application/octet-stream" });
   });
 
-  it("rejects compiled Python with 400 instead of dropping it silently", async () => {
-    const { app, json, seed, skillStore } = setup();
+  it("leaves compiled Python out of an upload and rejects writes that target it", async () => {
+    const { app, json, seed, skillStore, skillBundleStore: bundles } = setup();
     const skill = await seed();
     for (const res of [
       await uploadInto(app, skill.id, [{ name: "render.cpython-312.pyc", body: randomBytes(32) }], { destDir: "scripts" }),
       await uploadInto(app, skill.id, [{ name: "render.py", body: "print()" }], { destDir: "scripts/__pycache__" }),
-      await uploadInto(app, skill.id, [{ name: "ok.md", body: "ok" }, { name: "__pycache__/x.pyc", body: randomBytes(8) }]),
       await json("PUT", `/v1/skills/${skill.id}/files/content`, { path: "scripts/render.pyc", content: "x" }),
       await json("POST", `/v1/skills/${skill.id}/files/rename`, { from: "notes.md", to: "__pycache__/notes.md" }),
     ]) {
@@ -383,6 +382,14 @@ describe("binary files in an existing Skill (#269)", () => {
       expect(body.error).toMatch(/\.pyc files and __pycache__ directories/);
     }
     expect((await skillStore.getById(skill.id))?.bundleSha256).toBe(skill.bundleSha256);
+
+    const mixed = await uploadInto(app, skill.id, [{ name: "ok.md", body: "ok" }, { name: "__pycache__/x.pyc", body: randomBytes(8) }]);
+    expect(mixed.status).toBe(200);
+    expect(await mixed.json()).toEqual({ data: [{ path: "ok.md" }], skipped: ["__pycache__/x.pyc"] });
+    const current = (await skillStore.getById(skill.id))!;
+    const paths = (await bundles.listFiles(current.tenantId, current.bundleSha256!))!.map((entry) => entry.path);
+    expect(paths).toContain("ok.md");
+    expect(paths.some((path) => path.includes("__pycache__"))).toBe(false);
   });
 
   it("rejects an upload over 50 MB uncompressed with 413 and keeps the version", async () => {
