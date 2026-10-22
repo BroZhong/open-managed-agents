@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DefaultSandboxManager, type EnvSpec } from '../src/sandbox-manager.js';
 import { FakeSandboxClient } from '../src/fake-sandbox-client.js';
+import type { ToolFileSystem } from '@open-managed-agents/adapter-core';
 const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', workspaceMount: {
   bucket: 'agentry', prefix: 't/w/', agentName: 'agent', pvName: 'pv', credentialProviderName: 'credentials',
 } };
@@ -136,6 +137,47 @@ describe('Turn-scoped remote exit evidence', () => {
     await sibling.prepare();
     expect(parent.executionSettled!()).toBe(false);
     expect(sibling.executionSettled!()).toBe(true);
+  });
+
+  /** A native write that completes, then sees its caller's Interrupt; `lost` drops its outcome instead. */
+  function interruptedWrite(client: FakeSandboxClient, controller: AbortController, lost = false) {
+    const unavailable = () => { throw new Error('Unexpected filesystem operation'); };
+    const fileSystem = (id: string): ToolFileSystem => ({
+      writeFile: async (path, content, options) => {
+        await client.writeFileBytes(id, path, content as Uint8Array);
+        controller.abort();
+        if (lost) vi.spyOn(client, 'hasUncertainExecution').mockReturnValue(true);
+        options?.signal?.throwIfAborted();
+      },
+      readFile: unavailable, appendFile: unavailable, access: unavailable, stat: unavailable, lstat: unavailable,
+      realpath: unavailable, readdir: unavailable, mkdir: unavailable, createTempFile: unavailable,
+    });
+    Object.assign(client, { fileSystem });
+  }
+
+  it('keeps a Turn settled when an Interrupt cancels a filesystem operation whose outcome is known', async () => {
+    const { client, session } = setup();
+    await session.writeFile('saved', 'value');
+    const controller = new AbortController();
+    interruptedWrite(client, controller);
+    await expect(session.fileSystem.writeFile('request.json', new Uint8Array([1]), { signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(session.executionSettled!()).toBe(true);
+    await expect(session.checkWorkspace()).resolves.toBeUndefined();
+  });
+
+  it('keeps a Turn uncertain when the client lost the outcome of an interrupted filesystem operation', async () => {
+    const { client, session } = setup();
+    await session.writeFile('saved', 'value');
+    const controller = new AbortController();
+    interruptedWrite(client, controller, true);
+    await expect(session.fileSystem.writeFile('request.json', new Uint8Array([1]), { signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    vi.mocked(client.hasUncertainExecution).mockRestore();
+    // Latched for the Turn: a sibling's preparation resetting the client does not settle it.
+    expect(client.hasUncertainExecution(client.created[0])).toBe(false);
+    expect(session.executionSettled!()).toBe(false);
+    await expect(session.checkWorkspace()).rejects.toThrow(/Workspace storage/);
   });
 });
 

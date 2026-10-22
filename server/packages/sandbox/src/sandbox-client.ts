@@ -79,7 +79,12 @@ export interface SandboxClient {
   /** Read-only control-plane state; unknown transport errors must throw. */
   state(id: string): Promise<"running" | "paused" | "missing">;
   setTimeout(id: string, seconds: number): Promise<void>;
-  /** Native I/O primitives at absolute sandbox paths, separate from persistence. */
+  /**
+   * Native I/O primitives at absolute sandbox paths, separate from persistence.
+   * An operation rejects with its caller's AbortError only before it starts or
+   * once its outcome is known; one that ends without an outcome is recorded as
+   * uncertain execution.
+   */
   fileSystem?(id: string): ToolFileSystem;
 
   /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */

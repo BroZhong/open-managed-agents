@@ -238,12 +238,14 @@ class SandboxSessionImpl implements SandboxSession {
     catch (error) { return this.operationFailed(id, generation, error); }
   }
   private async operationFailed(id: string, generation: number, error: unknown): Promise<never> {
+    // Latch what the client recorded as ending without an outcome before a
+    // sibling's preparation can reset its shared flag.
     if (this.deps.sandboxClient.hasUncertainExecution(id)) this.uncertainTurn = true;
     if (error instanceof ExecAbortedBeforeStartError) throw error;
-    if (error instanceof Error && error.name === 'AbortError') {
-      this.uncertainTurn = true; // No local exit evidence on a file/RPC abort.
-      throw error;
-    }
+    // A cancellation is passed on, not taken as an unknown outcome: a native
+    // filesystem operation rejects with it only before it starts or once its
+    // outcome is known. exec latches a command cancelled without exit evidence.
+    if (error instanceof Error && error.name === 'AbortError') throw error;
     // Ordinary tool errors are not environment failures.
     if (error && typeof error === 'object' && (
       'exitCode' in error || ('name' in error && ['AbortError', 'FileNotFoundError', 'InvalidArgumentError'].includes(String(error.name))) ||
