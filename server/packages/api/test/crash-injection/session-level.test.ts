@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PendingEventClaimLostError, type StoredEvent } from "@oma-server/store";
-import { bash, describeWrite, eventsOfInput, execute, expectResumed, OUTCOME_UNKNOWN_PREFIX, rowOf, sweep, text, usePiSettings, writesOf,
-  type Outcome, type Scenario } from "./harness.js";
+import { bash, describeWrite, eventsOfInput, execute, expectResumed, INTERRUPTED_PREFIX, OUTCOME_UNKNOWN_PREFIX, rowOf, sweep, text, usePiSettings, writesOf,
+  type Block, type ModelRequest, type Outcome, type Scenario } from "./harness.js";
 
 await usePiSettings();
 
@@ -59,6 +59,42 @@ describe("G1 the Session is terminated while its Runner is lost", () => {
         expect(outcome.requests.filter((request) => request.runner > 0)).toEqual([]);
         expect(outcome.errors).toEqual([]);
       });
+  });
+});
+
+describe("G8 a parent Session is terminated while its child's Runner is lost", () => {
+  it("G8 the child's takeover stops the child's Turn as an Interrupted Turn without asking its model, and nothing runs for the parent", async () => {
+    const PARENT = "summarise the build";
+    const fromChild = (request: ModelRequest) => !request.text.includes(PARENT);
+    const agent: Block = { type: "tool_use", id: "call_agent", name: "Agent", input: { prompt: "inspect the build" } };
+    let logAtTermination: StoredEvent[] = [];
+    const scenario: Scenario = {
+      inputs: [PARENT],
+      children: "apart",
+      model: (request) => fromChild(request)
+        ? request.results.has("call_inspect") ? { blocks: [text("green")], stop: "end_turn" } : { blocks: [bash("call_inspect", "make check")], stop: "tool_use" }
+        : request.results.has("call_agent") ? { blocks: [text("done")], stop: "end_turn" } : { blocks: [text("delegating"), agent], stop: "tool_use" },
+      // The child's Runner is lost while its bash runs; the user terminates the parent meanwhile.
+      tool: (_call, run) => { run.crash(); return new Promise<string>(() => {}); },
+      afterLoss: async (run) => { await run.terminate(); logAtTermination = await run.log(); },
+    };
+    const outcome = await execute(scenario);
+    const [execution] = outcome.executions;
+    const child = outcome.sessions[1];
+    expect(execution).toMatchObject({ status: "interrupted", notificationStatus: "suppressed" });
+    expect(child.log.filter((event) => event.type === "session.turn_aborted")).toHaveLength(1);
+    expect(child.log.map((event) => event.type).slice(-6)).toEqual(["session.turn_resumed", "session.interrupt_requested", "agent.tool_result",
+      "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
+    expect(JSON.stringify(child.log.filter((event) => event.type === "agent.tool_result").map((event) => event.data))).toContain(INTERRUPTED_PREFIX);
+    expect(outcome.requests.map((request) => request.runner)).toEqual([0, 1]);
+    expect(outcome.toolCalls.map((call) => call.runner)).toEqual([1]);
+    // The parent's log gained only the child's outcome record; no Turn ran for it.
+    expect(outcome.log.slice(logAtTermination.length).map((event) => event.type)).toEqual(["subagent.result"]);
+    for (const session of outcome.sessions) expect(await outcome.stores.pendingEventStore.count(session.id)).toBe(0);
+    expect((await outcome.stores.sessionStore.getById(outcome.sessionId))?.status).toBe("terminated");
+    // The parent's Runner learned of the termination as a lost lease and stopped.
+    expect(outcome.errors.map(({ runner, error }) => [runner, (error as Error).name])).toEqual([[0, "PendingLeaseLostError"]]);
+    expect(outcome.disposals).not.toEqual([]);
   });
 });
 

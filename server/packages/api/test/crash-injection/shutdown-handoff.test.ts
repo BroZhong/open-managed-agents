@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bash, eventsOfInput, execute, expectResumed, handoffSweep, OUTCOME_UNKNOWN_PREFIX, text, usePiSettings, type Outcome, type Scenario } from "./harness.js";
+import { bash, describeWrite, eventsOfInput, execute, expectResumed, handoffSweep, OUTCOME_UNKNOWN_PREFIX, text, usePiSettings, type Outcome, type Scenario } from "./harness.js";
 import { parallelTools } from "./scenarios.js";
 
 await usePiSettings();
@@ -185,4 +185,49 @@ describe("handoff sweep: a single bash call", async () => {
 
 describe("handoff sweep: parallel tools", async () => {
   await handoffSweep(parallelTools);
+});
+
+describe("F8 the takeover of a lost Runner's Turn is shut down after each of its writes", async () => {
+  const scenario: Scenario = {
+    inputs: ["clean the workspace", "then report"],
+    model: (request) => request.lastUser === "then report" ? { blocks: [text("reported")], stop: "end_turn" }
+      : request.results.has("call_bash") ? { blocks: [text("cleaned")], stop: "end_turn" }
+      : { blocks: [text("cleaning"), bash("call_bash", "rm -rf build")], stop: "tool_use" },
+    // The first Runner is lost while the command runs.
+    tool: (call, run) => { if (run.runner > 0) return `ran ${call.id}`; run.crash(); return new Promise<string>(() => {}); },
+  };
+  const takeover = (await execute(scenario)).runners[1].writes;
+  it.each(takeover.map((write, index) => [index + 1, describeWrite(write)] as const))(
+    "lost mid-tool, the takeover shut down after its write %i (%s): the Turn is handed on and completes",
+    async (n) => {
+      const outcome = await execute(scenario, [], [undefined, n]);
+      expectResumed(scenario, outcome);
+      expect(outcome.losses.map((loss) => [loss.runner, loss.reason])).toEqual([[0, "expired"], [1, "released"]]);
+      // The loss is marked once; whatever moved the Turn after it was a handoff.
+      expect(markers(outcome).map((marker) => (marker as { reason: string }).reason).filter((reason) => reason === "expired")).toHaveLength(1);
+      expect(calls(outcome)).toEqual([[0, "call_bash"]]);
+    });
+});
+
+describe("F9 the process is killed during its handoff", () => {
+  it("F9 SIGTERM while a tool runs, then SIGKILL before the handoff ends: the claim lapses and the takeover counts it as a loss", async () => {
+    const scenario: Scenario = {
+      inputs: ["run the migration"],
+      model: (request) => request.results.has("call_migrate")
+        ? { blocks: [text("checked the migration state")], stop: "end_turn" }
+        : { blocks: [bash("call_migrate", "./migrate.sh && sleep 600")], stop: "tool_use" },
+      tool: (_call, run) => {
+        run.shutDown();
+        // The grace period ends first: the kubelet kills the process.
+        setTimeout(() => run.crash(), 20);
+        return new Promise<string>(() => {});
+      },
+    };
+    const outcome = await execute(scenario);
+    expectResumed(scenario, outcome);
+    expect(outcome.losses).toEqual([expect.objectContaining({ runner: 0, reason: "expired", input: 0, dangling: ["call_migrate"] })]);
+    expect(markers(outcome)).toEqual([expect.objectContaining({ reason: "expired", danglingToolUseIds: ["call_migrate"] })]);
+    expect(calls(outcome)).toEqual([[0, "call_migrate"]]);
+    expect(outcome.requests.at(-1)?.results.get("call_migrate")).toEqual({ isError: true, text: expect.stringContaining(OUTCOME_UNKNOWN_PREFIX) });
+  });
 });

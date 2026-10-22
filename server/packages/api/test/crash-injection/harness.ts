@@ -144,8 +144,8 @@ export interface Outcome {
   /** Every command a Runner sent the Sandbox, in order. */
   commands: Array<{ runner: number; command: string[] }>;
   errors: Array<{ runner: number; error: unknown }>;
-  /** Every Delta any Runner streamed, in order. */
-  deltas: TurnDelta[];
+  /** Every Delta any Runner streamed, in order, with its Session. */
+  deltas: Array<TurnDelta & { sessionId: string }>;
   /** Every Sandbox a Runner disposed, by that Runner. */
   disposals: number[];
 }
@@ -234,6 +234,8 @@ export type LoseAfter = number | ((write: Write) => boolean);
 /** One Runner process: its writes, and its loss. */
 export class Runner {
   dead = false;
+  /** It was lost, not shut down: whatever it held lapses, a handoff it began included. */
+  killed = false;
   /** Its Router's handoff, once the Runner is shut down; the process exits when it is done. */
   handingOff?: Promise<boolean>;
   /** Shuts the Runner down; set once its Router exists. */
@@ -259,6 +261,7 @@ export class Runner {
   lose(): void {
     if (this.dead) return;
     this.dead = true;
+    this.killed = true;
     this.onLoss(this);
     this.markDied();
   }
@@ -435,7 +438,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
   // The Redis stand-in all Runners share; it records every Delta as it is appended.
   const turnStreams = new InMemoryTurnStreamStore();
   const appendDelta = turnStreams.appendDelta.bind(turnStreams);
-  turnStreams.appendDelta = async (sessionId, delta) => { outcome.deltas.push(delta); return appendDelta(sessionId, delta); };
+  turnStreams.appendDelta = async (sessionId, delta) => { outcome.deltas.push({ ...delta, sessionId }); return appendDelta(sessionId, delta); };
   // Redis as a Runner reaches it while it is down: production wraps it as best effort.
   const redisDown = new BestEffortTurnStreamStore(new Proxy({} as TurnStreamStore, {
     get: () => () => Promise.reject(new Error("Redis connection is closed")) }), () => true);
@@ -632,10 +635,12 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
         held.delete(sessionId);
       }
     }
-    // A lost Runner's claims lapse; one shut down ends holding none, and the inputs it released are the ones it handed over.
-    const reason: PendingEventClaimEnd = runner.handingOff ? "released" : "expired";
-    const left = runner.handingOff ? released : held;
-    const detached = runner.handingOff ? { detached: !await runner.handingOff } : {};
+    // A lost Runner's claims lapse, also while it was handing them over; one
+    // shut down ends holding none, and the inputs it released are the ones it handed over.
+    const handedOver = runner.handingOff !== undefined && !runner.killed;
+    const reason: PendingEventClaimEnd = handedOver ? "released" : "expired";
+    const left = handedOver ? released : held;
+    const detached = handedOver ? { detached: !await runner.handingOff } : {};
     if (!left.size) return [{ runner: runner.index, reason, dangling: [], ...detached }];
     const losses: Loss[] = [];
     for (const [sessionId, claim] of left) {
@@ -737,6 +742,19 @@ export function expectResumed(scenario: Scenario, outcome: Outcome, expected: Ex
     .some((tokens) => typeof tokens === "number" && tokens > 0));
   expect(billed.length).toBeLessThanOrEqual(outcome.requests.filter((sent) => !sent.summary).length);
   expect(logs.filter((event) => event.type === "span.model_request_start").length).toBeLessThanOrEqual(ends.length + outcome.losses.length);
+  // Every Delta names the Turn it streams and the attempt that streamed it,
+  // the generation of the claim that ran the attempt, so a console that
+  // keeps the latest attempt never stitches a lost attempt's onto it (#246).
+  const claims = outcome.runners.flatMap((runner) => runner.writes).filter((write) => write.method === "claim")
+    .map((write) => ({ sessionId: write.args[0] as string, claim: write.result as PendingEventClaim }));
+  for (const delta of outcome.deltas) {
+    const completion = outcome.sessions.find((session) => session.id === delta.sessionId)?.log
+      .find((event) => event.type === "session.turn_completed" && turnIdOf(event) === delta.turnId);
+    expect(completion, `the Turn ${delta.turnId} a Delta streams`).toBeDefined();
+    const input = (completion!.data as { pendingEventId: string }).pendingEventId;
+    expect(claims.filter(({ sessionId, claim }) => sessionId === delta.sessionId && claim.event.id === input).map(({ claim }) => claim.generation),
+      `the attempt of a Delta of ${delta.turnId}`).toContain(delta.attempt);
+  }
   // No Runner reports a failure but a write the scenario refused: a lost one
   // is gone before it could, and the one that takes over never loses its
   // claim or a write.
@@ -756,6 +774,10 @@ function expectSessionResumed(scenario: Scenario, outcome: Outcome, session: Ses
     expect(events.filter((event) => event.type === "session.turn_completed").map(turnIdOf)).toEqual(named);
     expect(events.at(-1)?.type === "session.turn_completed" || events.at(-1)?.type === "session.status_idle").toBe(true);
   });
+  // Queued inputs ran in the order they were queued, each promoted once.
+  const queued = session.inputs.filter((key) => !key.startsWith("subagent.result:"));
+  expect(log.filter((event) => PROMOTIONS.has(event.type)).map((event) => inputKey(event.type, event.data))
+    .filter((key) => queued.includes(key!)), `${of}inputs in order`).toEqual(queued);
   // No error but the scenario's own: a recovery error only where it expects one (the takeover limit).
   const errorCodes = log.filter((event) => event.type === "session.error").map((event) => (event.data as { error: { code: string } }).error.code);
   expect(errorCodes.filter((code) => !(scenario.errors ?? []).includes(code)), `${of}errors`).toEqual([]);
