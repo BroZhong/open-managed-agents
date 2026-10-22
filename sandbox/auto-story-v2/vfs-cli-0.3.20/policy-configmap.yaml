@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vfs-cli-policy-test-v1
+  namespace: sandbox-system
+immutable: true
+data:
+  policy.json: '{"environment":"test"}'
