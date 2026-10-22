@@ -462,19 +462,28 @@ describe("Skill Install beside inference (#268)", () => {
     expect((await h.types()).slice(-4)).toEqual(["agent.tool_result", "session.error", "session.turn_completed", "session.status_idle"]);
   });
 
-  it("completes a Turn that calls no tool although its install failed; the end span records why and the next Turn installs", async () => {
+  it("ends a Turn that calls no tool with skills_install_failed when its install failed, keeping the answer; the next Turn installs", async () => {
     const h = await beside();
     const recorded = await h.installed();
     await h.edit(h.writer, [file("SKILL.md", "v2")]);
     h.sandbox.skillInstallFault = (stage) => { if (stage === "download") throw new Error("HTTP 503, curl exit 0"); };
     h.run(async (_input, write) => { await write(text("just chatting")); });
     await h.turn();
-    expect((await h.log()).filter((stored) => stored.type === "session.error")).toEqual([]);
+    const log = await h.log();
+    const turnId = (log.findLast((stored) => stored.type === "session.turn_completed")!.data as { turnId: string }).turnId;
+    expect(log.filter((stored) => stored.type === "session.error").map((stored) => stored.data)).toEqual([{ turnId, error: {
+      code: "skills_install_failed",
+      message: "Skill Install failed at download: HTTP 503, curl exit 0. The answer is retained; the Skills were not installed, and the next Turn installs them again.",
+    } }]);
+    // The answer stands: the error follows it, like the Workspace check at the Turn's end.
+    expect(log.filter((stored) => stored.type === "agent.message").at(-1)?.data).toMatchObject({ turnId, content: [{ type: "text", text: "just chatting" }] });
     expect((await h.spans()).map((stored) => stored.data)).toEqual([expect.any(Object),
       expect.objectContaining({ outcome: "failed", stage: "download", reason: "HTTP 503, curl exit 0" })]);
     const types = await h.types();
-    expect(types.lastIndexOf("span.skills_install_end")).toBeLessThan(types.lastIndexOf("session.turn_completed"));
-    expect(types.slice(-2)).toEqual(["session.turn_completed", "session.status_idle"]);
+    expect(types.lastIndexOf("span.skills_install_end")).toBeLessThan(types.lastIndexOf("session.error"));
+    expect(types.slice(-3)).toEqual(["session.error", "session.turn_completed", "session.status_idle"]);
+    expect((await h.stores.sessionStore.getById(h.parent.id))?.status).toBe("idle");
+    expect(JSON.stringify(log)).not.toMatch(/data:application|https?:\/\//);
     expect(await h.installed()).toEqual(recorded);
     h.sandbox.skillInstallFault = undefined;
     const before = h.installs();
@@ -510,6 +519,8 @@ describe("Skill Install beside inference (#268)", () => {
     expect(start).toMatchObject({ installId: expect.any(String) });
     expect(end).toMatchObject({ installId: start.installId, outcome: "aborted", reason: "Session interrupted" });
     expect((await h.types()).slice(-4)).toEqual(["span.skills_install_end", "session.turn_aborted", "session.turn_completed", "session.status_idle"]);
+    // A cancelled install is no failure: the Turn records no error for it.
+    expect((await h.log()).filter((stored) => stored.type === "session.error")).toEqual([]);
     expect((await h.stores.sessionStore.getById(h.parent.id))?.status).toBe("idle");
     expect(h.businessReads).not.toHaveBeenCalled();
     expect(await h.installed()).toEqual(recorded);
@@ -561,5 +572,7 @@ describe("Skill Install beside inference (#268)", () => {
     const log = await h.log();
     const resumed = log.findIndex((stored) => stored.type === "session.turn_resumed");
     expect(log[resumed + 1]?.type).toBe("span.skills_install_end");
+    // The stopped attempt's install is no failure: no error is recorded for it.
+    expect(log.filter((stored) => stored.type === "session.error")).toEqual([]);
   });
 });

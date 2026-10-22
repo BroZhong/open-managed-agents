@@ -35,6 +35,7 @@ export class SkillInstallSpans implements SkillInstallObserver {
   private running?: { start: SkillInstallStartData; startedAt: number; ended(): void };
   private idle: Promise<void> = Promise.resolve();
   private closed = false;
+  private failed?: SkillInstallError;
 
   constructor(private readonly deps: SkillInstallSpansDeps) {}
 
@@ -52,6 +53,8 @@ export class SkillInstallSpans implements SkillInstallObserver {
     const running = this.running;
     if (!running) return;
     this.running = undefined;
+    // Only a failure counts: an install the Turn cancelled is none.
+    this.failed = "error" in outcome && outcome.error instanceof SkillInstallError ? outcome.error : undefined;
     if (!this.closed) {
       const end: SkillInstallEndData = { ...running.start, ...endOf(outcome), durationMs: Math.round(performance.now() - running.startedAt) };
       this.deps.write({ type: "span.skills_install_end", data: end }, skillInstallKey(running.start.installId, "end"));
@@ -62,6 +65,11 @@ export class SkillInstallSpans implements SkillInstallObserver {
   /** Resolves once no install of the attempt runs: each one's end span is recorded. */
   settled(): Promise<void> {
     return this.idle;
+  }
+
+  /** The error of the attempt's last install when it failed; undefined when it succeeded or was cancelled. */
+  failure(): SkillInstallError | undefined {
+    return this.failed;
   }
 
   /** The attempt stopped or ended: it records nothing more. */

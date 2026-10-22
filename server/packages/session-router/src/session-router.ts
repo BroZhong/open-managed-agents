@@ -175,7 +175,7 @@ export interface SessionRouterDeps {
    * read here; bundles go from OSS to the Sandbox, never through the Host.
    * Absent ⇒ no Skills.
    *
-   * WHY the sandbox and not a Host temp dir (ADR-0005 §4): the Pi adapter runs
+   * WHY the sandbox and not a Host temp dir (ADR-0022): the Pi adapter runs
    * `noTools: "builtin"` + custom tools, so Pi's prompt tells the model to
    * `read` a Skill's file — and that read is sandbox-mapped. A Skill left on the
    * Host would therefore be unreadable; it MUST be installed into the sandbox.
@@ -935,6 +935,27 @@ export class SessionRouter {
       });
       await journal.flush();
     }
+  }
+
+  /**
+   * Record, after the answer, that the Turn's Skill Install failed when no
+   * Sandbox operation met the failure (ADR-0022): like the Workspace check,
+   * the error keeps the answer and ends the Turn with it. The binding records
+   * nothing, so the next Turn installs again. A cancelled install is no failure.
+   */
+  private async checkSkillInstall(
+    journal: TurnJournal,
+    skillInstalls: SkillInstallSpans,
+    pendingEventId: string,
+    turnId: string,
+  ): Promise<void> {
+    const failure = skillInstalls.failure();
+    if (!failure) return;
+    this.recordTurnError(journal, pendingEventId, turnId, "skills_install_failed", {
+      message: `${failure.message}. The answer is retained; the Skills were not installed, and the next Turn installs them again.`,
+      code: "skills_install_failed",
+    });
+    await journal.flush();
   }
 
   /**
@@ -1725,9 +1746,8 @@ export class SessionRouter {
         await journal.flush();
       }
       // A Turn that made no Sandbox operation never waited for its install,
-      // but its end does, whatever came of it: a failure is recorded only in
-      // the install's end span, the binding records nothing, and the next
-      // Turn installs again (ADR-0022). An aborted Turn cancelled it.
+      // but its end does: the end span precedes the Turn's end, and a failure
+      // is recorded with the answer below. An aborted Turn cancelled it.
       await skillInstalls?.settled();
 
       // A temporary Adapter return cannot finish a Turn that still owns a
@@ -1760,6 +1780,7 @@ export class SessionRouter {
       if (sandbox) {
         await this.checkWorkspace(journal, sandbox, pendingEvent.id, turnId);
       }
+      if (skillInstalls) await this.checkSkillInstall(journal, skillInstalls, pendingEvent.id, turnId);
 
       // Fence again before changing global Turn state after the storage check.
       const completionLease = await this.renewPendingClaim(sessionId, claim);
@@ -1895,7 +1916,7 @@ export class SessionRouter {
         skills: agentConfig.skills,
         // Per-call Host injections (ADR-0002): assembled Agent Files and the
         // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<skill-name>`
-        // paths *inside the sandbox* (ADR-0005 §4) — the adapter points Pi's
+        // paths *inside the sandbox* (ADR-0022) — the adapter points Pi's
         // sandbox-mapped read tool at them (SKILL.md at `/skills/<skill-name>/SKILL.md`).
         // Undefined when their stores are absent, preserving prior behavior.
         appendSystemPrompt: appendSystemPrompt && appendSystemPrompt.length > 0
