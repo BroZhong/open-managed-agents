@@ -54,6 +54,7 @@ export type {
   StreamEvent,
   // Union
   SessionEvent,
+  DurableEvent,
 } from "./types.js";
 
 export type { Adapter, AdapterRunResult, TurnJournalPort } from "./interface.js";

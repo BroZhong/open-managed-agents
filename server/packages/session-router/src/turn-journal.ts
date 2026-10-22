@@ -1,5 +1,5 @@
 import type { StoredEvent } from "@oma-server/store";
-import type { SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
+import type { DurableEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 
 /** A durable event in the event log's input shape, before it has a seq. */
 export interface JournalEvent {
@@ -39,7 +39,7 @@ export interface TurnJournalOptions {
   /** Transient Delta output, awaited before the next Delta leaves. Failures are ignored. */
   outputDelta(delta: JournalDelta): void | Promise<unknown>;
   /** Durable form and idempotency key of an event the Adapter recorded. */
-  fromAdapter(event: Exclude<SessionEvent, StreamEvent>): { event: JournalEvent; key: string };
+  fromAdapter(event: DurableEvent): { event: JournalEvent; key: string };
   /**
    * Called once, at the first failure, before the failing flush rejects: the
    * owner stops the attempt on it as on a lost lease (ADR-0020).

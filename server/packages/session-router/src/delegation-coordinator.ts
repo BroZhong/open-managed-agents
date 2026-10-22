@@ -1,7 +1,7 @@
 import type {
   DelegationCaller, DelegationExecution, DelegationOutcome, DelegationStore,
-  DelegationWait, DelegationWaitConfig, PendingEventFence, PendingEventStore, Session,
-  SessionStore, StoredEvent,
+  DelegationWait, PendingEventFence, PendingEventStore, Session,
+  SessionStore, StoredEvent, TurnConfig,
 } from "@oma-server/store";
 import { PendingEventClaimLostError, presentContextData, presentEvent } from "@oma-server/store";
 import type {
@@ -384,7 +384,7 @@ function executionResultIsError(result: Record<string, unknown>): boolean {
 }
 
 /** Only what a recovered wait needs to resume the same Turn configuration. */
-function waitConfig(run: DelegationRun): DelegationWaitConfig {
+function waitConfig(run: DelegationRun): TurnConfig {
   const { model, thinking } = run.effectiveConfig ?? {};
   return { ...(typeof model === "string" ? { model } : {}), ...(typeof thinking === "string" ? { thinking } : {}) };
 }

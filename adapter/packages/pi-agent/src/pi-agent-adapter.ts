@@ -21,11 +21,10 @@ import type {
   Adapter,
   AdapterInput,
   AdapterRunResult,
+  DurableEvent,
   SessionErrorEvent,
-  SessionEvent,
   SkillDescriptor,
   DelegationInstruction,
-  StreamEvent,
 } from "@open-managed-agents/adapter-core";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Api, Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -127,7 +126,7 @@ export interface SessionFactoryArgs {
    */
   resourceLoaderOptions: PiResourceLoaderOptions;
   /** Record a native context event through the Turn journal, aligned with its Deltas. */
-  emitContext(event: Exclude<SessionEvent, StreamEvent>): void;
+  emitContext(event: DurableEvent): void;
   compactionInfo(): PiEventTranslator["activeCompaction"];
   beforeModelStep(): Promise<DelegationInstruction[]>;
   /**
@@ -302,7 +301,7 @@ export class PiAgentAdapter implements Adapter {
     const { journal } = input;
     // Set once Pi stopped at a model request gate at the Host's request.
     let stopped = false;
-    const record = (event: Exclude<SessionEvent, StreamEvent>) => {
+    const record = (event: DurableEvent) => {
       // What Pi produces as it unwinds from the stop (the request it never
       // sent, ending as aborted) is not the Agent's output: the Turn goes on
       // from what is committed, on another Runner.

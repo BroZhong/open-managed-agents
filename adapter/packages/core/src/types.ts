@@ -482,3 +482,6 @@ export type SessionEvent =
   | SpanEvent
   | CanonicalEvent
   | StreamEvent;
+
+/** An event an Adapter records durably: anything but a Delta. */
+export type DurableEvent = Exclude<SessionEvent, StreamEvent>;

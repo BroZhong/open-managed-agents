@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import type { Adapter, AdapterInput, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
+import type { Adapter, AdapterInput, DurableEvent, SessionEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
@@ -14,7 +14,6 @@ const event = (type: string, data: object = {}) => ({ id: randomUUID(), timestam
 const text = (message: string) => event("agent.message", { content: [{ type: "text", text: message }], stopReason: "stop" });
 const tool = (id: string) => event("agent.tool_use", { toolUseId: id, name: "Agent", input: { prompt: "child" } });
 const result = (id: string, data: unknown) => event("agent.tool_result", { toolUseId: id, content: [{ type: "text", text: JSON.stringify(data) }], isError: false });
-type DurableEvent = Exclude<SessionEvent, StreamEvent>;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function until(check: () => Promise<boolean>, timeout = 4000) {
   const start = Date.now();

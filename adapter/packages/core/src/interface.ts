@@ -1,4 +1,4 @@
-import type { AdapterInput, SessionEvent, StreamEvent } from "./types.js";
+import type { AdapterInput, DurableEvent, StreamEvent } from "./types.js";
 
 /**
  * How a run ended (ADR-0020). `"finished"`: the Adapter is done with the Turn,
@@ -30,7 +30,7 @@ export interface TurnJournalPort {
    * never throws: nothing is written until the next flush, the event is
    * written as it was at this call, and recording it again is a no-op.
    */
-  record(event: Exclude<SessionEvent, StreamEvent>): void;
+  record(event: DurableEvent): void;
   /**
    * Emit a Delta of output block `blockIndex`, which must equal the blockIndex
    * of the Complete Event that later replaces it. Best effort and transient:

@@ -65,18 +65,19 @@ export interface DelegationAcceptInput extends DelegationCaller {
   sandboxSessionId: string;
 }
 /**
- * The calling parent Turn's effective configuration, so recovery resumes that
- * Turn unchanged. History is never stored here: each native message, including
- * the requesting tool call, reaches the event log before Pi runs its tools.
+ * The model and thinking a Turn runs with on every attempt. A delegation wait
+ * records its calling parent Turn's, so recovery resumes that Turn unchanged.
+ * History is never stored here: each native message, including the requesting
+ * tool call, reaches the event log before Pi runs its tools.
  */
-export interface DelegationWaitConfig {
+export interface TurnConfig {
   model?: string;
   thinking?: string;
 }
 export interface DelegationWait extends DelegationCaller {
   executionId: string;
   parentPendingEventId: string;
-  config: DelegationWaitConfig;
+  config: TurnConfig;
   status: "waiting" | "consumed" | "cancelled";
   toolResultSeq?: number;
 }

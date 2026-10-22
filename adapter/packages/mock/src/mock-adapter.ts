@@ -2,6 +2,7 @@ import type {
   Adapter,
   AdapterInput,
   AdapterRunResult,
+  DurableEvent,
   SessionEvent,
   StreamEvent,
 } from "@open-managed-agents/adapter-core";
@@ -108,7 +109,7 @@ class StreamBlocks {
     return Math.max(0, this.current);
   }
 
-  complete<T extends Exclude<SessionEvent, StreamEvent>>(event: T): T {
+  complete<T extends DurableEvent>(event: T): T {
     const toolUseId = "toolUseId" in event ? event.toolUseId : undefined;
     for (let i = this.open.length - 1; i >= 0; i--) {
       const block = this.open[i]!;

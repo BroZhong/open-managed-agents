@@ -1,5 +1,5 @@
 import type { ExtensionFactory, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { AdapterInput, AgentContextEntryEvent, SessionEvent, StreamEvent } from "@open-managed-agents/adapter-core";
+import type { AdapterInput, AgentContextEntryEvent, DurableEvent } from "@open-managed-agents/adapter-core";
 
 import { isContinuationEntry } from "./pi-continuation.js";
 import { PiPresentation } from "./pi-presentation.js";
@@ -8,7 +8,7 @@ interface JournalOptions {
   manager: SessionManager;
   input: AdapterInput;
   /** Record a native context event through the Turn journal. */
-  emit(event: Exclude<SessionEvent, StreamEvent>): void;
+  emit(event: DurableEvent): void;
   compactionInfo(): { compactionId: string; reason: "manual" | "threshold" | "overflow" } | undefined;
 }
 

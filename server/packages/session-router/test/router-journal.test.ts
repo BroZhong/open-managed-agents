@@ -5,7 +5,7 @@ import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { PendingEventClaimLostError, presentEvent, type StoredEvent } from "@oma-server/store";
-import type { Adapter, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
+import type { Adapter, DurableEvent, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 
@@ -15,7 +15,6 @@ const usage = () => event("span.model_request_end", { usage: { inputTokens: 1, o
 const contextEntry = (id: string) => event("agent.context_entry", { sdk: "pi@0.83.0",
   entry: { id, type: "message", parentId: null, message: { role: "assistant", content: [{ type: "text", text: id }] } },
   presentation: { version: 1, blocks: [{ type: "agent.message", index: 0 }] } });
-type DurableEvent = Exclude<SessionEvent, StreamEvent>;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const aborted = (signal: AbortSignal) => new Promise<void>((resolve) => {
   if (signal.aborted) resolve();

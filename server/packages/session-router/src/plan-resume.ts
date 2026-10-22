@@ -1,4 +1,4 @@
-import type { DelegationExecution, DelegationWait, DelegationWaitConfig, PendingEventClaimEnd, StoredEvent } from "@oma-server/store";
+import type { DelegationExecution, DelegationWait, PendingEventClaimEnd, StoredEvent, TurnConfig } from "@oma-server/store";
 import { presentEvent } from "@oma-server/store";
 import type { AdapterResume } from "@open-managed-agents/adapter-core";
 import { isTerminalExecution } from "./delegation-coordinator.js";
@@ -108,8 +108,8 @@ export interface DanglingToolCall {
 
 /** A session.error that ends a Turn; it names the Turn it ends. */
 export interface RecoveryError {
-  /** Names the error's idempotency key under its input. */
-  phase: string;
+  /** The error's idempotency key segment under its input: one error of this kind per input. */
+  keySegment: string;
   code: string;
   message?: string;
 }
@@ -136,7 +136,7 @@ export interface RunPlan {
    * as a delegation wait recorded them. Absent while no attempt claimed the
    * input: the Turn then starts with the configuration current at this claim.
    */
-  config?: DelegationWaitConfig;
+  config?: TurnConfig;
   takeover?: Takeover;
 }
 
@@ -224,7 +224,7 @@ export function planResume(facts: ResumeFacts): ResumePlan {
  * records what it resolved when it claims the input (agent.context_start),
  * before its first model request.
  */
-function turnConfig(output: readonly StoredEvent[], turnId: string): DelegationWaitConfig | undefined {
+function turnConfig(output: readonly StoredEvent[], turnId: string): TurnConfig | undefined {
   for (const event of output) {
     if (event.type !== "agent.context_start") continue;
     const data = event.data as { turnId?: unknown; model?: unknown; thinking?: unknown } | null;
@@ -242,7 +242,7 @@ function turnConfig(output: readonly StoredEvent[], turnId: string): DelegationW
 export const TAKEOVER_LIMIT = 3;
 
 const RECOVERY_LIMIT_EXCEEDED: RecoveryError = {
-  phase: "recovery_limit_exceeded",
+  keySegment: "recovery_limit_exceeded",
   code: "recovery_limit_exceeded",
   message: `The Runner executing this Turn was lost ${TAKEOVER_LIMIT + 1} times without the Turn committing new progress in between, ` +
     "so it was ended instead of being resumed again. Inspect what the Turn was doing before retrying it.",

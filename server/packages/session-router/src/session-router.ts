@@ -33,8 +33,8 @@ import type {
   Adapter,
   AdapterInput,
   AdapterRunResult,
+  DurableEvent,
   SessionEvent,
-  StreamEvent,
   ContentBlock,
   ToolExecutor,
   TurnJournalPort,
@@ -70,7 +70,7 @@ interface AttemptWrites {
   /** The prepared Turn's delegation run; tool results consume its waits. */
   delegationRun?: DelegationRun;
   /** Durable form and idempotency key of an Adapter event, set before the Adapter runs. */
-  fromAdapter?(event: Exclude<SessionEvent, StreamEvent>): { event: JournalEvent; key: string };
+  fromAdapter?(event: DurableEvent): { event: JournalEvent; key: string };
 }
 
 /** The claim heartbeat of one Turn attempt. */
@@ -986,8 +986,9 @@ export class SessionRouter {
     });
   }
 
-  private turnKey(pendingEventId: string, phase: string): string {
-    return `pending:${pendingEventId}:${phase}`;
+  /** The idempotency key of a Router write for an input: `keySegment` names the write among the input's. */
+  private turnKey(pendingEventId: string, keySegment: string): string {
+    return `pending:${pendingEventId}:${keySegment}`;
   }
 
   /**
@@ -999,10 +1000,10 @@ export class SessionRouter {
     journal: TurnJournal,
     pendingEventId: string,
     turnId: string,
-    phase: string,
+    keySegment: string,
     error: { code: string; message?: string },
   ): void {
-    journal.record({ type: "session.error", data: { turnId, error } }, this.turnKey(pendingEventId, phase));
+    journal.record({ type: "session.error", data: { turnId, error } }, this.turnKey(pendingEventId, keySegment));
   }
 
   /**
@@ -1037,7 +1038,7 @@ export class SessionRouter {
         `recovery_tool_result:${encodeURIComponent(call.toolUseId)}`,
       ));
     }
-    if (error) this.recordTurnError(journal, pendingEventId, turnId, error.phase, { code: error.code, message: error.message });
+    if (error) this.recordTurnError(journal, pendingEventId, turnId, error.keySegment, { code: error.code, message: error.message });
   }
 
   /** Under the key of the attempt that accepted the Interrupt: whichever attempt writes it, it is written once. */
@@ -1294,8 +1295,8 @@ export class SessionRouter {
       };
       // End the Turn with an error no later attempt could avoid: retaining
       // its input would make every claim retry and recovery scan run it again.
-      const endTurnWithError = (endedTurnId: string, phase: string, error: { code: string; message: string }): Promise<boolean> => {
-        this.recordTurnError(journal, pendingEvent.id, endedTurnId, phase, error);
+      const endTurnWithError = (endedTurnId: string, keySegment: string, error: { code: string; message: string }): Promise<boolean> => {
+        this.recordTurnError(journal, pendingEvent.id, endedTurnId, keySegment, error);
         return endTurn(endedTurnId);
       };
       // A completed Turn is never run again. Its acknowledgement must still

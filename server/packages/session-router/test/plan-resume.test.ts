@@ -140,7 +140,7 @@ const continuedAfterHandoff: RunPlan = { kind: "run", start: "continue", turnId:
 /** End the Turn instead of continuing it once more: repair its calls, record recovery_limit_exceeded, stop its children. */
 const stalled = (repairs: DanglingToolCall[] = [], turnId = TURN): ResumePlan => ({ kind: "complete", cause: "stalled", turnId, repairs,
   repairOutcome: "unknown", interruptChildren: true,
-  error: { phase: "recovery_limit_exceeded", code: "recovery_limit_exceeded", message: expect.any(String) as string },
+  error: { keySegment: "recovery_limit_exceeded", code: "recovery_limit_exceeded", message: expect.any(String) as string },
   takeover: expired(...repairs.map((repair) => repair.toolUseId)) });
 
 /** Every row plans an input that runs no Child execution, or one that has not ended. */

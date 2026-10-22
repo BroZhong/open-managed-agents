@@ -1,8 +1,7 @@
 import type { Adapter, TurnJournalPort } from "./interface.js";
-import type { AdapterInput, SessionEvent, StreamEvent } from "./types.js";
+import type { AdapterInput, DurableEvent, SessionEvent, StreamEvent } from "./types.js";
 
-/** An event an Adapter records durably: anything but a Delta. */
-export type DurableEvent = Exclude<SessionEvent, StreamEvent>;
+export type { DurableEvent };
 
 /**
  * In-memory TurnJournalPort for testing Adapters, with the Host journal's
