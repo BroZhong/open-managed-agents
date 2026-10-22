@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { Runtime } from "@oma-server/store";
-import { InMemoryAgentStore, InMemoryAgentFileStore, InMemorySkillStore, InMemorySkillArtifactStore } from "@oma-server/store-memory";
+import { InMemoryAgentStore, InMemoryAgentFileStore, InMemorySkillStore, InMemorySkillBundleStore } from "@oma-server/store-memory";
+import { currentFiles, seedSkill } from "./fixtures/skill-bundles.js";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
@@ -10,21 +11,22 @@ async function setup() {
   const agentStore = new InMemoryAgentStore();
   const agentFileStore = new InMemoryAgentFileStore();
   const skillStore = new InMemorySkillStore();
-  const skillArtifactStore = new InMemorySkillArtifactStore();
-  const app = createApp({ apiKeyStore: { async findByKeyHash() { return null; } }, agentStore, agentFileStore, skillStore, skillArtifactStore });
+  const skillBundleStore = new InMemorySkillBundleStore();
+  const app = createApp({ apiKeyStore: { async findByKeyHash() { return null; } }, agentStore, agentFileStore, skillStore, skillBundleStore });
   const source = await agentStore.create({ tenantId: "dev", name: "Original", description: "Research", model: "m", system: "s", runtime: "pi-agent", tools: ["Read"], sandbox: { enabled: true, env: { LANG: "en_US" } } });
   await agentFileStore.upsert("dev", source.id, "SOUL.md", "Private instructions");
-  const skill = await skillStore.create({ tenantId: "dev", name: "research", description: "Edited Agent Skill", ownerType: "agent", ownerId: source.id, sourceSkillId: "deleted-library-skill" });
-  await skillArtifactStore.put("dev", skill.id, "SKILL.md", "Current Agent edits");
-  await skillArtifactStore.put("dev", skill.id, "references/data.bin", new Uint8Array([0, 128, 255]));
+  const skill = await seedSkill(skillStore, skillBundleStore,
+    { tenantId: "dev", name: "research", description: "Edited Agent Skill", ownerType: "agent", ownerId: source.id, sourceSkillId: "deleted-library-skill" },
+    { "SKILL.md": "Current Agent edits", "references/data.bin": new Uint8Array([0, 128, 255]) });
   await agentStore.update(source.id, { skills: [skill.id] });
   const fork = (id = source.id, name = "Copy") => app.request(`/v1/agents/${id}/fork`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-  return { app, agentStore, agentFileStore, skillStore, skillArtifactStore, source, skill, fork };
+  const filesOf = (id: string) => currentFiles(skillStore, skillBundleStore, id);
+  return { app, agentStore, agentFileStore, skillStore, skillBundleStore, filesOf, source, skill, fork };
 }
 
 describe("Agent fork", () => {
-  it("copies configuration, Agent Files and current private Skill contents into independent owners", async () => {
-    const { fork, source, skill, agentStore, agentFileStore, skillStore, skillArtifactStore } = await setup();
+  it("copies configuration and Agent Files and references the current private Skill versions under independent owners", async () => {
+    const { app, fork, source, skill, agentStore, agentFileStore, skillStore, skillBundleStore, filesOf } = await setup();
     const response = await fork();
     expect(response.status).toBe(201);
     const copy = await response.json();
@@ -35,11 +37,21 @@ describe("Agent fork", () => {
     expect(copies[0]).toMatchObject({ name: skill.name, description: skill.description, ownerId: copy.id, sourceSkillId: "deleted-library-skill" });
     expect(copies[0].id).not.toBe(skill.id);
     expect(copy.skills).toEqual([copies[0].id]);
-    expect(await skillArtifactStore.getAll("dev", copies[0].id)).toEqual(await skillArtifactStore.getAll("dev", skill.id));
+    // The copy references the source's bundle; no Skill file is copied.
+    expect(copies[0]).toMatchObject({ bundleSha256: skill.bundleSha256, bundleSize: skill.bundleSize });
+    const sourceBundle = await skillBundleStore.get("dev", skill.bundleSha256!);
     expect((await agentFileStore.get("dev", copy.id, "SOUL.md"))?.content).toBe("Private instructions");
-    await skillArtifactStore.put("dev", copies[0].id, "SKILL.md", "Copy edit");
+    const edit = await app.request(`/v1/skills/${copies[0].id}/files/content`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "SKILL.md", content: "Copy edit" }),
+    });
+    expect(edit.status).toBe(200);
     await agentFileStore.upsert("dev", copy.id, "SOUL.md", "Copy persona");
-    expect(new TextDecoder().decode((await skillArtifactStore.get("dev", skill.id, "SKILL.md"))!)).toBe("Current Agent edits");
+    expect((await filesOf(copies[0].id)).files["SKILL.md"]).toBe("Copy edit");
+    const original = await filesOf(skill.id);
+    expect(original.sha256).toBe(skill.bundleSha256);
+    expect(original.files["SKILL.md"]).toBe("Current Agent edits");
+    expect(await skillBundleStore.get("dev", skill.bundleSha256!)).toEqual(sourceBundle);
+    expect(await skillBundleStore.readFile("dev", skill.bundleSha256!, "references/data.bin")).toEqual(new Uint8Array([0, 128, 255]));
     expect((await agentFileStore.get("dev", source.id, "SOUL.md"))?.content).toBe("Private instructions");
     expect((await agentStore.getById(source.id))?.skills).toEqual([skill.id]);
     const storedCopy = (await agentStore.getById(copy.id))!;
@@ -57,18 +69,21 @@ describe("Agent fork", () => {
   });
 
   it("cleans up a failed Skill copy while preserving the source", async () => {
-    const { fork, source, skill, agentStore, agentFileStore, skillStore, skillArtifactStore } = await setup();
-    const put = skillArtifactStore.put.bind(skillArtifactStore);
-    vi.spyOn(skillArtifactStore, "put").mockImplementation(async (tenant, id, path, body) => {
-      if (path.endsWith(".bin")) throw new Error("Storage unavailable");
-      return put(tenant, id, path, body);
+    const { fork, source, skill, agentStore, agentFileStore, skillStore, skillBundleStore, filesOf } = await setup();
+    const second = await seedSkill(skillStore, skillBundleStore,
+      { tenantId: "dev", name: "writing", description: "", ownerType: "agent", ownerId: source.id }, { "SKILL.md": "Write" });
+    await agentStore.update(source.id, { skills: [skill.id, second.id] });
+    const create = skillStore.create.bind(skillStore);
+    vi.spyOn(skillStore, "create").mockImplementation(async (input) => {
+      if (input.name === "writing") throw new Error("Database unavailable");
+      return create(input);
     });
     expect((await fork()).status).toBe(500);
     expect((await agentStore.list("dev")).data.map((agent) => agent.id)).toEqual([source.id]);
     expect(await skillStore.listByOwner("dev", "agent", "agent_2")).toEqual([]);
     expect(await agentFileStore.list("dev", "agent_2")).toEqual([]);
-    expect(await skillArtifactStore.list("dev", "skill_2")).toEqual([]);
-    expect(await skillArtifactStore.list("dev", skill.id)).toHaveLength(2);
+    expect((await skillStore.listByOwner("dev", "agent", source.id)).map((s) => s.id)).toEqual([skill.id, second.id]);
+    expect((await filesOf(skill.id)).sha256).toBe(skill.bundleSha256);
   });
 
   it("refuses to copy a retired runtime into a new Agent", async () => {

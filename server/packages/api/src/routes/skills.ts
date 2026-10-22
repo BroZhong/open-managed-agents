@@ -1,11 +1,11 @@
-import { SkillNameConflictError } from "@oma-server/store";
-import { replaceSkillFiles } from "../skills/replace-files.js";
+import { packSkillBundle } from "@oma-server/store";
 import { publicSkill } from "../lib/public-projection.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import type { SkillStore, SkillArtifactStore } from "@oma-server/store";
+import type { SkillBundleStore, SkillStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { detectSkills, parseSkillMetadata, type DroppedFile } from "../skills/detect-skills.js";
+import { SkillVersions } from "../skills/skill-versions.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -18,25 +18,32 @@ type Env = {
   };
 };
 
+/** The entry point every Skill keeps: uploads require it, and edits cannot remove it. */
+const SKILL_MD = "SKILL.md";
+
 /**
- * Skill Library routes: a tenant-scoped Library of reusable, instruction-only
- * Skills (a directory with a SKILL.md). Metadata lives in `skillStore`; file
- * bodies live in S3 under `<tenantId>/skills/<skillId>/…` via `skillArtifacts`.
- * Listing returns only Library Skills; equipping (which forks a Library Skill
- * onto an Agent, ADR-0004) lives on the Agent routes. The `:id/files/*`
- * endpoints edit any Skill the tenant owns — a Library Skill or an Agent fork.
+ * Skill Library routes: a tenant-scoped Library of reusable Skills (a
+ * directory with a SKILL.md). Metadata and the current version live in
+ * `skillStore`; each version's files are one immutable Skill Bundle in
+ * `skillBundles` (ADR-0022), and every file change publishes a new bundle by
+ * compare-and-set (see `SkillVersions`). Listing returns only Library Skills;
+ * equipping (which forks a Library Skill onto an Agent, ADR-0004) lives on the
+ * Agent routes. The `:id/files/*` endpoints edit any Skill the tenant owns — a
+ * Library Skill or an Agent fork.
  *
  * Upload wire shape for POST /v1/skills — `multipart/form-data`:
  *   - `paths`: a JSON array of root-relative file paths (string[]).
  *   - `files`: one File entry per path, in the SAME order as `paths`.
  * The dropped folder's tree is flattened client-side into (path, file) pairs;
  * the server re-runs the single/multi-Skill detection (server-authoritative).
+ * Files are stored byte for byte; `.pyc` and `__pycache__` are left out.
  */
 export function skillRoutes(
   skillStore: SkillStore,
-  skillArtifacts: SkillArtifactStore,
+  skillBundles: SkillBundleStore,
 ): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
+  const versions = new SkillVersions(skillStore, skillBundles);
 
   // POST /v1/skills — upload a dropped folder → create N Skills
   registerContractRoute(router, getOpenApiRoute("uploadSkills"), async (c) => {
@@ -71,15 +78,16 @@ export function skillRoutes(
 
     const dropped: DroppedFile[] = [];
     for (let i = 0; i < paths.length; i++) {
-      const content = await fileEntries[i].text();
-      dropped.push({ path: paths[i], content });
+      // Bytes, never text(): decoding corrupts fonts and other binary files.
+      dropped.push({ path: paths[i], body: new Uint8Array(await fileEntries[i].arrayBuffer()) });
     }
 
     const detected = detectSkills(dropped);
     if (!detected.ok) return c.json({ error: detected.error }, 400);
 
+    // A replacement is based on the version read here: capture it as a value.
     const existing = await skillStore.listByOwner(tenant.tenantId, "library", tenant.tenantId);
-    const byName = new Map(existing.map((skill) => [skill.name, skill]));
+    const byName = new Map(existing.map((skill) => [skill.name, { id: skill.id, bundleSha256: skill.bundleSha256 }]));
     const incoming = new Map<string, (typeof detected.skills)[number]>();
     const conflicts = new Set<string>();
     for (const skill of detected.skills) {
@@ -93,22 +101,27 @@ export function skillRoutes(
       }, 409);
     }
 
+    // Pack every Skill before writing anything, so an invalid or oversized
+    // Skill rejects the whole upload.
+    const packed = [];
+    for (const skill of incoming.values()) packed.push({ skill, bundle: await packSkillBundle(skill.files) });
+
+    // A Skill row is written only with its stored bundle: a failure leaves no
+    // half-created Skill, and a replacement keeps the old version until its
+    // compare-and-set succeeds.
     const created = [];
-    for (const skill of incoming.values()) {
+    for (const { skill, bundle } of packed) {
+      const version = await versions.store(tenant.tenantId, bundle);
       const previous = byName.get(skill.name);
-      const row = previous ?? await skillStore.create({
-        tenantId: tenant.tenantId,
-        name: skill.name,
-        description: skill.description,
-      });
-      try {
-        await replaceSkillFiles(skillArtifacts, tenant.tenantId, row.id,
-          skill.files.map((file) => ({ path: file.path, body: file.content })));
-      } catch (error) {
-        if (!previous) await skillStore.delete(row.id);
-        throw error;
-      }
-      created.push(await skillStore.update(row.id, { description: skill.description }));
+      created.push(previous
+        ? await skillStore.update(previous.id, { description: skill.description, ...version },
+          { expectedBundleSha256: previous.bundleSha256 })
+        : await skillStore.create({
+          tenantId: tenant.tenantId,
+          name: skill.name,
+          description: skill.description,
+          ...version,
+        }));
     }
 
     return c.json({ data: created.map((skill) => skill && publicSkill(skill)) }, 201);
@@ -146,14 +159,16 @@ export function skillRoutes(
   registerContractRoute(router, getOpenApiRoute("getSkill"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
-    const files = await skillArtifacts.list(skill.tenantId, skill.id);
-    return c.json({ ...publicSkill(skill), files });
+    return c.json({ ...publicSkill(skill), files: await versions.paths(skill) });
   });
 
-  // POST /v1/skills/:id — update metadata
+  // POST /v1/skills/:id — update metadata. No file changes, so the version
+  // stays; the compare-and-set still rejects a metadata change based on a
+  // version that a concurrent file edit has replaced.
   registerContractRoute(router, getOpenApiRoute("updateSkill"), async (c) => {
     const existing = await requireOwned(c, skillStore);
     if (!existing) return c.json({ error: "Not found" }, 404);
+    const version = existing.bundleSha256;
 
     const body = await c.req.json().catch(() => null);
     if (!body) return c.json({ error: "Invalid JSON body" }, 400);
@@ -166,16 +181,16 @@ export function skillRoutes(
       if (typeof body.description !== "string") return c.json({ error: "description must be a string" }, 400);
       update.description = body.description;
     }
-    const updated = await skillStore.update(existing.id, update);
+    const updated = await skillStore.update(existing.id, update, { expectedBundleSha256: version });
     if (!updated) return c.json({ error: "Not found" }, 404);
     return c.json(publicSkill(updated));
   });
 
-  // DELETE /v1/skills/:id — remove from Library + S3
+  // DELETE /v1/skills/:id — remove the Skill. Its bundles stay: they are
+  // content-addressed and may be the current version of a fork (GC is #273).
   registerContractRoute(router, getOpenApiRoute("deleteSkill"), async (c) => {
     const existing = await requireOwned(c, skillStore);
     if (!existing) return c.json({ error: "Not found" }, 404);
-    await skillArtifacts.deleteTree(existing.tenantId, existing.id);
     const deleted = await skillStore.delete(existing.id);
     if (!deleted) return c.json({ error: "Not found" }, 404);
     return c.json({ type: "skill_deleted", id: existing.id });
@@ -190,8 +205,7 @@ export function skillRoutes(
   registerContractRoute(router, getOpenApiRoute("listSkillFiles"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
-    const files = await skillArtifacts.list(skill.tenantId, skill.id);
-    return c.json({ data: files, has_more: false });
+    return c.json({ data: await versions.paths(skill), has_more: false });
   });
 
   // GET /v1/skills/:id/files/content?path=… — read one file's text
@@ -200,7 +214,7 @@ export function skillRoutes(
     if (!skill) return c.json({ error: "Not found" }, 404);
     const path = safePath(c.req.query("path"));
     if (!path) return c.json({ error: "path is required" }, 400);
-    const bytes = await skillArtifacts.get(skill.tenantId, skill.id, path);
+    const bytes = await versions.readFile(skill, path);
     if (!bytes) return c.json({ error: "Not found" }, 404);
     return c.json({ path, content: new TextDecoder().decode(bytes) });
   });
@@ -216,27 +230,16 @@ export function skillRoutes(
     if (typeof body.content !== "string") {
       return c.json({ error: "content is required" }, 400);
     }
-    // Keep summaries in sync with the edited entry point. A missing name keeps
-    // the Skill's current name, matching upload parsing without renaming it to
-    // a generic fallback. Other files only advance updatedAt.
-    const metadata: { name?: string; description?: string } = path === "SKILL.md"
-      ? parseSkillMetadata(body.content, skill.name)
-      : {};
-    if (metadata.name !== undefined) {
-      const siblings = await skillStore.listByOwner(skill.tenantId, skill.ownerType, skill.ownerId);
-      if (siblings.some((other) => other.id !== skill.id && other.name === metadata.name)) {
-        throw new SkillNameConflictError(metadata.name);
-      }
-    }
-    // Reserve the name before writing so concurrent renames cannot create duplicates.
-    const previousMetadata = { name: skill.name, description: skill.description };
-    await skillStore.update(skill.id, metadata);
-    try {
-      await skillArtifacts.put(skill.tenantId, skill.id, path, body.content);
-    } catch (error) {
-      await skillStore.update(skill.id, previousMetadata);
-      throw error;
-    }
+    const base = await versions.checkout(skill);
+    const previous = base.files.find((file) => file.path === path);
+    const files = [
+      ...base.files.filter((file) => file.path !== path),
+      { path, body: new TextEncoder().encode(body.content), mode: previous?.mode },
+    ];
+    // The row's name and the new version are published together, so a name
+    // conflict (409) changes nothing.
+    const updated = await versions.commit(base, files, skillMdMetadata(path, body.content, skill.name));
+    if (!updated) return c.json({ error: "Not found" }, 404);
     return c.json({ path, content: body.content });
   });
 
@@ -246,12 +249,20 @@ export function skillRoutes(
     if (!skill) return c.json({ error: "Not found" }, 404);
     const path = safePath(c.req.query("path"));
     if (!path) return c.json({ error: "path is required" }, 400);
-    await skillArtifacts.delete(skill.tenantId, skill.id, path);
-    await skillStore.update(skill.id, {});
+    if (path === SKILL_MD) {
+      return c.json({ error: "SKILL.md cannot be deleted: every Skill needs one. Edit it instead." }, 400);
+    }
+    // Deleting an absent file is a no-op that publishes no version.
+    const base = await versions.checkout(skill);
+    if (base.files.some((file) => file.path === path)) {
+      const updated = await versions.commit(base, base.files.filter((file) => file.path !== path));
+      if (!updated) return c.json({ error: "Not found" }, 404);
+    }
     return c.json({ type: "skill_file_deleted", id: skill.id, path });
   });
 
-  // POST /v1/skills/:id/files/rename — rename/move one file within the Skill
+  // POST /v1/skills/:id/files/rename — rename/move one file within the Skill,
+  // replacing any file at the destination.
   //   body: { from: string, to: string }
   registerContractRoute(router, getOpenApiRoute("renameSkillFile"), async (c) => {
     const skill = await requireOwned(c, skillStore);
@@ -260,14 +271,33 @@ export function skillRoutes(
     const from = safePath(body?.from);
     const to = safePath(body?.to);
     if (!from || !to) return c.json({ error: "from and to are required" }, 400);
-    const src = await skillArtifacts.get(skill.tenantId, skill.id, from);
-    if (!src) return c.json({ error: "Not found" }, 404);
-    await skillArtifacts.move(skill.tenantId, skill.id, from, to);
-    await skillStore.update(skill.id, {});
+    if (from === SKILL_MD && to !== SKILL_MD) {
+      return c.json({ error: "SKILL.md cannot be renamed: every Skill needs one. Rename the Skill by editing its name in SKILL.md." }, 400);
+    }
+    const base = await versions.checkout(skill);
+    const source = base.files.find((file) => file.path === from);
+    if (!source) return c.json({ error: "Not found" }, 404);
+    const files = [
+      ...base.files.filter((file) => file.path !== from && file.path !== to),
+      { ...source, path: to },
+    ];
+    const metadata = skillMdMetadata(to, new TextDecoder().decode(source.body), skill.name);
+    const updated = await versions.commit(base, files, metadata);
+    if (!updated) return c.json({ error: "Not found" }, 404);
     return c.json({ type: "skill_file_renamed", id: skill.id, from, to });
   });
 
   return router;
+}
+
+/**
+ * Keep the Skill's summary in sync with its entry point: writing `SKILL.md`
+ * refreshes name and description. A missing name keeps the Skill's current
+ * name, matching upload parsing without renaming it to a generic fallback.
+ * Other files change no metadata.
+ */
+function skillMdMetadata(path: string, content: string, currentName: string): { name?: string; description?: string } {
+  return path === SKILL_MD ? parseSkillMetadata(content, currentName) : {};
 }
 
 /**

@@ -86,7 +86,6 @@ async function main() {
     agentStore: stores.agentStore,
     agentFileStore: stores.agentFileStore,
     skillStore: stores.skillStore,
-    skillArtifactStore: stores.skillArtifactStore,
     skillBundleStore: stores.skillBundleStore,
     sessionStore: stores.sessionStore,
     eventLogStore: stores.eventLogStore,

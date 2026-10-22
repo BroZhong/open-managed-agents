@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import type { ApiKeyStore } from "../src/types.js";
-import { InMemoryAgentStore, InMemorySkillArtifactStore, InMemorySkillStore } from "@oma-server/store-memory";
+import { InMemoryAgentStore, InMemorySkillBundleStore, InMemorySkillStore } from "@oma-server/store-memory";
 
 const emptyApiKeyStore: ApiKeyStore = { async findByKeyHash() { return null; } };
 /** The documented `Skill` schema: storage coordinates such as the bundle digest stay Host-private. */
@@ -11,8 +11,8 @@ it("returns Skills in their documented shape without Skill Bundle storage fields
   process.env.AUTH_DISABLED = "true";
   const agentStore = new InMemoryAgentStore();
   const skillStore = new InMemorySkillStore();
-  const skillArtifactStore = new InMemorySkillArtifactStore();
-  const app = createApp({ apiKeyStore: emptyApiKeyStore, agentStore, skillStore, skillArtifactStore });
+  const skillBundleStore = new InMemorySkillBundleStore();
+  const app = createApp({ apiKeyStore: emptyApiKeyStore, agentStore, skillStore, skillBundleStore });
   const json = async (path: string, init?: RequestInit) => (await app.request(path, init)).json();
 
   const form = new FormData();
@@ -20,7 +20,7 @@ it("returns Skills in their documented shape without Skill Bundle storage fields
   form.append("files", new Blob(["---\nname: greeter\ndescription: Greets\n---\nHi."]), "SKILL.md");
   const uploaded = (await json("/v1/skills", { method: "POST", body: form })).data[0];
   expect(Object.keys(uploaded).sort()).toEqual(SKILL_KEYS);
-  await skillStore.update(uploaded.id, { bundleSha256: "a".repeat(64), bundleSize: 10 });
+  expect((await skillStore.getById(uploaded.id))?.bundleSha256).toMatch(/^[a-f0-9]{64}$/);
 
   const detail = await json(`/v1/skills/${uploaded.id}`);
   expect(Object.keys(detail).sort()).toEqual([...SKILL_KEYS, "files"].sort());
@@ -39,7 +39,6 @@ it("returns Skills in their documented shape without Skill Bundle storage fields
   });
   const fork = await equip();
   expect(Object.keys(fork).sort()).toEqual(SKILL_KEYS);
-  await skillStore.update(fork.id, { bundleSha256: "a".repeat(64), bundleSize: 10 });
   expect(Object.keys(await equip()).sort()).toEqual(SKILL_KEYS);
   expect(Object.keys(await equip(true)).sort()).toEqual(SKILL_KEYS);
 });

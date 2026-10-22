@@ -1,6 +1,7 @@
-import { RUNTIMES, type AgentFileStore, type AgentStore, type SkillArtifactStore, type SkillStore } from "@oma-server/store";
+import { RUNTIMES, type AgentFileStore, type AgentStore, type SkillStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { publicAgent } from "../lib/public-projection.js";
+import { currentVersion } from "../skills/skill-versions.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import { createContractRouter, registerContractRoute } from "../openapi/router.js";
 
@@ -10,7 +11,6 @@ export function agentForkRoutes(
   agents: AgentStore,
   agentFiles: AgentFileStore,
   skills: SkillStore,
-  artifacts: SkillArtifactStore,
 ) {
   const router = createContractRouter<Env>();
   registerContractRoute(router, getOpenApiRoute("forkAgent"), async (c) => {
@@ -25,12 +25,11 @@ export function agentForkRoutes(
     const { name } = await c.req.json<{ name: string }>();
 
     // Snapshot the Agent's current private copies, including edits made since
-    // equip and Skills whose Library source has been deleted.
+    // equip and Skills whose Library source has been deleted. A copy references
+    // its source's current Skill Bundle, which never changes (ADR-0022).
     const config = structuredClone(source);
-    const skillSnapshots = [];
-    for (const skill of await skills.listByOwner(tenantId, "agent", source.id)) {
-      skillSnapshots.push({ skill: structuredClone(skill), files: structuredClone(await artifacts.getAll(tenantId, skill.id)) });
-    }
+    const skillSnapshots = (await skills.listByOwner(tenantId, "agent", source.id))
+      .map((skill) => ({ skill: structuredClone(skill), version: currentVersion(skill) }));
     const fileSnapshots = [];
     for (const file of await agentFiles.list(tenantId, source.id)) {
       const snapshot = await agentFiles.get(tenantId, source.id, file.filename);
@@ -50,13 +49,12 @@ export function agentForkRoutes(
       for (const file of fileSnapshots) {
         await agentFiles.upsert(tenantId, fork.id, file.filename, file.content);
       }
-      for (const { skill, files } of skillSnapshots) {
+      for (const { skill, version } of skillSnapshots) {
         const copy = await skills.create({
           tenantId, name: skill.name, description: skill.description,
-          ownerType: "agent", ownerId: fork.id, sourceSkillId: skill.sourceSkillId,
+          ownerType: "agent", ownerId: fork.id, sourceSkillId: skill.sourceSkillId, ...version,
         });
         forkSkillIds.push(copy.id);
-        for (const file of files) await artifacts.put(tenantId, copy.id, file.path, file.body);
       }
       const updated = await agents.update(fork.id, { skills: forkSkillIds });
       if (!updated) throw new Error("Forked Agent disappeared");
@@ -64,7 +62,7 @@ export function agentForkRoutes(
     } catch (error) {
       // Attempt every cleanup even if one storage operation fails.
       const cleanup = await Promise.allSettled([
-        ...forkSkillIds.flatMap((id) => [artifacts.deleteTree(tenantId, id), skills.delete(id)]),
+        ...forkSkillIds.map((id) => skills.delete(id)),
         ...fileSnapshots.map((file) => agentFiles.delete(tenantId, fork.id, file.filename)),
         agents.delete(fork.id),
       ]);
