@@ -1,7 +1,9 @@
 -- Record what each environment binding's Sandbox holds (ADR-0022): the Sandbox
--- the last complete Skill Install went into and the Skill Set hash it
--- installed. A Turn whose Sandbox and Skill Set both match skips the install.
--- Both NULL until an install is recorded. Mirrors the idempotent ensureSchema DDL.
+-- the last complete Skill Install went into, the Skill Set hash it installed
+-- and the generation of its /skills switch in that Sandbox, which orders
+-- installs recording out of order. A Turn whose Sandbox and Skill Set both
+-- match skips the install. All NULL until an install is recorded. Mirrors the
+-- idempotent ensureSchema DDL.
 --
 -- Additive and nullable. Prod runs PG_ENSURE_SCHEMA=false: apply this migration
 -- before deploying the Runner that reads and writes these columns. Adding a
@@ -11,4 +13,5 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS skills_sandbox_id TEXT;
 ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS skills_set_hash TEXT;
+ALTER TABLE oma.delegation_environments ADD COLUMN IF NOT EXISTS skills_generation BIGINT;
 COMMIT;

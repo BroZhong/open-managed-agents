@@ -43,7 +43,12 @@ function durableBinding(id = "root") {
     id,
     withLock: async (work) => { const result = await work(sandboxId); sandboxId = result.sandboxId; return result.value; },
     installedSkills: async () => installed,
-    recordSkillsInstalled: async (next) => { if (next.sandboxId !== sandboxId) return false; installed = next; return true; },
+    recordSkillsInstalled: async (next) => {
+      if (next.sandboxId !== sandboxId) return "detached";
+      if (installed?.sandboxId === next.sandboxId && installed.generation >= next.generation) return "superseded";
+      installed = next;
+      return "recorded";
+    },
     forgetSkills: () => { installed = null; },
     installed: () => installed,
   };
@@ -131,7 +136,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(await resumed.readFile("/skills/new-name/SKILL.md")).toBe("new body");
     await expect(resumed.readFile("/skills/old-name/SKILL.md")).rejects.toThrow();
     expect(client.created).toHaveLength(1);
-    expect(binding.installed()).toEqual({ sandboxId: client.created[0], setHash: skillSetOf([edited]).setHash });
+    expect(binding.installed()).toEqual({ sandboxId: client.created[0], setHash: skillSetOf([edited]).setHash, generation: 2 });
   });
 
   it("skips an unchanged Skill Set for later Turns and for every session sharing the binding", async () => {

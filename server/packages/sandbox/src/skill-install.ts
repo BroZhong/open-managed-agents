@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { EMPTY_SKILL_SET_HASH, skillSetHash, type InstalledSkillSet, type SkillBundleStore } from "@oma-server/store";
+import { EMPTY_SKILL_SET_HASH, skillSetHash, type InstalledSkillSet, type SkillBundleStore, type SkillSetRecordOutcome } from "@oma-server/store";
 import type { SandboxClient } from "./sandbox-client.js";
 
 /**
@@ -79,6 +79,12 @@ export interface SkillInstallReport {
   bytes: number;
   /** A projected `/skills` directory was replaced. */
   legacy: boolean;
+  /**
+   * The Sandbox's switch generation of this install's `/skills` switch:
+   * higher than every earlier switch in the Sandbox, so the record of the
+   * highest one names what `/skills` points at.
+   */
+  generation: number;
 }
 
 export const SKILL_INSTALL_SCRIPT = readFileSync(new URL("./skill-install.sh", import.meta.url), "utf8");
@@ -187,9 +193,11 @@ export async function installSkillSet(input: {
     throw new SkillInstallError(isScriptStage(result.stage) ? result.stage : seen.stage, typeof result.reason === "string" ? result.reason : "the installer failed");
   }
   if (exit && exit.exitCode !== 0) throw new SkillInstallError(seen.stage, `the installer exited with code ${exit.exitCode}`);
+  const generation = Number(result.generation);
+  if (!Number.isSafeInteger(generation) || generation < 1) throw new SkillInstallError("switch", "the installer reported no switch generation");
   return {
     reused: result.reused === 1, skills: Number(result.skills), downloaded: Number(result.downloaded),
-    bytes: Number(result.bytes), legacy: result.legacy === 1,
+    bytes: Number(result.bytes), legacy: result.legacy === 1, generation,
   };
 }
 
@@ -204,8 +212,11 @@ function messageOf(error: unknown): string {
 /** Where the binding records what its Sandbox holds. */
 export interface SkillInstallLedger {
   installed(): Promise<InstalledSkillSet | null>;
-  /** Compare-and-set on the bound Sandbox; false when the binding moved on. */
-  record(installed: InstalledSkillSet): Promise<boolean>;
+  /**
+   * Compare-and-set on the bound Sandbox and the switch generation: an
+   * install records only over an earlier switch (see `SkillSetRecordOutcome`).
+   */
+  record(installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
 }
 
 export interface SkillInstallerDeps extends SkillInstallBudget {
@@ -319,17 +330,24 @@ export class SkillInstaller {
     }
     // An install its caller cancelled is not recorded, even once complete.
     signal?.throwIfAborted();
-    let recorded: boolean;
-    try { recorded = await ledger.record({ sandboxId: target.sandboxId, setHash: skills.setHash }); }
+    let outcome: SkillSetRecordOutcome;
+    try { outcome = await ledger.record({ sandboxId: target.sandboxId, setHash: skills.setHash, generation: report.generation }); }
     catch (error) { throw new SkillInstallError("record", `cannot record the install: ${messageOf(error)}`); }
-    if (!recorded) throw new SkillInstallError("record", "the environment binding no longer holds the Sandbox that was installed");
+    if (outcome === "detached") throw new SkillInstallError("record", "the environment binding no longer holds the Sandbox that was installed");
+    // Superseded: another install switched /skills after this one and is
+    // recorded. The Turn goes on and may see that version (ADR-0022).
     return report;
   }
 
   private localLedger(key: unknown): SkillInstallLedger {
     return {
       installed: async () => this.local.get(key) ?? null,
-      record: async (installed) => { this.local.set(key, { ...installed }); return true; },
+      record: async (installed) => {
+        const recorded = this.local.get(key);
+        if (recorded?.sandboxId === installed.sandboxId && recorded.generation >= installed.generation) return "superseded";
+        this.local.set(key, { ...installed });
+        return "recorded";
+      },
     };
   }
 }

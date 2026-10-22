@@ -22,6 +22,10 @@
 # bundle directory appears only through a rename after it is complete, and a
 # complete one is never rewritten, so an interrupted install leaves only work
 # directories behind and /skills keeps its old target.
+#
+# Every switch of /skills takes the Sandbox's next switch generation under the
+# lock and reports it: installs may record in any order, and the record of the
+# highest generation names what /skills points at.
 set -uo pipefail
 export LC_ALL=C.UTF-8 LANG=C.UTF-8
 umask 022
@@ -151,6 +155,14 @@ if [[ ! -d $dest ]]; then
 fi
 
 step switch
+# The next generation, reuse and unchanged targets included. Never below the
+# clock in milliseconds, so a lost counter cannot fall behind a recorded one.
+counter=$(cat "$root/.generation" 2>/dev/null)
+[[ $counter =~ ^[1-9][0-9]{0,17}$ ]] || counter=0
+clock=$(($(date +%s%N) / 1000000))
+generation=$((counter + 1 > clock ? counter + 1 : clock))
+{ printf '%s\n' "$generation" >"$root/.generation.next" && mv -f "$root/.generation.next" "$root/.generation"; } ||
+  fail "cannot advance the switch generation"
 previous=""
 moved=""
 if [[ -L $link ]]; then
@@ -197,6 +209,6 @@ if [[ $previous != "$dest" ]]; then
     -exec rm -rf {} + 2>/dev/null
 fi
 
-printf 'OMA_SKILLS_RESULT {"ok":true,"stage":"done","reused":%d,"skills":%d,"downloaded":%d,"bytes":%d,"legacy":%d}\n' \
-  "$reused" "$count" "$downloaded" "$bytes" "$legacy"
+printf 'OMA_SKILLS_RESULT {"ok":true,"stage":"done","reused":%d,"skills":%d,"downloaded":%d,"bytes":%d,"legacy":%d,"generation":%d}\n' \
+  "$reused" "$count" "$downloaded" "$bytes" "$legacy" "$generation"
 exit 0

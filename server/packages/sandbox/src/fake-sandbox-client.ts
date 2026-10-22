@@ -35,6 +35,8 @@ interface FakeSkills {
   versions: Map<string, { tree: Map<string, FakeFile>; bundles: Set<string> }>;
   /** The version `/skills` points at. */
   current?: string;
+  /** The switch generation of the last `/skills` switch. */
+  generation: number;
   /** The install lock (flock). */
   lock: Promise<void>;
 }
@@ -224,7 +226,7 @@ export class FakeSandboxClient implements SandboxClient {
       destroyed: false,
       reclaimed: false,
       createOpts: opts,
-      skills: { bundles: new Map(), versions: new Map(), lock: Promise.resolve() },
+      skills: { bundles: new Map(), versions: new Map(), generation: 0, lock: Promise.resolve() },
     });
     this.created.push(id);
     return { id };
@@ -357,7 +359,7 @@ export class FakeSandboxClient implements SandboxClient {
   seedProjectedSkills(id: string, files: Record<string, string>): void {
     const sandbox = this.require(id);
     for (const path of [...sandbox.files.keys()]) if (path.startsWith(`${SKILLS_PATH}/`)) sandbox.files.delete(path);
-    sandbox.skills = { bundles: new Map(), versions: new Map(), lock: sandbox.skills.lock };
+    sandbox.skills = { bundles: new Map(), versions: new Map(), generation: 0, lock: sandbox.skills.lock };
     for (const [path, content] of Object.entries(files)) sandbox.files.set(path, { content, mtimeMs: this.nextMtime() });
   }
 
@@ -391,15 +393,18 @@ export class FakeSandboxClient implements SandboxClient {
       if (signal?.aborted) throw signal.reason;
     };
     const failure = (reason: string) => line(`OMA_SKILLS_RESULT ${JSON.stringify({ ok: false, stage, reason })}`);
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const previousHolder = sandbox.skills.lock;
-    sandbox.skills.lock = previousHolder.then(() => held);
+    let release = () => {};
     try {
       yield enter("start");
       await work();
       const request = parseInstallRequest(opts?.stdin);
       if (typeof request === "string") { yield failure(request); opts?.onExit?.({ exitCode: 1 }); return; }
+      // flock after reading the request. A kill ends the process and so
+      // releases the lock, even while its stream has not ended yet.
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const previousHolder = sandbox.skills.lock;
+      sandbox.skills.lock = previousHolder.then(() => held);
+      signal?.addEventListener("abort", () => release(), { once: true });
       await previousHolder;
       const skills = sandbox.skills;
       let reused = 1, downloaded = 0, bytes = 0;
@@ -453,12 +458,14 @@ export class FakeSandboxClient implements SandboxClient {
       for (const path of [...sandbox.files.keys()]) if (path.startsWith(`${SKILLS_PATH}/`)) sandbox.files.delete(path);
       for (const [path, file] of skills.versions.get(request.setHash)!.tree) sandbox.files.set(path, { ...file });
       skills.current = request.setHash;
+      // Every switch, a reuse or an unchanged target included, takes the next generation under the lock.
+      const generation = ++skills.generation;
       if (previous !== request.setHash) {
         for (const version of [...skills.versions.keys()]) if (version !== request.setHash && version !== previous) skills.versions.delete(version);
         const referenced = new Set([...skills.versions.values()].flatMap((version) => [...version.bundles]));
         for (const sha of [...skills.bundles.keys()]) if (!referenced.has(sha)) skills.bundles.delete(sha);
       }
-      yield line(`OMA_SKILLS_RESULT ${JSON.stringify({ ok: true, stage: "done", reused, skills: request.records.length, downloaded, bytes, legacy })}`);
+      yield line(`OMA_SKILLS_RESULT ${JSON.stringify({ ok: true, stage: "done", reused, skills: request.records.length, downloaded, bytes, legacy, generation })}`);
       opts?.onExit?.({ exitCode: 0 });
     } catch (error) {
       if (signal?.aborted) {

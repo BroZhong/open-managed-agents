@@ -9,7 +9,7 @@ import type {
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import { SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
 import type { SandboxClient } from "./sandbox-client.js";
-import type { InstalledSkillSet, SandboxActivity, SandboxLifecycleStore, SkillBundleStore } from '@oma-server/store';
+import type { InstalledSkillSet, SandboxActivity, SandboxLifecycleStore, SkillBundleStore, SkillSetRecordOutcome } from '@oma-server/store';
 import { setTimeout as delay } from 'node:timers/promises';
 import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
@@ -79,8 +79,8 @@ export interface SandboxEnvironmentBinding {
    * the Manager remembers installs per binding in this process only.
    */
   installedSkills?(): Promise<InstalledSkillSet | null>;
-  /** Compare-and-set on the bound Sandbox; false when the binding moved on. */
-  recordSkillsInstalled?(installed: InstalledSkillSet): Promise<boolean>;
+  /** Compare-and-set on the bound Sandbox and the switch generation (see `SkillSetRecordOutcome`). */
+  recordSkillsInstalled?(installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
 }
 
 /** Told of each Skill Install a session runs for a Turn, which records them (ADR-0022). */

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { InstalledSkillSet } from "@oma-server/store";
+import { createMemoryStores } from "@oma-server/store-memory";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import { Bundles, text } from "./skill-bundles.js";
+import { Bundles, TENANT, text } from "./skill-bundles.js";
 import {
   EMPTY_SKILL_SET,
   SkillInstallError,
@@ -16,7 +17,6 @@ import {
   type SkillSetMember,
 } from "../src/skill-install.js";
 
-const TENANT = "tenant_1";
 /** A TrueType header followed by every byte value: survives only a byte-exact path. */
 const FONT = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x00, 0x0c, ...Array.from({ length: 256 }, (_, index) => index)]);
 
@@ -29,17 +29,18 @@ async function setUp() {
   return { client, id, bundles, exec, installs };
 }
 
-function ledger(initial: InstalledSkillSet | null = null) {
-  let installed = initial;
-  let bound: string | null = initial?.sandboxId ?? null;
+/** One binding of the in-memory delegation store, optionally recording `initial` as installed into its Sandbox. */
+async function ledger(initial: Omit<InstalledSkillSet, "generation"> | null = null) {
+  const store = createMemoryStores().delegationStore;
+  const bind = (sandboxId: string | null) => store.withEnvironmentLock("binding", async () => ({ sandboxId, value: undefined }));
+  if (initial) {
+    await bind(initial.sandboxId);
+    await store.recordSkillSetInstall("binding", { ...initial, generation: 1 });
+  }
   const book = {
-    bind: (sandboxId: string | null) => { bound = sandboxId; },
-    installed: vi.fn(async () => installed),
-    record: vi.fn(async (next: InstalledSkillSet) => {
-      if (next.sandboxId !== bound) return false;
-      installed = next;
-      return true;
-    }),
+    bind,
+    installed: vi.fn(() => store.installedSkillSet("binding")),
+    record: vi.fn((next: InstalledSkillSet) => store.recordSkillSetInstall("binding", next)),
   };
   return book satisfies SkillInstallLedger;
 }
@@ -102,7 +103,7 @@ describe("Skill Install into one Sandbox", () => {
 
   it.each([
     ["download", "HTTP 000, curl exit 6", (bundles: Bundles) => { bundles.createInstallUrl = async () => "https://agentry.oss-cn-shanghai-internal.aliyuncs.com/b.zip?Signature=secret"; }],
-    ["verify", "sha256 mismatch", (bundles: Bundles) => { const sign = bundles.createInstallUrl.bind(bundles); bundles.createInstallUrl = async (tenant, sha) => (await sign(tenant, sha)).replace(/.{8}$/, "AAAAAAAA"); }],
+    ["verify", "sha256 mismatch", (bundles: Bundles) => { const sign = bundles.createInstallUrl.bind(bundles); bundles.createInstallUrl = async (...args) => (await sign(...args)).replace(/.{8}$/, "AAAAAAAA"); }],
   ] as const)("fails at %s without exposing a URL or switching /skills", async (stage, reason, sabotage) => {
     const { client, id, bundles } = await setUp();
     const kept = await bundles.add("kept", [text("SKILL.md", "kept")]);
@@ -156,7 +157,7 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     const { client, id, bundles, exec } = await setUp();
     const skill = await bundles.add("writer", [text("SKILL.md", "x")]);
     const skills = skillSetOf([skill]);
-    const book = ledger({ sandboxId: id, setHash: skills.setHash });
+    const book = await ledger({ sandboxId: id, setHash: skills.setHash });
     expect(await new SkillInstaller({ client, bundles }).ensure("binding", book, { sandboxId: id, tenantId: TENANT }, skills)).toBeUndefined();
     expect(exec).not.toHaveBeenCalled();
     expect(bundles.signed).toEqual([]);
@@ -167,18 +168,18 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     const { client, id, bundles, installs } = await setUp();
     const skill = await bundles.add("writer", [text("SKILL.md", "x")]);
     const skills = skillSetOf([skill]);
-    const book = ledger({ sandboxId: "sbx-old", setHash: skills.setHash });
-    book.bind(id);
+    const book = await ledger({ sandboxId: "sbx-old", setHash: skills.setHash });
+    await book.bind(id);
     const report = await new SkillInstaller({ client, bundles }).ensure("binding", book, { sandboxId: id, tenantId: TENANT }, skills);
     expect(report).toMatchObject({ downloaded: 1 });
     expect(installs()).toHaveLength(1);
-    expect(book.record).toHaveBeenCalledExactlyOnceWith({ sandboxId: id, setHash: skills.setHash });
+    expect(book.record).toHaveBeenCalledExactlyOnceWith({ sandboxId: id, setHash: skills.setHash, generation: 1 });
   });
 
   it("retries a failed attempt once and never records a failure", async () => {
     const { client, id, bundles, installs } = await setUp();
     const skill = await bundles.add("writer", [text("SKILL.md", "x")]);
-    const book = ledger(); book.bind(id);
+    const book = await ledger(); await book.bind(id);
     let faults = 0;
     client.skillInstallFault = (stage) => { if (stage === "switch" && faults++ < 1) throw new Error("rename failed"); };
     await new SkillInstaller({ client, bundles }).ensure("binding", book, { sandboxId: id, tenantId: TENANT }, skillSetOf([skill]));
@@ -197,7 +198,7 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     const { client, id, bundles, installs } = await setUp();
     const skill = await bundles.add("writer", [text("SKILL.md", "x")]);
     const skills = skillSetOf([skill]);
-    const book = ledger(); book.bind(id);
+    const book = await ledger(); await book.bind(id);
     const installer = new SkillInstaller({ client, bundles });
     const target = { sandboxId: id, tenantId: TENANT };
     const [parent, child] = await Promise.all([installer.ensure("root", book, target, skills), installer.ensure("root", book, target, skills)]);
@@ -210,7 +211,7 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     const { client, id, bundles, installs } = await setUp();
     const members = await Promise.all(["a", "b", "c"].map((name) => bundles.add(name, [text("SKILL.md", name), { path: "font.ttf", body: FONT }])));
     const skills = skillSetOf(members);
-    const book = ledger(); book.bind(id);
+    const book = await ledger(); await book.bind(id);
     const target = { sandboxId: id, tenantId: TENANT };
     const reports = await Promise.all([new SkillInstaller({ client, bundles }), new SkillInstaller({ client, bundles })]
       .map((installer) => installer.ensure("root", book, target, skills)));
@@ -224,10 +225,30 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     expect(book.record).toHaveBeenCalledTimes(2);
   });
 
+  it("records the last switch when two Runners install different Sets into one Sandbox and record out of order", async () => {
+    const { client, id, bundles, installs } = await setUp();
+    const x = skillSetOf([await bundles.add("writer", [text("SKILL.md", "x")])]);
+    const y = skillSetOf([await bundles.add("writer", [text("SKILL.md", "y")])]);
+    const book = await ledger(); await book.bind(id);
+    const target = { sandboxId: id, tenantId: TENANT };
+    // Runner B installs Y first and switches first, but records only after Runner A switched to X and recorded it.
+    const recordY = deferred();
+    const lateBook: SkillInstallLedger = { installed: book.installed, record: async (next) => { await recordY.promise; return book.record(next); } };
+    const runnerB = new SkillInstaller({ client, bundles }).ensure("root", lateBook, target, y);
+    await vi.waitFor(() => expect(installs()).toHaveLength(1));
+    const runnerA = new SkillInstaller({ client, bundles }).ensure("root", book, target, x);
+    expect(await runnerA).toMatchObject({ generation: 2 });
+    recordY.resolve();
+    // The superseded record is not a failure: B's Turn sees X, which another Turn switched to.
+    expect(await runnerB).toMatchObject({ generation: 1 });
+    expect(await client.readFile(id, "/skills/writer/SKILL.md")).toBe("x");
+    expect(await book.installed()).toEqual({ sandboxId: id, setHash: x.setHash, generation: 2 });
+  });
+
   it("fails at record when the binding moved on to another Sandbox", async () => {
     const { client, id, bundles } = await setUp();
     const skill = await bundles.add("writer", [text("SKILL.md", "x")]);
-    const book = ledger(); book.bind("sbx-replacement");
+    const book = await ledger(); await book.bind("sbx-replacement");
     const failure = await new SkillInstaller({ client, bundles }).ensure("binding", book, { sandboxId: id, tenantId: TENANT }, skillSetOf([skill])).catch((error) => error);
     expect(failure).toMatchObject({ name: "SkillInstallError", stage: "record" });
   });
@@ -253,7 +274,7 @@ describe("Skill Installer beside a Turn (#268)", () => {
   async function installerFor(name = "writer") {
     const fixture = await setUp();
     const skills = skillSetOf([await fixture.bundles.add(name, [text("SKILL.md", name)])]);
-    const book = ledger(); book.bind(fixture.id);
+    const book = await ledger(); await book.bind(fixture.id);
     const installer = new SkillInstaller({ client: fixture.client, bundles: fixture.bundles });
     return { ...fixture, skills, book, installer, target: { sandboxId: fixture.id, tenantId: TENANT } };
   }
@@ -261,7 +282,7 @@ describe("Skill Installer beside a Turn (#268)", () => {
   it("decides first: begin resolves nothing for a recorded Set, else the started install without waiting for it", async () => {
     const { client, id, skills, book, installer, target } = await installerFor();
     const onStart = vi.fn();
-    const recorded = ledger({ sandboxId: id, setHash: skills.setHash });
+    const recorded = await ledger({ sandboxId: id, setHash: skills.setHash });
     expect(await installer.begin("recorded", recorded, target, skills, { onStart })).toBeUndefined();
     expect(onStart).not.toHaveBeenCalled();
     const download = deferred();

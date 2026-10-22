@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { packSkillBundle, type Skill, type SkillBundleInputFile, type SkillBundleStore } from "@oma-server/store";
-import { DefaultSandboxManager, FakeSandboxClient, isSkillInstallCommand, type SkillInstallBudget } from "@oma-server/sandbox";
+import { DefaultSandboxManager, FakeSandboxClient, isSkillInstallCommand, skillSetOf, type SkillInstallBudget } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -286,6 +286,59 @@ describe("Skill Install per Turn", () => {
     expect(await h.sandbox.readFileBytes(id, "/skills/writer/font.ttf")).toEqual(FONT);
     expect(await h.installed()).toMatchObject({ sandboxId: id });
     expect(h.sandbox.created).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("keeps the record on the last switch when two Runners install different Sets and record out of order", async () => {
+    const childReads: Array<Record<string, string>> = [];
+    let parentTurns = 0;
+    const h = await harness({ async run(input) {
+      const write = journalWriter(input);
+      if (input.execution?.isChild) {
+        childReads.push(await readSkills(input));
+        await write(text("child done"));
+        return "finished";
+      }
+      if (++parentTurns > 1) { await write(text("noted")); return "finished"; }
+      await readSkills(input);
+      for (const id of ["first", "second"]) {
+        await write(event("agent.tool_use", { toolUseId: id, name: "Agent", input: { prompt: id } }));
+        const accepted = await input.subagents!.delegate({ prompt: id, runInBackground: true }, { toolUseId: id });
+        await write(event("agent.tool_result", { toolUseId: id, content: [{ type: "text", text: JSON.stringify(accepted) }], isError: false }));
+      }
+      return "finished";
+    } });
+    const runnerA = h.makeRouter({ wakeSession: () => {} });
+    const runnerB = h.makeRouter({ wakeSession: () => {} });
+    const writer = await h.equip("writer", [file("SKILL.md", "v1")]);
+    await h.turn(h.parent.id, runnerA);
+    const [first, second] = await Promise.all((await h.stores.delegationStore.list("tenant", h.parent.id))
+      .map(async (execution) => (await h.stores.sessionStore.getById(execution.childId))!));
+    // Runner B starts a Child Turn on Set Y and switches /skills to it, but its record is delayed.
+    const record = h.stores.delegationStore.recordSkillSetInstall.bind(h.stores.delegationStore);
+    const recording = deferred();
+    const recordY = deferred();
+    const records = vi.spyOn(h.stores.delegationStore, "recordSkillSetInstall").mockImplementationOnce(async (...args) => {
+      recording.resolve();
+      await recordY.promise;
+      return record(...args);
+    });
+    await h.edit(writer, [file("SKILL.md", "y")]);
+    const childY = runnerB.handleNewEvent(second.id, second.agent);
+    await recording.promise;
+    // Runner A then starts a Child Turn on Set X, switches after Y and records first.
+    await h.edit(writer, [file("SKILL.md", "x")]);
+    await runnerA.handleNewEvent(first.id, first.agent);
+    recordY.resolve();
+    await childY;
+    const current = (await h.stores.skillStore.getById(writer.id))!;
+    const x = skillSetOf([{ name: "writer", sha256: current.bundleSha256!, size: current.bundleSize! }]);
+    expect(await records.mock.results[0].value).toBe("superseded");
+    expect(await h.installed()).toMatchObject({ sandboxId: h.sandbox.created[0], setHash: x.setHash });
+    expect(await h.sandbox.readFile(h.sandbox.created[0], "/skills/writer/SKILL.md")).toBe("x");
+    // Neither Turn failed; the one that installed Y reads the version switched after it.
+    expect(childReads).toEqual([{ writer: "x" }, { writer: "x" }]);
+    for (const child of [first, second]) expect((await h.log(child.id)).filter((stored) => stored.type === "session.error")).toEqual([]);
     expect(h.errors).toEqual([]);
   });
 });
