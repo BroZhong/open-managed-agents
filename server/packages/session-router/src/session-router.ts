@@ -1040,6 +1040,33 @@ export class SessionRouter {
     if (error) this.recordTurnError(journal, pendingEventId, turnId, error.phase, { code: error.code, message: error.message });
   }
 
+  /** Under the key of the attempt that accepted the Interrupt: whichever attempt writes it, it is written once. */
+  private recordTurnAborted(journal: TurnJournal, pendingEventId: string, turnId: string): void {
+    journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEventId, "turn_aborted"));
+  }
+
+  /**
+   * Apply an Interrupt to the attempt's own Turn: stop the synchronous
+   * children it waits on, give every call left without a result the
+   * Interrupt's result and record the Turn as an Interrupted Turn. The
+   * repairs read the Turn's output from the log, including what the Adapter
+   * recorded before it lost its write entry.
+   */
+  private async interruptTurn(
+    journal: TurnJournal,
+    session: Session,
+    pendingEventId: string,
+    promotedSeq: number,
+    turnId: string,
+    pendingFence: PendingEventFence,
+  ): Promise<void> {
+    await this.delegations?.interruptChildren(session, turnId, pendingFence);
+    await journal.flush();
+    const turnEvents = (await this.readAllEvents(session.id)).filter((event) => event.seq > promotedSeq);
+    await this.recordRepairs(journal, session.id, pendingEventId, turnId, danglingToolCalls(turnEvents), "interrupted");
+    this.recordTurnAborted(journal, pendingEventId, turnId);
+  }
+
   /**
    * Mark that this attempt continues a Turn another claim held, before it
    * writes anything else of the Turn. One marker per takeover: a lost
@@ -1082,17 +1109,7 @@ export class SessionRouter {
       // outside the normal Router append/publish path. Publish that durable
       // event before waking the parent so connected clients see arrival even
       // while another parent Turn is still running or waiting synchronously.
-      if (finished.notificationEventSeq !== undefined) {
-        const notifications = await this.eventLogStore.getEvents(finished.callerSessionId, {
-          afterSeq: finished.notificationEventSeq - 1, limit: 1,
-        });
-        const notification = notifications.data[0];
-        if (notification?.seq === finished.notificationEventSeq) {
-          this.eventStreamHub.publish(finished.callerSessionId, {
-            type: notification.type, seq: notification.seq, data: notification.data,
-          });
-        }
-      }
+      if (finished.notificationEventSeq !== undefined) await this.publishCommitted(finished.callerSessionId, finished.notificationEventSeq);
       // A synchronous wait on another Runner reads the result on the hint;
       // the local drain delivers an asynchronous result.
       this.checkSession(finished.callerSessionId);
@@ -1267,6 +1284,20 @@ export class SessionRouter {
       // an earlier input, or of an earlier generation of this one, replaces
       // what it records.
       const projectionWriter: ActiveTurnWriter = { inputSeq: promotedEvent.seq, generation: claim.generation };
+      // Close the Turn as it stands: its Delta stream goes, its completion
+      // marker is written and its input acknowledged. False once the attempt
+      // lost its claim on the way.
+      const endTurn = async (endedTurnId: string): Promise<boolean> => {
+        await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
+        lastOwnedTurn = projectionWriter;
+        return this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, endedTurnId, pendingFence);
+      };
+      // End the Turn with an error no later attempt could avoid: retaining
+      // its input would make every claim retry and recovery scan run it again.
+      const endTurnWithError = (endedTurnId: string, phase: string, error: { code: string; message: string }): Promise<boolean> => {
+        this.recordTurnError(journal, pendingEvent.id, endedTurnId, phase, error);
+        return endTurn(endedTurnId);
+      };
       // A completed Turn is never run again. Its acknowledgement must still
       // settle Session idle if the queue empties.
       if (plan.kind === "acknowledge") {
@@ -1322,9 +1353,7 @@ export class SessionRouter {
           this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
           await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
             executionPlan.repairOutcome, executionPlan.error);
-          await this.endTurnStream(sessionId, executionPlan.turnId, projectionWriter);
-          lastOwnedTurn = projectionWriter;
-          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, executionPlan.turnId, pendingFence)) return;
+          if (!await endTurn(executionPlan.turnId)) return;
           continue;
         }
         if (executionPlan.kind !== "acknowledge") plan = executionPlan;
@@ -1340,20 +1369,8 @@ export class SessionRouter {
         }
         if (plan.interruptChildren) await this.delegations?.interruptChildren(claimedSession, turnId, pendingFence);
         await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId, plan.repairs, plan.repairOutcome, plan.error);
-        // Under the key of the attempt that accepted the Interrupt: whichever writes it, it is written once.
-        if (plan.cause === "interrupted") {
-          journal.record({ type: "session.turn_aborted", data: { turnId } }, this.turnKey(pendingEvent.id, "turn_aborted"));
-        }
-        await this.endTurnStream(sessionId, turnId, projectionWriter);
-        lastOwnedTurn = projectionWriter;
-        if (!await this.completeTurn(
-          journal,
-          sessionId,
-          pendingEvent.id,
-          promotedEvent.seq,
-          turnId,
-          pendingFence,
-        )) return;
+        if (plan.cause === "interrupted") this.recordTurnAborted(journal, pendingEvent.id, turnId);
+        if (!await endTurn(turnId)) return;
         continue;
       }
 
@@ -1400,19 +1417,10 @@ export class SessionRouter {
       // run it again.
       const adapter = this.resolveAdapter(currentAgent.runtime);
       if (!adapter) {
-        this.recordTurnError(journal, pendingEvent.id, turnId, "unsupported_runtime", {
+        if (!await endTurnWithError(turnId, "unsupported_runtime", {
           code: "unsupported_runtime",
           message: `Agent runtime "${currentAgent.runtime}" is not supported`,
-        });
-        await this.endTurnStream(sessionId, turnId, projectionWriter);
-        if (!await this.completeTurn(
-          journal,
-          sessionId,
-          pendingEvent.id,
-          promotedEvent.seq,
-          turnId,
-          pendingFence,
-        )) return;
+        })) return;
         continue;
       }
 
@@ -1426,19 +1434,7 @@ export class SessionRouter {
             "Agent is sandboxed but no sandbox manager is available (SANDBOX_ENABLED / E2B config missing)",
           code: "sandbox_unavailable",
         };
-        this.recordTurnError(journal, pendingEvent.id, turnId, "sandbox_unavailable", error);
-        // Mirror the normal turn-end housekeeping so the transient stream/active
-        // turn record don't leak, then move on to the next pending event (the
-        // drain loop falls through to the idle transition when the queue empties).
-        await this.endTurnStream(sessionId, turnId, projectionWriter);
-        if (!await this.completeTurn(
-          journal,
-          sessionId,
-          pendingEvent.id,
-          promotedEvent.seq,
-          turnId,
-          pendingFence,
-        )) return;
+        if (!await endTurnWithError(turnId, "sandbox_unavailable", error)) return;
         continue;
       }
 
@@ -1498,16 +1494,7 @@ export class SessionRouter {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
             code: "sandbox_prepare_failed",
           };
-          this.recordTurnError(journal, pendingEvent.id, turnId, "sandbox_prepare_failed", refreshError);
-          await this.endTurnStream(sessionId, turnId, projectionWriter);
-          if (!await this.completeTurn(
-            journal,
-            sessionId,
-            pendingEvent.id,
-            promotedEvent.seq,
-            turnId,
-            pendingFence,
-          )) return;
+          if (!await endTurnWithError(turnId, "sandbox_prepare_failed", refreshError)) return;
           continue;
       }
 
@@ -1579,14 +1566,8 @@ export class SessionRouter {
         };
       } catch (error) {
         if (turnController.signal.aborted && !stopped && this.delegations) {
-          await this.delegations.interruptChildren(session, turnId, pendingFence);
-          await journal.flush();
-          const interruptedEvents = await this.readAllEvents(sessionId);
-          await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId,
-            danglingToolCalls(interruptedEvents.filter((event) => event.seq > promotedEvent.seq)), "interrupted");
-          journal.record({ type: "session.turn_aborted", data: { turnId } },
-            this.turnKey(pendingEvent.id, "turn_aborted"));
-          if (!await this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, turnId, pendingFence)) return;
+          await this.interruptTurn(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence);
+          if (!await endTurn(turnId)) return;
           continue;
         }
         if (!(error instanceof ManagedMcpResolutionError)) throw error;
@@ -1597,16 +1578,7 @@ export class SessionRouter {
           message: "A managed MCP connection is unavailable for this Tenant",
           code: "managed_mcp_unavailable",
         };
-        this.recordTurnError(journal, pendingEvent.id, turnId, "managed_mcp_unavailable", managedMcpError);
-        await this.endTurnStream(sessionId, turnId, projectionWriter);
-        if (!await this.completeTurn(
-          journal,
-          sessionId,
-          pendingEvent.id,
-          promotedEvent.seq,
-          turnId,
-          pendingFence,
-        )) return;
+        if (!await endTurnWithError(turnId, "managed_mcp_unavailable", managedMcpError)) return;
         continue;
       }
 
@@ -1690,13 +1662,7 @@ export class SessionRouter {
       // Turn-level fact that this Turn was interrupted — a message-level
       // `stopReason` has nowhere to carry it.
       if (interrupted) {
-        // The repair reads this attempt's output from the log, including what
-        // the Adapter recorded before it lost its write entry.
-        await this.delegations?.interruptChildren(session, turnId, pendingFence);
-        await this.recordRepairs(journal, sessionId, pendingEvent.id, turnId,
-          danglingToolCalls((await this.readAllEvents(sessionId)).filter((event) => event.seq > promotedEvent.seq)), "interrupted");
-        journal.record({ type: "session.turn_aborted", data: { turnId } },
-          this.turnKey(pendingEvent.id, "turn_aborted"));
+        await this.interruptTurn(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence);
         await journal.flush();
       }
 
@@ -1721,16 +1687,7 @@ export class SessionRouter {
       // The turn's full content is now persisted to PostgreSQL, so the
       // transient delta stream is no longer needed: reclaim it (DEL) and mark
       // the turn idle. This runs on normal completion and after an Interrupt.
-      await this.endTurnStream(sessionId, turnId, projectionWriter);
-
-      if (!await this.completeTurn(
-        journal,
-        sessionId,
-        pendingEvent.id,
-        promotedEvent.seq,
-        turnId,
-        pendingFence,
-      )) return;
+      if (!await endTurn(turnId)) return;
       } catch (error) {
         if (stopped || error instanceof PendingEventClaimLostError) return;
         throw error;

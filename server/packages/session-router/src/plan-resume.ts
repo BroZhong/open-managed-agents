@@ -274,9 +274,11 @@ function isProgress(event: StoredEvent): boolean {
   if (event.type !== "agent.context_entry") return false;
   const entry = (event.data as { entry?: { type?: string; message?: { role?: string; stopReason?: string } } } | null)?.entry;
   const message = entry?.type === "message" ? entry.message : undefined;
-  return message?.role === "toolResult" ||
-    (message?.role === "assistant" && message.stopReason !== "error" && message.stopReason !== "aborted");
+  return message?.role === "toolResult" || (message?.role === "assistant" && !requestFailed(message.stopReason));
 }
+
+/** A model request that failed or was cut short: its message is no answer, and the Turn goes on after it. */
+const requestFailed = (stopReason: string | undefined): boolean => stopReason === "error" || stopReason === "aborted";
 
 /** A message of the Turn's conversation, native or display, as the runtime would rebuild it. */
 type ConversationMessage =
@@ -325,7 +327,7 @@ function inputCommitted(output: readonly StoredEvent[], last: ConversationMessag
 
 /** The Agent's last word: an assistant message that requests no tool and whose request did not fail. */
 function isFinalAnswer(message: ConversationMessage): boolean {
-  if (message.stopReason === "error" || message.stopReason === "aborted") return false;
+  if (requestFailed(message.stopReason)) return false;
   return message.native ? message.role === "assistant" && message.toolCalls === 0 : message.type === "agent.message";
 }
 
