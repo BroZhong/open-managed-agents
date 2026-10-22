@@ -82,14 +82,16 @@ test("every migration rewrites cleanly for the test schema", () => {
 
 const runner = (docs) => docs.find((doc) => /^kind: Deployment$/m.test(doc) && doc.includes("name: oma-runner\n"));
 
-test("test runs two rolling Runners that can be killed abruptly; production keeps one", () => {
-  const test = runner(render("test"));
-  assert.match(test, /^  replicas: 2$/m);
-  assert.match(test, /^      shareProcessNamespace: true$/m);
-  assert.match(test, /^    type: RollingUpdate$/m);
-  assert.match(test, /^      maxUnavailable: 0$/m);
-  const production = runner(render("production"));
-  assert.match(production, /^  replicas: 1$/m);
-  assert.doesNotMatch(production, /shareProcessNamespace/);
-  assert.match(production, /^    type: Recreate$/m);
+test("both environments run two rolling 2-CPU Runners; only test can kill them abruptly", () => {
+  for (const env of ["test", "production"]) {
+    const doc = runner(render(env));
+    assert.match(doc, /^  replicas: 2$/m, env);
+    assert.match(doc, /^    type: RollingUpdate$/m, env);
+    assert.match(doc, /^      maxSurge: 1$/m, env);
+    assert.match(doc, /^      maxUnavailable: 0$/m, env);
+    assert.match(doc, /^            cpu: "2"$/m, env);
+    assert.match(doc, /^            memory: 8Gi$/m, env);
+  }
+  assert.match(runner(render("test")), /^      shareProcessNamespace: true$/m);
+  assert.doesNotMatch(runner(render("production")), /shareProcessNamespace/);
 });
