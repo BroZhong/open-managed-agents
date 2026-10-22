@@ -1,5 +1,5 @@
 # Sole maintained sandbox template; captured from Shanghai on 2026-09-16.
-# Runtime advanced to 0.3.2 on 2026-10-22; immutable test policy mounted read-only.
+# Runtime advanced to 0.3.3 on 2026-10-22; immutable test policy mounted read-only.
 # Secret references only. Replace the pinned image after building and publishing.
 ---
 apiVersion: agents.kruise.io/v1alpha1
@@ -123,7 +123,7 @@ spec:
             secretKeyRef:
               key: OPENGROVE_WW_ACCESS_TOKEN
               name: base-secret
-        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:f95eebfa2adb297747d4ccb17d1c151ddf73e82549b76abecdc703ce39843309
+        image: registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-sandbox@sha256:67a46af66d3a53f4034b5c4d2c482a0b411718a3e923194bc547ab9528f3ba8d
         volumeMounts:
         - name: vfs-cli-policy
           mountPath: /etc/vfs-cli
