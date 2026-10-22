@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, OSSSkillBundleStore, S3SkillArtifactStore, OSSEventPayloadStore, EventPayloadCodec, type ArtifactStore, type SkillArtifactStore, type SkillBundleStore } from "@oma-server/store";
+import { createPgPool, pgConfigFromEnv, createPgStores, OSSArtifactStore, OSSSkillBundleStore, OSSEventPayloadStore, EventPayloadCodec, type ArtifactStore, type SkillBundleStore } from "@oma-server/store";
 import { createRedisClient, redisConfigFromEnv, RedisTurnStreamStore, BestEffortTurnStreamStore, RedisSessionSignals } from "@oma-server/redis";
 import { RedisEventStreamHub } from "@oma-server/event-log";
 import { createApp } from "./app.js";
@@ -39,28 +39,18 @@ export async function startHost(role: HostRole): Promise<void> {
   const eventStreamHub = new RedisEventStreamHub(signals);
   const turnStreamStore = new BestEffortTurnStreamStore(new RedisTurnStreamStore(redis), () => redis.status === "ready");
   let artifactStore: ArtifactStore;
-  let skillArtifactStore: SkillArtifactStore;
   let skillBundleStore: SkillBundleStore;
   if (local) {
     // Explicit local mock profile only; PG + Redis and entrypoints are real.
-    const { InMemoryArtifactStore, InMemorySkillArtifactStore, InMemorySkillBundleStore } = await import("@oma-server/store-memory");
+    const { InMemoryArtifactStore, InMemorySkillBundleStore } = await import("@oma-server/store-memory");
     artifactStore = new InMemoryArtifactStore();
-    skillArtifactStore = new InMemorySkillArtifactStore();
     skillBundleStore = new InMemorySkillBundleStore();
   } else {
     artifactStore = new OSSArtifactStore(oss!);
     skillBundleStore = new OSSSkillBundleStore(skillBundleStorageConfigFromEnv(process.env));
     await artifactStore.list("oma_startup", "storage_check");
-    const endpoint = process.env.S3_ENDPOINT || process.env.SUPABASE_STORAGE_URL;
-    const serviceKey = process.env.S3_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
-    if (!endpoint || !serviceKey) throw new Error("Skills require S3_ENDPOINT and S3_SERVICE_KEY");
-    // Captured direct dispatcher keeps internal Storage off the model proxy.
-    const { Agent } = await import("undici");
-    const directDispatcher = new Agent();
-    const directFetch: typeof fetch = (input, init) => fetch(input, { ...init, dispatcher: directDispatcher } as RequestInit);
-    skillArtifactStore = new S3SkillArtifactStore({ endpoint, serviceKey, bucket: process.env.S3_BUCKET || "workspace", fetch: directFetch });
   }
-  const deps = { ...stores, artifactStore, skillArtifactStore, skillBundleStore, eventStreamHub, turnStreamStore };
+  const deps = { ...stores, artifactStore, skillBundleStore, eventStreamHub, turnStreamStore };
   const execution = role === "api" ? undefined : await (await import("./execution.js")).startExecution({ ...deps, pool, signals, local });
   const app = new Hono();
   const modelProviders = new ModelProviderService(stores.modelProviderStore, process.env.OMA_PROVIDER_ENCRYPTION_KEY);

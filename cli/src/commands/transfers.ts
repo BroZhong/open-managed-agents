@@ -188,14 +188,14 @@ async function downloadWorkspace(c: Context) {
 transfers.push({
   path: "skill download",
   description:
-    "Export this Skill’s complete UTF-8 text tree; no binary fidelity or cross-file snapshot guarantee. Existing unrelated files remain.",
+    "Export this Skill’s complete file tree with original bytes, text or binary; files are read one by one, not as one version snapshot. Existing unrelated files remain.",
   flags: {
     ...id("skill"),
     output: string("Local directory", { required: true }),
     overwrite,
   },
   write: true,
-  api: ["GET /v1/skills/{id}", "GET /v1/skills/{id}/files/content"],
+  api: ["GET /v1/skills/{id}", "GET /v1/skills/{id}/files/raw"],
   run: async (c) => {
     await checkChain(c.flags.output, "directory");
     const root = base(c, "skill"),
@@ -203,7 +203,7 @@ transfers.push({
     const paths: string[] = skill.files;
     const outputs = await destinations(c.flags.output, paths, true);
     for (const o of outputs) await checkChain(o, "file", c.flags.overwrite);
-    const request = (p: string) => root + "/files/content?path=" + enc(p);
+    const request = (p: string) => root + "/files/raw?path=" + enc(p);
     if (c.flags["dry-run"])
       return plan(
         c,
@@ -211,7 +211,7 @@ transfers.push({
           method: "GET",
           path: request(p),
           output: outputs[i]!,
-          effects: "Save full UTF-8 content locally",
+          effects: "Atomically commit the file's complete bytes locally",
         })),
       );
     const results: Values[] = [];
@@ -220,15 +220,10 @@ transfers.push({
         output = outputs[i]!;
       try {
         c.signal.throwIfAborted();
-        const r = await c.http.request(request(path));
-        if (typeof r.content !== "string")
-          throw new Error("Invalid Skill content response");
-        const size = await save(
-          output,
-          Buffer.from(r.content),
-          c.flags.overwrite,
-          c.signal,
-        );
+        const stream = await c.http.request(request(path), "GET", undefined, {
+          stream: true,
+        });
+        const size = await save(output, stream, c.flags.overwrite, c.signal);
         results.push({ path, output, size, status: "succeeded" });
       } catch (e) {
         if (c.signal.aborted) throw c.signal.reason;
@@ -264,7 +259,7 @@ function metadata(text: string, fallback: string) {
 transfers.push({
   path: "skill upload",
   description:
-    "Upload Library Skill text trees without equipping. Root SKILL.md or direct child Skills; YAML multiline descriptions are not fully parsed. Overwrite replaces the whole tree while preserving forks.",
+    "Upload Library Skill trees with original bytes, without equipping. Root SKILL.md or direct child Skills; YAML multiline descriptions are not fully parsed. Overwrite replaces the whole tree while preserving forks.",
   flags: {
     directory: string("Local Skill directory or directory of Skills", {
       required: true,
@@ -289,17 +284,16 @@ transfers.push({
     for (const local of selected) {
       const prefix = basename(resolve(local));
       remotePath(prefix, true);
-      const files = await tree(local);
-      const content = files.map((x) => ({
+      const files = (await tree(local)).map((x) => ({
         path: remotePath(x.path, true),
-        content: utf8(x.bytes, x.path),
+        bytes: x.bytes,
       }));
-      const md = content.find((x) => x.path === "SKILL.md");
+      const md = files.find((x) => x.path === "SKILL.md");
       if (!md) invalid("Missing SKILL.md");
-      const meta = metadata(md.content, prefix);
+      const meta = metadata(utf8(md.bytes, md.path), prefix);
       if (names.has(meta.name)) invalid("Duplicate Skill name in upload batch");
       names.add(meta.name);
-      inputs.push({ ...meta, prefix, files: content });
+      inputs.push({ ...meta, prefix, files });
     }
     const existing = (
       await c.http.pages("/v1/skills", { all: true, limit: 100 })
@@ -337,7 +331,7 @@ transfers.push({
         for (const f of skill.files)
           form.append(
             "files",
-            new Blob([f.content], { type: "text/plain" }),
+            new Blob([f.bytes], { type: mime(f.path) }),
             basename(f.path),
           );
         const r = await c.http.request("/v1/skills", "POST", form);

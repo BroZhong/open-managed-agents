@@ -7,8 +7,9 @@ import {
   type SandboxEnvironmentBinding,
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import { FakeProvisionSource } from "../src/provision-source.js";
-import type { SandboxLifecycleStore } from '@oma-server/store';
+import { isSkillInstallCommand, skillSetOf } from "../src/skill-install.js";
+import type { InstalledSkillSet, SandboxLifecycleStore } from '@oma-server/store';
+import { Bundles, text } from "./skill-bundles.js";
 
 const mount = {
   bucket: "agentry",
@@ -27,12 +28,26 @@ function specFor(extra: Partial<EnvSpec> = {}): EnvSpec {
 }
 function makeManager() {
   const client = new FakeSandboxClient();
-  const provision = new FakeProvisionSource();
-  const manager = new DefaultSandboxManager({
-    sandboxClient: client,
-    provisionSources: { s3: provision },
-  });
-  return { client, provision, manager };
+  const bundles = new Bundles();
+  const manager = new DefaultSandboxManager({ sandboxClient: client, skillBundleStore: bundles });
+  const exec = vi.spyOn(client, "exec");
+  const installs = () => exec.mock.calls.filter(([, command]) => isSkillInstallCommand(command)).length;
+  return { client, bundles, manager, installs };
+}
+
+/** A durable binding: the Sandbox pointer and the Skill Install record with its compare-and-set. */
+function durableBinding(id = "root") {
+  let sandboxId: string | null = null;
+  let installed: InstalledSkillSet | null = null;
+  const binding: SandboxEnvironmentBinding & { forgetSkills(): void; installed(): InstalledSkillSet | null } = {
+    id,
+    withLock: async (work) => { const result = await work(sandboxId); sandboxId = result.sandboxId; return result.value; },
+    installedSkills: async () => installed,
+    recordSkillsInstalled: async (next) => { if (next.sandboxId !== sandboxId) return false; installed = next; return true; },
+    forgetSkills: () => { installed = null; },
+    installed: () => installed,
+  };
+  return binding;
 }
 
 describe("mounted Workspace Sandbox Manager", () => {
@@ -44,7 +59,7 @@ describe("mounted Workspace Sandbox Manager", () => {
       claimReclamation: vi.fn(async () => storedId ? { bindingId: 'root', sandboxId: storedId } : null),
       completeReclamation: vi.fn(async () => { storedId = null; }),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: store });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store });
     const session = manager.open(specFor(), { id: 'root', withLock: async work => {
       const result = await work(storedId); storedId = result.sandboxId; return result.value;
     } });
@@ -71,7 +86,7 @@ describe("mounted Workspace Sandbox Manager", () => {
       claimReclamation: vi.fn(async () => { throw new Error('database unavailable'); }),
       completeReclamation: vi.fn(async () => {}),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: store });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store });
     await expect(manager.reclaim('arbitrary')).rejects.toThrow('ticket');
     expect(client.destroyed).toEqual([]);
   });
@@ -82,7 +97,7 @@ describe("mounted Workspace Sandbox Manager", () => {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
       claimReclamation: vi.fn(async () => null), completeReclamation: vi.fn(async () => {}),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: store });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store });
     const binding: SandboxEnvironmentBinding = { id: 'shared', withLock: async work => {
       const result = await work(id); id = result.sandboxId; return result.value;
     } };
@@ -104,36 +119,71 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.destroyed).toEqual([]);
     expect(store.completeReclamation).not.toHaveBeenCalled();
   });
-  it("refreshes renamed Skills after a new Host attaches to a shared environment", async () => {
-    const { client, provision, manager } = makeManager();
-    let storedId: string | null = null;
-    const binding: SandboxEnvironmentBinding = { withLock: async (work) => {
-      const result = await work(storedId); storedId = result.sandboxId; return result.value;
-    } };
-    const source = { kind: "s3", ref: { skillId: "one" } };
-    provision.seed(source, { "SKILL.md": "old body" });
-    const first = manager.open(specFor({ projections: [{ targetPath: "/skills/old-name", source }] }), binding);
+  it("installs renamed Skills after a new Host attaches to a shared environment", async () => {
+    const { client, bundles, manager } = makeManager();
+    const binding = durableBinding();
+    const old = await bundles.add("old-name", [text("SKILL.md", "old body")]);
+    const first = manager.open(specFor({ skills: skillSetOf([old]) }), binding);
     expect(await first.readFile("/skills/old-name/SKILL.md")).toBe("old body");
-    provision.seed(source, { "SKILL.md": "new body" });
+    const edited = await bundles.add("new-name", [text("SKILL.md", "new body")]);
     const resumed = manager.open(specFor(), binding);
-    await resumed.prepare([{ targetPath: "/skills/new-name", source }]);
+    await resumed.prepare(skillSetOf([edited]));
     expect(await resumed.readFile("/skills/new-name/SKILL.md")).toBe("new body");
     await expect(resumed.readFile("/skills/old-name/SKILL.md")).rejects.toThrow();
     expect(client.created).toHaveLength(1);
+    expect(binding.installed()).toEqual({ sandboxId: client.created[0], setHash: skillSetOf([edited]).setHash });
   });
 
-  it("prepares a shared environment with no Skills when its user cannot create /skills", async () => {
-    const { client, manager } = makeManager();
-    let storedId: string | null = null;
-    const binding: SandboxEnvironmentBinding = { withLock: async (work) => {
-      const result = await work(storedId); storedId = result.sandboxId; return result.value;
-    } };
+  it("skips an unchanged Skill Set for later Turns and for every session sharing the binding", async () => {
+    const { client, bundles, manager, installs } = makeManager();
+    const binding = durableBinding();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "body")])]);
+    const parent = manager.open(specFor({ skills }), binding);
+    await parent.writeFile("saved.txt", "kept");
+    expect(installs()).toBe(1);
+    const signed = bundles.signed.length;
+    await parent.prepare(skills);
+    const child = manager.open(specFor({ skills }), binding);
+    await child.prepare(skills);
+    expect(await child.readFile("/skills/writer/SKILL.md")).toBe("body");
+    expect(installs()).toBe(1);
+    expect(bundles.signed).toHaveLength(signed);
+    expect(client.created).toHaveLength(1);
+  });
+
+  it("installs the empty Skill Set over a projected /skills directory once, then skips it", async () => {
+    const { client, manager, installs } = makeManager();
+    const binding = durableBinding();
     const first = manager.open(specFor(), binding);
     await first.writeFile("existing.txt", "kept");
-    vi.spyOn(client, "exec").mockImplementation(async function* () { throw new Error("Permission denied creating /skills"); });
+    const id = client.created[0];
+    // A Sandbox prepared before Skill Install: projected files and no record.
+    client.seedProjectedSkills(id, { "/skills/projected/SKILL.md": "legacy" });
+    binding.forgetSkills();
     const resumed = manager.open(specFor(), binding);
     await resumed.prepare();
+    // The install runs beside the Turn; its first operation waits for it.
     expect(await resumed.readFile("existing.txt")).toBe("kept");
+    expect(client.filesOf(id).has("/skills/projected/SKILL.md")).toBe(false);
+    const before = installs();
+    await resumed.prepare();
+    expect(installs()).toBe(before);
+    expect(client.created).toHaveLength(1);
+  });
+
+  it("fails the Turn's operations with the install's stage and keeps the Sandbox for the next Turn", async () => {
+    const { client, bundles, manager } = makeManager();
+    const binding = durableBinding();
+    const session = manager.open(specFor(), binding);
+    await session.writeFile("saved.txt", "kept");
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "body")])]);
+    client.skillInstallFault = (stage) => { if (stage === "download") throw new Error("connection reset"); };
+    await session.prepare(skills);
+    await expect(session.readFile("saved.txt")).rejects.toMatchObject({ name: "SkillInstallError", stage: "download", message: expect.stringContaining("connection reset") });
+    expect(binding.installed()?.setHash).not.toBe(skills.setHash);
+    client.skillInstallFault = undefined;
+    await session.prepare(skills);
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("body");
     expect(client.created).toHaveLength(1);
   });
 
@@ -203,24 +253,6 @@ describe("mounted Workspace Sandbox Manager", () => {
     const rebuilt = manager.open(specFor());
     expect(await rebuilt.readFile("other.txt")).toBe("saved by b");
   });
-  it("rejects projection ancestors and normalized paths into the mounted Workspace", () => {
-    const { manager } = makeManager();
-    for (const targetPath of [
-      "/home/user",
-      "/",
-      "/skills/../home/user/workspace/skills",
-      "skills/writer",
-    ]) {
-      expect(() =>
-        manager.open(
-          specFor({
-            projections: [{ targetPath, source: { kind: "s3", ref: {} } }],
-          }),
-        ),
-      ).toThrow();
-    }
-  });
-
   it("requests the exact trusted CSI prefix and rejects another Workspace before creating", async () => {
     const { client, manager } = makeManager();
     const session = manager.open(specFor());
@@ -296,16 +328,10 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.created).toHaveLength(1);
   });
 
-  it("reprojects Skills by name including renamed targets, and restores them on rebuild", async () => {
-    const { client, manager, provision } = makeManager();
-    const source = {
-      kind: "s3",
-      ref: { tenantId: "tenant_1", skillId: "skill_123" },
-    };
-    provision.seed(source, { "SKILL.md": "v1", "old.txt": "obsolete" });
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/writer", source }] }),
-    );
+  it("installs renamed Skills by name, and reinstalls them on a rebuilt Sandbox", async () => {
+    const { client, manager, bundles } = makeManager();
+    const writer = await bundles.add("writer", [text("SKILL.md", "v1"), text("old.txt", "obsolete")]);
+    const session = manager.open(specFor({ skills: skillSetOf([writer]) }));
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
     await session.writeFile("data.txt", "workspace");
     const id = client.created[0];
@@ -314,8 +340,8 @@ describe("mounted Workspace Sandbox Manager", () => {
       "/home/user/.local/cache.txt",
       "local dependency",
     );
-    provision.seed(source, { "SKILL.md": "v2" });
-    await session.prepare([{ targetPath: "/skills/editor", source }]);
+    const editor = await bundles.add("editor", [text("SKILL.md", "v2")]);
+    await session.prepare(skillSetOf([editor]));
     expect(await session.readFile("/skills/editor/SKILL.md")).toBe("v2");
     await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow();
     expect((await session.list()).map((entry) => entry.path)).toEqual([
@@ -350,23 +376,23 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(await other.readFile("a.txt")).toBe("other");
   });
 
-  it.each(["mount check", "removal", "partial projection"])("removes old Skill names when a failed %s is retried after another rename", async (failure) => {
-    const { client, manager, provision } = makeManager();
-    const source = { kind: "s3", ref: { tenantId: "tenant_1", skillId: "skill_123" } };
-    provision.seed(source, { "SKILL.md": "original" });
-    const session = manager.open(specFor({ projections: [{ targetPath: "/skills/writer", source }] }));
+  it.each(["mount check", "download", "extract", "switch"])("keeps the old Skills when a failed %s is retried after another rename", async (failure) => {
+    const { client, manager, bundles } = makeManager();
+    const original = await bundles.add("writer", [text("SKILL.md", "original")]);
+    const session = manager.open(specFor({ skills: skillSetOf([original]) }));
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("original");
     const id = client.created[0];
-    provision.seed(source, { "SKILL.md": "renamed", "helper.txt": "helper" });
+    const files = [text("SKILL.md", "renamed"), text("helper.txt", "helper")];
     if (failure === "mount check") client.setMountFailure(id, "storage offline");
-    else if (failure === "removal") vi.spyOn(client, "remove").mockRejectedValueOnce(new Error("remove unavailable"));
-    else {
-      const write = client.writeFile.bind(client);
-      vi.spyOn(client, "writeFile").mockImplementationOnce(write).mockRejectedValueOnce(new Error("copy unavailable"));
-    }
-    await expect(session.prepare([{ targetPath: "/skills/editor", source }])).rejects.toThrow();
+    else client.skillInstallFault = (stage) => { if (stage === failure) throw new Error(`${failure} unavailable`); };
+    // A mount check fails preparation; an install fails the Turn's first operation.
+    await expect(session.prepare(skillSetOf([await bundles.add("editor", files)])).then(() => session.readFile("data.txt"))).rejects.toThrow();
     client.setMountFailure(id);
-    await session.prepare([{ targetPath: "/skills/final-name", source }]);
+    client.skillInstallFault = undefined;
+    // Never a half-installed tree: the old version stays until a switch.
+    expect(await client.readFile(id, "/skills/writer/SKILL.md")).toBe("original");
+    expect(client.filesOf(id).has("/skills/editor/SKILL.md")).toBe(false);
+    await session.prepare(skillSetOf([await bundles.add("final-name", files)]));
     expect(await session.readFile("/skills/final-name/SKILL.md")).toBe("renamed");
     await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow(/no such file/);
     await expect(session.readFile("/skills/editor/SKILL.md")).rejects.toThrow(/no such file/);
@@ -425,22 +451,137 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.destroyed).toHaveLength(1);
   });
 
-  it("does not expose an incompletely projected Sandbox when failed cleanup is retried", async () => {
-    const { client, manager, provision } = makeManager();
-    const source = { kind: "s3", ref: { skillId: "skill_123" } };
-    provision.seed(source, { "SKILL.md": "body" });
-    vi.spyOn(provision, "project").mockRejectedValueOnce(
-      new Error("Skill source unavailable"),
-    );
-    vi.spyOn(client, "destroy").mockRejectedValueOnce(
-      new Error("gateway unavailable"),
-    );
-    const session = manager.open(
-      specFor({ projections: [{ targetPath: "/skills/writer", source }] }),
-    );
-    await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow(
-      /Skill source/,
-    );
+  it("keeps a new Sandbox whose first install failed and installs on the next tool call", async () => {
+    const { client, manager, bundles } = makeManager();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "body")])]);
+    client.skillInstallFault = (stage) => { if (stage === "download") throw new Error("Skill source unavailable"); };
+    const session = manager.open(specFor({ skills }));
+    await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow(/Skill Install failed at download: Skill source unavailable/);
+    expect(client.created).toHaveLength(1);
+    expect(client.filesOf(client.created[0]).has("/skills/writer/SKILL.md")).toBe(false);
+    client.skillInstallFault = undefined;
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("body");
+    expect(client.created).toHaveLength(1);
+  });
+});
+
+/** A promise the test settles. */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+/** Let pending callbacks run. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+describe("a Turn's Skill Install runs beside the Turn (#268)", () => {
+  /** A bound session whose Sandbox exists and holds the empty Skill Set. */
+  async function warm() {
+    const fixture = makeManager();
+    const binding = durableBinding();
+    const session = fixture.manager.open(specFor(), binding);
+    await session.writeFile("saved.txt", "kept");
+    const id = fixture.client.created[0];
+    const exec = vi.mocked(fixture.client.exec);
+    /** What reached the Sandbox besides installs: the Turn's own operations. */
+    const business = () => exec.mock.calls.filter(([, command]) => !isSkillInstallCommand(command)).length
+      + readFile.mock.calls.length + nativeCalls.length;
+    const readFile = vi.spyOn(fixture.client, "readFile");
+    // Native filesystem primitives over the fake's files, counted.
+    const nativeCalls: string[] = [];
+    const native = (name: string, work: () => Promise<unknown>) => { nativeCalls.push(name); return work(); };
+    const unavailable = () => { throw new Error("Unexpected filesystem operation"); };
+    Object.assign(fixture.client, { fileSystem: (sandboxId: string): ToolFileSystem => ({
+      stat: (path) => native("stat", async () => ({ isFile: fixture.client.filesOf(sandboxId).has(path), isDirectory: false, isSymbolicLink: false, size: 0, mtimeMs: 0 })),
+      createTempFile: () => native("createTempFile", async () => "/tmp/request.json"),
+      readFile: unavailable, writeFile: unavailable, appendFile: unavailable, access: unavailable,
+      lstat: unavailable, realpath: unavailable, readdir: unavailable, mkdir: unavailable,
+    }) as ToolFileSystem });
+    const observer = { started: vi.fn(), ended: vi.fn() };
+    return { ...fixture, binding, session, id, business, observer, before: business() };
+  }
+
+  it("resolves prepare once the mount is verified; every kind of operation waits for the install before it runs", async () => {
+    const { client, bundles, session, binding, observer, business } = await warm();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    const download = deferred();
+    client.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
+    const ran = business();
+    await session.prepare(skills, { skillInstalls: observer });
+    expect(observer.started).toHaveBeenCalledExactlyOnceWith(skills);
+    const read = session.readFile("/skills/writer/SKILL.md");
+    const stat = session.fileSystem.stat("/skills/writer/SKILL.md");
+    const exec = (async () => { for await (const _ of session.exec(["echo", "hi"])) { /* drain */ } })();
+    await settle();
+    expect(business()).toBe(ran);
+    expect(observer.ended).not.toHaveBeenCalled();
+    download.resolve();
+    expect(await read).toBe("v1");
+    expect(await stat).toMatchObject({ isFile: true });
+    await exec;
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ report: expect.objectContaining({ downloaded: 1, skills: 1 }) });
+    expect(binding.installed()?.setHash).toBe(skills.setHash);
+  });
+
+  it("fails every operation of the Turn with the install's error without running it; the next Turn installs again", async () => {
+    const { client, bundles, session, binding, observer, business, installs } = await warm();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    client.skillInstallFault = (stage) => { if (stage === "download") throw new Error("HTTP 503"); };
+    const ran = business();
+    await session.prepare(skills, { skillInstalls: observer });
+    await expect(session.readFile("saved.txt")).rejects.toMatchObject({ name: "SkillInstallError", stage: "download" });
+    await expect(session.fileSystem.createTempFile()).rejects.toMatchObject({ name: "SkillInstallError", stage: "download" });
+    const attempts = installs();
+    expect(business()).toBe(ran);
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ error: expect.objectContaining({ name: "SkillInstallError", stage: "download" }) });
+    expect(binding.installed()?.setHash).not.toBe(skills.setHash);
+    client.skillInstallFault = undefined;
+    await session.prepare(skills);
+    expect(installs()).toBe(attempts + 1);
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+  });
+
+  it("prepares a skipped install before prepare resolves and tells the observer nothing", async () => {
+    const { session, observer, installs } = await warm();
+    const before = installs();
+    await session.prepare(undefined, { skillInstalls: observer });
+    expect(await session.readFile("saved.txt")).toBe("kept");
+    expect(installs()).toBe(before);
+    expect(observer.started).not.toHaveBeenCalled();
+    expect(observer.ended).not.toHaveBeenCalled();
+  });
+
+  it("cancels the install when the Turn's signal aborts: operations reject with its reason and nothing is recorded", async () => {
+    const { client, bundles, session, binding, observer, business } = await warm();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    client.skillInstallFault = (stage, signal) => stage === "download"
+      ? new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve())) : undefined;
+    const turn = new AbortController();
+    const ran = business();
+    await session.prepare(skills, { signal: turn.signal, skillInstalls: observer });
+    const read = session.readFile("saved.txt");
+    await settle();
+    turn.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(read).rejects.toMatchObject({ name: "AbortError", message: "Session interrupted" });
+    expect(business()).toBe(ran);
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ error: expect.objectContaining({ name: "AbortError" }) });
+    expect(binding.installed()?.setHash).not.toBe(skills.setHash);
+    client.skillInstallFault = undefined;
+    await session.prepare(skills);
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+  });
+
+  it("tells the observer of the install a cold Sandbox runs before its first operation", async () => {
+    const { manager, client, bundles } = makeManager();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    const session = manager.open(specFor({ skills }), durableBinding());
+    const observer = { started: vi.fn(), ended: vi.fn() };
+    await session.prepare(skills, { skillInstalls: observer });
+    expect(client.created).toHaveLength(0);
+    expect(observer.started).not.toHaveBeenCalled();
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+    expect(observer.started).toHaveBeenCalledExactlyOnceWith(skills);
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ report: expect.objectContaining({ downloaded: 1 }) });
   });
 });

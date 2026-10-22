@@ -130,6 +130,39 @@ switched `/skills`, but never a half-installed tree.
   duration, bytes downloaded, number of Skills and, on failure, the reason. A
   skipped install emits nothing.
 
+As implemented (#268):
+
+- Before inference the Turn still waits for the cheap steps: reconnecting the
+  Sandbox, verifying its mount and deciding the install (one read of the
+  binding's record). They keep their failures (`sandbox_prepare_failed`; an
+  unreadable record is `skills_install_failed` at stage `check`), and a
+  skipped install is complete when preparation returns, as before. A cold
+  Sandbox installs when the Turn's first Sandbox operation creates it.
+- Every Sandbox operation waits for the install. A failed install fails the
+  operation without running it (`skills_install_failed: <error>. The tool was
+  not executed.`), and the first such failure ends the Turn: the Router aborts
+  the Adapter run, gives any call left without a result the same answer and
+  records `session.error` `skills_install_failed`. The Turn installs no more.
+- A Turn that makes no Sandbox operation waits for its install only at its
+  end, so the end span precedes `session.turn_completed` and a complete
+  install is recorded. If that install failed, the Turn keeps its answer and
+  ends with `session.error` `skills_install_failed` naming the stage and
+  reason ("The answer is retained; ..."), like the Workspace check at Turn
+  end. The binding records nothing, and the next Turn installs again.
+- An Interrupt cancels the install: its exec is killed, it is neither retried
+  nor recorded, the binding's single flight is free at once, and the end span
+  says `aborted`. A cancelled install, by an Interrupt or a stopped attempt,
+  records no error.
+- `span.skills_install_start` carries `turnId`, `installId`, `setHash` and
+  `skills` (Skills in the Set); `span.skills_install_end` adds `outcome`
+  (`installed`, `failed`, `aborted`), `durationMs`, `downloaded` and `bytes`
+  (installed) or `stage` and `reason`. The Host writes both through the Turn
+  attempt's journal under keys of the attempt (`installId` is
+  `<claim generation>.<n>`). An attempt that stops writes no end; the attempt
+  that takes the Turn over ends each unended start right after its takeover
+  marker, `aborted` without a duration. A Child Turn that only waited for its
+  parent's install writes none.
+
 ### Rollout
 
 This is informational; the release tickets own the procedure.

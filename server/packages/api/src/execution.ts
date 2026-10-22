@@ -1,7 +1,7 @@
 import { SessionRouter } from "@oma-server/session-router";
-import { DefaultSandboxManager, E2BSandboxClient, S3ProvisionSource, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
+import { DefaultSandboxManager, E2BSandboxClient, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
-import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
+import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { SessionSignals, TurnStreamStore } from "@oma-server/redis";
 import { runtimeAdapters } from "./lib/runtime-adapters.js";
@@ -17,7 +17,7 @@ import { ModelProviderService } from "./lib/model-providers.js";
 
 export async function startExecution(deps: PgStores & {
   pool: Pool; local: boolean; signals: SessionSignals; artifactStore: ArtifactStore;
-  skillArtifactStore: SkillArtifactStore; skillBundleStore: SkillBundleStore; eventStreamHub: EventStreamHub; turnStreamStore: TurnStreamStore;
+  skillBundleStore: SkillBundleStore; eventStreamHub: EventStreamHub; turnStreamStore: TurnStreamStore;
 }, execution?: { resolveAdapter(runtime: string): Adapter | undefined; sandboxManager: SandboxManager; workspaceMount: Omit<WorkspaceMountSpec, "prefix"> }) {
   const proxyUrl = process.env.OMA_PROXY_URL || process.env.HTTPS_PROXY || process.env.https_proxy;
   if (proxyUrl && !deps.local) {
@@ -40,7 +40,8 @@ export async function startExecution(deps: PgStores & {
       },
     }),
     lifecycle: await sandboxLifecycle(deps.pool),
-    provisionSources: { s3: new S3ProvisionSource(deps.skillArtifactStore) },
+    // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
+    skillBundleStore: deps.skillBundleStore,
   }) : undefined);
   const router = new SessionRouter({
     ...deps, sandboxManager, workspaceMount: execution?.workspaceMount ?? workspaceConfig?.mount, ...sandboxEnvPolicy,

@@ -20,6 +20,10 @@ Its declared capacity is not an OSS quota; `Available` is not evidence that
 this dynamic mount infrastructure is unused. CredentialProvider narrows each
 STS credential to the requested bucket/subPath in private bucket `agentry`.
 Host credentials are separate and never supplied to the Sandbox.
+The read-only Skills mount resources added for the 2026-10-22 probe
+(CredentialProvider `agentry-skills-ro`, AgentRole/AgentRoleBinding
+`agentry-skills-storage`) were removed on 2026-10-23 (#267): Skills are
+installed from versioned bundles instead ([ADR-0022](../../docs/adr/0022-skill-bundles.md)).
 
 The maintained [Sandbox recipe](../../sandbox/auto-story-v2/README.md) and
 [manifest](../../sandbox/auto-story-v2/sandboxset.yaml) live under `sandbox/`.

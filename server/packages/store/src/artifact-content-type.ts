@@ -17,6 +17,7 @@ const contentTypes: Record<string, string> = {
   ".webm": "video/webm", ".mkv": "video/x-matroska",
   ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
   ".m4a": "audio/mp4", ".flac": "audio/flac", ".aac": "audio/aac",
+  ".ttf": "font/ttf", ".otf": "font/otf", ".woff": "font/woff", ".woff2": "font/woff2",
   ".pdf": "application/pdf", ".zip": "application/zip", ".gz": "application/gzip",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -29,4 +30,15 @@ export function resolveArtifactContentType(path: string, stored?: string): strin
   const mime = stored?.split(";")[0].trim().toLowerCase();
   if (mime && !["application/octet-stream", "binary/octet-stream", "application/x-empty", "text/plain"].includes(mime)) return stored!;
   return contentTypes[extname(path).toLowerCase()] ?? stored ?? "application/octet-stream";
+}
+
+/** `Content-Disposition: attachment` naming the path's file, safe for any filename. */
+export function attachmentDisposition(path: string): string {
+  const filename = path.slice(path.lastIndexOf("/") + 1);
+  const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${fallback}"` +
+    (fallback !== filename ? `; filename*=UTF-8''${encoded}` : "");
 }

@@ -134,7 +134,7 @@ for (const noun of ["workspace", "skill"] as const) {
           : undefined;
     files.push({
       path: `${noun} file ${action}`,
-      description: `${action} a ${noun} text file. ${skill ? "Text channel may normalize BOM/invalid UTF-8 on the server. Root SKILL.md may only be written." : "Writes replace contents without a Session lock."} ${action === "rename" ? "Copy then delete is non-atomic; preflight cannot prevent concurrent overwrites." : action === "delete" ? "No file recovery API." : ""}`,
+      description: `${action} a ${noun} text file. ${skill ? "Binary files are refused by read; skill download and skill upload keep their bytes. Root SKILL.md may only be written." : "Writes replace contents without a Session lock."} ${action === "rename" ? (skill ? "Publishes one new Skill version; a concurrent edit returns a version conflict." : "Copy then delete is non-atomic; preflight cannot prevent concurrent overwrites.") : action === "delete" ? "No file recovery API." : ""}`,
       flags: {
         ...id(noun),
         path:
@@ -201,7 +201,11 @@ for (const noun of ["workspace", "skill"] as const) {
           );
         if (action === "read") {
           const r = await read(c.flags.path);
-          if (skill) return { data: r };
+          if (skill) {
+            if (r.binary === true)
+              invalid("Binary file: use skill download", "--path");
+            return { data: r };
+          }
           const bytes = await c.http.request(r.url, "GET", undefined, {
             signed: true,
             bytes: true,

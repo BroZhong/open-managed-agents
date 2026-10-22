@@ -10,7 +10,6 @@ import type {
   AgentStore,
   Session,
   SkillStore,
-  SkillArtifactStore,
   DelegationStore,
   DelegationExecution,
   SandboxActivity,
@@ -21,12 +20,14 @@ import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
+import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf } from "@oma-server/sandbox";
 import type {
   EnvSpec,
   SandboxManager,
   SandboxSession,
+  SkillSet,
+  SkillSetMember,
   WorkspaceMountSpec,
-  ReadonlyProjection,
 } from "@oma-server/sandbox";
 import { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";
 import type {
@@ -41,10 +42,12 @@ import type {
   UserMessage,
   SkillDescriptor,
 } from "@open-managed-agents/adapter-core";
-import { DelegationCoordinator, fencedExecutor, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
+import { DelegationCoordinator, outcomeFromEvents, isTerminalExecution, type DelegationRun } from "./delegation-coordinator.js";
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
-import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type RepairOutcome, type ResumeFacts, type Takeover } from "./plan-resume.js";
-import { repairResult, type DanglingCallResolver } from "./dangling-call-results.js";
+import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts, type Takeover } from "./plan-resume.js";
+import { repairResult, type DanglingCallResolver, type RepairCause } from "./dangling-call-results.js";
+import { skillsInstallFailedText, turnExecutor } from "./turn-executor.js";
+import { INSTALL_ATTEMPT_STOPPED, SkillInstallSpans, skillInstallKey, unendedSkillInstalls, type SkillInstallEndData } from "./skill-install-spans.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -63,6 +66,7 @@ type AdapterOutcome = { result: AdapterRunResult } | { error: unknown };
 interface EquippedSkill {
   id: string;
   descriptor: SkillDescriptor;
+  bundle: SkillSetMember;
 }
 
 /** What the ports of a Turn attempt's journal learn while the attempt is prepared. */
@@ -163,23 +167,20 @@ export interface SessionRouterDeps {
    */
   agentStore?: AgentStore;
   /**
-   * Tenant Skill Library metadata + S3 bodies. When both are present, the
-   * router selects the Agent's *equipped* Skills that are valid (exist, in this
-   * tenant, owned by this Agent when `ownerType==='agent'`, and non-empty) and
-   * declares each as a **Read-only Projection** into the sandbox at
-   * `/skills/<skill-name>` (ADR-0007). The Skill *content* flows S3→sandbox inside
-   * the SandboxManager (via `S3ProvisionSource`) — never through the Host — so
-   * the router consults `skillArtifactStore` only to confirm a Skill is
-   * non-empty (mirroring the old `materializeSkills`' zero-files skip), not to
-   * read bodies. Absent ⇒ no Skills projected.
+   * Tenant Skill metadata. Each Turn the router selects the Agent's
+   * *equipped* Skills that are valid (exist, in this tenant, owned by this
+   * Agent, with a current Skill Bundle) and hands their Skill Set to the
+   * Sandbox session, which installs it at `/skills/<skill-name>` unless the
+   * binding records that Set for its Sandbox (ADR-0022). Only PostgreSQL is
+   * read here; bundles go from OSS to the Sandbox, never through the Host.
+   * Absent ⇒ no Skills.
    *
-   * WHY the sandbox and not a Host temp dir (ADR-0005 §4): the Pi adapter runs
+   * WHY the sandbox and not a Host temp dir (ADR-0022): the Pi adapter runs
    * `noTools: "builtin"` + custom tools, so Pi's prompt tells the model to
    * `read` a Skill's file — and that read is sandbox-mapped. A Skill left on the
-   * Host would therefore be unreadable; it MUST be projected into the sandbox.
+   * Host would therefore be unreadable; it MUST be installed into the sandbox.
    */
   skillStore?: SkillStore;
-  skillArtifactStore?: SkillArtifactStore;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * token-level deltas are written to `stream:session:{sessionId}:turn:{turnId}` for server-side
@@ -253,7 +254,6 @@ export class SessionRouter {
   private readonly agentFileStore?: AgentFileStore;
   private readonly agentStore?: AgentStore;
   private readonly skillStore?: SkillStore;
-  private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
   private readonly defaultSandboxEnv?: Record<string, string>;
   private readonly managedSandboxEnvByAgentId?: Readonly<
@@ -338,7 +338,6 @@ export class SessionRouter {
     this.agentFileStore = deps.agentFileStore;
     this.agentStore = deps.agentStore;
     this.skillStore = deps.skillStore;
-    this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
     this.defaultSandboxEnv = deps.defaultSandboxEnv;
     this.managedSandboxEnvByAgentId = deps.managedSandboxEnvByAgentId;
@@ -789,7 +788,7 @@ export class SessionRouter {
     const bindingId = session.delegation?.sandboxSessionId ?? session.id;
     // Disposal rechecks shared users under binding coordination. A confirmed
     // missing resource can also clear an obsolete pointer despite old unknown use.
-    const sandbox = this.sandboxFor(sessionId, session, session.agent, []);
+    const sandbox = this.sandboxFor(sessionId, session, session.agent, EMPTY_SKILL_SET);
     if (sandbox) await sandbox.dispose();
     this.sessions.delete(sessionId);
     // Disposal may retain a binding that became busy after our first check.
@@ -854,15 +853,9 @@ export class SessionRouter {
   /**
    * Compute the complete recipe the SandboxManager needs for this Session
    * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
-   * Agent's image/env, and each validated equipped Skill as a Read-only
-   * Projection at `/skills/<skill-name>` outside the persistent Workspace.
-   *
-   * `equippedSkills` is precomputed by the caller (it needs async store
-   * lookups for ownership + non-empty validation), so `specFor` stays a pure
-   * value builder. The projection `source` is the weak-typed coordinate the
-   * `S3ProvisionSource` (registered under `kind: "s3"` in the manager's deps)
-   * reads: `{ tenantId, skillId }` maps straight onto
-   * `SkillArtifactStore.getAll` inside the manager (see `S3ProvisionRef`).
+   * Agent's image/env, and the Skill Set to install at `/skills/<skill-name>`
+   * outside the persistent Workspace. The Skill Set is precomputed by the
+   * caller (it needs async store lookups for ownership and validation).
    *
    * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
    * with the Agent's own `sandbox.env`, then any Host-managed values explicitly
@@ -872,7 +865,7 @@ export class SessionRouter {
   private specFor(
     session: Session,
     agent: Agent,
-    equippedSkills: EquippedSkill[],
+    skills: SkillSet,
   ): EnvSpec {
     if (!this.workspaceMount) throw new Error("OSS Workspace mount is not configured");
     const mergedEnv = {
@@ -887,14 +880,14 @@ export class SessionRouter {
       workspaceMount: { ...this.workspaceMount, prefix: workspaceObjectPrefix(session.tenantId, session.workspaceId) },
       image: agent.sandbox?.image,
       env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
-      projections: this.skillProjections(session, equippedSkills),
+      skills,
     };
   }
 
   /**
    * Get (or lazily open) this session's {@link SandboxSession} (design doc §6).
    * `open` is **cheap** — it starts no sandbox; the first filesystem/code
-   * primitive triggers create+mount verification+projection — so obtaining it here spins
+   * primitive triggers create+mount verification+Skill Install — so obtaining it here spins
    * nothing up for a pure-chat turn. The session is remembered in {@link sessions}
    * and reused across turns; it is disposed only at session end.
    *
@@ -905,34 +898,25 @@ export class SessionRouter {
     sessionId: string,
     session: Session,
     agent: Agent,
-    equippedSkills: EquippedSkill[],
+    skills: SkillSet,
   ): SandboxSession | undefined {
     if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
     let sandbox = this.sessions.get(sessionId);
     if (!sandbox) {
+      // A Child Session shares its root's binding, and so its Skill Install record.
       const bindingId = session.delegation?.sandboxSessionId ?? sessionId;
-      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills), this.delegationStore ? {
+      const delegationStore = this.delegationStore;
+      sandbox = this.sandboxManager.open(this.specFor(session, agent, skills), delegationStore ? {
         id: bindingId,
-        withLock: (work) => this.delegationStore!.withEnvironmentLock(bindingId, work),
-        canReclaim: async () => !await this.delegationStore!.hasResourceUsers(bindingId),
+        withLock: (work) => delegationStore.withEnvironmentLock(bindingId, work),
+        canReclaim: async () => !await delegationStore.hasResourceUsers(bindingId),
         canExecute: async () => (await this.sessionStore.getById(sessionId))?.status !== "terminated",
+        installedSkills: () => delegationStore.installedSkillSet(bindingId),
+        recordSkillsInstalled: (installed) => delegationStore.recordSkillSetInstall(bindingId, installed),
       } : undefined);
       this.sessions.set(sessionId, sandbox);
     }
     return sandbox; // lazy: no sandbox actually started yet.
-  }
-
-  private skillProjections(
-    session: Session,
-    equippedSkills: EquippedSkill[],
-  ): ReadonlyProjection[] {
-    return equippedSkills.map(({ id, descriptor }) => ({
-      targetPath: `/skills/${descriptor.name}`,
-      source: {
-        kind: "s3",
-        ref: { tenantId: session.tenantId, skillId: id },
-      },
-    }));
   }
 
   /** Check availability without changing the completed answer or claiming all handles are saved. */
@@ -951,6 +935,27 @@ export class SessionRouter {
       });
       await journal.flush();
     }
+  }
+
+  /**
+   * Record, after the answer, that the Turn's Skill Install failed when no
+   * Sandbox operation met the failure (ADR-0022): like the Workspace check,
+   * the error keeps the answer and ends the Turn with it. The binding records
+   * nothing, so the next Turn installs again. A cancelled install is no failure.
+   */
+  private async checkSkillInstall(
+    journal: TurnJournal,
+    skillInstalls: SkillInstallSpans,
+    pendingEventId: string,
+    turnId: string,
+  ): Promise<void> {
+    const failure = skillInstalls.failure();
+    if (!failure) return;
+    this.recordTurnError(journal, pendingEventId, turnId, "skills_install_failed", {
+      message: `${failure.message}. The answer is retained; the Skills were not installed, and the next Turn installs them again.`,
+      code: "skills_install_failed",
+    });
+    await journal.flush();
   }
 
   /**
@@ -1030,7 +1035,7 @@ export class SessionRouter {
     pendingEventId: string,
     turnId: string,
     repairs: readonly DanglingToolCall[],
-    outcome: RepairOutcome,
+    outcome: RepairCause,
     error?: RecoveryError,
   ): Promise<void> {
     for (const call of repairs) {
@@ -1081,14 +1086,44 @@ export class SessionRouter {
   }
 
   /**
+   * End the attempt's Turn because the Skill Install a Sandbox operation
+   * waited for failed (ADR-0022): stop the synchronous children it waits on,
+   * tell every call left without a result that it was not executed, and
+   * record the install's error. The repairs read the Turn's output from the
+   * log, so the caller has flushed what the attempt recorded.
+   */
+  private async failTurnOnSkillInstall(
+    journal: TurnJournal,
+    session: Session,
+    pendingEventId: string,
+    promotedSeq: number,
+    turnId: string,
+    pendingFence: PendingEventFence,
+    error: SkillInstallError,
+  ): Promise<void> {
+    await this.delegations?.interruptChildren(session, turnId, pendingFence);
+    const turnEvents = (await this.readAllEvents(session.id)).filter((event) => event.seq > promotedSeq);
+    await this.recordRepairs(journal, session.id, pendingEventId, turnId, danglingToolCalls(turnEvents),
+      { notExecuted: skillsInstallFailedText(error) });
+    this.recordTurnError(journal, pendingEventId, turnId, "skills_install_failed", { code: "skills_install_failed", message: error.message });
+  }
+
+  /**
    * Mark that this attempt continues a Turn another claim held, before it
    * writes anything else of the Turn. One marker per takeover: a lost
-   * takeover's marker stays, and the next claim writes its own.
+   * takeover's marker stays, and the next claim writes its own. A Skill
+   * Install the stopped attempt left without an end span gets one now: that
+   * attempt no longer waits for it, whatever it did (ADR-0022).
    */
-  private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number, takeover: Takeover | undefined): void {
+  private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number,
+    takeover: Takeover | undefined, events: readonly StoredEvent[]): void {
     if (!takeover) return;
     journal.record({ type: "session.turn_resumed", data: { turnId, generation, ...takeover } },
       this.turnKey(pendingEventId, `turn_resumed:${generation}`));
+    for (const start of unendedSkillInstalls(events)) {
+      const end: SkillInstallEndData = { ...start, outcome: "aborted", reason: INSTALL_ATTEMPT_STOPPED };
+      journal.record({ type: "span.skills_install_end", data: end }, this.turnKey(pendingEventId, skillInstallKey(start.installId, "end")));
+    }
   }
 
   /**
@@ -1243,6 +1278,11 @@ export class SessionRouter {
         failure = { error };
         stopAttempt(error);
       };
+      // The spans of the Skill Installs the attempt's Sandbox runs, once it is
+      // prepared, and the failed install a Sandbox operation waited for: it
+      // ends the Turn (ADR-0022).
+      let skillInstalls: SkillInstallSpans | undefined;
+      let installFailure: SkillInstallError | undefined;
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
@@ -1255,6 +1295,8 @@ export class SessionRouter {
       const stopAttempt = (reason: unknown): void => {
         if (stopped) return;
         stopped = true;
+        // The next attempt ends the spans of installs this one leaves running.
+        skillInstalls?.close();
         journal.revokeAdapter();
         stopHeartbeat();
         turnController.abort(reason);
@@ -1307,6 +1349,9 @@ export class SessionRouter {
       // marker is written and its input acknowledged. False once the attempt
       // lost its claim on the way.
       const endTurn = async (endedTurnId: string): Promise<boolean> => {
+        // An install still running ends inside the Turn: its end span precedes
+        // the Turn's end, and a complete install is recorded on the binding.
+        await skillInstalls?.settled();
         await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
         lastOwnedTurn = projectionWriter;
         return this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, endedTurnId, pendingFence);
@@ -1368,7 +1413,7 @@ export class SessionRouter {
           (await this.delegationStore.listCommands(started.id)).some((command) => command.kind === "interrupt" && command.status !== "not_applied");
         const executionPlan = planResume({ ...facts, execution: { ...started, interruptRequested } });
         if (executionPlan.kind === "complete" && executionPlan.cause === "execution_ended") {
-          this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover);
+          this.recordTakeover(journal, pendingEvent.id, executionPlan.turnId, claim.generation, executionPlan.takeover, facts.events);
           await this.recordRepairs(journal, sessionId, pendingEvent.id, executionPlan.turnId, executionPlan.repairs,
             executionPlan.repairOutcome, executionPlan.error);
           if (!await endTurn(executionPlan.turnId)) return;
@@ -1377,7 +1422,7 @@ export class SessionRouter {
         if (executionPlan.kind !== "acknowledge") plan = executionPlan;
       }
 
-      this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover);
+      this.recordTakeover(journal, pendingEvent.id, turnId, claim.generation, plan.takeover, facts.events);
       if (plan.kind === "complete") {
         if (plan.cause === "interrupted" && delegationExecution) {
           // The parent's Interrupt takes effect now, after the takeover marker:
@@ -1464,7 +1509,7 @@ export class SessionRouter {
       // model API rejects. Loop on `hasMore` using the last seq seen as
       // `afterSeq` so history never silently truncates as a session grows.
       // Select the Agent's valid equipped Skills up front — the async store
-      // validation feeds BOTH the EnvSpec projections (via `sandboxFor`) and the
+      // validation feeds BOTH the Skill Set the Sandbox installs and the
       // in-sandbox `skillPaths` handed to the adapter, so the two never diverge.
       let equippedSkills: EquippedSkill[] = [];
 
@@ -1503,23 +1548,37 @@ export class SessionRouter {
       try {
           equippedSkills = await this.equippedSkills(currentAgent);
           if (stopped) return;
-          sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
+          const skills = skillSetOf(equippedSkills.map(({ bundle }) => bundle));
+          sandbox = this.sandboxFor(sessionId, session, currentAgent, skills);
           activitySandbox = sandbox;
-          await sandbox?.prepare(this.skillProjections(session, equippedSkills));
+          skillInstalls = new SkillInstallSpans({ turnId, generation: claim.generation, write: (event, keySegment) => {
+            journal.record(event, this.turnKey(pendingEvent.id, keySegment));
+            // Written at once, so the stream shows it live; a failed write
+            // stops the attempt through the journal.
+            journal.flush().catch(() => {});
+          } });
+          // The Skill Set is computed per attempt: a Resumed Turn installs the
+          // current one. Preparation verifies the mount and decides the
+          // install; the install runs beside inference, and the first Sandbox
+          // operation waits for it (ADR-0022).
+          await sandbox?.prepare(skills, { signal: turnController.signal, skillInstalls });
           if (stopped) return;
         } catch (error) {
+          // Deciding the install can fail (reading the binding's record); its
+          // stage names that, and its reason carries no URL.
+          const code = error instanceof SkillInstallError ? "skills_install_failed" : "sandbox_prepare_failed";
           const refreshError = {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
-            code: "sandbox_prepare_failed",
+            code,
           };
-          if (!await endTurnWithError(turnId, "sandbox_prepare_failed", refreshError)) return;
+          if (!await endTurnWithError(turnId, code, refreshError)) return;
           continue;
       }
 
       // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
-      // skipped). Skills are no longer materialized to a Host temp dir — they are
-      // projected into the sandbox by the SandboxManager (ADR-0005 §4); the
-      // adapter is pointed at their in-sandbox `/skills/<skill-name>` roots below.
+      // skipped). Skills are not materialized on the Host — the SandboxManager
+      // installs them into the sandbox (ADR-0022); the adapter is pointed at
+      // their in-sandbox `/skills/<skill-name>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
       if (sandbox) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
       if (stopped) return;
@@ -1544,7 +1603,17 @@ export class SessionRouter {
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox && this.delegations ? fencedExecutor(sandbox, assertExecutionOwner) : sandbox,
+          sandbox && turnExecutor(sandbox, {
+            ...(this.delegations ? { assertOwner: assertExecutionOwner } : {}),
+            // The first operation to find the install failed ends the Turn:
+            // the Adapter run is aborted and the Turn closed with its error.
+            // A Turn already stopping or interrupted ends as it would anyway.
+            skillInstallFailed: (error) => {
+              if (installFailure || turnController.signal.aborted) return;
+              installFailure = error;
+              turnController.abort(error);
+            },
+          }),
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,
@@ -1660,6 +1729,13 @@ export class SessionRouter {
       // An Adapter stops before the Turn finishes only at the Host's request,
       // a handoff (#254): the Turn goes to the next claim as it stands.
       if (outcome && "result" in outcome && outcome.result === "stopped") { handedOff = true; return; }
+      // The Skill Install a Sandbox operation waited for failed: the operation
+      // did not run, and the Turn ends with the install's error.
+      if (installFailure) {
+        await this.failTurnOnSkillInstall(journal, session, pendingEvent.id, promotedEvent.seq, turnId, pendingFence, installFailure);
+        if (!await endTurn(turnId)) return;
+        continue;
+      }
       const interrupted = turnController.signal.aborted;
       // A rejection after an abort is how the abort ended the run, not a failure.
       const failure = outcome && "error" in outcome && !interrupted ? outcome : undefined;
@@ -1669,6 +1745,10 @@ export class SessionRouter {
         this.recordTurnError(journal, pendingEvent.id, turnId, "adapter_error", { message: String(failure.error), code: "adapter_error" });
         await journal.flush();
       }
+      // A Turn that made no Sandbox operation never waited for its install,
+      // but its end does: the end span precedes the Turn's end, and a failure
+      // is recorded with the answer below. An aborted Turn cancelled it.
+      await skillInstalls?.settled();
 
       // A temporary Adapter return cannot finish a Turn that still owns a
       // durable wait. Reclaim the same input and continue from the event log.
@@ -1700,6 +1780,7 @@ export class SessionRouter {
       if (sandbox) {
         await this.checkWorkspace(journal, sandbox, pendingEvent.id, turnId);
       }
+      if (skillInstalls) await this.checkSkillInstall(journal, skillInstalls, pendingEvent.id, turnId);
 
       // Fence again before changing global Turn state after the storage check.
       const completionLease = await this.renewPendingClaim(sessionId, claim);
@@ -1726,6 +1807,7 @@ export class SessionRouter {
             await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
           }
         } finally {
+          skillInstalls?.close();
           stopHeartbeat();
           signal.removeEventListener("abort", forwardOuterAbort);
           if (activeRun.stopAttempt === stopAttempt) activeRun.stopAttempt = undefined;
@@ -1834,7 +1916,7 @@ export class SessionRouter {
         skills: agentConfig.skills,
         // Per-call Host injections (ADR-0002): assembled Agent Files and the
         // in-sandbox roots of equipped Skills. `skillPaths` are `/skills/<skill-name>`
-        // paths *inside the sandbox* (ADR-0005 §4) — the adapter points Pi's
+        // paths *inside the sandbox* (ADR-0022) — the adapter points Pi's
         // sandbox-mapped read tool at them (SKILL.md at `/skills/<skill-name>/SKILL.md`).
         // Undefined when their stores are absent, preserving prior behavior.
         appendSystemPrompt: appendSystemPrompt && appendSystemPrompt.length > 0
@@ -1882,33 +1964,26 @@ export class SessionRouter {
   }
 
   /**
-   * Select the Agent's equipped Skills that should be projected into
-   * the sandbox as Read-only Projections at `/skills/<skill-name>` (ADR-0005 §4). This
-   * is the *validation* half of the old `materializeSkills`, minus the Host
-   * temp-dir write: it decides WHICH Skills become projections/descriptors; the *content*
-   * flows S3→sandbox inside the SandboxManager (`S3ProvisionSource`), never
-   * through the Host.
+   * Select the Agent's equipped Skills for this Turn: its Skill Set and the
+   * prompt's Skill descriptors (ADR-0022). Only PostgreSQL is read.
    *
-   * Preserved behavior, id-for-id, from `materializeSkills`:
-   *  - No Skill stores or no equipped Skills ⇒ no ids (no projections).
-   *  - A Skill is skipped unless it exists, is in this tenant, and — for
-   *    `ownerType==='agent'` — is owned by this Agent. Per ADR-0004
-   *    `agent.skills` holds the Agent's own Skill Fork ids, which always exist
-   *    while equipped; we still guard on ownership defensively.
-   *  - A Skill without its required `SKILL.md` is skipped. We confirm this with
-   *    `skillArtifactStore.list` (paths only) rather than
-   *    `getAll` (bodies) — the bodies are the manager's job now, so the router
-   *    reads only enough to make the include/skip decision.
+   *  - No Skill store or no equipped Skills ⇒ none.
+   *  - A Skill is skipped unless it exists, is in this tenant and is owned by
+   *    this Agent: per ADR-0004 `agent.skills` holds the Agent's own Skill Fork
+   *    ids, which always exist while equipped; ownership is still checked.
+   *  - A Skill without a Skill Bundle has no files to install and is skipped.
+   *  - Names become `/skills/<name>`: an unsafe or duplicate name fails the
+   *    Turn visibly before execution instead of hiding a Skill.
    */
   private async equippedSkills(agentConfig: Agent): Promise<EquippedSkill[]> {
     const skillIds = agentConfig.skills ?? [];
-    if (!this.skillStore || !this.skillArtifactStore || skillIds.length === 0) {
+    if (!this.skillStore || skillIds.length === 0) {
       return [];
     }
 
     const valid: EquippedSkill[] = [];
     for (const skillId of skillIds) {
-      // Only project the Agent's own forks (owned by this Agent, in this
+      // Only install the Agent's own forks (owned by this Agent, in this
       // tenant). Anything else (missing, cross-tenant, or a stale Library id
       // from pre-fork data) is skipped rather than trusted.
       const skill = await this.skillStore.getById(skillId);
@@ -1920,10 +1995,7 @@ export class SessionRouter {
       ) {
         continue;
       }
-      // Confirm the Skill has its entrypoint. `list` reads only paths — bytes are projected
-      // S3→sandbox by the manager, so the router never touches Skill content.
-      const files = await this.skillArtifactStore.list(agentConfig.tenantId, skillId);
-      if (!files.includes("SKILL.md")) continue;
+      if (skill.bundleSha256 === null || skill.bundleSize === null) continue;
       // Names become path components without rewriting: reject ambiguity rather
       // than silently hiding a second equipped Skill behind the first.
       validateArtifactPath(skill.name);
@@ -1938,6 +2010,7 @@ export class SessionRouter {
           description: skill.description,
           path: `/skills/${skill.name}/SKILL.md`,
         },
+        bundle: { name: skill.name, sha256: skill.bundleSha256, size: skill.bundleSize },
       });
     }
     return valid;

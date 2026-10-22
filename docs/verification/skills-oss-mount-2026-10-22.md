@@ -70,3 +70,26 @@
 7 个探测沙箱全部已杀掉，`sandbox-system` 里不再有带 `oma.dev/probe` 注解的沙箱；探测用的 OSS 前缀已删除（剩余 0 个对象）；预热池恢复到 5/5。新增的只读凭证配置保留，供后续实现使用。
 
 逐步记录和耗时见 [JSON 证据](skills-oss-mount-2026-10-22.json)。证据里不包含凭证、签名 URL 或 Skill 正文。
+
+## 2026-10-23 补记：只读挂载资源已删除（#267）
+
+Skills 改为在 OSS 中保存版本包，Sandbox 只在 Skill 集合变化时安装新版本（[ADR-0022](../adr/0022-skill-bundles.md)）。200 个 Sandbox 的并发安装压测已经通过（[#261 报告](skill-bundle-install-spike-2026-10-23.md)），所以本报告验证的只读挂载方案不再使用。本报告保留，作为选型依据。
+
+更正：本分支的 [storage.yaml](../../deploy/oss-workspace/storage.yaml) 从未包含上文所说的三个资源。上文“已经写进 storage.yaml”只描述了当时另一个工作区里未提交的改动。
+
+- **删除前的引用检查（02:16，只读 `get -o json`，逐字段搜索，不输出任何值）。** 范围包括：
+  - `sandbox-system` 中的 49 个 Sandbox、3 个 SandboxSet、19 个 SandboxTemplate、24 个 Checkpoint、27 个 Pod；
+  - 全集群的 PV，以及 oma-test 的 ConfigMap 和 Deployment。
+
+  结果没有任何对象引用 `agentry-skills-ro` 或 `agentry-skills-storage`：36 个带 `csi-volume-config` 的 Sandbox 都只挂载 `/home/user/workspace`，凭证为 `agentry-oss-rw`；所有 `storage-auth` 注解（36 个 Sandbox、4 个 Pod）中也只有 `agentry-oss-rw`。仅有的引用来自这三个资源之间：AgentRole 引用 CredentialProvider，AgentRoleBinding 引用 AgentRole。
+- **删除（02:17:31）。** 删除了以下三个资源，三者创建于 2026-10-22 14:42:26。删除前的 YAML 保存在本机私有备份中，不含 Secret 数据；删除后三者都返回 `NotFound`：
+  - AgentRoleBinding `agentry-skills-storage`
+  - AgentRole `agentry-skills-storage`
+  - CredentialProvider `agentry-skills-ro`
+
+  `agentry-oss-rw`、`agentry-workspace-storage`、AgentIdentity `agentry-workspace`、PV `agentry-workspace-oss` 和 RAM 角色都没有改动，并且仍为 Available。
+- **抽查 Workspace 挂载（02:18）。** 从 `oma-scale-test-20261021` 新建 1 个 Sandbox，只请求 Workspace 挂载，与本报告的基线场景相同；领取用了 0.9 s。
+  - 网关只签发了一份凭证：`agentry-oss-rw`，对应 `skillmountcleanup-20261022181842/ws_probe`。
+  - 挂载为 `fuse.ossfs rw`。
+  - uid 1000 通过挂载写入的文本和 64 KiB 二进制文件，在 Host 侧从 OSS 读回的内容完全一致；Host 写入的对象在挂载中可见；通过挂载删除文件也成功。
+- **清理。** 抽查用的 Sandbox 已杀掉，带 `oma.dev/probe` 注解的 Sandbox 剩余 0 个；抽查前缀已删除，剩余 0 个对象。

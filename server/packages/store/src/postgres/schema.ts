@@ -176,6 +176,10 @@ CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, r
 CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creation_pending BOOLEAN NOT NULL DEFAULT FALSE;
+-- The last complete Skill Install (ADR-0022): the Sandbox it went into and the
+-- Skill Set hash it installed. Both NULL until one is recorded.
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_sandbox_id TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_set_hash TEXT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);

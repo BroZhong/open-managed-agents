@@ -33,7 +33,7 @@ async function harness(adapter: Adapter, options: { quota?: number; leaseMs?: nu
   const createHub = () => { const hub = new InProcessEventStreamHub(); hubs.push(hub); return hub; };
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: createHub(), resolveAdapter: () => adapter,
-    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox, provisionSources: {} }),
+    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox }),
     workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
     maxConcurrentSubagents: options.quota,
     pendingClaimLeaseMs: options.leaseMs ?? 30000,

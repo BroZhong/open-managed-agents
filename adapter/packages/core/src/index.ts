@@ -32,6 +32,8 @@ export type {
   SpanModelFirstTokenEvent,
   TokenUsage,
   SpanModelRequestEndEvent,
+  SpanSkillsInstallStartEvent,
+  SpanSkillsInstallEndEvent,
   SpanEvent,
   // Canonical events
   AgentMessageEvent,

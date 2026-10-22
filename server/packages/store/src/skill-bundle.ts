@@ -105,8 +105,11 @@ function pathProblem(path: unknown): string | null {
   return null;
 }
 
-/** Compiled Python never belongs in a Skill version. */
-function isFiltered(path: string): boolean {
+/**
+ * Compiled Python never belongs in a Skill version: packing leaves these paths
+ * out. A request that targets one explicitly is rejected instead (#269).
+ */
+export function isFilteredSkillPath(path: string): boolean {
   return path.endsWith(".pyc") || path.split("/").includes("__pycache__");
 }
 
@@ -138,10 +141,10 @@ export async function packSkillBundle(files: readonly SkillBundleInputFile[]): P
     }
   }
   const kept = files
-    .filter((file) => !isFiltered(file.path))
+    .filter((file) => !isFilteredSkillPath(file.path))
     .map((file) => ({ path: file.path, body: file.body, mode: normalizeMode(file.path, file.mode) }))
     .sort((a, b) => byCodeUnit(a.path, b.path));
-  const filtered = files.filter((file) => isFiltered(file.path)).map((file) => file.path).sort(byCodeUnit);
+  const filtered = files.filter((file) => isFilteredSkillPath(file.path)).map((file) => file.path).sort(byCodeUnit);
   const size = kept.reduce((total, file) => total + file.body.byteLength, 0);
   if (size > SKILL_BUNDLE_MAX_BYTES) throw new SkillBundleTooLargeError(size, SKILL_BUNDLE_MAX_BYTES);
 

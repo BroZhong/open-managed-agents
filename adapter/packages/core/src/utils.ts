@@ -27,6 +27,8 @@ const SPAN_TYPES: ReadonlySet<string> = new Set([
   "span.model_request_start",
   "span.model_first_token",
   "span.model_request_end",
+  "span.skills_install_start",
+  "span.skills_install_end",
 ]);
 
 const CANONICAL_TYPES: ReadonlySet<string> = new Set([

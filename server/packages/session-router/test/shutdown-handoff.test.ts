@@ -112,7 +112,7 @@ async function harness(options: Script & { adapter?: Adapter } = {}) {
       pendingClaimOwnerId: name, pendingClaimLeaseMs: 200, pendingClaimRenewIntervalMs: 50,
       pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
       ...(sandboxed ? {
-        sandboxManager: new DefaultSandboxManager({ sandboxClient, provisionSources: {} }),
+        sandboxManager: new DefaultSandboxManager({ sandboxClient }),
         workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       } : {}),
       // The Redis wake every Runner receives, this one included.
@@ -449,7 +449,7 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
         }
       }
     }
-    const sandboxes = () => new TrackedSandboxes({ sandboxClient: new FakeSandboxClient(), provisionSources: {} });
+    const sandboxes = () => new TrackedSandboxes({ sandboxClient: new FakeSandboxClient() });
     await h.enqueue("work");
     const a = h.start("runner-a", { sandboxManager: sandboxes() });
     h.start("runner-b", { sandboxManager: sandboxes() });

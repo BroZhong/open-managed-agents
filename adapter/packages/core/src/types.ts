@@ -147,7 +147,7 @@ export interface AdapterInput {
      */
     skillPaths?: string[];
     /**
-     * Already-resolved metadata for sandbox-projected Skills. Required by
+     * Already-resolved metadata for Skills installed in the sandbox. Required by
      * runtimes that replace native tools with a Host-injected ToolExecutor:
      * those runtimes format the available-Skills prompt from these descriptors
      * and leave the bodies in the sandbox for the read tool to load.
@@ -327,10 +327,49 @@ export interface SpanModelRequestEndEvent extends BaseEvent {
   usage: TokenUsage;
 }
 
+/**
+ * A Skill Install the Host runs into the Turn's Sandbox (ADR-0022). The Host
+ * writes its start and its end, an Adapter never does; a skipped install
+ * writes neither. `installId` pairs the two.
+ */
+export interface SpanSkillsInstallStartEvent extends BaseEvent {
+  type: "span.skills_install_start";
+  installId: string;
+  /** The Skill Set version being installed. */
+  setHash: string;
+  /** Skills in the Skill Set. */
+  skills: number;
+}
+
+export interface SpanSkillsInstallEndEvent extends BaseEvent {
+  type: "span.skills_install_end";
+  installId: string;
+  setHash: string;
+  skills: number;
+  /**
+   * `installed`: the Sandbox holds the Set and its binding records it.
+   * `failed`: `stage` and `reason` say where and why; nothing is recorded.
+   * `aborted`: the Turn stopped waiting for it first, as `reason` says. An
+   * install its Turn cancelled (an Interrupt) records nothing; one whose
+   * attempt stopped (a lost Runner), ended by the attempt that took the Turn
+   * over, may still have finished.
+   */
+  outcome: "installed" | "failed" | "aborted";
+  /** Absent when the attempt that took the Turn over ends the span. */
+  durationMs?: number;
+  /** Bundles the Sandbox downloaded, the others it already held, and their zip bytes: installed only. */
+  downloaded?: number;
+  bytes?: number;
+  stage?: string;
+  reason?: string;
+}
+
 export type SpanEvent =
   | SpanModelRequestStartEvent
   | SpanModelFirstTokenEvent
-  | SpanModelRequestEndEvent;
+  | SpanModelRequestEndEvent
+  | SpanSkillsInstallStartEvent
+  | SpanSkillsInstallEndEvent;
 
 // ─── Canonical agent events ──────────────────────────────────────────────────
 

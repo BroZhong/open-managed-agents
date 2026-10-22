@@ -124,3 +124,23 @@ test("Skill rename treats a missing destination as available", async () => {
     await f.close();
   }
 });
+test("Skill file read refuses a binary file and points to the byte-preserving download", async () => {
+  const f = await fixture((req, res) =>
+    json(res, {
+      path: "a.ttf",
+      binary: true,
+      size: 4,
+      contentType: "font/ttf",
+    }),
+  );
+  try {
+    const r = await run(
+      ["skill", "file", "read", "--skill-id", "s", "--path", "a.ttf"],
+      auth(f),
+    );
+    assert.equal(r.code, 2);
+    assert.match(r.error().message, /Binary file: use skill download/);
+  } finally {
+    await f.close();
+  }
+});

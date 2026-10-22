@@ -7,7 +7,7 @@ const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', workspaceMount: {
 } };
 function setup() {
   const client = new FakeSandboxClient();
-  const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {} });
+  const manager = new DefaultSandboxManager({ sandboxClient: client });
   return { client, manager, session: manager.open(spec) };
 }
 describe('native lifecycle per Turn', () => {

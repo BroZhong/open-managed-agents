@@ -37,7 +37,7 @@ describe("the claim heartbeat of a completed Turn", () => {
         await journalWriter(input)(event("agent.message", { content: [{ type: "text", text: "done" }] }));
         return "finished";
       } }),
-      sandboxManager: new SlowSandboxes({ sandboxClient: new FakeSandboxClient(), provisionSources: {} }),
+      sandboxManager: new SlowSandboxes({ sandboxClient: new FakeSandboxClient() }),
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       pendingClaimOwnerId: "runner", pendingClaimLeaseMs: 500, pendingClaimRenewIntervalMs: 20,
       onDrainError: ({ error }) => errors.push(error),
