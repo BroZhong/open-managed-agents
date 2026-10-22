@@ -1,11 +1,14 @@
 import { SHARE_READ_OPERATIONS } from "../lib/share-access.js";
 import type { TenantContext } from "../types.js";
-import { SkillNameConflictError } from "@oma-server/store";
+import { InvalidSkillFileError, SkillBundleTooLargeError, SkillNameConflictError, SkillVersionConflictError } from "@oma-server/store";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { RouteConfig, RouteHandler } from "@hono/zod-openapi";
 import type { Env, Handler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { RegisteredOpenApiRoute } from "./routes.js";
+
+const SKILL_VERSION_CONFLICT_MESSAGE =
+  "The Skill was changed by another request since this edit read it. Reload the Skill and retry.";
 
 /**
  * Runtime router used by route factories whose method/path registration is
@@ -27,6 +30,16 @@ export function createContractRouter<E extends Env>(): OpenAPIHono<E> {
   router.onError((error, c) => {
     if (error instanceof SkillNameConflictError) {
       return c.json({ error: error.message, code: error.code }, 409);
+    }
+    // The bundle digests in the message are Host-private storage coordinates.
+    if (error instanceof SkillVersionConflictError) {
+      return c.json({ error: SKILL_VERSION_CONFLICT_MESSAGE, code: error.code }, 409);
+    }
+    if (error instanceof SkillBundleTooLargeError) {
+      return c.json({ error: error.message, code: error.code }, 413);
+    }
+    if (error instanceof InvalidSkillFileError) {
+      return c.json({ error: error.message, code: error.code }, 400);
     }
     if (
       error instanceof HTTPException &&

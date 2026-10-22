@@ -1,9 +1,9 @@
 import { SkillNameConflictError } from "@oma-server/store";
-import { replaceSkillFiles } from "../skills/replace-files.js";
 import { publicSkill } from "../lib/public-projection.js";
+import { currentVersion } from "../skills/skill-versions.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import type { AgentStore, SkillStore, SkillArtifactStore } from "@oma-server/store";
+import type { AgentStore, SkillStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
@@ -21,13 +21,15 @@ type Env = {
  * Routes for the Skills equipped on an Agent (ADR-0004 fork-on-equip).
  *
  * Equipping a Library Skill FORKS it: we snapshot the Library Skill's metadata
- * and files into a new Agent Skill (`ownerType='agent'`, `ownerId=agentId`,
- * `sourceSkillId=<libraryId>`) and add the fork's id to `Agent.skills`. The
- * fork is independent from then on — editing it never touches the Library, and
+ * into a new Agent Skill (`ownerType='agent'`, `ownerId=agentId`,
+ * `sourceSkillId=<libraryId>`) whose current version is the Library Skill's
+ * current Skill Bundle (ADR-0022: bundles are immutable, so no file is copied),
+ * and add the fork's id to `Agent.skills`. The fork is independent from then
+ * on — an edit on either side publishes a new bundle for that side only, and
  * deleting the Library Skill never affects already-equipped Agents.
  *
- * Unequipping DELETES the Agent's fork (metadata + files) and removes its id
- * from `Agent.skills`; the Library Skill is untouched.
+ * Unequipping DELETES the Agent's fork row and removes its id from
+ * `Agent.skills`; the Library Skill and every bundle are untouched.
  *
  * `GET` lists the Agent's forks (its equipped Skills), read from the skill store
  * by owner — so an equipped Skill is always visible (fixes the invisible-skill
@@ -36,7 +38,6 @@ type Env = {
 export function agentSkillRoutes(
   agentStore: AgentStore,
   skillStore: SkillStore,
-  skillArtifacts: SkillArtifactStore,
 ): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
 
@@ -95,19 +96,21 @@ export function agentSkillRoutes(
     if (already && !body.overwrite) return c.json(publicSkill(already), 200);
     const sameName = existingForks.find((s) => s.name === library.name);
     if (sameName && !body.overwrite) throw new SkillNameConflictError(library.name);
+    const version = currentVersion(library);
     if (sameName || already) {
+      // Overwrite: the target moves to the Library Skill's current version,
+      // unless the target was edited since it was read (409).
       const target = sameName ?? already!;
-      const files = await skillArtifacts.getAll(agent.tenantId, library.id);
-      await replaceSkillFiles(skillArtifacts, agent.tenantId, target.id, files);
       const updated = await skillStore.update(target.id, {
         name: library.name,
         description: library.description,
         sourceSkillId: library.id,
-      });
+        ...version,
+      }, { expectedBundleSha256: target.bundleSha256 });
       return c.json(updated && publicSkill(updated), 200);
     }
 
-    // Snapshot metadata → new Agent Skill, then copy the files.
+    // Snapshot metadata → new Agent Skill on the Library Skill's bundle.
     const fork = await skillStore.create({
       tenantId: agent.tenantId,
       name: library.name,
@@ -115,17 +118,14 @@ export function agentSkillRoutes(
       ownerType: "agent",
       ownerId: agent.id,
       sourceSkillId: library.id,
+      ...version,
     });
     try {
-      await skillArtifacts.copyTree(agent.tenantId, library.id, fork.id);
+      await agentStore.update(agent.id, { skills: [...(agent.skills ?? []), fork.id] });
     } catch (error) {
-      await skillArtifacts.deleteTree(agent.tenantId, fork.id);
       await skillStore.delete(fork.id);
       throw error;
     }
-
-    const nextSkills = [...(agent.skills ?? []), fork.id];
-    await agentStore.update(agent.id, { skills: nextSkills });
 
     return c.json(publicSkill(fork), 201);
   });
@@ -150,7 +150,7 @@ export function agentSkillRoutes(
       return c.json({ error: "Not found" }, 404);
     }
 
-    await skillArtifacts.deleteTree(agent.tenantId, fork.id);
+    // The fork's bundle stays: it may be shared (GC is #273).
     await skillStore.delete(fork.id);
 
     const nextSkills = (agent.skills ?? []).filter((id) => id !== fork.id);

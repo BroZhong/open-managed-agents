@@ -283,7 +283,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/agents/{id}/fork",
     operationId: "forkAgent",
     summary: "Fork an Agent with independent Agent Files and Skills",
-    description: "Copies configuration, Agent Files and the current contents of every Agent Skill into a new Agent. Sessions, Loops and Workspaces are not copied. Skill IDs and ownership are new; the original Library provenance is retained.",
+    description: "Copies configuration and Agent Files into a new Agent, and gives it a copy of every Agent Skill at that Skill's current version (the version is shared, no file is copied; later edits on either side stay independent). Sessions, Loops and Workspaces are not copied. Skill IDs and ownership are new; the original Library provenance is retained.",
     tags: ["Agents"],
     request: { params: idParams, body: jsonBody(z.object({ name: z.string().trim().min(1) })) },
     responses: {
@@ -485,7 +485,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/agents/{id}/skills",
     operationId: "equipAgentSkill",
     summary: "Equip a Library Skill by creating a Skill Fork",
-    description: "Copies the Library Skill's current metadata and files into an independent Agent Skill. Re-equipping the same Library Skill returns the existing fork with 200; it does not refresh that fork from the Library. A name collision returns 409. Set overwrite=true after confirmation to replace the existing Agent Skill, including its complete file tree.",
+    description: "Creates an independent Agent Skill with the Library Skill's current metadata, at the Library Skill's current version (the version is shared, no file is copied; later edits on either side stay independent). Re-equipping the same Library Skill returns the existing fork with 200; it does not refresh that fork from the Library. A name collision returns 409 skill_name_conflict. Set overwrite=true after confirmation to move the existing Agent Skill to the Library Skill's current version, replacing its complete file tree; if that Agent Skill was edited concurrently, the request returns 409 skill_version_conflict and changes nothing.",
     tags: ["Agents/Skills"],
     request: {
       params: idParams,
@@ -495,7 +495,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
       200: jsonResponse(SkillSchema, "Existing Skill Fork returned"),
       201: jsonResponse(SkillSchema, "Skill Fork created"),
       400: errorResponse("skillId is required"),
-      409: errorResponse("Skill name conflict; confirm overwrite before retrying"),
+      409: errorResponse("Skill name conflict (skill_name_conflict; confirm overwrite before retrying), or the replaced Agent Skill changed concurrently (skill_version_conflict)"),
       404: errorResponse("Agent or Library Skill not found"),
     },
   }),
@@ -525,7 +525,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "uploadSkills",
     summary: "Upload one or more Library Skills",
     description:
-      "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths. Names are unique per owner. Conflicts return 409 before any writes; retry with overwrite=true after confirmation to replace the entire folder, retaining the Skill ID. For repeated names within one upload the last folder wins after confirmation.",
+      "paths is a JSON-encoded string array. Repeated files fields must have the same length and order as paths. Files are stored byte for byte; .pyc files and __pycache__ directories are left out. Each Skill holds at most 50 MB uncompressed; a larger Skill returns 413 before any writes. Names are unique per owner. Conflicts return 409 skill_name_conflict before any writes; retry with overwrite=true after confirmation to replace the entire folder with a new version, retaining the Skill ID. A replaced Skill that was edited concurrently returns 409 skill_version_conflict and keeps its version. For repeated names within one upload the last folder wins after confirmation.",
     tags: ["Skills"],
     request: {
       body: {
@@ -546,8 +546,9 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         z.object({ data: z.array(SkillSchema) }),
         "Library Skills created",
       ),
-      400: errorResponse("Invalid multipart Skill tree"),
-      409: errorResponse("Skill name conflict; confirm overwrite before retrying"),
+      400: errorResponse("Invalid multipart Skill tree or file path"),
+      409: errorResponse("Skill name conflict (skill_name_conflict; confirm overwrite before retrying), or a replaced Skill changed concurrently (skill_version_conflict)"),
+      413: errorResponse("A Skill exceeds 50 MB uncompressed (skill_bundle_too_large)"),
     },
   }),
   protectedRoute({
@@ -578,6 +579,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/skills/{id}",
     operationId: "updateSkill",
     summary: "Update Skill metadata",
+    description: "Changes no file, so the Skill keeps its current version. A change based on a version that a concurrent file edit has replaced returns 409 skill_version_conflict.",
     tags: ["Skills"],
     request: {
       params: idParams,
@@ -591,7 +593,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     responses: {
       200: jsonResponse(SkillSchema, "Skill updated"),
       400: errorResponse("Invalid Skill metadata"),
-      409: errorResponse("Skill name already exists for this owner"),
+      409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
       404: errorResponse("Skill not found"),
     },
   }),
@@ -599,8 +601,8 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     method: "delete",
     path: "/v1/skills/{id}",
     operationId: "deleteSkill",
-    summary: "Delete a Skill and its files",
-    description: "Accepts a tenant-owned Library Skill or Agent Skill. Deleting a Library Skill preserves existing Agent forks. To remove an equipped Agent Skill together with its Agent reference, use DELETE /v1/agents/{id}/skills/{skillId}.",
+    summary: "Delete a Skill",
+    description: "Accepts a tenant-owned Library Skill or Agent Skill. Deleting a Library Skill preserves existing Agent forks, including forks at the same version. To remove an equipped Agent Skill together with its Agent reference, use DELETE /v1/agents/{id}/skills/{skillId}.",
     tags: ["Skills"],
     request: { params: idParams },
     responses: {
@@ -639,14 +641,15 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "putSkillFileContent",
     summary: "Create or replace a Skill text file",
     description:
-      "Saving the root SKILL.md refreshes the Skill name and description. Edits preserve createdAt and advance updatedAt; editing an Agent Skill affects only its private copy.",
+      "Every write publishes a new version of the Skill, based on the version it read; if another edit published a version in the meantime, the write returns 409 skill_version_conflict and changes nothing. Saving the root SKILL.md refreshes the Skill name and description. Edits preserve createdAt and advance updatedAt; editing an Agent Skill affects only its private copy. A Skill holds at most 50 MB uncompressed.",
     tags: ["Skills/Files"],
     request: { params: idParams, body: jsonBody(SkillFileContentSchema) },
     responses: {
-      409: errorResponse("Skill name already exists for this owner"),
+      409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
       200: jsonResponse(SkillFileContentSchema, "Skill file stored"),
       400: errorResponse("Invalid path or content"),
       404: errorResponse("Skill not found"),
+      413: errorResponse("The Skill would exceed 50 MB uncompressed (skill_bundle_too_large)"),
     },
   }),
   protectedRoute({
@@ -654,6 +657,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/skills/{id}/files/content",
     operationId: "deleteSkillFileContent",
     summary: "Delete a Skill file",
+    description: "Publishes a new version of the Skill without the file; deleting a path that does not exist changes nothing. The root SKILL.md cannot be deleted. A concurrent edit of the same version returns 409 skill_version_conflict.",
     tags: ["Skills/Files"],
     request: { params: idParams, query: pathQuery },
     responses: {
@@ -665,8 +669,9 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         }),
         "Skill file deleted",
       ),
-      400: errorResponse("Invalid or missing path"),
+      400: errorResponse("Invalid or missing path, or the path is the root SKILL.md"),
       404: errorResponse("Skill not found"),
+      409: errorResponse("The Skill changed concurrently (skill_version_conflict)"),
     },
   }),
   protectedRoute({
@@ -674,6 +679,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/skills/{id}/files/rename",
     operationId: "renameSkillFile",
     summary: "Rename or move a Skill file",
+    description: "Publishes a new version of the Skill, replacing any file at the destination. The root SKILL.md cannot be renamed away; renaming a file onto it refreshes the Skill name and description. A concurrent edit of the same version returns 409 skill_version_conflict.",
     tags: ["Skills/Files"],
     request: {
       params: idParams,
@@ -689,8 +695,9 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         }),
         "Skill file renamed",
       ),
-      400: errorResponse("Invalid source or destination path"),
+      400: errorResponse("Invalid source or destination path, or the source is the root SKILL.md"),
       404: errorResponse("Skill or source file not found"),
+      409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
     },
   }),
 

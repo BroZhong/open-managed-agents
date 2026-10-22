@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { ApiKeyStore } from "../src/types.js";
-import { InMemorySkillStore, InMemorySkillArtifactStore } from "@oma-server/store-memory";
+import { InMemorySkillStore, InMemorySkillBundleStore } from "@oma-server/store-memory";
+import { currentFiles, seedSkill } from "./fixtures/skill-bundles.js";
 
 const emptyApiKeyStore: ApiKeyStore = { async findByKeyHash() { return null; } };
 
 function setup() {
   process.env.AUTH_DISABLED = "true";
   const skillStore = new InMemorySkillStore();
-  const skillArtifactStore = new InMemorySkillArtifactStore();
-  const app = createApp({ apiKeyStore: emptyApiKeyStore, skillStore, skillArtifactStore });
-  return { app, skillStore, skillArtifactStore };
+  const skillBundleStore = new InMemorySkillBundleStore();
+  const app = createApp({ apiKeyStore: emptyApiKeyStore, skillStore, skillBundleStore });
+  const filesOf = (id: string) => currentFiles(skillStore, skillBundleStore, id);
+  return { app, skillStore, skillBundleStore, filesOf };
 }
 
 /** Build a multipart upload matching the POST /v1/skills wire shape. */
@@ -71,12 +73,13 @@ describe("Skill Library routes", () => {
     const listed = await (await app.request("/v1/skills")).json();
     expect(listed.data[0]).toMatchObject(expected);
     const detail = await (await app.request(`/v1/skills/${skill.id}`)).json();
-    expect(detail).toMatchObject(expected);
+    expect(detail).toMatchObject({ ...expected, files: ["SKILL.md"] });
   });
 
   it("keeps the current name when SKILL.md has no name and ignores other files' metadata", async () => {
-    const { app, skillStore } = setup();
-    const skill = await skillStore.create({ tenantId: "dev", name: "greeter", description: "Old description" });
+    const { app, skillStore, skillBundleStore } = setup();
+    const skill = await seedSkill(skillStore, skillBundleStore,
+      { tenantId: "dev", name: "greeter", description: "Old description" }, { "SKILL.md": SKILL_MD });
     const write = (path: string, content: string) => app.request(`/v1/skills/${skill.id}/files/content`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -110,8 +113,8 @@ describe("Skill Library routes", () => {
     expect(body.data[0].description).toBe("Greets warmly");
   });
 
-  it("multi-subfolder → N Skills, bodies stored in S3", async () => {
-    const { app, skillArtifactStore } = setup();
+  it("multi-subfolder → N Skills, each with its own bundle", async () => {
+    const { app, filesOf } = setup();
     const res = await app.request("/v1/skills", {
       method: "POST",
       body: uploadForm([
@@ -124,17 +127,19 @@ describe("Skill Library routes", () => {
     const body = await res.json();
     expect(body.data).toHaveLength(2);
     const a = body.data.find((s: { name: string }) => s.name === "a");
-    const files = await skillArtifactStore.list("dev", a.id);
-    expect(files.sort()).toEqual(["SKILL.md", "notes.md"].sort());
+    const b = body.data.find((s: { name: string }) => s.name === "b");
+    expect(Object.keys((await filesOf(a.id)).files)).toEqual(["SKILL.md", "notes.md"]);
+    expect(Object.keys((await filesOf(b.id)).files)).toEqual(["SKILL.md"]);
   });
 
   it("no SKILL.md → 400", async () => {
-    const { app } = setup();
+    const { app, skillStore } = setup();
     const res = await app.request("/v1/skills", {
       method: "POST",
       body: uploadForm([{ path: "readme.md", content: "hi" }]),
     });
     expect(res.status).toBe(400);
+    expect((await skillStore.list("dev")).data).toHaveLength(0);
   });
 
   it("ambiguous mix → 400", async () => {
@@ -149,13 +154,25 @@ describe("Skill Library routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("list, then delete removes from list and S3", async () => {
-    const { app, skillArtifactStore } = setup();
+  it("an invalid file path → 400 with nothing created", async () => {
+    const { app, skillStore } = setup();
+    const res = await app.request("/v1/skills", {
+      method: "POST",
+      body: uploadForm([{ path: "SKILL.md", content: SKILL_MD }, { path: "bad\\name.md", content: "x" }]),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("invalid_skill_file");
+    expect((await skillStore.list("dev")).data).toHaveLength(0);
+  });
+
+  it("list, then delete removes the Skill from the list and keeps its bundle", async () => {
+    const { app, skillStore, skillBundleStore } = setup();
     const create = await app.request("/v1/skills", {
       method: "POST",
       body: uploadForm([{ path: "SKILL.md", content: SKILL_MD }]),
     });
     const id = (await create.json()).data[0].id;
+    const { bundleSha256 } = (await skillStore.getById(id))!;
 
     const list1 = await app.request("/v1/skills");
     expect((await list1.json()).data).toHaveLength(1);
@@ -166,7 +183,9 @@ describe("Skill Library routes", () => {
 
     const list2 = await app.request("/v1/skills");
     expect((await list2.json()).data).toHaveLength(0);
-    expect(await skillArtifactStore.list("dev", id)).toHaveLength(0);
+    expect(await skillStore.getById(id)).toBeNull();
+    // Bundles are content-addressed and may be shared by forks: GC is separate (#273).
+    expect(await skillBundleStore.listFiles("dev", bundleSha256!)).not.toBeNull();
   });
 
   it("update metadata", async () => {
@@ -188,7 +207,7 @@ describe("Skill Library routes", () => {
 
 describe("Skill name uniqueness", () => {
   it("preflights the whole upload and replaces the complete tree only after confirmation", async () => {
-    const { app, skillStore, skillArtifactStore } = setup();
+    const { app, skillStore, filesOf } = setup();
     const send = (files: { path: string; content: string }[], overwrite = false) => {
       const form = uploadForm(files);
       if (overwrite) form.set("overwrite", "true");
@@ -207,12 +226,13 @@ describe("Skill name uniqueness", () => {
     expect(conflict.status).toBe(409);
     expect((await conflict.json()).code).toBe("skill_name_conflict");
     expect((await skillStore.list("dev")).data).toHaveLength(1);
-    expect(await skillArtifactStore.list("dev", id)).toContain("old.txt");
+    expect(Object.keys((await filesOf(id)).files)).toContain("old.txt");
     const confirmed = await send(files, true);
     expect(confirmed.status).toBe(201);
     expect((await skillStore.list("dev")).data).toHaveLength(2);
-    expect(await skillArtifactStore.list("dev", id)).toEqual(["SKILL.md"]);
-    expect(new TextDecoder().decode(await skillArtifactStore.get("dev", id, "SKILL.md") ?? undefined)).toContain("new");
+    const replaced = await filesOf(id);
+    expect(Object.keys(replaced.files)).toEqual(["SKILL.md"]);
+    expect(replaced.files["SKILL.md"]).toContain("new");
   });
 
   it("requires confirmation for duplicate names in one batch and keeps the last folder", async () => {
@@ -228,10 +248,9 @@ describe("Skill name uniqueness", () => {
   });
 
   it("rejects conflicting metadata and SKILL.md renames without changing files", async () => {
-    const { app, skillStore, skillArtifactStore } = setup();
-    await skillStore.create({ tenantId: "dev", name: "greeter", description: "" });
-    const other = await skillStore.create({ tenantId: "dev", name: "other", description: "" });
-    await skillArtifactStore.put("dev", other.id, "SKILL.md", "original");
+    const { app, skillStore, skillBundleStore, filesOf } = setup();
+    await seedSkill(skillStore, skillBundleStore, { tenantId: "dev", name: "greeter", description: "" }, { "SKILL.md": SKILL_MD });
+    const other = await seedSkill(skillStore, skillBundleStore, { tenantId: "dev", name: "other", description: "" }, { "SKILL.md": "original" });
     for (const [suffix, method, body] of [
       ["", "POST", { name: "greeter" }],
       ["/files/content", "PUT", { path: "SKILL.md", content: SKILL_MD }],
@@ -240,28 +259,35 @@ describe("Skill name uniqueness", () => {
         method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       expect(result.status).toBe(409);
+      expect((await result.json()).code).toBe("skill_name_conflict");
     }
     expect((await skillStore.getById(other.id))?.name).toBe("other");
-    expect(new TextDecoder().decode((await skillArtifactStore.get("dev", other.id, "SKILL.md"))!)).toBe("original");
+    expect(await filesOf(other.id)).toEqual({ sha256: other.bundleSha256, files: { "SKILL.md": "original" } });
   });
 
-  it("restores the old tree if an overwrite upload fails", async () => {
-    const { app, skillStore, skillArtifactStore } = setup();
-    const skill = await skillStore.create({ tenantId: "dev", name: "greeter", description: "Original" });
-    await skillArtifactStore.put("dev", skill.id, "SKILL.md", "original");
-    await skillArtifactStore.put("dev", skill.id, "old.txt", "keep");
-    vi.spyOn(skillArtifactStore, "put").mockRejectedValueOnce(new Error("Storage unavailable"));
+  it("keeps the old version if storing an overwrite upload fails", async () => {
+    const { app, skillStore, skillBundleStore, filesOf } = setup();
+    const skill = await seedSkill(skillStore, skillBundleStore,
+      { tenantId: "dev", name: "greeter", description: "Original" }, { "SKILL.md": "original", "old.txt": "keep" });
+    vi.spyOn(skillBundleStore, "put").mockRejectedValueOnce(new Error("Storage unavailable"));
     const form = uploadForm([{ path: "SKILL.md", content: SKILL_MD }]);
     form.set("overwrite", "true");
     expect((await app.request("/v1/skills", { method: "POST", body: form })).status).toBe(500);
     expect((await skillStore.getById(skill.id))?.description).toBe("Original");
-    expect(new TextDecoder().decode((await skillArtifactStore.get("dev", skill.id, "SKILL.md"))!)).toBe("original");
-    expect(await skillArtifactStore.list("dev", skill.id)).toContain("old.txt");
+    expect(await filesOf(skill.id)).toEqual({ sha256: skill.bundleSha256, files: { "SKILL.md": "original", "old.txt": "keep" } });
+  });
+
+  it("creates no Skill if storing a new upload fails", async () => {
+    const { app, skillStore, skillBundleStore } = setup();
+    vi.spyOn(skillBundleStore, "put").mockRejectedValueOnce(new Error("Storage unavailable"));
+    const res = await app.request("/v1/skills", { method: "POST", body: uploadForm([{ path: "SKILL.md", content: SKILL_MD }]) });
+    expect(res.status).toBe(500);
+    expect((await skillStore.list("dev")).data).toHaveLength(0);
   });
 
   it("isolates names by tenant and prevents concurrent duplicate creation", async () => {
-    const { app, skillStore } = setup();
-    await skillStore.create({ tenantId: "other", name: "greeter", description: "" });
+    const { app, skillStore, skillBundleStore } = setup();
+    await seedSkill(skillStore, skillBundleStore, { tenantId: "other", name: "greeter", description: "" }, { "SKILL.md": SKILL_MD });
     const responses = await Promise.all([1, 2].map(() => app.request("/v1/skills", {
       method: "POST", body: uploadForm([{ path: "SKILL.md", content: SKILL_MD }]),
     })));

@@ -1,9 +1,10 @@
 /**
  * Single/multi-Skill detection over a dropped folder, mirroring Pi's
  * `loadSkillsFromDir` discovery. Pure and unit-testable: given the flat list of
- * files in the dropped root (each with a root-relative path + text content),
+ * files in the dropped root (each with a root-relative path + its bytes),
  * decide whether the drop is one Skill or many, and extract name/description
- * from each Skill's `SKILL.md`.
+ * from each Skill's `SKILL.md`. Files are bytes end to end (ADR-0022): only a
+ * `SKILL.md` is decoded, as UTF-8, to read its metadata.
  *
  * Rules (server-authoritative; the client runs the same rule for instant
  * feedback), given dropped root `ROOT/`:
@@ -17,8 +18,8 @@
 export interface DroppedFile {
   /** Root-relative path, e.g. `SKILL.md` or `my-skill/SKILL.md`. */
   path: string;
-  /** File text. Binary skill assets are out of scope for MVP (instruction-only). */
-  content: string;
+  /** The file's exact bytes; binary assets such as fonts are kept as uploaded. */
+  body: Uint8Array;
 }
 
 export interface DetectedSkill {
@@ -26,8 +27,7 @@ export interface DetectedSkill {
   description: string;
   /**
    * Files belonging to this Skill, RE-ROOTED so each path is relative to the
-   * Skill's own directory (SKILL.md sits at the top). Materializing these under
-   * `<tmp>/<skillId>/` yields a directory Pi can load as a skill root.
+   * Skill's own directory (SKILL.md sits at the top): the Skill Bundle's tree.
    */
   files: DroppedFile[];
 }
@@ -74,8 +74,10 @@ export function parseSkillMetadata(skillMd: string, fallbackName: string): {
   return { name, description };
 }
 
+const decodeSkillMd = (file: DroppedFile | undefined) => new TextDecoder().decode(file?.body);
+
 export function detectSkills(files: DroppedFile[]): DetectResult {
-  const normalized = files.map((f) => ({ path: normalize(f.path), content: f.content }));
+  const normalized = files.map((f) => ({ path: normalize(f.path), body: f.body }));
 
   const rootSkillMd = normalized.find((f) => f.path === "SKILL.md");
 
@@ -95,7 +97,7 @@ export function detectSkills(files: DroppedFile[]): DetectResult {
   }
 
   if (rootSkillMd) {
-    const meta = parseSkillMetadata(rootSkillMd.content, deriveRootName(normalized));
+    const meta = parseSkillMetadata(decodeSkillMd(rootSkillMd), deriveRootName(normalized));
     return { ok: true, skills: [{ name: meta.name, description: meta.description, files: normalized }] };
   }
 
@@ -105,9 +107,8 @@ export function detectSkills(files: DroppedFile[]): DetectResult {
       const prefix = `${dir}/`;
       const skillFiles = normalized
         .filter((f) => f.path.startsWith(prefix))
-        .map((f) => ({ path: f.path.slice(prefix.length), content: f.content }));
-      const skillMd = skillFiles.find((f) => f.path === "SKILL.md");
-      const meta = parseSkillMetadata(skillMd?.content ?? "", dir);
+        .map((f) => ({ path: f.path.slice(prefix.length), body: f.body }));
+      const meta = parseSkillMetadata(decodeSkillMd(skillFiles.find((f) => f.path === "SKILL.md")), dir);
       skills.push({ name: meta.name, description: meta.description, files: skillFiles });
     }
     return { ok: true, skills };
