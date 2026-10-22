@@ -24,6 +24,12 @@ type CompleteTurn = (sessionId: string, eventId: string, queueEmpty: boolean) =>
   accepted: boolean; idleEvent?: StoredEvent;
 };
 
+/** An input {@link InMemoryPendingEventStore.removeById} took out of its queue, with its claim. */
+export interface RemovedPendingEvent { event: PendingEvent; claim?: ClaimState }
+
+const idPrefix = "pending_";
+const enqueueOrder = (eventId: string) => Number(eventId.slice(idPrefix.length));
+
 const unboundCompleteTurn: CompleteTurn = () => {
   throw new Error("A standalone InMemoryPendingEventStore cannot complete Turns; use createMemoryStores()");
 };
@@ -64,7 +70,7 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
 
   async enqueue(sessionId: string, event: PendingEventEnqueueInput): Promise<PendingEvent> {
     const pending: PendingEvent = {
-      id: `pending_${this.nextId++}`,
+      id: `${idPrefix}${this.nextId++}`,
       sessionId,
       type: event.type,
       data: event.data,
@@ -241,15 +247,29 @@ export class InMemoryPendingEventStore implements PendingEventIngressStore {
       })
       .slice(0, limit);
   }
-  /** Internal rollback boundary for the in-memory delegation transaction. */
+  /** Internal copy and replacement of the whole store state; tests lapse claims with them. */
   snapshotState() { return structuredClone({ queues: this.queues, claims: this.claims, nextId: this.nextId }); }
   restoreState(state: ReturnType<InMemoryPendingEventStore["snapshotState"]>): void { this.queues = state.queues; this.claims = state.claims; this.nextId = state.nextId; }
-  async removeById(sessionId: string, eventId: string, onlyUnclaimed = false): Promise<boolean> {
+  /** Internal write for the in-memory delegation transaction; {@link restoreRemoved} undoes it. */
+  removeById(sessionId: string, eventId: string, onlyUnclaimed = false): RemovedPendingEvent | null {
     const queue = this.queues.get(sessionId) ?? [];
     const index = queue.findIndex((event) => event.id === eventId);
     const claim = this.claims.get(eventId);
-    if (index < 0 || (onlyUnclaimed && claim?.ownerId && claim.expiresAtMs > Date.now())) return false;
-    queue.splice(index, 1); this.claims.delete(eventId); return true;
+    if (index < 0 || (onlyUnclaimed && claim?.ownerId && claim.expiresAtMs > Date.now())) return null;
+    const [event] = queue.splice(index, 1); this.claims.delete(eventId);
+    return { event, ...(claim ? { claim } : {}) };
+  }
+  /**
+   * Puts an input {@link removeById} took back where it was, with its claim.
+   * A queue is in enqueue order, so the input goes before every input
+   * enqueued after it, those others enqueued meanwhile included.
+   */
+  restoreRemoved(sessionId: string, removed: RemovedPendingEvent): void {
+    const queue = this.queues.get(sessionId) ?? [];
+    const later = queue.findIndex((event) => enqueueOrder(event.id) > enqueueOrder(removed.event.id));
+    queue.splice(later < 0 ? queue.length : later, 0, removed.event);
+    this.queues.set(sessionId, queue);
+    if (removed.claim) this.claims.set(removed.event.id, removed.claim);
   }
 
 }

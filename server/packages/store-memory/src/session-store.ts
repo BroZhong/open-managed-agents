@@ -152,15 +152,12 @@ export class InMemorySessionStore implements SessionStore {
     return session;
   }
 
-  /** Internal compensation hook used by the in-memory Loop transaction. */
+  /** Internal compensation hook used by the in-memory Loop and delegation transactions. */
   async delete(id: string): Promise<boolean> {
     const index = this.sessions.findIndex((session) => session.id === id);
     if (index < 0) return false;
     this.sessions.splice(index, 1);
     return true;
   }
-  /** Internal rollback boundary for the in-memory delegation transaction. */
-  snapshotState() { return structuredClone({ sessions: this.sessions, nextId: this.nextId }); }
-  restoreState(state: ReturnType<InMemorySessionStore["snapshotState"]>): void { this.sessions = state.sessions; this.nextId = state.nextId; }
 
 }

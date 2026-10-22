@@ -11,7 +11,7 @@ export type DelegationRecord = DelegationExecution | DelegationWait | Delegation
 /** Internal transaction seam shared by production SQL and the development stores. */
 export interface DelegationTransaction {
   sessions: Pick<SessionStore, "create" | "getById">;
-  pending: PendingEventStore;
+  pending: Pick<PendingEventStore, "enqueue" | "ownsClaim">;
   read<T extends DelegationRecord>(table: DelegationTable, filters?: Record<string, string>): Promise<T[]>;
   put(table: DelegationTable, id: string, value: DelegationRecord): Promise<void>;
   remove(table: DelegationTable, id: string): Promise<void>;

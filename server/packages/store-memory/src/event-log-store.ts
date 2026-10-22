@@ -15,6 +15,8 @@ import {
   summarizeTokenUsage,
 } from "@oma-server/store";
 
+const idempotencyIdentity = (sessionId: string, idempotencyKey: string) => `${sessionId}\u0000${idempotencyKey}`;
+
 export class InMemoryEventLogStore implements EventLogIngressStore {
   async getLatestSeq(sessionId: string): Promise<number> {
     return this.seqCounters.get(sessionId) ?? 0;
@@ -51,14 +53,43 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     return this.appendUnfenced(sessionId, event);
   }
 
+  /**
+   * {@link append} for the in-memory delegation transaction, which also says
+   * whether the event is new: an idempotent retry returns an existing one,
+   * which a rollback must keep. {@link removeAdded} takes back one it added.
+   * `append` does not call this: an extra await on every append shifts the
+   * interleavings the crash-injection sweeps check.
+   */
+  async appendRecorded(sessionId: string, event: EventLogStoreAppendInput): Promise<{ event: StoredEvent; added: boolean }> {
+    if (event.pendingFence && this.validateFence && !await this.validateFence(sessionId, event.pendingFence)) {
+      throw new PendingEventClaimLostError(sessionId, event.pendingFence.eventId, event.pendingFence.ownerId, event.pendingFence.generation);
+    }
+    return this.insert(sessionId, event);
+  }
+
   /** Internal synchronous write for a composed in-memory transaction. */
   appendUnfenced(sessionId: string, event: Omit<EventLogStoreAppendInput, "pendingFence">): StoredEvent {
-    const idempotencyIdentity = event.idempotencyKey === undefined
+    return this.insert(sessionId, event).event;
+  }
+
+  /**
+   * Takes back an event {@link appendRecorded} added. Its sequence number is
+   * not reused: another writer may have read the event or appended after it.
+   */
+  removeAdded(event: StoredEvent, idempotencyKey?: string): void {
+    const records = this.events.get(event.sessionId) ?? [];
+    const index = records.findIndex((record) => record.event.seq === event.seq);
+    if (index >= 0) records.splice(index, 1);
+    if (idempotencyKey !== undefined) this.idempotentEvents.delete(idempotencyIdentity(event.sessionId, idempotencyKey));
+  }
+
+  private insert(sessionId: string, event: Omit<EventLogStoreAppendInput, "pendingFence">): { event: StoredEvent; added: boolean } {
+    const identity = event.idempotencyKey === undefined
       ? undefined
-      : `${sessionId}\u0000${event.idempotencyKey}`;
-    if (idempotencyIdentity !== undefined) {
-      const existing = this.idempotentEvents.get(idempotencyIdentity);
-      if (existing) return existing;
+      : idempotencyIdentity(sessionId, event.idempotencyKey);
+    if (identity !== undefined) {
+      const existing = this.idempotentEvents.get(identity);
+      if (existing) return { event: existing, added: false };
     }
 
     const currentSeq = this.seqCounters.get(sessionId) ?? 0;
@@ -80,11 +111,11 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
       ...(event.apiKeyId ? { apiKeyId: event.apiKeyId } : {}),
     });
     this.events.set(sessionId, sessionEvents);
-    if (idempotencyIdentity !== undefined) {
-      this.idempotentEvents.set(idempotencyIdentity, stored);
+    if (identity !== undefined) {
+      this.idempotentEvents.set(identity, stored);
     }
 
-    return stored;
+    return { event: stored, added: true };
   }
 
   /** Internal lookup for the completed-input acknowledgement transaction. */
@@ -158,8 +189,5 @@ export class InMemoryEventLogStore implements EventLogIngressStore {
     }
     return result;
   }
-  /** Internal rollback boundary for the in-memory delegation transaction. */
-  snapshotState() { return structuredClone({ events: this.events, seqCounters: this.seqCounters, idempotentEvents: this.idempotentEvents }); }
-  restoreState(state: ReturnType<InMemoryEventLogStore["snapshotState"]>): void { this.events = state.events; this.seqCounters = state.seqCounters; this.idempotentEvents = state.idempotentEvents; }
 
 }
