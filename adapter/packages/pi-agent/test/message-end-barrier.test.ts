@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 import { createAgentSession, defineTool, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
@@ -66,6 +66,11 @@ async function run(options: { fail?: "assistant" | "toolResult"; message?: strin
   await session.dispose();
   return { log, requests, rejected, idle, executed: log.filter(item => item.startsWith("exec:start")).length };
 }
+
+// The scripted stream never calls a provider, but Pi resolves an API key before
+// each request; supply a fake one instead of whatever the developer's shell has.
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); });
+afterEach(() => { vi.unstubAllEnvs(); });
 
 describe("Agent message_end listener as a commit barrier (Pi 0.83.0)", () => {
   it("runs after the native append and is awaited before tools and the next request", async () => {
