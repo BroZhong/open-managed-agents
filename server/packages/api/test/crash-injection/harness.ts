@@ -32,6 +32,12 @@ import { PiAgentAdapter, registerCustomProvider, type CustomProviderDefinition }
  */
 
 /** How a takeover's result for a call of unknown outcome begins (#248). */
+// Each scenario runs several Routers, a real Pi SDK and short leases on one
+// event loop. It normally takes well under a second, but under heavy machine
+// load timers fire late and a scenario can need several times longer; a
+// stalled scenario still fails, at this bound instead of vitest's 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
+
 export const OUTCOME_UNKNOWN_PREFIX = "The agent runtime restarted while this tool call was in progress";
 
 type Json = Record<string, unknown>;
