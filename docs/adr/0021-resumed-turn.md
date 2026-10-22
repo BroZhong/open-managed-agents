@@ -71,6 +71,8 @@ The first row that applies decides:
    aborted request): give each dangling call an outcome-unknown result and
    continue.
 
+Rows 2 and 4 go beyond #248's rows: #252 adds row 2 and the parent's stop of
+a Child execution in row 4, #249 adds the Interrupt of row 4 and #250 row 5.
 There are no other rows: an ordinary Turn is never ended because it was taken
 over, unless it keeps losing its Runner without progress (row 5). A
 compaction boundary is not a message. Pi compacts after a final answer
@@ -147,7 +149,11 @@ this claim is the fourth, the Turn ends instead of being continued once more.
   assistant message whose request did not fail. A failed or aborted request, a
   compaction boundary, steering and the results a takeover writes for dangling
   calls are none: a Turn whose every attempt fails its request and loses its
-  Runner is the case the limit exists for. Progress resets the count, so a
+  Runner is the case the limit exists for. This deviates from #250's wording,
+  which counts any assistant message: Pi commits a failed or aborted request
+  as an assistant message before it retries or stops, so a Turn whose every
+  attempt failed its request before losing its Runner would reset the count
+  on every takeover and be continued forever. Progress resets the count, so a
   long Turn survives any number of losses that each let it commit something.
 - Only `expired` takeovers count. A released claim (a handoff, a Turn left
   waiting for a delegation or a slot) proves its Runner was not lost to the
