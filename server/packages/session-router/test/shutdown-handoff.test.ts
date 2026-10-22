@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
-import type { StoredEvent } from "@oma-server/store";
+import type { SandboxActivity, StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
@@ -415,6 +415,56 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
     // No Runner started an attempt once its shutdown began, and none failed.
     for (const [name, at] of stoppedAt) expect(h.inputs.slice(at).filter(({ router }) => router === name)).toEqual([]);
     expect(h.errors).toEqual([]);
+  });
+
+  it("F2 a Turn detached at the deadline leaves its Sandbox activity to the next owner, so the exiting Runner writes nothing after handOff", async () => {
+    const toolRunning = gate();
+    const late = gate();
+    let attempts = 0;
+    const adapter: Adapter = {
+      async run(input) {
+        const write = journalWriter(input);
+        if (attempts++ === 0) {
+          await write(event("agent.tool_use", { toolUseId: "call_0", name: "bash", input: { command: "sleep" } }));
+          toolRunning.open();
+          // The command outlives the grace period, then the runtime settles.
+          await late.opened;
+          return "finished";
+        }
+        await write(event("agent.message", { content: [{ type: "text", text: "done" }] }));
+        return "finished";
+      },
+    };
+    const h = await harness({ adapter });
+    // Sandbox activity is tracked: each attempt begins one and finishes it once its runtime settled.
+    let exited = false;
+    const writesAfterExit: string[] = [];
+    class TrackedSandboxes extends DefaultSandboxManager {
+      override async beginActivity() { return true; }
+      override async finishActivity(activity: SandboxActivity) {
+        // The exiting Runner's process has closed its PostgreSQL pool.
+        if (exited && activity.fence.ownerId === "runner-a") {
+          writesAfterExit.push(activity.sessionId);
+          throw new Error("Cannot use a pool after calling end on the pool");
+        }
+      }
+    }
+    const sandboxes = () => new TrackedSandboxes({ sandboxClient: new FakeSandboxClient(), provisionSources: {} });
+    await h.enqueue("work");
+    const a = h.start("runner-a", { sandboxManager: sandboxes() });
+    h.start("runner-b", { sandboxManager: sandboxes() });
+    void a.handleNewEvent(h.session.id, h.agent);
+    await toolRunning.opened;
+
+    expect(await h.shutDown("runner-a", 30)).toBe(false);
+    exited = true;
+    late.open();
+    await until(() => h.idle());
+    await sleep(20);
+
+    expect(writesAfterExit).toEqual([]);
+    expect(h.errors).toEqual([]);
+    expect((await h.ofType("session.turn_resumed")).map((stored) => dataOf(stored).reason)).toEqual(["released"]);
   });
 
   it("F4 shut down while a parent waits on a synchronous delegation: the wait is detached at the deadline and resumed by the other Runner with the child's real result", async () => {

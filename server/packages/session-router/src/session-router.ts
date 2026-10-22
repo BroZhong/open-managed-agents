@@ -1623,9 +1623,12 @@ export class SessionRouter {
       journal.revokeAdapter();
       if (outcome) {
         executionSettled = true;
-      } else if (sandboxActivity) {
+      } else if (sandboxActivity && !handedOff) {
         // An expired lease or a bounded Interrupt wait is not proof that the
         // runtime ended. Observe its natural end without blocking the Session.
+        // A Turn detached at the handoff deadline is not watched: this Runner
+        // is exiting, and the next owner's admitted generation supersedes the
+        // abandoned activity (ADR-0019).
         const activity = sandboxActivity;
         void run.then(async () => {
           if (activitySandbox?.executionSettled?.() !== false) await this.finishSettledActivity(activity);
