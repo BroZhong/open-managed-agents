@@ -177,7 +177,8 @@ suite("independent API / Runner processes with PostgreSQL and Redis", () => {
     const result = await complete(session.id, 2);
     expect(result.filter(e => e.type === "user.message")).toHaveLength(2);
     expect(result.some(e => e.type === "session.turn_aborted")).toBe(true);
-    expect((await request(api2, `sessions/${session.id}`)).status).toBe("idle");
+    // Session idle commits with the last acknowledgement, just after turn_completed.
+    await until(async () => (await request(api2, `sessions/${session.id}`)).status, status => status === "idle");
   });
 
   it("termination is durable for active and idle Sessions, without API execution objects", async () => {
