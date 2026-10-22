@@ -128,7 +128,7 @@ export interface RunPlan {
   progress: AdapterResume;
   /** Calls without a result outside the waits; each gets an outcome-unknown result before the run. */
   repairs: DanglingToolCall[];
-  /** The Turn's delegation waits; each still waiting is resumed for its result before the Turn goes on. */
+  /** The Turn's delegation waits still waiting; each is resumed for its result before the Turn goes on. */
   waits: DelegationWait[];
   /**
    * The model and thinking the Turn runs with on every attempt: those its
@@ -150,8 +150,9 @@ export interface RunPlan {
  *      stop the Child execution: repair, end as an Interrupted Turn;
  *   5. this claim is the fourth expired takeover since the Turn last made
  *      progress: repair, end it with recovery_limit_exceeded;
- *   6. the Turn waits on delegations: resume the waits, give every other
- *      dangling call an outcome-unknown result, continue;
+ *   6. the Turn still waits on delegations, a wait whose result it has not
+ *      consumed: resume those waits, give every other dangling call an
+ *      outcome-unknown result, continue;
  *   7. the input is not in the Turn's native history yet: prompt it;
  *   8. the last message is the Agent's final answer: complete the Turn without a model request;
  *   9. otherwise (a tool call, a tool result, steering, the input itself, a
@@ -199,15 +200,18 @@ export function planResume(facts: ResumeFacts): ResumePlan {
   if (expiredTakeoversSinceProgress(output, facts.claim.previous) > TAKEOVER_LIMIT) {
     return complete("stalled", { interruptChildren: true, error: RECOVERY_LIMIT_EXCEEDED });
   }
-  const config = turnConfig(output, turnId);
+  // A wait records the configuration it ran with, consumed or not.
+  const config = waits.length ? { ...turnConfig(output, turnId), ...waits[0].config } : turnConfig(output, turnId);
   const run = (start: RunPlan["start"], plan: Partial<RunPlan> = {}): RunPlan => ({
     kind: "run", start, turnId, progress: turnProgress(output, turnId), repairs: dangling, waits: [],
     ...(config ? { config } : {}), ...plan, ...takeover,
   });
-  if (waits.length) {
-    const waitCalls = new Set(waits.map((wait) => wait.callerToolUseId));
-    return run("continue", { repairs: dangling.filter((call) => !waitCalls.has(call.toolUseId)), waits,
-      config: { ...config, ...waits[0].config } });
+  // A consumed wait's result is in the log: the Turn goes on from its last
+  // message like any other, so an answer given after it completes the Turn.
+  const waiting = waits.filter((wait) => wait.status === "waiting");
+  if (waiting.length) {
+    const waitCalls = new Set(waiting.map((wait) => wait.callerToolUseId));
+    return run("continue", { repairs: dangling.filter((call) => !waitCalls.has(call.toolUseId)), waits: waiting });
   }
   const last = lastMessage(output);
   if (!inputCommitted(output, last)) return run("prompt");

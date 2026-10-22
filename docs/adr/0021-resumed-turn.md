@@ -57,8 +57,10 @@ The first row that applies decides:
    progress: repair the dangling calls, record `recovery_limit_exceeded`, stop
    the synchronous children and complete the Turn (#250, "The takeover limit"
    below).
-6. The Turn waits on synchronous delegations: resume the waits, give every
-   other dangling call an outcome-unknown result, continue.
+6. The Turn still waits on synchronous delegations, waits whose result it
+   has not consumed: resume them, give every other dangling call an
+   outcome-unknown result, continue. A consumed wait's result is in the log,
+   so the rows below decide: an answer given after it completes the Turn.
 7. The input is not in the Turn's native history yet (Pi claims it with
    `agent.context_start` and commits it as its user message): prompt it again in
    the same Turn, on top of what the Turn committed (a compaction, say).

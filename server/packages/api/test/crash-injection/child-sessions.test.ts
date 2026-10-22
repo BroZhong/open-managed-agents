@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StoredEvent } from "@oma-server/store";
 import { bash, eventsOfInput, execute, expectResumed, INTERRUPTED_PREFIX, OUTCOME_UNKNOWN_PREFIX, sweep, text, usePiSettings,
-  type Block, type ModelRequest, type Outcome, type Scenario, type SessionOutcome } from "./harness.js";
+  type Block, type ModelRequest, type Outcome, type Scenario, type SessionOutcome, type Write } from "./harness.js";
 
 await usePiSettings();
 
@@ -31,15 +31,26 @@ function resultOf(request: ModelRequest, toolUseId: string): Record<string, unkn
 }
 const unknown = (request: ModelRequest, toolUseId: string) => request.results.get(toolUseId)?.text.includes(OUTCOME_UNKNOWN_PREFIX) ?? false;
 
+/** The parent's final answers, as the scripted model gives them. */
+const PARENT_ANSWERS = ["the child says:", "the delegation's outcome is unknown"];
+/**
+ * A parent request whose context already holds the parent's final answer. A
+ * committed final answer completes its Turn without a model request (A10),
+ * so no takeover may ask the model again.
+ */
+const askedAfterAnswer = (request: ModelRequest) => !fromChild(request) && PARENT_ANSWERS.some((given) => request.text.includes(given));
+
 /** The parent delegates synchronously; the child runs one bash command and answers. */
 function delegation(overrides: Partial<Scenario> = {}): Scenario {
   return {
     inputs: [PARENT_INPUT],
     model: (request) => {
       if (fromChild(request)) return request.results.has(INSPECT) ? answer(CHILD_ANSWER) : use(text("inspecting"), bash(INSPECT, "make check"));
+      // Answering again would hide a takeover that asks after the final answer; refuse instead.
+      if (askedAfterAnswer(request)) return { error: { status: 400, type: "invalid_request_error", message: "asked again after the final answer" } };
       if (!request.results.has("call_agent")) return use(text("delegating"), agent("call_agent", CHILD_TASK));
       // A takeover that lost the call before its delegation was accepted cannot know the child's result (C3).
-      return answer(unknown(request, "call_agent") ? "the delegation's outcome is unknown" : `the child says: ${CHILD_ANSWER}`);
+      return answer(unknown(request, "call_agent") ? PARENT_ANSWERS[1] : `${PARENT_ANSWERS[0]} ${CHILD_ANSWER}`);
     },
     ...overrides,
   };
@@ -64,6 +75,7 @@ const parentAnswered = (outcome: Outcome) => outcome.requests.filter((request) =
  * was told the call's outcome is unknown.
  */
 function expectDelegated(outcome: Outcome, output = CHILD_ANSWER): void {
+  expect(outcome.requests.filter(askedAfterAnswer).map((request) => request.runner), "parent requests after its final answer").toEqual([]);
   expect(outcome.executions.length).toBeLessThanOrEqual(1);
   const [execution] = outcome.executions;
   if (!execution) {
@@ -148,6 +160,26 @@ describe("crash injection: a Child Session loses its Runner (#252)", () => {
     const takeover = outcome.attempts.find((attempt) => attempt.input.sessionId === outcome.sessionId && attempt.input.resume)!;
     expect(takeover.input.resume?.completedModelSteps).toBe(1);
     expect(takeover.input.turnId).toBe(outcome.attempts[0].input.turnId);
+  });
+
+  it("C2/A10 the parent's Runner is lost right after its final answer, its wait consumed: the takeover completes the Turn without asking the model again", async () => {
+    const scenario = delegation({ children: "apart" });
+    const finalAnswer = (write: Write) => {
+      if (write.method !== "append") return false;
+      const stored = write.result as StoredEvent;
+      const message = (stored.data as { entry?: { message?: { role?: string; stopReason?: string } } }).entry?.message;
+      return stored.type === "agent.context_entry" && message?.role === "assistant" && message.stopReason === "stop";
+    };
+    const outcome = await execute(scenario, [finalAnswer]);
+    expectResumed(scenario, outcome);
+    expectDelegated(outcome);
+    expect(outcome.losses).toEqual([expect.objectContaining({ runner: 0, sessionId: outcome.sessionId, input: 0, dangling: [] })]);
+    // The wait was consumed before the loss: the takeover found the answer and only completed the Turn.
+    expect(markers(outcome.log)).toEqual([expect.objectContaining({ reason: "expired", danglingToolUseIds: [] })]);
+    expect(outcome.requests.filter((request) => !fromChild(request)).map((request) => request.runner)).toEqual([0, 0]);
+    expect(outcome.attempts.filter((attempt) => attempt.input.sessionId === outcome.sessionId).map((attempt) => attempt.runner)).toEqual([0]);
+    expect(typesOf(outcome.log, "agent.context_entry").filter((event) =>
+      (event.data as { entry?: { message?: { role?: string } } }).entry?.message?.role === "assistant")).toHaveLength(2);
   });
 });
 
