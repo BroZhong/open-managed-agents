@@ -5,9 +5,8 @@ import {
   createMemoryStores,
   InMemoryAgentFileStore,
   InMemorySkillStore,
-  InMemorySkillArtifactStore,
 } from "@oma-server/store-memory";
-import type { Agent } from "@oma-server/store";
+import { packSkillBundle, type Agent } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 
@@ -48,7 +47,6 @@ function capturingAdapter(): { adapter: Adapter; last: () => AdapterInput | unde
 async function runOneTurn(deps: {
   agentFileStore?: InMemoryAgentFileStore;
   skillStore?: InMemorySkillStore;
-  skillArtifactStore?: InMemorySkillArtifactStore;
   agent?: Agent;
   thinking?: Agent["thinking"];
 }) {
@@ -65,7 +63,6 @@ async function runOneTurn(deps: {
     resolveAdapter: () => adapter,
     agentFileStore: deps.agentFileStore,
     skillStore: deps.skillStore,
-    skillArtifactStore: deps.skillArtifactStore,
   });
 
   const session = await sessionStore.create({
@@ -114,22 +111,23 @@ describe("session-router: Agent Files → appendSystemPrompt", () => {
 
 describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<skill-name>)", () => {
   it("passes each valid equipped Skill by name while resolving content by ID", async () => {
-    // Skills are no longer materialized to a Host temp dir — they are projected
-    // into the sandbox at /skills/<skill-name> (ADR-0007), and `skillPaths` carries
-    // those in-sandbox roots so Pi's sandbox-mapped read tool can load them.
+    // Skills are not materialized on the Host — the Sandbox Manager installs
+    // them at /skills/<skill-name> (ADR-0022), and `skillPaths` carries those
+    // in-sandbox roots so Pi's sandbox-mapped read tool can load them.
     const skillStore = new InMemorySkillStore();
-    const skillArtifactStore = new InMemorySkillArtifactStore();
+    const packed = await packSkillBundle([{ path: "SKILL.md", body: new TextEncoder().encode("---\nname: greeter\n---\nhi") }]);
     const skill = await skillStore.create({
       tenantId: "tenant_1",
       name: "greeter",
       description: "greets",
       ownerType: "agent",
       ownerId: "agent_1",
+      bundleSha256: packed.sha256,
+      bundleSize: packed.size,
     });
-    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "---\nname: greeter\n---\nhi");
 
     const agent: Agent = { ...AGENT, skills: [skill.id] };
-    const input = await runOneTurn({ skillStore, skillArtifactStore, agent });
+    const input = await runOneTurn({ skillStore, agent });
 
     expect(input?.agent.skillPaths).toEqual(["/skills/greeter"]);
     expect(input?.agent.skillDescriptors).toEqual([
@@ -141,27 +139,26 @@ describe("session-router: equipped Skills → in-sandbox skillPaths (/skills/<sk
     ]);
   });
 
-  it("skips a Skill with zero files (never becomes a skillPath)", async () => {
-    // The zero-files skip preserved from materializeSkills: a Skill whose store
-    // has no files must not produce a projection / skillPath.
+  it("skips a Skill without a Skill Bundle (never becomes a skillPath)", async () => {
+    // A Skill with no bundle has no files to install, so it is not offered.
     const skillStore = new InMemorySkillStore();
-    const skillArtifactStore = new InMemorySkillArtifactStore();
     const empty = await skillStore.create({
       tenantId: "tenant_1",
       name: "empty",
       description: "no files",
+      ownerType: "agent",
+      ownerId: "agent_1",
     });
 
     const agent: Agent = { ...AGENT, skills: [empty.id] };
-    const input = await runOneTurn({ skillStore, skillArtifactStore, agent });
+    const input = await runOneTurn({ skillStore, agent });
 
     expect(input?.agent.skillPaths).toBeUndefined();
   });
 
   it("no equipped Skills ⇒ skillPaths undefined", async () => {
     const skillStore = new InMemorySkillStore();
-    const skillArtifactStore = new InMemorySkillArtifactStore();
-    const input = await runOneTurn({ skillStore, skillArtifactStore });
+    const input = await runOneTurn({ skillStore });
     expect(input?.agent.skillPaths).toBeUndefined();
   });
 });

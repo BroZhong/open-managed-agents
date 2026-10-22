@@ -1,25 +1,19 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { SessionRouter } from "../src/session-router.js";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { createMemoryStores, InMemoryAgentStore } from "@oma-server/store-memory";
-import { PendingEventClaimLostError } from "@oma-server/store";
+import { createMemoryStores, InMemoryAgentStore, InMemorySkillBundleStore, InMemorySkillStore } from "@oma-server/store-memory";
+import { PendingEventClaimLostError, packSkillBundle } from "@oma-server/store";
 import {
   FakeSandboxClient,
-  FakeProvisionSource,
   DefaultSandboxManager,
 } from "@oma-server/sandbox";
 import type {
   PendingEventStore,
-  PaginatedResult,
   Agent,
   AgentStore,
   Skill,
   SkillStore,
   SkillStoreCreateInput,
-  SkillStoreUpdateInput,
-  SkillOwnerType,
-  SkillArtifactStore,
-  SkillFile,
 } from "@oma-server/store";
 import type {
   Adapter,
@@ -32,109 +26,20 @@ beforeEach(() => {
   process.env.OMA_SUPABASE_ALLOWED_TENANTS = "tenant_1";
 });
 
-// ─── Minimal in-memory Skill stores (metadata + non-empty check) ─────────────
+// ─── Skills ──────────────────────────────────────────────────────────────────
 //
-// The router's projection selection reads Skill metadata (existence, tenant,
-// ownership) via SkillStore and confirms non-empty via SkillArtifactStore.list.
-// The Skill CONTENT flows S3→sandbox through the FakeProvisionSource (seeded
-// separately), so these stores only need to answer the include/skip decision.
+// The router reads Skill metadata and each Skill's current bundle from the
+// SkillStore; the Sandbox Manager installs the bundles from the bundle store.
 
-class TinySkillStore implements SkillStore {
-  private skills: Skill[] = [];
-  private nextId = 1;
-
-  async create(input: SkillStoreCreateInput): Promise<Skill> {
-    const now = new Date();
-    const ownerType: SkillOwnerType = input.ownerType ?? "library";
-    const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
-    const skill: Skill = {
-      id: `skl_${this.nextId++}`,
-      tenantId: input.tenantId,
-      name: input.name,
-      description: input.description,
-      ownerType,
-      ownerId,
-      sourceSkillId: input.sourceSkillId ?? null,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.skills.push(skill);
-    return skill;
-  }
-  async getById(id: string): Promise<Skill | null> {
-    return this.skills.find((s) => s.id === id) ?? null;
-  }
-  async list(tenantId: string): Promise<PaginatedResult<Skill>> {
-    const data = this.skills.filter(
-      (s) => s.tenantId === tenantId && s.ownerType === "library",
-    );
-    return { data, hasMore: false };
-  }
-  async listByOwner(
-    tenantId: string,
-    ownerType: SkillOwnerType,
-    ownerId: string,
-  ): Promise<Skill[]> {
-    return this.skills.filter(
-      (s) => s.tenantId === tenantId && s.ownerType === ownerType && s.ownerId === ownerId,
-    );
-  }
-  async update(id: string, input: SkillStoreUpdateInput): Promise<Skill | null> {
-    const skill = this.skills.find((s) => s.id === id);
-    if (!skill) return null;
-    if (input.name !== undefined) skill.name = input.name;
-    if (input.description !== undefined) skill.description = input.description;
-    return skill;
-  }
-  async delete(id: string): Promise<boolean> {
-    const before = this.skills.length;
-    this.skills = this.skills.filter((s) => s.id !== id);
-    return this.skills.length < before;
-  }
+/** Pack `files` into the bundle store and give the Skill that bundle. */
+async function withBundle(bundles: InMemorySkillBundleStore, files: Record<string, string>) {
+  const packed = await packSkillBundle(Object.entries(files).map(([path, body]) => ({ path, body: new TextEncoder().encode(body) })));
+  await bundles.put("tenant_1", packed);
+  return { bundleSha256: packed.sha256, bundleSize: packed.size };
 }
 
-class TinySkillArtifactStore implements SkillArtifactStore {
-  private readonly files = new Map<string, Uint8Array>();
-  private key(t: string, s: string, p: string) {
-    return `${t}/${s}/${p}`;
-  }
-  async put(t: string, s: string, p: string, body: Uint8Array | string): Promise<void> {
-    const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
-    this.files.set(this.key(t, s, p), bytes);
-  }
-  async list(t: string, s: string): Promise<string[]> {
-    const prefix = `${t}/${s}/`;
-    const out: string[] = [];
-    for (const k of this.files.keys()) if (k.startsWith(prefix)) out.push(k.slice(prefix.length));
-    return out;
-  }
-  async get(t: string, s: string, p: string): Promise<Uint8Array | null> {
-    return this.files.get(this.key(t, s, p)) ?? null;
-  }
-  async getAll(t: string, s: string): Promise<SkillFile[]> {
-    const prefix = `${t}/${s}/`;
-    const out: SkillFile[] = [];
-    for (const [k, body] of this.files) {
-      if (k.startsWith(prefix)) out.push({ path: k.slice(prefix.length), body });
-    }
-    return out;
-  }
-  async delete(t: string, s: string, p: string): Promise<void> {
-    this.files.delete(this.key(t, s, p));
-  }
-  async move(t: string, s: string, from: string, to: string): Promise<void> {
-    const b = this.files.get(this.key(t, s, from));
-    if (!b) return;
-    this.files.set(this.key(t, s, to), b);
-    this.files.delete(this.key(t, s, from));
-  }
-  async deleteTree(t: string, s: string): Promise<void> {
-    const prefix = `${t}/${s}/`;
-    for (const k of [...this.files.keys()]) if (k.startsWith(prefix)) this.files.delete(k);
-  }
-  async copyTree(t: string, from: string, to: string): Promise<void> {
-    for (const f of await this.getAll(t, from)) await this.put(t, to, f.path, f.body);
-  }
+async function createSkill(skills: SkillStore, bundles: InMemorySkillBundleStore, input: SkillStoreCreateInput, files: Record<string, string>) {
+  return skills.create({ ...input, ...await withBundle(bundles, files) });
 }
 
 // ─── Adapters ────────────────────────────────────────────────────────────────
@@ -217,16 +122,15 @@ const legacyAgent: Agent = {
 };
 
 /**
- * Wire the real Sandbox Manager with a shared mounted Workspace and the
- * external Skill projection fixture. The Router still owns the complete
+ * Wire the real Sandbox Manager with a shared mounted Workspace and an
+ * in-memory Skill Bundle store. The Router still owns the complete
  * Session lifecycle and emits the durable completion/error events.
  */
 function createDeps(opts: {
   adapter: Adapter;
   sandboxClient?: FakeSandboxClient;
-  provisionSource?: FakeProvisionSource;
+  skillBundleStore?: InMemorySkillBundleStore;
   skillStore?: SkillStore;
-  skillArtifactStore?: SkillArtifactStore;
   agentStore?: AgentStore;
   withManager?: boolean;
   interruptedAdapterDrainTimeoutMs?: number;
@@ -238,17 +142,12 @@ function createDeps(opts: {
   const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
-  const provisionSource = opts.provisionSource ?? new FakeProvisionSource();
+  const skillBundleStore = opts.skillBundleStore ?? new InMemorySkillBundleStore();
 
   const sandboxManager =
     opts.withManager === false
       ? undefined
-      : new DefaultSandboxManager({
-          sandboxClient,
-          // Register the fake under kind "s3" so the router's { kind: "s3" }
-          // projection coordinates dispatch to it (proving kind-based dispatch).
-          provisionSources: { s3: provisionSource },
-        });
+      : new DefaultSandboxManager({ sandboxClient, skillBundleStore });
 
   const router = new SessionRouter({
     interruptedAdapterDrainTimeoutMs: opts.interruptedAdapterDrainTimeoutMs,
@@ -265,7 +164,6 @@ function createDeps(opts: {
       credentialProviderName: "agentry-oss-rw",
     },
     skillStore: opts.skillStore,
-    skillArtifactStore: opts.skillArtifactStore,
     agentStore: opts.agentStore,
     defaultSandboxEnv: opts.defaultSandboxEnv,
     managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
@@ -277,7 +175,7 @@ function createDeps(opts: {
     sessionStore,
     eventStreamHub,
     sandboxClient,
-    provisionSource,
+    skillBundleStore,
     sandboxManager,
     router,
   };
@@ -1203,27 +1101,18 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
   });
 
   it("the model can read an equipped Skill from inside the sandbox (/skills/<skill-name>/SKILL.md)", async () => {
-    // Seed the FakeProvisionSource with a Skill's SKILL.md, equip it on the
-    // agent, run a turn, and assert the session can read it at /skills/<skill-name> —
-    // proving Skills-as-projection works end to end (ADR-0005 §4).
-    const skillStore = new TinySkillStore();
-    const skillArtifactStore = new TinySkillArtifactStore();
-    const skill = await skillStore.create({
+    // Equip a Skill with a bundle, run a turn, and assert the session can
+    // read it at /skills/<skill-name> — the Skill Install end to end (ADR-0022).
+    const skillStore = new InMemorySkillStore();
+    const skillBundleStore = new InMemorySkillBundleStore();
+    const SKILL_BODY = "---\nname: greeter\n---\nsay hi";
+    const skill = await createSkill(skillStore, skillBundleStore, {
       tenantId: "tenant_1",
       name: "greeter",
       description: "greets",
       ownerType: "agent",
       ownerId: "agent_sbx",
-    });
-    const SKILL_BODY = "---\nname: greeter\n---\nsay hi";
-    // The router's non-empty check reads the artifact store; the CONTENT is
-    // projected S3→sandbox by the FakeProvisionSource, so seed both.
-    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", SKILL_BODY);
-    const provisionSource = new FakeProvisionSource();
-    provisionSource.seed(
-      { kind: "s3", ref: { tenantId: "tenant_1", skillId: skill.id } },
-      { "SKILL.md": SKILL_BODY },
-    );
+    }, { "SKILL.md": SKILL_BODY });
 
     let readBody = "<unread>";
     let descriptors: AdapterInput["agent"]["skillDescriptors"];
@@ -1234,7 +1123,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
         // The adapter is pointed at the in-sandbox /skills/<skill-name> root and reads
         // SKILL.md from there, exactly as Pi's sandbox-mapped read would.
         const root = input.agent.skillPaths?.[0];
-        // Projections live outside /home/user/workspace, so read via an absolute-path
+        // Skills live outside /home/user/workspace, so read via an absolute-path
         // exec (cat) — the FakeSandboxClient's built-in cat reads any abs path.
         for await (const chunk of input.toolExecutor!.exec(["cat", `${root}/SKILL.md`])) {
           if (chunk.stream === "stdout") readBody = chunk.text;
@@ -1251,9 +1140,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
 
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter: skillReadingAdapter,
-      provisionSource,
+      skillBundleStore,
       skillStore,
-      skillArtifactStore,
     });
     const agent: Agent = { ...sandboxedAgent, skills: [skill.id] };
     const session = await sessionStore.create({
@@ -1266,26 +1154,21 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     await enqueue(pendingEventStore, session.id, "load the skill");
     await router.handleNewEvent(session.id, agent);
 
-    // The projection landed at /skills/<skill-name>/SKILL.md and was readable inside the
-    // sandbox with the seeded content.
+    // The Skill was installed at /skills/<skill-name>/SKILL.md, read-only, and
+    // readable inside the sandbox with the bundle's content.
     const id = sandboxClient.created[0];
-    expect(sandboxClient.filesOf(id).get("/skills/greeter/SKILL.md")?.content).toBe(
-      SKILL_BODY,
-    );
+    expect(await sandboxClient.readFile(id, "/skills/greeter/SKILL.md")).toBe(SKILL_BODY);
+    expect(sandboxClient.filesOf(id).get("/skills/greeter/SKILL.md")?.mode).toBe(0o444);
     expect(readBody).toBe(SKILL_BODY);
 
-    // Edit the Skill while the Session stays alive. The next turn must refresh
-    // the same sandbox projection and rebuild prompt metadata from the store.
+    // Edit the Skill while the Session stays alive. The next turn must install
+    // the new version into the same sandbox and rebuild prompt metadata from the store.
     const UPDATED_BODY = "---\nname: greeter-v2\n---\nsay hello";
     await skillStore.update(skill.id, {
       name: "greeter-v2",
       description: "greets better",
+      ...await withBundle(skillBundleStore, { "SKILL.md": UPDATED_BODY }),
     });
-    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", UPDATED_BODY);
-    provisionSource.seed(
-      { kind: "s3", ref: { tenantId: "tenant_1", skillId: skill.id } },
-      { "SKILL.md": UPDATED_BODY },
-    );
 
     await enqueue(pendingEventStore, session.id, "load the edited skill");
     await router.handleNewEvent(session.id, agent);
@@ -1304,19 +1187,22 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
   });
 
   it.each([["same", "same"], ["../escape"], ["nested/name"], ["."]])("rejects ambiguous or unsafe equipped Skill paths: %j", async (...names) => {
-    const skillStore = new TinySkillStore();
-    const skillArtifactStore = new TinySkillArtifactStore();
+    const skillStore = new InMemorySkillStore();
+    const skillBundleStore = new InMemorySkillBundleStore();
     const ids: string[] = [];
+    const renamed = new Map<string, Skill>();
     for (const name of names) {
-      const skill = await skillStore.create({ tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name, description: name });
+      // Renamed behind the store's back: the Skill store itself rejects these names.
+      const skill = await createSkill(skillStore, skillBundleStore, { tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name: `placeholder-${ids.length}`, description: name }, { "SKILL.md": "body" });
+      renamed.set(skill.id, { ...skill, name });
       ids.push(skill.id);
-      await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "body");
     }
+    vi.spyOn(skillStore, "getById").mockImplementation(async (id) => renamed.get(id) ?? null);
     let adapterRan = false;
     const adapter: Adapter = {
       async run() { adapterRan = true; return "finished"; },
     };
-    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } = createDeps({ adapter, skillStore, skillArtifactStore });
+    const { router, sessionStore, pendingEventStore, eventLogStore, sandboxClient } = createDeps({ adapter, skillStore, skillBundleStore });
     const agent = { ...sandboxedAgent, skills: ids };
     const session = await sessionStore.create({ tenantId: "tenant_1", agentId: agent.id, agent, workspaceId: "ws_1" });
     await enqueue(pendingEventStore, session.id, "load equipped Skills");
@@ -1340,21 +1226,15 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
       skills: [],
       sandbox: { enabled: true },
     });
-    const skillStore = new TinySkillStore();
-    const skillArtifactStore = new TinySkillArtifactStore();
-    const skill = await skillStore.create({
+    const skillStore = new InMemorySkillStore();
+    const skillBundleStore = new InMemorySkillBundleStore();
+    const skill = await createSkill(skillStore, skillBundleStore, {
       tenantId: "tenant_1",
       name: "late-skill",
       description: "equipped after session creation",
       ownerType: "agent",
       ownerId: liveAgent.id,
-    });
-    await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "late body");
-    const provisionSource = new FakeProvisionSource();
-    provisionSource.seed(
-      { kind: "s3", ref: { tenantId: "tenant_1", skillId: skill.id } },
-      { "SKILL.md": "late body" },
-    );
+    }, { "SKILL.md": "late body" });
 
     const seen: Array<{
       system: string;
@@ -1399,9 +1279,8 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     const { router, sessionStore, pendingEventStore, sandboxClient } = createDeps({
       adapter,
       agentStore,
-      provisionSource,
+      skillBundleStore,
       skillStore,
-      skillArtifactStore,
     });
     const session = await sessionStore.create({
       tenantId: "tenant_1",

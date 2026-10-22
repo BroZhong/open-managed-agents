@@ -261,5 +261,32 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await stores.delegationStore.withEnvironmentLock("binding", async (existing) => { expect(existing).toBeNull(); return { sandboxId: "sandbox-1", value: 1 }; });
       expect(await stores.delegationStore.withEnvironmentLock("binding", async (existing) => ({ sandboxId: existing, value: existing }))).toBe("sandbox-1");
     });
+    it("records a Skill Install only while the binding still holds the Sandbox it went into", async () => {
+      const store = stores.delegationStore;
+      const [first, second] = ["a".repeat(64), "b".repeat(64)];
+      expect(await store.installedSkillSet("skills-binding")).toBeNull();
+      // Nothing is bound yet: there is no Sandbox an install could have gone into.
+      expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first })).toBe(false);
+      await store.withEnvironmentLock("skills-binding", async () => ({ sandboxId: "sandbox-1", value: undefined }));
+      expect(await store.installedSkillSet("skills-binding")).toBeNull();
+      expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first })).toBe(true);
+      expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: first });
+      // A record is not part of the environment operation's compare-and-set.
+      expect(await store.withEnvironmentLock("skills-binding", async (id) => {
+        expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: second })).toBe(true);
+        return { sandboxId: id, value: id };
+      })).toBe("sandbox-1");
+      expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: second });
+      // A rebuilt binding keeps the old record, naming the old Sandbox: the
+      // new Sandbox never inherits it, and a late install into the old one is refused.
+      await store.withEnvironmentLock("skills-binding", async () => ({ sandboxId: "sandbox-2", value: undefined }));
+      expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: second });
+      expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first })).toBe(false);
+      expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-2", setHash: first })).toBe(true);
+      expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-2", setHash: first });
+      await store.withEnvironmentLock("skills-binding", async () => ({ sandboxId: null, value: undefined }));
+      expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-2", setHash: second })).toBe(false);
+      expect(await store.installedSkillSet("other-binding")).toBeNull();
+    });
   });
 }

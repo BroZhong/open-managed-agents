@@ -69,7 +69,7 @@ async function lostWhileDelegating(calls: (child: { childId: string; executionId
     for (const held of state.claims.values()) if (held.ownerId === "lost-runner") held.expiresAtMs = 0;
     stores.pendingEventStore.restoreState(state);
     const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-      sandboxManager: new DefaultSandboxManager({ sandboxClient: new FakeSandboxClient(), provisionSources: {} }),
+      sandboxManager: new DefaultSandboxManager({ sandboxClient: new FakeSandboxClient() }),
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       pendingClaimOwnerId: "takeover-runner", onDrainError: ({ error }) => errors.push(error) });
     await router.recoverPendingEvents();

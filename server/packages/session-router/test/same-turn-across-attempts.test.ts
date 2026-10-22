@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore, type ActiveTurn, type TurnStreamStore } from "@oma-server/redis";
-import type { StoredEvent } from "@oma-server/store";
+import { packSkillBundle, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, AdapterRunResult, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
@@ -271,9 +271,10 @@ describe("every attempt of an input continues the Turn its first attempt started
     const draining = h.runner("runner-a").handleNewEvent(h.session.id, h.agent);
     await until(async () => (await h.ofType("agent.tool_use")).length === 1);
     // The user edits the Agent and the Session while the Turn runs.
+    const bundle = await packSkillBundle([{ path: "SKILL.md", body: new TextEncoder().encode("# Runbook") }]);
+    await h.stores.skillBundleStore.put("tenant", bundle);
     const skill = await h.stores.skillStore.create({ tenantId: "tenant", name: "runbook", description: "Equipped mid-Turn",
-      ownerType: "agent", ownerId: h.agent.id });
-    await h.stores.skillArtifactStore.put("tenant", skill.id, "SKILL.md", "# Runbook");
+      ownerType: "agent", ownerId: h.agent.id, bundleSha256: bundle.sha256, bundleSize: bundle.size });
     await h.stores.agentStore.update(h.agent.id, { model: "provider/edited", system: "edited system", skills: [skill.id],
       mcpServers: [{ catalogId: "rds-mcp", name: "rds-mcp" }] });
     await h.stores.sessionStore.setThinking(h.session.id, "off");

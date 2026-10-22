@@ -102,6 +102,16 @@ export interface ResourceUseLease {
   ownerId: string;
   generation: number;
 }
+/**
+ * What a Skill Install placed into an environment binding's Sandbox
+ * (ADR-0022): the Sandbox it went into and the Skill Set hash it installed.
+ * It describes that Sandbox only; a binding that now holds another Sandbox
+ * has nothing installed until an install into that one is recorded.
+ */
+export interface InstalledSkillSet {
+  sandboxId: string;
+  setHash: string;
+}
 /** Coordination shares the pending-input lease: no second execution scheduler. */
 export interface DelegationStore {
   /** Reconcile durable Session termination even when its input/lease was already removed. */
@@ -111,6 +121,16 @@ export interface DelegationStore {
   getExecution(tenantId: string, executionId: string): Promise<DelegationExecution | null>;
   listExecutions(tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }): Promise<DelegationExecution[]>;
   withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  /** The binding's last recorded Skill Install; null when none was recorded. */
+  installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
+  /**
+   * Record a complete Skill Install by compare-and-set: it applies only while
+   * the binding still holds `installed.sandboxId`, so a rebuilt or reclaimed
+   * binding never inherits it. False when the binding moved on. A single
+   * statement: no lock outlives it, and it never conflicts with an
+   * environment operation, which compares only the Sandbox identity.
+   */
+  recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<boolean>;
   get(tenantId: string, callerSessionId: string, childId: string, executionId?: string): Promise<DelegationExecution | null>;
   getByPendingEventId(pendingEventId: string): Promise<DelegationExecution | null>;
   list(tenantId: string, callerSessionId: string): Promise<DelegationExecution[]>;

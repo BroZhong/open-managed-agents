@@ -22,6 +22,7 @@ interface RunCall {
     timeoutMs?: number;
     signal?: AbortSignal;
     background?: boolean;
+    stdin?: boolean;
     onStdout?: (data: string) => void | Promise<void>;
     onStderr?: (data: string) => void | Promise<void>;
     onStdoutBytes?: (data: Uint8Array) => void | Promise<void>;
@@ -51,6 +52,8 @@ class FakeSandbox implements E2BSandbox {
   processWait?: () => Promise<E2BCommandResult>;
   processKill = vi.fn(async () => true);
   processDisconnect = vi.fn(async () => {});
+  readonly stdinWrites: Array<{ pid: number; data: string | Uint8Array }> = [];
+  sendStdin = vi.fn(async (pid: number, data: string | Uint8Array) => { this.stdinWrites.push({ pid, data }); });
   private runHandler?: (
     cmd: string,
   ) =>
@@ -87,10 +90,11 @@ class FakeSandbox implements E2BSandbox {
       };
       if (opts?.background) {
         await this.backgroundStart?.();
-        return { wait, kill: this.processKill, disconnect: this.processDisconnect };
+        return { pid: 4242, wait, kill: this.processKill, disconnect: this.processDisconnect };
       }
       return wait();
     }) as E2BSandbox["commands"]["run"],
+    sendStdin: (pid: number, data: string | Uint8Array) => this.sendStdin(pid, data),
   };
 
   files = {
@@ -207,6 +211,45 @@ function makeClient(
   });
   return { client, factoryCalls, sandboxes };
 }
+
+describe("root commands with input on stdin", () => {
+  it("runs as root and sends the input once to the started process, never on its command line", async () => {
+    const { client, sandboxes } = makeClient(() => ({ stdout: "done\n" }));
+    const { id } = await client.create();
+    const onExit = vi.fn();
+    const secret = "https://bucket.example.com/key.zip?Signature=abc\n";
+    const chunks = await collect(client.exec(id, ["bash", "-c", "read -r line"], { user: "root", stdin: secret, timeoutSeconds: 40, onExit }));
+    expect(chunks.map((chunk) => chunk.text).join("")).toBe("done\n");
+    const call = sandboxes[0].runCalls.at(-1)!;
+    expect(call.opts).toMatchObject({ user: "root", stdin: true, background: true, timeoutMs: 40_000 });
+    expect(call.cmd).not.toContain("Signature");
+    expect(JSON.stringify(call.opts)).not.toContain("Signature");
+    expect(sandboxes[0].stdinWrites).toEqual([{ pid: 4242, data: secret }]);
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ exitCode: 0 });
+  });
+
+  it("keeps ordinary commands on the default user with stdin closed", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    await collect(client.exec(id, ["true"]));
+    expect(sandboxes[0].runCalls.at(-1)!.opts).not.toHaveProperty("user");
+    expect(sandboxes[0].runCalls.at(-1)!.opts).not.toHaveProperty("stdin");
+    expect(sandboxes[0].sendStdin).not.toHaveBeenCalled();
+  });
+
+  it("stops a process whose input could not be delivered and reports the transport error", async () => {
+    const { client, sandboxes } = makeClient();
+    const { id } = await client.create();
+    let finish!: (result: E2BCommandResult) => void;
+    sandboxes[0].processWait = () => new Promise((resolve) => { finish = resolve; });
+    sandboxes[0].processKill.mockImplementation(async () => { finish({ exitCode: 137, stdout: "", stderr: "" }); return true; });
+    sandboxes[0].sendStdin.mockRejectedValueOnce(new Error("stdin RPC unavailable"));
+    const onExit = vi.fn();
+    await expect(collect(client.exec(id, ["bash", "-c", "read -r line"], { user: "root", stdin: "request\n", onExit }))).rejects.toThrow("stdin RPC unavailable");
+    expect(sandboxes[0].processKill).toHaveBeenCalledOnce();
+    expect(onExit).not.toHaveBeenCalled();
+  });
+});
 
 describe('managed Sandbox lifetime and exit evidence', () => {
   it('does not turn an acknowledged kill plus a broken stream into exit evidence', async () => {

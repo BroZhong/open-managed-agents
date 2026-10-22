@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, FakeSandboxClient, type SandboxExecChunk, type SandboxExecOptions, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultSandboxManager, FakeSandboxClient, isSkillInstallCommand, type SandboxExecChunk, type SandboxExecOptions, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
 import type { SandboxActivity } from "@oma-server/store";
 import { SANDBOX_WORKSPACE_ROOT, type Adapter, type ExecExitResult } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -81,7 +81,9 @@ function managedSandbox(options: {
       remove: (path) => rm(path, { force: true }),
     });
     fileSystem() { return this.files; }
-    override async *exec(_id: string, command: string[], execOptions?: SandboxExecOptions): AsyncIterable<SandboxExecChunk> {
+    override async *exec(id: string, command: string[], execOptions?: SandboxExecOptions): AsyncIterable<SandboxExecChunk> {
+      // The Skill Install stays emulated: it must never run on this machine.
+      if (isSkillInstallCommand(command)) { yield* super.exec(id, command, execOptions); return; }
       const sent: SandboxCommand = { command, stdout: "" };
       commands.push(sent);
       options.onCommand?.(sent);
@@ -103,7 +105,7 @@ function managedSandbox(options: {
       return session;
     }
   }
-  const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox(), provisionSources: {} });
+  const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox() });
   return { manager, commands, finished, sessions, disposed: () => false };
 }
 

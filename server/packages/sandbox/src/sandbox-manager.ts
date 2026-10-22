@@ -8,15 +8,10 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
 import { SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
-import type { SandboxClient, SandboxFsAccess } from "./sandbox-client.js";
-import type { SandboxActivity, SandboxLifecycleStore } from '@oma-server/store';
+import type { SandboxClient } from "./sandbox-client.js";
+import type { InstalledSkillSet, SandboxActivity, SandboxLifecycleStore, SkillBundleStore } from '@oma-server/store';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  assertProjectionOutsideWorkspace,
-  type ProvisionSource,
-  type ProjectionTarget,
-  type ReadonlyProjection,
-} from "./provision-source.js";
+import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillSet } from "./skill-install.js";
 import {
   assertWorkspaceMountSpec,
   workspaceMountMetadata,
@@ -25,21 +20,25 @@ import {
   type WorkspaceMountTarget,
 } from "./workspace-mount.js";
 
-/** Host computes the trusted mount identity and read-only Skill projections. */
+/** Host computes the trusted mount identity and the Skill Set to install. */
 export interface EnvSpec {
   tenantId: string;
   workspaceId: string;
   workspaceMount: WorkspaceMountSpec;
   image?: string;
   env?: Record<string, string>;
-  projections?: readonly ReadonlyProjection[];
+  /** The Agent's equipped Skills; each Turn's `prepare` passes the current Set. Default: none. */
+  skills?: SkillSet;
 }
 
 export interface SandboxManagerDeps {
   /** Business execution/queue coordination and explicit termination only. */
   lifecycle?: SandboxLifecycleStore;
   sandboxClient: SandboxClient;
-  provisionSources: Record<string, ProvisionSource>;
+  /** Signs the short-lived URLs a Skill Install downloads; required to install any Skill. */
+  skillBundleStore?: Pick<SkillBundleStore, "createInstallUrl">;
+  /** Skill Install budget calibration (ADR-0022): 20 MB/s with a 30 s floor by default. */
+  skillInstallBudget?: SkillInstallBudget;
 }
 export interface SandboxDescriptor {
   sandboxId: string;
@@ -75,6 +74,13 @@ export interface SandboxEnvironmentBinding {
   canExecute?(): Promise<boolean>;
   /** Evaluated inside withLock immediately before reclamation. */
   canReclaim?(): Promise<boolean>;
+  /**
+   * The binding's record of its last complete Skill Install. Without these
+   * the Manager remembers installs per binding in this process only.
+   */
+  installedSkills?(): Promise<InstalledSkillSet | null>;
+  /** Compare-and-set on the bound Sandbox; false when the binding moved on. */
+  recordSkillsInstalled?(installed: InstalledSkillSet): Promise<boolean>;
 }
 
 export interface SandboxSession {
@@ -84,8 +90,12 @@ export interface SandboxSession {
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   list(globOrDir?: string): Promise<FileListEntry[]>;
-  /** Recheck an existing mount and replace Skill projections; cold sessions stay cold. */
-  prepare(projections?: readonly ReadonlyProjection[]): Promise<void>;
+  /**
+   * Recheck an existing mount and install `skills` unless the binding records
+   * them for this Sandbox; cold sessions stay cold and install on creation.
+   * A failed install rejects with a SkillInstallError.
+   */
+  prepare(skills?: SkillSet): Promise<void>;
   /** Availability check only: never scans files or claims all open handles were saved. */
   checkWorkspace(): Promise<void>;
   /** Close execution resources. Completed writes already belong to the Workspace. */
@@ -93,7 +103,11 @@ export interface SandboxSession {
 }
 
 export class DefaultSandboxManager implements SandboxManager {
-  constructor(private readonly deps: SandboxManagerDeps) {}
+  /** Shared by every session this manager opens: one install per binding at a time. */
+  private readonly skillInstaller: SkillInstaller;
+  constructor(private readonly deps: SandboxManagerDeps) {
+    this.skillInstaller = new SkillInstaller({ client: deps.sandboxClient, bundles: deps.skillBundleStore, ...deps.skillInstallBudget });
+  }
   async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
     const store = this.deps.lifecycle;
     if (!store) return false;
@@ -110,7 +124,7 @@ export class DefaultSandboxManager implements SandboxManager {
   }
   open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession {
     if (this.deps.lifecycle && !binding?.id) throw new Error('Managed Sandbox lifecycle requires durable environment bindings');
-    return new SandboxSessionImpl(this.deps, spec, binding);
+    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, binding);
   }
   async list(_filter?: {
     tenantId?: string;
@@ -130,9 +144,7 @@ class SandboxSessionImpl implements SandboxSession {
   }
   readonly fileSystem: ToolFileSystem;
   private readonly target: WorkspaceMountTarget;
-  private projections: readonly ReadonlyProjection[];
-  /** Targets that may contain files, including a partially failed projection. */
-  private readonly projectedPaths = new Set<string>();
+  private skills: SkillSet;
   private sandboxId?: string;
   /** Only an in-flight create/rebuild is shared; failed provisioning can be retried. */
   private ensuring?: Promise<string>;
@@ -146,6 +158,7 @@ class SandboxSessionImpl implements SandboxSession {
 
   constructor(
     private readonly deps: SandboxManagerDeps,
+    private readonly skillInstaller: SkillInstaller,
     private readonly spec: EnvSpec,
     private readonly binding?: SandboxEnvironmentBinding,
   ) {
@@ -166,8 +179,7 @@ class SandboxSessionImpl implements SandboxSession {
       bucket: spec.workspaceMount.bucket,
       prefix: spec.workspaceMount.prefix,
     };
-    this.projections = spec.projections ?? [];
-    this.assertProjections(this.projections);
+    this.skills = spec.skills ?? EMPTY_SKILL_SET;
 
     // Keep identity stable across sandbox reclamation: Pi scopes mutation
     // queues to this capability while each operation resolves the live handle.
@@ -267,66 +279,72 @@ class SandboxSessionImpl implements SandboxSession {
     const restore = async (storedId: string | null) => {
       await this.assertExecutable();
       const id = storedId ?? this.sandboxId;
-      if (!id) return { sandboxId: null, value: undefined };
+      if (!id) return { sandboxId: null, value: null };
       const state = await this.deps.sandboxClient.state(id);
       if (state === 'missing') {
         this.sandboxId = undefined;
-        return { sandboxId: null, value: undefined };
+        return { sandboxId: null, value: null };
       }
       // Never replace Running or unknown resources. Refresh a Running handle
       // only after an exception; ordinary tools do not perform this I/O.
-      await this.prepareExisting(id);
-      return { sandboxId: id, value: undefined };
+      await this.attach(id);
+      return { sandboxId: id, value: id };
     };
-    if (this.binding) await this.binding.withLock(restore);
-    else await restore(failedId);
+    const id = this.binding ? await this.binding.withLock(restore) : (await restore(failedId)).value;
     // A known missing environment stays cold until the next tool requests it.
+    if (id) await this.finishPreparation(id);
   }
 
-  async prepare(
-    projections: readonly ReadonlyProjection[] = this.projections,
-  ): Promise<void> {
+  async prepare(skills: SkillSet = this.skills): Promise<void> {
     this.assertOpen();
-    this.assertProjections(projections);
     if (this.ensuring) await this.ensuring;
     if (this.recovering) await this.recovering;
-    this.projections = projections;
+    this.skills = skills;
     this.prepared = false;
     this.uncertainTurn = false;
     const refresh = async (id: string | null, creationPending = false) => {
       await this.assertExecutable();
       if (creationPending) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
       this.sandboxId = id ?? undefined;
-      if (!id) return { sandboxId: null, value: undefined };
+      if (!id) return { sandboxId: null, value: null };
       if (!await this.deps.sandboxClient.reconnect(id, this.metadata())) {
         this.sandboxId = undefined;
-        return { sandboxId: null, value: undefined };
+        return { sandboxId: null, value: null };
       }
       this.deps.sandboxClient.resetExecutionUncertainty(id);
-      await this.prepareExisting(id, false);
-      return { sandboxId: id, value: undefined };
+      await this.attach(id, false);
+      return { sandboxId: id, value: id };
     };
-    await this.withPreparationLock(refresh);
+    const id = await this.withPreparationLock(refresh);
+    if (id) await this.finishPreparation(id);
   }
-  private async prepareExisting(id: string, connect = true): Promise<void> {
+  /** Reattach an existing Sandbox under binding coordination: its mount is verified again. */
+  private async attach(id: string, connect = true): Promise<void> {
     if (connect && !await this.deps.sandboxClient.reconnect(id, this.metadata())) {
       throw new Error('Sandbox disappeared during preparation; retry a subsequent tool');
     }
     await this.verify(id);
-    if (this.binding) {
-      for (const entry of await this.deps.sandboxClient.list(id, '/skills', { missingOk: true })) {
-        const name = /^\/skills\/([^/]+)\//.exec(entry.path)?.[1];
-        if (name && name !== '.' && name !== '..') this.projectedPaths.add(`/skills/${name}`);
-      }
-    }
-    for (const path of new Set([...this.projectedPaths, ...this.projections.map(projection => projection.targetPath)])) {
-      await this.deps.sandboxClient.remove(id, path);
-      this.projectedPaths.delete(path);
-    }
-    await this.projectAll(id);
+    this.sandboxId = id;
+  }
+  /**
+   * Make the verified Sandbox hold the current Skill Set, outside binding
+   * coordination: the install holds no database lock or pooled client, and
+   * the binding records it by its own compare-and-set. Usable only after.
+   */
+  private async finishPreparation(id: string): Promise<void> {
+    // The install is one promise per binding. Preparation waits for it here;
+    // #268 starts inference first and lets the first tool call await it.
+    await this.skillInstaller.ensure(this.binding?.id ?? this.binding ?? this, this.skillLedger(),
+      { sandboxId: id, tenantId: this.spec.tenantId }, this.skills);
+    this.assertOpen();
     this.sandboxId = id;
     this.prepared = true;
     this.generation++;
+  }
+  private skillLedger(): SkillInstallLedger | undefined {
+    const binding = this.binding;
+    if (!binding?.installedSkills || !binding.recordSkillsInstalled) return undefined;
+    return { installed: () => binding.installedSkills!(), record: installed => binding.recordSkillsInstalled!(installed) };
   }
   async checkWorkspace(): Promise<void> {
     this.assertOpen();
@@ -389,13 +407,6 @@ class SandboxSessionImpl implements SandboxSession {
   private assertOpen(): void {
     if (this.closed) throw new SandboxSessionClosed();
   }
-  private assertProjections(projections: readonly ReadonlyProjection[]): void {
-    for (const projection of projections)
-      assertProjectionOutsideWorkspace(
-        projection.targetPath,
-        SANDBOX_WORKSPACE_ROOT,
-      );
-  }
   private async verify(id: string): Promise<void> {
     try {
       await this.deps.sandboxClient.verifyWorkspaceMount(id, this.target);
@@ -438,7 +449,7 @@ class SandboxSessionImpl implements SandboxSession {
       if (creationPending) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
       if (id) {
         if (await this.deps.sandboxClient.reconnect(id, this.metadata())) {
-          await this.prepareExisting(id, false);
+          await this.attach(id, false);
           return { sandboxId: id, value: id };
         }
       }
@@ -447,7 +458,10 @@ class SandboxSessionImpl implements SandboxSession {
     let existing: string | null;
     try { existing = await this.withPreparationLock(reserve); }
     catch (error) { this.prepared = false; throw error; }
-    if (existing) return existing;
+    if (existing) {
+      await this.finishPreparation(existing);
+      return existing;
+    }
     this.creationUnconfirmed = true;
     const handle = await this.deps.sandboxClient.create({
       image: this.spec.image, env: this.spec.env,
@@ -457,11 +471,7 @@ class SandboxSessionImpl implements SandboxSession {
       await this.assertExecutable();
       if (id && id !== handle.id) throw new Error('Sandbox binding changed during creation');
       let failure: unknown;
-      try {
-        await this.verify(handle.id);
-        this.projectedPaths.clear();
-        await this.projectAll(handle.id);
-      } catch (error) { failure = error; }
+      try { await this.verify(handle.id); } catch (error) { failure = error; }
       // Retain a known finite-lived resource even on preparation failure. The
       // next Turn can retry preparation, not allocate an untracked replacement.
       return { sandboxId: handle.id, creationPending: false, value: failure };
@@ -471,8 +481,8 @@ class SandboxSessionImpl implements SandboxSession {
     this.creationUnconfirmed = false;
     if (failure) throw failure;
     this.assertOpen();
-    this.prepared = true;
-    this.generation++;
+    // A brand-new Sandbox installs once its mount is verified.
+    await this.finishPreparation(handle.id);
     return handle.id;
   }
   private metadata(): Record<string, string> {
@@ -481,36 +491,6 @@ class SandboxSessionImpl implements SandboxSession {
       "oma.dev/tenant": this.spec.tenantId,
       "oma.dev/workspace": this.spec.workspaceId,
       ...workspaceMountMetadata(this.spec.workspaceMount, SANDBOX_WORKSPACE_ROOT),
-    };
-  }
-  private async projectAll(id: string): Promise<void> {
-    for (const projection of this.projections) {
-      const source = this.deps.provisionSources[projection.source.kind];
-      if (!source)
-        throw new Error(
-          `No ProvisionSource registered for kind "${projection.source.kind}"`,
-        );
-      this.projectedPaths.add(projection.targetPath);
-      await source.project(
-        projection.source,
-        this.projectionTarget(id, projection.targetPath),
-      );
-    }
-  }
-  private projectionTarget(id: string, targetPath: string): ProjectionTarget {
-    const client = this.deps.sandboxClient;
-    const fs: SandboxFsAccess = {
-      writeFile: (path, body) => client.writeFile(id, path, body),
-      readFile: (path) => client.readFile(id, path),
-      writeFileBytes: (path, body) => client.writeFileBytes(id, path, body),
-      readFileBytes: (path) => client.readFileBytes(id, path),
-      remove: (path) => client.remove(id, path),
-      list: (path) => client.list(id, path),
-    };
-    return {
-      targetPath,
-      fs,
-      exec: (command, opts) => client.exec(id, command, opts),
     };
   }
   private resolve(path: string): string {

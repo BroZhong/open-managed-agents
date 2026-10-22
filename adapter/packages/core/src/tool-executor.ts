@@ -118,8 +118,9 @@ export interface FileListEntry {
  *
  * Relative paths use the executor's workspace. Each backend defines its
  * isolation boundary: LocalToolExecutor confines lexical paths to its root;
- * a sandbox executor can also access absolute projection and temporary paths
- * inside that sandbox. Nothing here depends on S3 or a concrete backend.
+ * a sandbox executor can also access absolute paths such as installed Skills
+ * and temporary files inside that sandbox. Nothing here depends on S3 or a
+ * concrete backend.
  */
 export interface ToolExecutor {
   /** Stable identity per executor. Required by Pi's native I/O hooks. */

@@ -356,9 +356,9 @@ export class Fleet {
       const name = `runner-${index}`;
       const stores = this.meter.view(name);
       const router = new SessionRouter({
-        ...stores, skillArtifactStore: this.raw.skillArtifactStore,
+        ...stores,
         eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-        sandboxManager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, provisionSources: {}, lifecycle: this.meter.lifecycle(name) }),
+        sandboxManager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, lifecycle: this.meter.lifecycle(name) }),
         workspaceMount: WORKSPACE_MOUNT, pendingClaimOwnerId: name,
         wakeSession: (sessionId) => this.signals.publish({ sessionId, kind: "wake" }),
         checkSession: (sessionId) => this.signals.publish({ sessionId, kind: "check" }),

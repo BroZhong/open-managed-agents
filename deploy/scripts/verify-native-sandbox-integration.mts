@@ -87,7 +87,7 @@ try {
         return sandbox;
       },
     });
-    const manager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle });
     const spec: EnvSpec = { tenantId: evidence.tenant, workspaceId: evidence.workspace,
       workspaceMount: { ...config.mount, prefix: `${evidence.tenant}/${evidence.workspace}/` },
       ...(phase === 'rebuild' ? { image: evidence.snapshotId } : {}) };

@@ -58,7 +58,7 @@ async function harness(adapter: Adapter, options: { sandboxed?: boolean } = {}) 
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     ...(options.sandboxed ? {
-      sandboxManager: new DefaultSandboxManager({ sandboxClient, provisionSources: {} }),
+      sandboxManager: new DefaultSandboxManager({ sandboxClient }),
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
     } : {}),
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
