@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { packSkillBundle, type Skill, type SkillBundleStore, type SkillStore, type SkillStoreCreateInput } from "@oma-server/store";
 
 export const bytes = (text: string) => new TextEncoder().encode(text);
@@ -29,3 +30,16 @@ export async function currentFiles(skills: SkillStore, bundles: SkillBundleStore
   if (!files) throw new Error(`Skill ${id} names a missing bundle`);
   return { sha256: skill.bundleSha256, files: Object.fromEntries(files.map((file) => [file.path, text(file.body)])) };
 }
+
+/** A TrueType header followed by bytes that are not valid UTF-8. */
+export const TTF = new Uint8Array(Buffer.concat([
+  Buffer.from([0x00, 0x01, 0x00, 0x00]),
+  randomBytes(64 * 1024),
+  Buffer.from([0xff, 0xfe, 0xc3, 0x28, 0x80]),
+]));
+
+/** A valid 1×1 PNG. */
+export const PNG = new Uint8Array(Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+));

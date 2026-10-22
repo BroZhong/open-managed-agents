@@ -2,6 +2,7 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { ArtifactStore, Workspace, WorkspaceMetadataStore } from "@oma-server/store";
 import { validateArtifactPath } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
+import { readUploadForm } from "../lib/upload-form.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -32,15 +33,6 @@ function isSafePath(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Join a directory and a filename into a workspace-relative path, tolerating a
- * missing or slash-suffixed directory. An empty dir yields the bare name.
- */
-function joinPath(dir: string, name: string): string {
-  const d = dir.replace(/\/+$/, "");
-  return d ? `${d}/${name}` : name;
 }
 
 /**
@@ -160,32 +152,11 @@ export function workspaceFileRoutes(deps: WorkspaceFileRouteDeps): OpenAPIHono<E
     const workspace = await resolveWorkspace(c.req.param("id")!, tenant);
     if (!workspace) return c.json({ error: "Workspace not found" }, 404);
 
-    const form = await c.req.parseBody({ all: true }).catch(() => null);
-    if (!form) return c.json({ error: "Invalid multipart body" }, 400);
-
-    const destDirRaw = form.destDir;
-    const destDir = typeof destDirRaw === "string" ? destDirRaw : "";
-    const explicitPath = typeof form.path === "string" ? form.path : undefined;
-
-    // Collect all File-valued form entries (a field may hold one or many).
-    const files: File[] = [];
-    for (const value of Object.values(form)) {
-      for (const v of Array.isArray(value) ? value : [value]) {
-        if (v instanceof File) files.push(v);
-      }
-    }
-    if (files.length === 0) {
-      return c.json({ error: "No files in upload" }, 400);
-    }
+    const upload = await readUploadForm(c.req);
+    if (!upload.ok) return c.json({ error: upload.error }, 400);
 
     const written: Array<{ path: string }> = [];
-    for (const file of files) {
-      // Single-file uploads may name the target with `path`; otherwise place
-      // the file under `destDir` using its own filename.
-      const target =
-        files.length === 1 && explicitPath
-          ? explicitPath
-          : joinPath(destDir, file.name);
+    for (const { path: target, file } of upload.files) {
       if (!isSafePath(target)) {
         return c.json({ error: "Invalid file path" }, 400);
       }

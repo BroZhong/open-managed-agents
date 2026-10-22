@@ -1,4 +1,4 @@
-import { packSkillBundle } from "@oma-server/store";
+import { attachmentDisposition, packSkillBundle, resolveArtifactContentType } from "@oma-server/store";
 import { publicSkill } from "../lib/public-projection.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
@@ -6,6 +6,8 @@ import type { SkillBundleStore, SkillStore } from "@oma-server/store";
 import type { TenantContext } from "../types.js";
 import { detectSkills, parseSkillMetadata, type DroppedFile } from "../skills/detect-skills.js";
 import { SkillVersions } from "../skills/skill-versions.js";
+import { readSkillFile } from "../skills/skill-file-content.js";
+import { readUploadForm } from "../lib/upload-form.js";
 import { getOpenApiRoute } from "../openapi/routes.js";
 import {
   createContractRouter,
@@ -37,6 +39,11 @@ const SKILL_MD = "SKILL.md";
  * The dropped folder's tree is flattened client-side into (path, file) pairs;
  * the server re-runs the single/multi-Skill detection (server-authoritative).
  * Files are stored byte for byte; `.pyc` and `__pycache__` are left out.
+ *
+ * Files are bytes on every route (ADR-0022): `files/upload` adds files of any
+ * type to an existing Skill, `files/content` reads text inline and binary
+ * files as metadata, and `files/raw` returns a file's bytes. An edit that
+ * targets compiled Python is rejected with 400 (see `SkillVersions.commit`).
  */
 export function skillRoutes(
   skillStore: SkillStore,
@@ -208,7 +215,8 @@ export function skillRoutes(
     return c.json({ data: await versions.paths(skill), has_more: false });
   });
 
-  // GET /v1/skills/:id/files/content?path=… — read one file's text
+  // GET /v1/skills/:id/files/content?path=… — read one file: a text file's
+  // content, or a binary file's metadata (see `readSkillFile`)
   registerContractRoute(router, getOpenApiRoute("getSkillFileContent"), async (c) => {
     const skill = await requireOwned(c, skillStore);
     if (!skill) return c.json({ error: "Not found" }, 404);
@@ -216,10 +224,60 @@ export function skillRoutes(
     if (!path) return c.json({ error: "path is required" }, 400);
     const bytes = await versions.readFile(skill, path);
     if (!bytes) return c.json({ error: "Not found" }, 404);
-    return c.json({ path, content: new TextDecoder().decode(bytes) });
+    return c.json(readSkillFile(path, bytes));
   });
 
-  // PUT /v1/skills/:id/files/content — write (create or overwrite) one file
+  // GET /v1/skills/:id/files/raw?path=… — one file's exact bytes, for preview
+  // and download; `download=1` asks for an attachment. The sandboxing policy
+  // keeps an HTML or SVG file opened from the API origin from running script.
+  registerContractRoute(router, getOpenApiRoute("getSkillFileRaw"), async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const path = safePath(c.req.query("path"));
+    if (!path) return c.json({ error: "path is required" }, 400);
+    const bytes = await versions.readFile(skill, path);
+    if (!bytes) return c.json({ error: "Not found" }, 404);
+    return c.body(new Uint8Array(bytes), 200, {
+      "Content-Type": resolveArtifactContentType(path),
+      "Content-Length": String(bytes.byteLength),
+      "Content-Disposition": c.req.query("download") === "1" ? attachmentDisposition(path) : "inline",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-store",
+    });
+  });
+
+  // POST /v1/skills/:id/files/upload — multipart upload into the Skill, the
+  // Workspace upload's form (`readUploadForm`). Files are stored as bytes,
+  // replacing any file at the same path, and the whole upload publishes one
+  // new version. An uploaded SKILL.md refreshes name and description.
+  registerContractRoute(router, getOpenApiRoute("uploadSkillFiles"), async (c) => {
+    const skill = await requireOwned(c, skillStore);
+    if (!skill) return c.json({ error: "Not found" }, 404);
+    const upload = await readUploadForm(c.req);
+    if (!upload.ok) return c.json({ error: upload.error }, 400);
+    const incoming = new Map<string, Uint8Array>();
+    for (const { path: target, file } of upload.files) {
+      const path = safePath(target);
+      if (!path) return c.json({ error: "Invalid file path" }, 400);
+      // Bytes, never text(): decoding corrupts fonts and other binary files.
+      incoming.set(path, new Uint8Array(await file.arrayBuffer()));
+    }
+    const base = await versions.checkout(skill);
+    const modes = new Map(base.files.map((file) => [file.path, file.mode]));
+    const files = [
+      ...base.files.filter((file) => !incoming.has(file.path)),
+      ...[...incoming].map(([path, body]) => ({ path, body, mode: modes.get(path) })),
+    ];
+    const skillMd = incoming.get(SKILL_MD);
+    const metadata = skillMd ? skillMdMetadata(SKILL_MD, new TextDecoder().decode(skillMd), skill.name) : {};
+    const updated = await versions.commit(base, files, metadata);
+    if (!updated) return c.json({ error: "Not found" }, 404);
+    return c.json({ data: [...incoming.keys()].map((path) => ({ path })) });
+  });
+
+  // PUT /v1/skills/:id/files/content — write (create or overwrite) one text
+  // file; binary files go through the upload
   //   body: { path: string, content: string }
   registerContractRoute(router, getOpenApiRoute("putSkillFileContent"), async (c) => {
     const skill = await requireOwned(c, skillStore);

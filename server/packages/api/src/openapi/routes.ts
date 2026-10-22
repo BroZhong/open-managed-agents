@@ -29,6 +29,7 @@ import {
   SharedSessionSchema,
   SessionStatusSchema,
   SessionUsageSchema,
+  SkillBinaryFileSchema,
   SkillDetailSchema,
   SkillFileContentSchema,
   SkillFileListSchema,
@@ -626,13 +627,92 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     method: "get",
     path: "/v1/skills/{id}/files/content",
     operationId: "getSkillFileContent",
-    summary: "Read a Skill text file",
+    summary: "Read a Skill file",
+    description:
+      "Returns a text file's content, or a binary file's metadata with binary: true; fetch its bytes from GET /v1/skills/{id}/files/raw. The media type comes from the file extension. A file is binary when that type is known and not text (images, audio, video, fonts, archives, PDF, SVG), or when its bytes are not UTF-8 or contain NUL. Text content keeps every byte, including a byte order mark.",
     tags: ["Skills/Files"],
     request: { params: idParams, query: pathQuery },
     responses: {
-      200: jsonResponse(SkillFileContentSchema, "Skill file content"),
+      200: jsonResponse(z.union([SkillFileContentSchema, SkillBinaryFileSchema]), "Text file content, or binary file metadata"),
       400: errorResponse("Invalid or missing path"),
       404: errorResponse("Skill or file not found"),
+    },
+  }),
+  protectedRoute({
+    method: "get",
+    path: "/v1/skills/{id}/files/raw",
+    operationId: "getSkillFileRaw",
+    summary: "Download a Skill file's bytes",
+    description:
+      "Returns the exact bytes of one file of the Skill's current version, for preview and download. Content-Type is resolved from the file extension (application/octet-stream when unknown). Responses are inline unless download=1, carry X-Content-Type-Options: nosniff and a sandboxing Content-Security-Policy, so active content such as HTML or SVG never runs script from the API origin, and are not cached.",
+    tags: ["Skills/Files"],
+    request: {
+      params: idParams,
+      query: pathQuery.extend({
+        download: z.literal("1").optional().openapi({
+          param: { name: "download", in: "query" },
+          description: "Set to 1 for Content-Disposition: attachment with the original filename.",
+        }),
+      }),
+    },
+    responses: {
+      200: {
+        description: "File bytes",
+        headers: {
+          "Content-Type": { schema: { type: "string", example: "font/ttf" } },
+          "Content-Length": { schema: { type: "integer" } },
+          "Content-Disposition": { schema: { type: "string", example: 'attachment; filename="Regular.ttf"' } },
+          "Content-Security-Policy": { schema: { type: "string", example: "default-src 'none'; sandbox" } },
+          "X-Content-Type-Options": { schema: { type: "string", example: "nosniff" } },
+          "Cache-Control": { schema: { type: "string", example: "no-store" } },
+        },
+        content: {
+          "application/octet-stream": { schema: z.string().openapi({ type: "string", format: "binary" }) },
+        },
+      },
+      400: errorResponse("Invalid or missing path"),
+      404: errorResponse("Skill or file not found"),
+    },
+  }),
+  protectedRoute({
+    method: "post",
+    path: "/v1/skills/{id}/files/upload",
+    operationId: "uploadSkillFiles",
+    summary: "Upload files into a Skill",
+    description:
+      "Upload one file field or repeated files fields of any type into an existing Skill, the same form as the Workspace upload. For one file, path may name the exact target. Otherwise each uploaded filename, which may carry a folder path, is joined to destDir. Files are stored byte for byte and replace any file at the same path, keeping its mode. The whole upload publishes one new version, based on the version it read: if another edit published a version in the meantime, it returns 409 skill_version_conflict and changes nothing. Uploading the root SKILL.md refreshes the Skill name and description. A Skill holds at most 50 MB uncompressed. .pyc files and __pycache__ directories are never stored in a Skill; an upload containing one returns 400 invalid_skill_file and changes nothing.",
+    tags: ["Skills/Files"],
+    request: {
+      params: idParams,
+      body: {
+        required: true,
+        content: {
+          "multipart/form-data": {
+            schema: z.union([
+              z.object({
+                file: binaryFileSchema,
+                path: z.string().optional(),
+                destDir: z.string().optional(),
+              }),
+              z.object({
+                files: uploadedFilesSchema,
+                path: z.string().optional(),
+                destDir: z.string().optional(),
+              }),
+            ]),
+          },
+        },
+      },
+    },
+    responses: {
+      200: jsonResponse(
+        z.object({ data: z.array(PathResultSchema) }),
+        "Stored file paths",
+      ),
+      400: errorResponse("Invalid multipart body or target path, or compiled Python (invalid_skill_file)"),
+      404: errorResponse("Skill not found"),
+      409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
+      413: errorResponse("The Skill would exceed 50 MB uncompressed (skill_bundle_too_large)"),
     },
   }),
   protectedRoute({
@@ -641,13 +721,13 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     operationId: "putSkillFileContent",
     summary: "Create or replace a Skill text file",
     description:
-      "Every write publishes a new version of the Skill, based on the version it read; if another edit published a version in the meantime, the write returns 409 skill_version_conflict and changes nothing. Saving the root SKILL.md refreshes the Skill name and description. Edits preserve createdAt and advance updatedAt; editing an Agent Skill affects only its private copy. A Skill holds at most 50 MB uncompressed.",
+      "Stores content as UTF-8 text; upload binary files with POST /v1/skills/{id}/files/upload. Every write publishes a new version of the Skill, based on the version it read; if another edit published a version in the meantime, the write returns 409 skill_version_conflict and changes nothing. Saving the root SKILL.md refreshes the Skill name and description. Edits preserve createdAt and advance updatedAt; editing an Agent Skill affects only its private copy. A Skill holds at most 50 MB uncompressed. A .pyc path or a path inside __pycache__ returns 400 invalid_skill_file: compiled Python is never stored in a Skill.",
     tags: ["Skills/Files"],
     request: { params: idParams, body: jsonBody(SkillFileContentSchema) },
     responses: {
       409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
       200: jsonResponse(SkillFileContentSchema, "Skill file stored"),
-      400: errorResponse("Invalid path or content"),
+      400: errorResponse("Invalid path or content, or a compiled Python path (invalid_skill_file)"),
       404: errorResponse("Skill not found"),
       413: errorResponse("The Skill would exceed 50 MB uncompressed (skill_bundle_too_large)"),
     },
@@ -679,7 +759,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     path: "/v1/skills/{id}/files/rename",
     operationId: "renameSkillFile",
     summary: "Rename or move a Skill file",
-    description: "Publishes a new version of the Skill, replacing any file at the destination. The root SKILL.md cannot be renamed away; renaming a file onto it refreshes the Skill name and description. A concurrent edit of the same version returns 409 skill_version_conflict.",
+    description: "Publishes a new version of the Skill, replacing any file at the destination. The root SKILL.md cannot be renamed away; renaming a file onto it refreshes the Skill name and description. A destination that is a .pyc path or inside __pycache__ returns 400 invalid_skill_file. A concurrent edit of the same version returns 409 skill_version_conflict.",
     tags: ["Skills/Files"],
     request: {
       params: idParams,
@@ -695,7 +775,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
         }),
         "Skill file renamed",
       ),
-      400: errorResponse("Invalid source or destination path, or the source is the root SKILL.md"),
+      400: errorResponse("Invalid source or destination path, the source is the root SKILL.md, or the destination is compiled Python (invalid_skill_file)"),
       404: errorResponse("Skill or source file not found"),
       409: errorResponse("Skill name already exists for this owner (skill_name_conflict), or the Skill changed concurrently (skill_version_conflict)"),
     },
