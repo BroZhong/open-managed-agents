@@ -5,7 +5,7 @@ import { PgSessionStore } from "./session-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
 import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationTable, type DelegationRecord } from "../delegation-store.js";
 import type { EventLogStoreAppendInput } from "../interfaces/event-log-store.js";
-import type { DelegationExecution, DelegationCommand, DelegationWait } from "../interfaces/delegation-store.js";
+import type { DelegationExecution, DelegationCommand, DelegationWait, InstalledSkillSet } from "../interfaces/delegation-store.js";
 import type { StoredEvent } from "../types.js";
 import type { PendingEventFence } from "../interfaces/pending-event-store.js";
 
@@ -185,6 +185,18 @@ export class PgDelegationStore extends TransactionalDelegationStore {
       await client.query("UPDATE delegation_environments SET sandbox_id = $2, creation_pending = $3 WHERE id = $1", [bindingId, result.sandboxId, result.creationPending ?? snapshot.creation_pending]);
       return result.value;
     });
+  }
+  async installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null> {
+    const { rows: [row] } = await this.pool.query<{ skills_sandbox_id: string | null; skills_set_hash: string | null }>(
+      "SELECT skills_sandbox_id, skills_set_hash FROM delegation_environments WHERE id = $1", [bindingId]);
+    return row?.skills_sandbox_id && row.skills_set_hash ? { sandboxId: row.skills_sandbox_id, setHash: row.skills_set_hash } : null;
+  }
+  /** One autocommitted statement: the Skill Install it records ran with no client or lock held. */
+  async recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<boolean> {
+    const result = await this.pool.query(
+      "UPDATE delegation_environments SET skills_sandbox_id = $2, skills_set_hash = $3 WHERE id = $1 AND sandbox_id = $2 AND reclaiming = FALSE",
+      [bindingId, installed.sandboxId, installed.setHash]);
+    return (result.rowCount ?? 0) > 0;
   }
   /** A short transaction holding the binding row lock; `work` may use only `client`. */
   private async environmentTransaction<T>(bindingId: string, work: (client: PoolClient, row: EnvironmentRow) => Promise<T>): Promise<T> {
