@@ -221,13 +221,13 @@ describe("SkillFileSource", () => {
   it("has nested, non-idle-gated capabilities", () => {
     expect(s.capabilities).toEqual({ hierarchy: "nested", idleGated: false });
   });
-  it("exposes write/rename/delete/upload but no previewUrl", () => {
+  it("exposes the full method set including previewUrl", () => {
     expect(methodsOf(s)).toEqual({
       write: true,
       rename: true,
       delete: true,
       upload: true,
-      previewUrl: false,
+      previewUrl: true,
     });
   });
 });
