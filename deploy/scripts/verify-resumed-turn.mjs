@@ -83,7 +83,12 @@ try{
   const es=await wait('Turn completion',()=>events(s.id),es=>es.some(x=>x.type==='session.turn_completed'));check('big: Turn with a large tool result completed',es.some(x=>x.type==='agent.context_entry'&&x.data?.entry?.message?.role==='toolResult'),{sessionId:s.id})}
  else if(phase==='mark-disrupted'){const name=process.argv[4];e.sessions[name].disruptedAt=new Date().toISOString();check(`${name}: disruption marked`,true)}
  else if(phase==='file'){const s=e.sessions[process.argv[4]];const access=await api(`/v1/workspaces/${s.workspaceId}/files/${s.marker}.txt`);const bytes=await (await fetch(access.url)).text();e.sessions[process.argv[4]].fileLater=bytes;check(`${process.argv[4]}: marker file now`,true,{bytes,at:new Date().toISOString()})}
- else if(phase==='cleanup'){for(const s of Object.values(e.sessions)){try{await api(`/v1/sessions/${s.id}`,undefined,'DELETE')}catch(error){failures.push(error)}}check('verification Sessions terminated',true,{count:Object.keys(e.sessions).length})}
+ else if(phase==='cleanup'){
+  // Every Session of this run's own tenant, including ones a repeated phase replaced in the evidence.
+  const ids=new Set(Object.values(e.sessions).map(s=>s.id));let cursor;
+  do{const r=await api(`/v1/sessions?limit=100${cursor?'&cursor='+encodeURIComponent(cursor):''}`);for(const s of r.data)if(s.status!=='terminated')ids.add(s.id);cursor=r.has_more?r.next_cursor:undefined}while(cursor);
+  for(const id of ids){try{await api(`/v1/sessions/${id}`,undefined,'DELETE')}catch(error){failures.push(error)}}
+  check('verification Sessions terminated',true,{count:ids.size})}
  else throw Error('unknown phase')
 }catch(error){failures.push(error)}finally{for(const f of [save,()=>keys.revoke(e.runId,key.apiKey.id),()=>pool.end()]){try{await f()}catch(error){failures.push(error)}}}
 if(failures.length)throw new AggregateError(failures,'Resumed Turn verification failed');
