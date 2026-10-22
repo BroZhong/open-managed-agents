@@ -60,4 +60,6 @@ export {
   type SandboxDescriptor,
   type EnvSpec,
   type SandboxEnvironmentBinding,
+  type PrepareOptions,
+  type SkillInstallObserver,
 } from "./sandbox-manager.js";

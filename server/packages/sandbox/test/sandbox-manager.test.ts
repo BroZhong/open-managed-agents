@@ -162,22 +162,24 @@ describe("mounted Workspace Sandbox Manager", () => {
     binding.forgetSkills();
     const resumed = manager.open(specFor(), binding);
     await resumed.prepare();
-    expect(client.filesOf(id).has("/skills/projected/SKILL.md")).toBe(false);
+    // The install runs beside the Turn; its first operation waits for it.
     expect(await resumed.readFile("existing.txt")).toBe("kept");
+    expect(client.filesOf(id).has("/skills/projected/SKILL.md")).toBe(false);
     const before = installs();
     await resumed.prepare();
     expect(installs()).toBe(before);
     expect(client.created).toHaveLength(1);
   });
 
-  it("fails preparation with the install's stage and keeps the Sandbox for the next Turn", async () => {
+  it("fails the Turn's operations with the install's stage and keeps the Sandbox for the next Turn", async () => {
     const { client, bundles, manager } = makeManager();
     const binding = durableBinding();
     const session = manager.open(specFor(), binding);
     await session.writeFile("saved.txt", "kept");
     const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "body")])]);
     client.skillInstallFault = (stage) => { if (stage === "download") throw new Error("connection reset"); };
-    await expect(session.prepare(skills)).rejects.toMatchObject({ name: "SkillInstallError", stage: "download", message: expect.stringContaining("connection reset") });
+    await session.prepare(skills);
+    await expect(session.readFile("saved.txt")).rejects.toMatchObject({ name: "SkillInstallError", stage: "download", message: expect.stringContaining("connection reset") });
     expect(binding.installed()?.setHash).not.toBe(skills.setHash);
     client.skillInstallFault = undefined;
     await session.prepare(skills);
@@ -383,7 +385,8 @@ describe("mounted Workspace Sandbox Manager", () => {
     const files = [text("SKILL.md", "renamed"), text("helper.txt", "helper")];
     if (failure === "mount check") client.setMountFailure(id, "storage offline");
     else client.skillInstallFault = (stage) => { if (stage === failure) throw new Error(`${failure} unavailable`); };
-    await expect(session.prepare(skillSetOf([await bundles.add("editor", files)]))).rejects.toThrow();
+    // A mount check fails preparation; an install fails the Turn's first operation.
+    await expect(session.prepare(skillSetOf([await bundles.add("editor", files)])).then(() => session.readFile("data.txt"))).rejects.toThrow();
     client.setMountFailure(id);
     client.skillInstallFault = undefined;
     // Never a half-installed tree: the old version stays until a switch.
@@ -459,5 +462,126 @@ describe("mounted Workspace Sandbox Manager", () => {
     client.skillInstallFault = undefined;
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("body");
     expect(client.created).toHaveLength(1);
+  });
+});
+
+/** A promise the test settles. */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+/** Let pending callbacks run. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+describe("a Turn's Skill Install runs beside the Turn (#268)", () => {
+  /** A bound session whose Sandbox exists and holds the empty Skill Set. */
+  async function warm() {
+    const fixture = makeManager();
+    const binding = durableBinding();
+    const session = fixture.manager.open(specFor(), binding);
+    await session.writeFile("saved.txt", "kept");
+    const id = fixture.client.created[0];
+    const exec = vi.mocked(fixture.client.exec);
+    /** What reached the Sandbox besides installs: the Turn's own operations. */
+    const business = () => exec.mock.calls.filter(([, command]) => !isSkillInstallCommand(command)).length
+      + readFile.mock.calls.length + nativeCalls.length;
+    const readFile = vi.spyOn(fixture.client, "readFile");
+    // Native filesystem primitives over the fake's files, counted.
+    const nativeCalls: string[] = [];
+    const native = (name: string, work: () => Promise<unknown>) => { nativeCalls.push(name); return work(); };
+    const unavailable = () => { throw new Error("Unexpected filesystem operation"); };
+    Object.assign(fixture.client, { fileSystem: (sandboxId: string): ToolFileSystem => ({
+      stat: (path) => native("stat", async () => ({ isFile: fixture.client.filesOf(sandboxId).has(path), isDirectory: false, isSymbolicLink: false, size: 0, mtimeMs: 0 })),
+      createTempFile: () => native("createTempFile", async () => "/tmp/request.json"),
+      readFile: unavailable, writeFile: unavailable, appendFile: unavailable, access: unavailable,
+      lstat: unavailable, realpath: unavailable, readdir: unavailable, mkdir: unavailable,
+    }) as ToolFileSystem });
+    const observer = { started: vi.fn(), ended: vi.fn() };
+    return { ...fixture, binding, session, id, business, observer, before: business() };
+  }
+
+  it("resolves prepare once the mount is verified; every kind of operation waits for the install before it runs", async () => {
+    const { client, bundles, session, binding, observer, business } = await warm();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    const download = deferred();
+    client.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
+    const ran = business();
+    await session.prepare(skills, { skillInstalls: observer });
+    expect(observer.started).toHaveBeenCalledExactlyOnceWith(skills);
+    const read = session.readFile("/skills/writer/SKILL.md");
+    const stat = session.fileSystem.stat("/skills/writer/SKILL.md");
+    const exec = (async () => { for await (const _ of session.exec(["echo", "hi"])) { /* drain */ } })();
+    await settle();
+    expect(business()).toBe(ran);
+    expect(observer.ended).not.toHaveBeenCalled();
+    download.resolve();
+    expect(await read).toBe("v1");
+    expect(await stat).toMatchObject({ isFile: true });
+    await exec;
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ report: expect.objectContaining({ downloaded: 1, skills: 1 }) });
+    expect(binding.installed()?.setHash).toBe(skills.setHash);
+  });
+
+  it("fails every operation of the Turn with the install's error without running it; the next Turn installs again", async () => {
+    const { client, bundles, session, binding, observer, business, installs } = await warm();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    client.skillInstallFault = (stage) => { if (stage === "download") throw new Error("HTTP 503"); };
+    const ran = business();
+    await session.prepare(skills, { skillInstalls: observer });
+    await expect(session.readFile("saved.txt")).rejects.toMatchObject({ name: "SkillInstallError", stage: "download" });
+    await expect(session.fileSystem.createTempFile()).rejects.toMatchObject({ name: "SkillInstallError", stage: "download" });
+    const attempts = installs();
+    expect(business()).toBe(ran);
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ error: expect.objectContaining({ name: "SkillInstallError", stage: "download" }) });
+    expect(binding.installed()?.setHash).not.toBe(skills.setHash);
+    client.skillInstallFault = undefined;
+    await session.prepare(skills);
+    expect(installs()).toBe(attempts + 1);
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+  });
+
+  it("prepares a skipped install before prepare resolves and tells the observer nothing", async () => {
+    const { session, observer, installs } = await warm();
+    const before = installs();
+    await session.prepare(undefined, { skillInstalls: observer });
+    expect(await session.readFile("saved.txt")).toBe("kept");
+    expect(installs()).toBe(before);
+    expect(observer.started).not.toHaveBeenCalled();
+    expect(observer.ended).not.toHaveBeenCalled();
+  });
+
+  it("cancels the install when the Turn's signal aborts: operations reject with its reason and nothing is recorded", async () => {
+    const { client, bundles, session, binding, observer, business } = await warm();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    client.skillInstallFault = (stage, signal) => stage === "download"
+      ? new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve())) : undefined;
+    const turn = new AbortController();
+    const ran = business();
+    await session.prepare(skills, { signal: turn.signal, skillInstalls: observer });
+    const read = session.readFile("saved.txt");
+    await settle();
+    turn.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(read).rejects.toMatchObject({ name: "AbortError", message: "Session interrupted" });
+    expect(business()).toBe(ran);
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ error: expect.objectContaining({ name: "AbortError" }) });
+    expect(binding.installed()?.setHash).not.toBe(skills.setHash);
+    client.skillInstallFault = undefined;
+    await session.prepare(skills);
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+  });
+
+  it("tells the observer of the install a cold Sandbox runs before its first operation", async () => {
+    const { manager, client, bundles } = makeManager();
+    const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "v1")])]);
+    const session = manager.open(specFor({ skills }), durableBinding());
+    const observer = { started: vi.fn(), ended: vi.fn() };
+    await session.prepare(skills, { skillInstalls: observer });
+    expect(client.created).toHaveLength(0);
+    expect(observer.started).not.toHaveBeenCalled();
+    expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
+    expect(observer.started).toHaveBeenCalledExactlyOnceWith(skills);
+    expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ report: expect.objectContaining({ downloaded: 1 }) });
   });
 });

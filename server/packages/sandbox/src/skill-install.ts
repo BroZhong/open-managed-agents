@@ -40,8 +40,11 @@ export const EMPTY_SKILL_SET: SkillSet = { setHash: EMPTY_SKILL_SET_HASH, bundle
 export const SKILLS_PATH = "/skills";
 export const SKILLS_ROOT = "/opt/oma/skills";
 
-/** Where an install stopped: Host signing, a step of the Sandbox script, or the binding write-back. */
-export type SkillInstallStage = "start" | "sign" | "download" | "verify" | "extract" | "switch" | "record";
+/**
+ * Where an install stopped: reading the binding's record, Host signing, a step
+ * of the Sandbox script, or the binding write-back.
+ */
+export type SkillInstallStage = "check" | "start" | "sign" | "download" | "verify" | "extract" | "switch" | "record";
 const SCRIPT_STAGES: readonly SkillInstallStage[] = ["start", "download", "verify", "extract", "switch"];
 
 /**
@@ -121,8 +124,11 @@ export async function installSkillSet(input: {
   tenantId: string;
   skills: SkillSet;
   budgetMs: number;
+  /** Cancels the install: the exec is killed and the signal's reason is thrown. */
+  signal?: AbortSignal;
 }): Promise<SkillInstallReport> {
-  const { client, bundles, sandboxId, tenantId, skills, budgetMs } = input;
+  const { client, bundles, sandboxId, tenantId, skills, budgetMs, signal } = input;
+  signal?.throwIfAborted();
   const budgetSeconds = Math.ceil(budgetMs / 1000);
   const expiresInSec = Math.min(900, Math.max(600, budgetSeconds + 60));
   const urls = new Map<string, string>();
@@ -159,7 +165,7 @@ export async function installSkillSet(input: {
   const budget = AbortSignal.timeout(budgetMs);
   try {
     for await (const chunk of client.exec(sandboxId, [...SKILL_INSTALL_COMMAND], {
-      user: "root", stdin: request, signal: budget,
+      user: "root", stdin: request, signal: signal ? AbortSignal.any([budget, signal]) : budget,
       timeoutSeconds: budgetSeconds + 30,
       onExit: (observed) => { seen.exit = observed; },
     })) {
@@ -169,6 +175,7 @@ export async function installSkillSet(input: {
     }
     scan(true);
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     if (budget.aborted) throw new SkillInstallError(seen.stage, `exceeded its budget of ${budgetSeconds} s`);
     throw new SkillInstallError(seen.stage, `the install exec failed: ${messageOf(error)}`);
   }
@@ -206,12 +213,30 @@ export interface SkillInstallerDeps extends SkillInstallBudget {
   bundles?: Pick<SkillBundleStore, "createInstallUrl">;
 }
 
+/** How a caller takes part in an install. */
+export interface SkillInstallOptions {
+  /**
+   * Cancels the caller's part: its own install is killed and recorded nowhere,
+   * a wait for another caller's install ends. Either rejects with the reason.
+   */
+  signal?: AbortSignal;
+  /** Called right before the caller's own install starts; never for a skip or a wait. */
+  onStart?(): void;
+}
+
+/** An install {@link SkillInstaller.begin} found necessary, running or waiting for one in flight. */
+export interface PendingSkillInstall {
+  /** The caller's own install's report; undefined when another's made it unnecessary. */
+  readonly settled: Promise<SkillInstallReport | undefined>;
+}
+
 /**
  * The Sandbox Manager's Skill Installs. Skips an install the binding already
  * recorded for the same Sandbox and Skill Set, runs at most one install per
  * binding in this process at a time (a parent and its Child Sessions each have
  * a SandboxSession but share the binding), retries a failed attempt once and
- * records the binding only after complete success.
+ * records the binding only after complete success. A cancelled install is
+ * neither retried nor recorded, and frees the binding at once.
  */
 export class SkillInstaller {
   private readonly inflight = new Map<unknown, Promise<SkillInstallReport>>();
@@ -221,23 +246,53 @@ export class SkillInstaller {
   constructor(private readonly deps: SkillInstallerDeps) {}
 
   /**
-   * Make `sandboxId` hold `skills`. Resolves undefined when nothing had to be
-   * installed. `key` identifies the binding; without a `ledger` the record is
-   * kept in this process.
+   * Decide whether `sandboxId` must install `skills`, and start making it hold
+   * them. Resolves undefined when the binding records the Set for the Sandbox
+   * and no install for the binding runs in this process: nothing is to be
+   * done. Otherwise resolves as soon as the caller's install has started, or
+   * its wait for the one in flight, without waiting for either. `key`
+   * identifies the binding; without a `ledger` the record is kept in this
+   * process.
    */
-  async ensure(key: unknown, ledger: SkillInstallLedger | undefined, target: { sandboxId: string; tenantId: string }, skills: SkillSet): Promise<SkillInstallReport | undefined> {
+  async begin(key: unknown, ledger: SkillInstallLedger | undefined, target: { sandboxId: string; tenantId: string }, skills: SkillSet, options: SkillInstallOptions = {}): Promise<PendingSkillInstall | undefined> {
     const book = ledger ?? this.localLedger(key);
+    const checked = !this.inflight.has(key);
+    if (checked && await this.holds(book, target, skills)) return undefined;
+    const settled = this.settle(key, book, target, skills, options, checked && !this.inflight.has(key));
+    // The caller may never look at the outcome of an install it started.
+    settled.catch(() => {});
+    return { settled };
+  }
+
+  /** {@link begin} and wait: the report of the caller's own install, undefined when it ran none. */
+  async ensure(key: unknown, ledger: SkillInstallLedger | undefined, target: { sandboxId: string; tenantId: string }, skills: SkillSet, options?: SkillInstallOptions): Promise<SkillInstallReport | undefined> {
+    return (await this.begin(key, ledger, target, skills, options))?.settled;
+  }
+
+  /**
+   * Wait for the install in flight, re-check what it recorded, and install the
+   * Set unless it did. `checked`: the caller just read that the binding does
+   * not hold the Set, and nothing was in flight.
+   */
+  private async settle(key: unknown, ledger: SkillInstallLedger, target: { sandboxId: string; tenantId: string }, skills: SkillSet, options: SkillInstallOptions, checked: boolean): Promise<SkillInstallReport | undefined> {
+    const { signal } = options;
     for (;;) {
+      signal?.throwIfAborted();
       const running = this.inflight.get(key);
       if (running) {
         // Re-check what the finished install recorded: it may have installed this Set.
-        await running.catch(() => undefined);
+        await untilSettled(running, signal);
+        checked = false;
         continue;
       }
-      const installed = await book.installed();
-      if (installed?.sandboxId === target.sandboxId && installed.setHash === skills.setHash) return undefined;
+      if (!checked && await this.holds(ledger, target, skills)) return undefined;
+      checked = false;
       if (this.inflight.has(key)) continue;
-      const install = this.install(book, target, skills).finally(() => {
+      signal?.throwIfAborted();
+      options.onStart?.();
+      // The binding is free as soon as its caller gives up on the install,
+      // even before a killed exec reports its end.
+      const install = cancellable(this.install(ledger, target, skills, signal), signal).finally(() => {
         if (this.inflight.get(key) === install) this.inflight.delete(key);
       });
       this.inflight.set(key, install);
@@ -245,16 +300,25 @@ export class SkillInstaller {
     }
   }
 
-  private async install(ledger: SkillInstallLedger, target: { sandboxId: string; tenantId: string }, skills: SkillSet): Promise<SkillInstallReport> {
+  private async holds(ledger: SkillInstallLedger, target: { sandboxId: string }, skills: SkillSet): Promise<boolean> {
+    let installed: InstalledSkillSet | null;
+    try { installed = await ledger.installed(); }
+    catch (error) { throw new SkillInstallError("check", `cannot read what the binding installed: ${messageOf(error)}`); }
+    return installed?.sandboxId === target.sandboxId && installed.setHash === skills.setHash;
+  }
+
+  private async install(ledger: SkillInstallLedger, target: { sandboxId: string; tenantId: string }, skills: SkillSet, signal?: AbortSignal): Promise<SkillInstallReport> {
     const budgetMs = skillInstallBudgetMs(skills, this.deps);
     let report: SkillInstallReport | undefined;
     for (let attempt = 1; !report; attempt++) {
       try {
-        report = await installSkillSet({ client: this.deps.client, bundles: this.deps.bundles, ...target, skills, budgetMs });
+        report = await installSkillSet({ client: this.deps.client, bundles: this.deps.bundles, ...target, skills, budgetMs, signal });
       } catch (error) {
-        if (attempt >= 2) throw error;
+        if (attempt >= 2 || signal?.aborted) throw error;
       }
     }
+    // An install its caller cancelled is not recorded, even once complete.
+    signal?.throwIfAborted();
     let recorded: boolean;
     try { recorded = await ledger.record({ sandboxId: target.sandboxId, setHash: skills.setHash }); }
     catch (error) { throw new SkillInstallError("record", `cannot record the install: ${messageOf(error)}`); }
@@ -268,4 +332,21 @@ export class SkillInstaller {
       record: async (installed) => { this.local.set(key, { ...installed }); return true; },
     };
   }
+}
+
+/** `work`, rejected with the signal's reason as soon as it aborts. */
+function cancellable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  work.catch(() => {});
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+/** Wait until `work` settles, whatever its outcome, or reject when the signal aborts first. */
+async function untilSettled(work: Promise<unknown>, signal?: AbortSignal): Promise<void> {
+  await cancellable(work.then(() => {}, () => {}), signal);
 }

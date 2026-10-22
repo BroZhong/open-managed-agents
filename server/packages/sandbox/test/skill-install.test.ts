@@ -241,3 +241,95 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     expect(installs()).toHaveLength(1);
   });
 });
+
+/** A promise the test settles. */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+describe("Skill Installer beside a Turn (#268)", () => {
+  async function installerFor(name = "writer") {
+    const fixture = await setUp();
+    const skills = skillSetOf([await fixture.bundles.add(name, [text("SKILL.md", name)])]);
+    const book = ledger(); book.bind(fixture.id);
+    const installer = new SkillInstaller({ client: fixture.client, bundles: fixture.bundles });
+    return { ...fixture, skills, book, installer, target: { sandboxId: fixture.id, tenantId: TENANT } };
+  }
+
+  it("decides first: begin resolves nothing for a recorded Set, else the started install without waiting for it", async () => {
+    const { client, id, skills, book, installer, target } = await installerFor();
+    const onStart = vi.fn();
+    const recorded = ledger({ sandboxId: id, setHash: skills.setHash });
+    expect(await installer.begin("recorded", recorded, target, skills, { onStart })).toBeUndefined();
+    expect(onStart).not.toHaveBeenCalled();
+    const download = deferred();
+    client.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
+    const pending = await installer.begin("binding", book, target, skills, { onStart });
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(book.record).not.toHaveBeenCalled();
+    download.resolve();
+    expect(await pending!.settled).toMatchObject({ downloaded: 1, skills: 1 });
+    expect(book.record).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an install whose caller aborts at once: no retry, no record, and the binding's single flight is free", async () => {
+    const { client, skills, book, installer, target, installs } = await installerFor();
+    // An exec that ignores the abort must not hold the caller or the binding.
+    client.skillInstallFault = (stage) => stage === "download" ? new Promise<void>(() => {}) : undefined;
+    const turn = new AbortController();
+    const pending = await installer.begin("binding", book, target, skills, { signal: turn.signal });
+    await vi.waitFor(() => expect(installs()).toHaveLength(1));
+    turn.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(pending!.settled).rejects.toMatchObject({ name: "AbortError", message: "Session interrupted" });
+    expect(installs()).toHaveLength(1);
+    expect(book.record).not.toHaveBeenCalled();
+    client.skillInstallFault = undefined;
+    expect(await installer.ensure("binding", book, target, skills)).toMatchObject({ downloaded: 1 });
+    expect(book.record).toHaveBeenCalledOnce();
+  });
+
+  it("stops a waiter that aborts without cancelling the install it waits for", async () => {
+    const { client, skills, book, installer, target, installs } = await installerFor();
+    const download = deferred();
+    client.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
+    const running = await installer.begin("binding", book, target, skills);
+    const child = new AbortController();
+    const onStart = vi.fn();
+    const waiting = await installer.begin("binding", book, target, skills, { signal: child.signal, onStart });
+    child.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(waiting!.settled).rejects.toMatchObject({ name: "AbortError" });
+    download.resolve();
+    expect(await running!.settled).toMatchObject({ downloaded: 1 });
+    expect(onStart).not.toHaveBeenCalled();
+    expect(installs()).toHaveLength(1);
+  });
+
+  it("lets a waiter install the Set itself once the install it waited for was aborted", async () => {
+    const { client, skills, book, installer, target, installs } = await installerFor();
+    const download = deferred();
+    client.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
+    const parent = new AbortController();
+    const running = await installer.begin("binding", book, target, skills, { signal: parent.signal });
+    const onStart = vi.fn();
+    const waiting = await installer.begin("binding", book, target, skills, { onStart });
+    expect(onStart).not.toHaveBeenCalled();
+    parent.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(running!.settled).rejects.toMatchObject({ name: "AbortError" });
+    client.skillInstallFault = undefined;
+    expect(await waiting!.settled).toMatchObject({ skills: 1 });
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(installs()).toHaveLength(2);
+    expect(book.record).toHaveBeenCalledOnce();
+  });
+
+  it("fails at check when the binding's record cannot be read", async () => {
+    const { skills, book, installer, target, installs } = await installerFor();
+    book.installed.mockRejectedValueOnce(new Error("connection terminated unexpectedly"));
+    await expect(installer.ensure("binding", book, target, skills)).rejects.toMatchObject({
+      name: "SkillInstallError", stage: "check", message: "Skill Install failed at check: cannot read what the binding installed: connection terminated unexpectedly",
+    });
+    expect(installs()).toHaveLength(0);
+  });
+});
