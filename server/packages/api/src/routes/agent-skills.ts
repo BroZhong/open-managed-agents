@@ -1,5 +1,6 @@
 import { SkillNameConflictError } from "@oma-server/store";
 import { replaceSkillFiles } from "../skills/replace-files.js";
+import { publicSkill } from "../lib/public-projection.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import type { AgentStore, SkillStore, SkillArtifactStore } from "@oma-server/store";
@@ -91,7 +92,7 @@ export function agentSkillRoutes(
     // the existing fork instead of creating a duplicate.
     const existingForks = await skillStore.listByOwner(agent.tenantId, "agent", agent.id);
     const already = existingForks.find((s) => s.sourceSkillId === library.id);
-    if (already && !body.overwrite) return c.json(already, 200);
+    if (already && !body.overwrite) return c.json(publicSkill(already), 200);
     const sameName = existingForks.find((s) => s.name === library.name);
     if (sameName && !body.overwrite) throw new SkillNameConflictError(library.name);
     if (sameName || already) {
@@ -103,7 +104,7 @@ export function agentSkillRoutes(
         description: library.description,
         sourceSkillId: library.id,
       });
-      return c.json(updated, 200);
+      return c.json(updated && publicSkill(updated), 200);
     }
 
     // Snapshot metadata → new Agent Skill, then copy the files.
@@ -126,7 +127,7 @@ export function agentSkillRoutes(
     const nextSkills = [...(agent.skills ?? []), fork.id];
     await agentStore.update(agent.id, { skills: nextSkills });
 
-    return c.json(fork, 201);
+    return c.json(publicSkill(fork), 201);
   });
 
   // DELETE /v1/agents/:id/skills/:skillId — unequip (delete the Agent's fork)

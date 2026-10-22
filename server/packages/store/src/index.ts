@@ -47,6 +47,7 @@ export type {
   SkillStore,
   SkillStoreCreateInput,
   SkillStoreUpdateInput,
+  SkillStoreUpdateOptions,
   SkillStoreListOpts,
 } from "./interfaces/skill-store.js";
 
@@ -120,6 +121,8 @@ export type {
 
 export { OSSArtifactStore } from "./oss/artifact-store.js";
 export { OSSEventPayloadStore } from "./oss/event-payload-store.js";
+export { OSSSkillBundleStore, skillBundleObjectKey } from "./oss/skill-bundle-store.js";
+export type { OSSSkillBundleStoreOptions } from "./oss/skill-bundle-store.js";
 export { EventPayloadCodec, BIG_RESULT_BYTES, lazyEventData, eventPayloadRef } from "./event-payload.js";
 export type { EventPayloadRef, EventPayloadStore } from "./event-payload.js";
 export { migrateEventPayloads } from "./postgres/migrate-event-payloads.js";
@@ -158,7 +161,36 @@ export type {
   PgConnectionConfig,
 } from "./postgres/index.js";
 
-export { SkillNameConflictError } from "./errors.js";
+export {
+  SkillNameConflictError,
+  SkillBundleTooLargeError,
+  InvalidSkillFileError,
+  InvalidSkillBundleError,
+  SkillVersionConflictError,
+} from "./errors.js";
+export {
+  SKILL_BUNDLE_MAX_BYTES,
+  EMPTY_SKILL_SET_HASH,
+  packSkillBundle,
+  listSkillBundle,
+  readSkillBundleFile,
+  unpackSkillBundle,
+  verifySkillBundle,
+  skillSetHash,
+  isSkillBundleSha256,
+  assertSkillBundleIdentity,
+  assertInstallUrlExpiry,
+  skillBundleColumns,
+} from "./skill-bundle.js";
+export type { SkillBundleStore } from "./interfaces/skill-bundle-store.js";
+export type {
+  PackedSkillBundle,
+  SkillBundleEntry,
+  SkillBundleFile,
+  SkillBundleInputFile,
+  SkillFileMode,
+  SkillSetMember,
+} from "./skill-bundle.js";
 export type * from "./interfaces/delegation-store.js";
 export { TransactionalDelegationStore, delegationFenceLost } from "./delegation-store.js";
 export type { DelegationTransaction, DelegationRecord, DelegationTable } from "./delegation-store.js";

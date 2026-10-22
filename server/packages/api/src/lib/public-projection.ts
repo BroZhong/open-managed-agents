@@ -1,4 +1,4 @@
-import type { Agent, Session } from "@oma-server/store";
+import type { Agent, Session, Skill } from "@oma-server/store";
 import { publicManagedMcpRefs } from "@oma-server/mcp-catalog";
 
 /** Remove Host-private MCP connection details from an Agent API response. */
@@ -26,5 +26,20 @@ export function sharedSession(session: Session) {
     status: session.status,
     agent: { name: session.agent.name },
     createdAt: session.createdAt,
+  };
+}
+
+/** The documented Skill shape; storage coordinates (the current Skill Bundle) stay Host-private. */
+export function publicSkill(skill: Skill) {
+  return {
+    id: skill.id,
+    tenantId: skill.tenantId,
+    name: skill.name,
+    description: skill.description,
+    ownerType: skill.ownerType,
+    ownerId: skill.ownerId,
+    sourceSkillId: skill.sourceSkillId,
+    createdAt: skill.createdAt,
+    updatedAt: skill.updatedAt,
   };
 }
