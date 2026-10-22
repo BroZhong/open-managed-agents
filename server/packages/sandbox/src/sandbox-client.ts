@@ -5,7 +5,7 @@ import type { WorkspaceMountTarget } from "./workspace-mount.js";
 
 /**
  * Low-level port over a disposable E2B sandbox. Workspace files reside in the
- * identity-scoped OSS mount; local HOME and Skill projections are disposable.
+ * identity-scoped OSS mount; local HOME and installed Skills are disposable.
  */
 
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -130,19 +130,4 @@ export interface SandboxClient {
 
   /** Tear the sandbox down. Idempotent — destroying twice is a no-op. */
   destroy(id: string): Promise<void>;
-}
-
-export interface SandboxFsAccess {
-  /** Write a UTF-8 file at an absolute sandbox path, creating parents. */
-  writeFile(path: string, content: string): Promise<void>;
-  /** Read a UTF-8 file at an absolute sandbox path. */
-  readFile(path: string): Promise<string>;
-  /** Write exact bytes at an absolute sandbox path, creating parents. */
-  writeFileBytes(path: string, content: Uint8Array): Promise<void>;
-  /** Read exact bytes at an absolute sandbox path. */
-  readFileBytes(path: string): Promise<Uint8Array>;
-  /** Remove a file or directory tree. Missing paths are an idempotent no-op. */
-  remove(path: string): Promise<void>;
-  /** List files under an absolute sandbox directory (recursively). */
-  list(dir: string): Promise<SandboxFileEntry[]>;
 }

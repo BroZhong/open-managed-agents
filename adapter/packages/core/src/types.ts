@@ -147,7 +147,7 @@ export interface AdapterInput {
      */
     skillPaths?: string[];
     /**
-     * Already-resolved metadata for sandbox-projected Skills. Required by
+     * Already-resolved metadata for Skills installed in the sandbox. Required by
      * runtimes that replace native tools with a Host-injected ToolExecutor:
      * those runtimes format the available-Skills prompt from these descriptors
      * and leave the bodies in the sandbox for the read tool to load.

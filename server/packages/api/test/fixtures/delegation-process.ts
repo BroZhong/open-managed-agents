@@ -7,7 +7,7 @@ import { SessionRouter } from "@oma-server/session-router";
 import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { startExecution } from "../../src/execution.js";
-import { InMemoryArtifactStore, InMemorySkillArtifactStore } from "@oma-server/store-memory";
+import { InMemoryArtifactStore, InMemorySkillBundleStore } from "@oma-server/store-memory";
 
 const pool = createPgPool(pgConfigFromEnv());
 const stores = await createPgStores(pool, { ensureSchema: false });
@@ -42,10 +42,10 @@ if (process.env.TEST_DELETE_URL) {
     deleted.add(id);
   };
 }
-const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, provisionSources: {}, lifecycle: activities });
+const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: activities });
 const workspaceMount = { bucket: "test", agentName: "test", pvName: "test", credentialProviderName: "test" };
 const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local: true,
-  artifactStore: new InMemoryArtifactStore(), skillArtifactStore: new InMemorySkillArtifactStore() };
+  artifactStore: new InMemoryArtifactStore(), skillBundleStore: new InMemorySkillBundleStore() };
 if (process.env.PARENT_SESSION_ID) {
   // A deterministic existing owner. Only the other OS process scans for children.
   const router = new SessionRouter({ ...deps, sandboxManager, workspaceMount, resolveAdapter: () => adapter,

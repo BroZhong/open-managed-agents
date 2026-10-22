@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import type { SandboxManager, SandboxSession } from "@oma-server/sandbox";
+import { SkillInstallError, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
@@ -12,12 +12,15 @@ const answers: Adapter = { async run(input) {
 } };
 
 /** A Sandbox that runs nothing; `fail` names the step that throws. */
-function sandbox(fail: "prepare" | "checkWorkspace"): SandboxManager {
+function sandbox(fail: "prepare" | "install" | "checkWorkspace"): SandboxManager {
   const session: SandboxSession = {
     fileSystem: {} as SandboxSession["fileSystem"],
     async *exec() { /* runs nothing */ },
     readFile: async () => "", writeFile: async () => {}, list: async () => [],
-    prepare: async () => { if (fail === "prepare") throw new Error("mount refused"); },
+    prepare: async () => {
+      if (fail === "prepare") throw new Error("mount refused");
+      if (fail === "install") throw new SkillInstallError("download", "HTTP 403, curl exit 0 for bundle 0123456789ab");
+    },
     checkWorkspace: async () => { if (fail === "checkWorkspace") throw new Error("mount gone"); },
     dispose: async () => {},
   };
@@ -32,6 +35,7 @@ describe("Errors the Router writes", () => {
     ["adapter_error", false, { resolveAdapter: () => ({ async run() { throw new Error("runtime crashed"); } }) }],
     ["sandbox_unavailable", true, {}],
     ["sandbox_prepare_failed", true, { sandboxManager: sandbox("prepare"), workspaceMount }],
+    ["skills_install_failed", true, { sandboxManager: sandbox("install"), workspaceMount }],
     ["workspace_storage_error", true, { sandboxManager: sandbox("checkWorkspace"), workspaceMount }],
   ])("%s names the Turn it is written in", async (code, sandboxed, deps) => {
     const stores = createMemoryStores();

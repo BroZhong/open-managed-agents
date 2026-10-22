@@ -1,6 +1,6 @@
 import { SANDBOX_WORKSPACE_ROOT, type ToolExecutor, type ToolFileSystem } from "@open-managed-agents/adapter-core";
 
-/** Absolute projections and temporary files remain inside the executor's boundary. */
+/** Absolute paths such as installed Skills and temporary files remain inside the executor's boundary. */
 export function toExecutorPath(path: string): string {
   if (path === SANDBOX_WORKSPACE_ROOT) return ".";
   const prefix = `${SANDBOX_WORKSPACE_ROOT}/`;

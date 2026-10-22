@@ -10,7 +10,6 @@ import type {
   AgentStore,
   Session,
   SkillStore,
-  SkillArtifactStore,
   DelegationStore,
   DelegationExecution,
   SandboxActivity,
@@ -21,12 +20,14 @@ import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
+import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf } from "@oma-server/sandbox";
 import type {
   EnvSpec,
   SandboxManager,
   SandboxSession,
+  SkillSet,
+  SkillSetMember,
   WorkspaceMountSpec,
-  ReadonlyProjection,
 } from "@oma-server/sandbox";
 import { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";
 import type {
@@ -63,6 +64,7 @@ type AdapterOutcome = { result: AdapterRunResult } | { error: unknown };
 interface EquippedSkill {
   id: string;
   descriptor: SkillDescriptor;
+  bundle: SkillSetMember;
 }
 
 /** What the ports of a Turn attempt's journal learn while the attempt is prepared. */
@@ -163,23 +165,20 @@ export interface SessionRouterDeps {
    */
   agentStore?: AgentStore;
   /**
-   * Tenant Skill Library metadata + S3 bodies. When both are present, the
-   * router selects the Agent's *equipped* Skills that are valid (exist, in this
-   * tenant, owned by this Agent when `ownerType==='agent'`, and non-empty) and
-   * declares each as a **Read-only Projection** into the sandbox at
-   * `/skills/<skill-name>` (ADR-0007). The Skill *content* flows S3→sandbox inside
-   * the SandboxManager (via `S3ProvisionSource`) — never through the Host — so
-   * the router consults `skillArtifactStore` only to confirm a Skill is
-   * non-empty (mirroring the old `materializeSkills`' zero-files skip), not to
-   * read bodies. Absent ⇒ no Skills projected.
+   * Tenant Skill metadata. Each Turn the router selects the Agent's
+   * *equipped* Skills that are valid (exist, in this tenant, owned by this
+   * Agent, with a current Skill Bundle) and hands their Skill Set to the
+   * Sandbox session, which installs it at `/skills/<skill-name>` unless the
+   * binding records that Set for its Sandbox (ADR-0022). Only PostgreSQL is
+   * read here; bundles go from OSS to the Sandbox, never through the Host.
+   * Absent ⇒ no Skills.
    *
    * WHY the sandbox and not a Host temp dir (ADR-0005 §4): the Pi adapter runs
    * `noTools: "builtin"` + custom tools, so Pi's prompt tells the model to
    * `read` a Skill's file — and that read is sandbox-mapped. A Skill left on the
-   * Host would therefore be unreadable; it MUST be projected into the sandbox.
+   * Host would therefore be unreadable; it MUST be installed into the sandbox.
    */
   skillStore?: SkillStore;
-  skillArtifactStore?: SkillArtifactStore;
   /**
    * Transient per-turn delta stream + active-turn map (Redis). When present,
    * token-level deltas are written to `stream:session:{sessionId}:turn:{turnId}` for server-side
@@ -253,7 +252,6 @@ export class SessionRouter {
   private readonly agentFileStore?: AgentFileStore;
   private readonly agentStore?: AgentStore;
   private readonly skillStore?: SkillStore;
-  private readonly skillArtifactStore?: SkillArtifactStore;
   private readonly turnStreamStore?: TurnStreamStore;
   private readonly defaultSandboxEnv?: Record<string, string>;
   private readonly managedSandboxEnvByAgentId?: Readonly<
@@ -338,7 +336,6 @@ export class SessionRouter {
     this.agentFileStore = deps.agentFileStore;
     this.agentStore = deps.agentStore;
     this.skillStore = deps.skillStore;
-    this.skillArtifactStore = deps.skillArtifactStore;
     this.turnStreamStore = deps.turnStreamStore;
     this.defaultSandboxEnv = deps.defaultSandboxEnv;
     this.managedSandboxEnvByAgentId = deps.managedSandboxEnvByAgentId;
@@ -789,7 +786,7 @@ export class SessionRouter {
     const bindingId = session.delegation?.sandboxSessionId ?? session.id;
     // Disposal rechecks shared users under binding coordination. A confirmed
     // missing resource can also clear an obsolete pointer despite old unknown use.
-    const sandbox = this.sandboxFor(sessionId, session, session.agent, []);
+    const sandbox = this.sandboxFor(sessionId, session, session.agent, EMPTY_SKILL_SET);
     if (sandbox) await sandbox.dispose();
     this.sessions.delete(sessionId);
     // Disposal may retain a binding that became busy after our first check.
@@ -854,15 +851,9 @@ export class SessionRouter {
   /**
    * Compute the complete recipe the SandboxManager needs for this Session
    * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
-   * Agent's image/env, and each validated equipped Skill as a Read-only
-   * Projection at `/skills/<skill-name>` outside the persistent Workspace.
-   *
-   * `equippedSkills` is precomputed by the caller (it needs async store
-   * lookups for ownership + non-empty validation), so `specFor` stays a pure
-   * value builder. The projection `source` is the weak-typed coordinate the
-   * `S3ProvisionSource` (registered under `kind: "s3"` in the manager's deps)
-   * reads: `{ tenantId, skillId }` maps straight onto
-   * `SkillArtifactStore.getAll` inside the manager (see `S3ProvisionRef`).
+   * Agent's image/env, and the Skill Set to install at `/skills/<skill-name>`
+   * outside the persistent Workspace. The Skill Set is precomputed by the
+   * caller (it needs async store lookups for ownership and validation).
    *
    * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
    * with the Agent's own `sandbox.env`, then any Host-managed values explicitly
@@ -872,7 +863,7 @@ export class SessionRouter {
   private specFor(
     session: Session,
     agent: Agent,
-    equippedSkills: EquippedSkill[],
+    skills: SkillSet,
   ): EnvSpec {
     if (!this.workspaceMount) throw new Error("OSS Workspace mount is not configured");
     const mergedEnv = {
@@ -887,14 +878,14 @@ export class SessionRouter {
       workspaceMount: { ...this.workspaceMount, prefix: workspaceObjectPrefix(session.tenantId, session.workspaceId) },
       image: agent.sandbox?.image,
       env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
-      projections: this.skillProjections(session, equippedSkills),
+      skills,
     };
   }
 
   /**
    * Get (or lazily open) this session's {@link SandboxSession} (design doc §6).
    * `open` is **cheap** — it starts no sandbox; the first filesystem/code
-   * primitive triggers create+mount verification+projection — so obtaining it here spins
+   * primitive triggers create+mount verification+Skill Install — so obtaining it here spins
    * nothing up for a pure-chat turn. The session is remembered in {@link sessions}
    * and reused across turns; it is disposed only at session end.
    *
@@ -905,34 +896,25 @@ export class SessionRouter {
     sessionId: string,
     session: Session,
     agent: Agent,
-    equippedSkills: EquippedSkill[],
+    skills: SkillSet,
   ): SandboxSession | undefined {
     if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
     let sandbox = this.sessions.get(sessionId);
     if (!sandbox) {
+      // A Child Session shares its root's binding, and so its Skill Install record.
       const bindingId = session.delegation?.sandboxSessionId ?? sessionId;
-      sandbox = this.sandboxManager.open(this.specFor(session, agent, equippedSkills), this.delegationStore ? {
+      const delegationStore = this.delegationStore;
+      sandbox = this.sandboxManager.open(this.specFor(session, agent, skills), delegationStore ? {
         id: bindingId,
-        withLock: (work) => this.delegationStore!.withEnvironmentLock(bindingId, work),
-        canReclaim: async () => !await this.delegationStore!.hasResourceUsers(bindingId),
+        withLock: (work) => delegationStore.withEnvironmentLock(bindingId, work),
+        canReclaim: async () => !await delegationStore.hasResourceUsers(bindingId),
         canExecute: async () => (await this.sessionStore.getById(sessionId))?.status !== "terminated",
+        installedSkills: () => delegationStore.installedSkillSet(bindingId),
+        recordSkillsInstalled: (installed) => delegationStore.recordSkillSetInstall(bindingId, installed),
       } : undefined);
       this.sessions.set(sessionId, sandbox);
     }
     return sandbox; // lazy: no sandbox actually started yet.
-  }
-
-  private skillProjections(
-    session: Session,
-    equippedSkills: EquippedSkill[],
-  ): ReadonlyProjection[] {
-    return equippedSkills.map(({ id, descriptor }) => ({
-      targetPath: `/skills/${descriptor.name}`,
-      source: {
-        kind: "s3",
-        ref: { tenantId: session.tenantId, skillId: id },
-      },
-    }));
   }
 
   /** Check availability without changing the completed answer or claiming all handles are saved. */
@@ -1464,7 +1446,7 @@ export class SessionRouter {
       // model API rejects. Loop on `hasMore` using the last seq seen as
       // `afterSeq` so history never silently truncates as a session grows.
       // Select the Agent's valid equipped Skills up front — the async store
-      // validation feeds BOTH the EnvSpec projections (via `sandboxFor`) and the
+      // validation feeds BOTH the Skill Set the Sandbox installs and the
       // in-sandbox `skillPaths` handed to the adapter, so the two never diverge.
       let equippedSkills: EquippedSkill[] = [];
 
@@ -1503,23 +1485,27 @@ export class SessionRouter {
       try {
           equippedSkills = await this.equippedSkills(currentAgent);
           if (stopped) return;
-          sandbox = this.sandboxFor(sessionId, session, currentAgent, equippedSkills);
+          const skills = skillSetOf(equippedSkills.map(({ bundle }) => bundle));
+          sandbox = this.sandboxFor(sessionId, session, currentAgent, skills);
           activitySandbox = sandbox;
-          await sandbox?.prepare(this.skillProjections(session, equippedSkills));
+          // The Skill Set is computed per attempt: a Resumed Turn installs the current one.
+          await sandbox?.prepare(skills);
           if (stopped) return;
         } catch (error) {
+          // A failed Skill Install names its stage; its reason carries no URL.
+          const code = error instanceof SkillInstallError ? "skills_install_failed" : "sandbox_prepare_failed";
           const refreshError = {
             message: error instanceof Error ? error.message : "Sandbox preparation failed",
-            code: "sandbox_prepare_failed",
+            code,
           };
-          if (!await endTurnWithError(turnId, "sandbox_prepare_failed", refreshError)) return;
+          if (!await endTurnWithError(turnId, code, refreshError)) return;
           continue;
       }
 
       // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
-      // skipped). Skills are no longer materialized to a Host temp dir — they are
-      // projected into the sandbox by the SandboxManager (ADR-0005 §4); the
-      // adapter is pointed at their in-sandbox `/skills/<skill-name>` roots below.
+      // skipped). Skills are not materialized on the Host — the SandboxManager
+      // installs them into the sandbox (ADR-0022); the adapter is pointed at
+      // their in-sandbox `/skills/<skill-name>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
       if (sandbox) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
       if (stopped) return;
@@ -1882,33 +1868,26 @@ export class SessionRouter {
   }
 
   /**
-   * Select the Agent's equipped Skills that should be projected into
-   * the sandbox as Read-only Projections at `/skills/<skill-name>` (ADR-0005 §4). This
-   * is the *validation* half of the old `materializeSkills`, minus the Host
-   * temp-dir write: it decides WHICH Skills become projections/descriptors; the *content*
-   * flows S3→sandbox inside the SandboxManager (`S3ProvisionSource`), never
-   * through the Host.
+   * Select the Agent's equipped Skills for this Turn: its Skill Set and the
+   * prompt's Skill descriptors (ADR-0022). Only PostgreSQL is read.
    *
-   * Preserved behavior, id-for-id, from `materializeSkills`:
-   *  - No Skill stores or no equipped Skills ⇒ no ids (no projections).
-   *  - A Skill is skipped unless it exists, is in this tenant, and — for
-   *    `ownerType==='agent'` — is owned by this Agent. Per ADR-0004
-   *    `agent.skills` holds the Agent's own Skill Fork ids, which always exist
-   *    while equipped; we still guard on ownership defensively.
-   *  - A Skill without its required `SKILL.md` is skipped. We confirm this with
-   *    `skillArtifactStore.list` (paths only) rather than
-   *    `getAll` (bodies) — the bodies are the manager's job now, so the router
-   *    reads only enough to make the include/skip decision.
+   *  - No Skill store or no equipped Skills ⇒ none.
+   *  - A Skill is skipped unless it exists, is in this tenant and is owned by
+   *    this Agent: per ADR-0004 `agent.skills` holds the Agent's own Skill Fork
+   *    ids, which always exist while equipped; ownership is still checked.
+   *  - A Skill without a Skill Bundle has no files to install and is skipped.
+   *  - Names become `/skills/<name>`: an unsafe or duplicate name fails the
+   *    Turn visibly before execution instead of hiding a Skill.
    */
   private async equippedSkills(agentConfig: Agent): Promise<EquippedSkill[]> {
     const skillIds = agentConfig.skills ?? [];
-    if (!this.skillStore || !this.skillArtifactStore || skillIds.length === 0) {
+    if (!this.skillStore || skillIds.length === 0) {
       return [];
     }
 
     const valid: EquippedSkill[] = [];
     for (const skillId of skillIds) {
-      // Only project the Agent's own forks (owned by this Agent, in this
+      // Only install the Agent's own forks (owned by this Agent, in this
       // tenant). Anything else (missing, cross-tenant, or a stale Library id
       // from pre-fork data) is skipped rather than trusted.
       const skill = await this.skillStore.getById(skillId);
@@ -1920,10 +1899,7 @@ export class SessionRouter {
       ) {
         continue;
       }
-      // Confirm the Skill has its entrypoint. `list` reads only paths — bytes are projected
-      // S3→sandbox by the manager, so the router never touches Skill content.
-      const files = await this.skillArtifactStore.list(agentConfig.tenantId, skillId);
-      if (!files.includes("SKILL.md")) continue;
+      if (skill.bundleSha256 === null || skill.bundleSize === null) continue;
       // Names become path components without rewriting: reject ambiguity rather
       // than silently hiding a second equipped Skill behind the first.
       validateArtifactPath(skill.name);
@@ -1938,6 +1914,7 @@ export class SessionRouter {
           description: skill.description,
           path: `/skills/${skill.name}/SKILL.md`,
         },
+        bundle: { name: skill.name, sha256: skill.bundleSha256, size: skill.bundleSize },
       });
     }
     return valid;

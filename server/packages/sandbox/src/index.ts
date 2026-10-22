@@ -31,7 +31,6 @@ export {
   type WorkspaceMountSpec,
   type WorkspaceMountTarget,
 } from "./workspace-mount.js";
-export type { SandboxFsAccess } from "./sandbox-client.js";
 
 export {
   EMPTY_SKILL_SET,
@@ -51,18 +50,6 @@ export {
   type SkillInstallReport,
   type SkillInstallBudget,
 } from "./skill-install.js";
-
-export {
-  S3ProvisionSource,
-  FakeProvisionSource,
-  isInsideWorkspace,
-  assertProjectionOutsideWorkspace,
-  type ProvisionSource,
-  type ProvisionCoordinate,
-  type ReadonlyProjection,
-  type ProjectionTarget,
-  type S3ProvisionRef,
-} from "./provision-source.js";
 
 export {
   DefaultSandboxManager,
