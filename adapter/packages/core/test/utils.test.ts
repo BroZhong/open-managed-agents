@@ -119,6 +119,27 @@ describe("isSpanEvent", () => {
     expect(isSpanEvent(event)).toBe(true);
   });
 
+  it("returns true for the Host's Skill Install spans", () => {
+    const start: SessionEvent = {
+      id: "sevt_abc",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      type: "span.skills_install_start",
+      installId: "1.1",
+      setHash: "a".repeat(64),
+      skills: 2,
+    };
+    const end: SessionEvent = {
+      ...start,
+      type: "span.skills_install_end",
+      outcome: "failed",
+      durationMs: 1200,
+      stage: "download",
+      reason: "HTTP 503, curl exit 0",
+    };
+    expect(isSpanEvent(start)).toBe(true);
+    expect(isSpanEvent(end)).toBe(true);
+  });
+
   it("returns false for non-span events", () => {
     const event: SessionEvent = {
       id: "sevt_abc",
