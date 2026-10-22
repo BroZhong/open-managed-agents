@@ -14,6 +14,7 @@ const answers: Adapter = { async run(input) {
 /** A Sandbox that runs nothing; `fail` names the step that throws. */
 function sandbox(fail: "prepare" | "checkWorkspace"): SandboxManager {
   const session: SandboxSession = {
+    fileSystem: {} as SandboxSession["fileSystem"],
     async *exec() { /* runs nothing */ },
     readFile: async () => "", writeFile: async () => {}, list: async () => [],
     prepare: async () => { if (fail === "prepare") throw new Error("mount refused"); },

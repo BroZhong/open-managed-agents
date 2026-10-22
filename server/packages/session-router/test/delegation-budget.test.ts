@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
+import type { TurnJournal } from "../src/turn-journal.js";
 
 describe("Host delegation budget", () => {
   it.each([7, 500, 1000])("assigns the Host budget of %i to create and resume", async (maximum) => {
@@ -15,7 +16,9 @@ describe("Host delegation budget", () => {
       sessions: stores.sessionStore,
       wake() {}, check() {}, maxSteps: maximum,
     });
-    const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal, effectiveConfig: { model: "provider/parent" } });
+    // Background delegations record nothing in the parent's journal.
+    const capability = coordinator.capability({ session: parent, turnId: "turn", fence: { eventId: input.id, ...claim! }, signal: new AbortController().signal,
+      effectiveConfig: { model: "provider/parent" }, journal: {} as TurnJournal });
     expect(capability.maxModelSteps).toBe(maximum);
     const override = { prompt: "task", runInBackground: true, model: "untrusted/different-model" };
     await expect(capability.delegate(override, { toolUseId: "model-override" }))

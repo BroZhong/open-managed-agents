@@ -1308,7 +1308,7 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     const skillArtifactStore = new TinySkillArtifactStore();
     const ids: string[] = [];
     for (const name of names) {
-      const skill = await skillStore.create({ tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name });
+      const skill = await skillStore.create({ tenantId: "tenant_1", ownerType: "agent", ownerId: sandboxedAgent.id, name, description: name });
       ids.push(skill.id);
       await skillArtifactStore.put("tenant_1", skill.id, "SKILL.md", "body");
     }

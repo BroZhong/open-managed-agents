@@ -7,6 +7,7 @@ import type { Adapter, AdapterInput, DurableEvent, SessionEvent, TurnJournalPort
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
 import { DelegationCoordinator } from "../src/delegation-coordinator.js";
+import type { TurnJournal } from "../src/turn-journal.js";
 import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
 import { acceptInterrupt } from "./accept-interrupt.js";
 
@@ -238,7 +239,7 @@ describe("Host-owned delegation through the Session Router", () => {
       pending: h.stores.pendingEventStore, sessions: h.stores.sessionStore,
       wake() {}, check() {}, maxSteps: 30 });
     expect(() => coordinator.capability({ session: child, turnId: "direct-child-turn",
-      fence: { eventId: "not-issued", ownerId: "host", generation: 1 }, signal: new AbortController().signal,
+      fence: { eventId: "not-issued", ownerId: "host", generation: 1 }, signal: new AbortController().signal, journal: {} as TurnJournal,
     })).toThrow("Child Sessions cannot receive delegation capabilities");
     await h.stores.pendingEventStore.enqueue(childId, { type: "user.message", data: { content: [{ type: "text", text: "try delegating again" }] }, sessionThreadId: "sthr_primary" });
     await h.makeRouter().handleNewEvent(childId, child.agent);
@@ -516,7 +517,7 @@ describe("Host-owned delegation through the Session Router", () => {
     expect(execution.notificationStatus).toBe("processed");
     expect(parentInputs).toHaveLength(2);
     expect(parentInputs[1].message.source).toBe("subagent_result");
-    expect(parentInputs[1].history.some((e) => e.type === "subagent.result")).toBe(false);
+    expect(parentInputs[1].history.some((e) => (e.type as string) === "subagent.result")).toBe(false);
     expect((await h.log()).filter((e) => e.type === "subagent.result")).toHaveLength(1);
     expect((await h.log(childId)).some((e) => e.type === "agent.message")).toBe(true);
     expect(h.errors).toEqual([]);

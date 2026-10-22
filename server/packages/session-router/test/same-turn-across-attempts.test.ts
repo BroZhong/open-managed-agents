@@ -51,7 +51,7 @@ async function harness(script: Script, { delegations = true }: { delegations?: b
   const lost = new Set<string>();
   const renew = stores.pendingEventStore.renewClaim.bind(stores.pendingEventStore);
   stores.pendingEventStore.renewClaim = async (sessionId, eventId, claim, leaseMs) =>
-    lost.has(claim.ownerId) ? false : renew(sessionId, eventId, claim, leaseMs);
+    lost.has(claim.ownerId) ? { renewed: false, interruptRequested: false } : renew(sessionId, eventId, claim, leaseMs);
   const claim = stores.pendingEventStore.claim.bind(stores.pendingEventStore);
   stores.pendingEventStore.claim = async (sessionId, ownerId, leaseMs) =>
     lost.has(ownerId) ? null : claim(sessionId, ownerId, leaseMs);
