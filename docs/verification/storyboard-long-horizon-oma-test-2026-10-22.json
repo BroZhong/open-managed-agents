@@ -1,0 +1,1170 @@
+{
+ "generatedAt": "2026-10-22T03:40Z",
+ "environment": {
+  "api": "https://agentry-test.welltop.tech/api",
+  "namespace": "oma-test",
+  "schema": "oma_test",
+  "imagePhase1": "oma-server:b8c1d8de1b7b",
+  "imagePhase2": "oma-server:194c53a81800",
+  "runners": "2 replicas, RollingUpdate maxSurge 1 / maxUnavailable 0, shareProcessNamespace"
+ },
+ "fixture": {
+  "agent": "agent_MQphuTegkqyda82d_elSj",
+  "model": "deepseek/deepseek-flash",
+  "thinking": "high",
+  "sandboxTemplate": "oma-scale-test-20261021",
+  "workspace": "scale_storyboard_200_20261021",
+  "evidence": "fixture-check.json"
+ },
+ "runs": [
+  {
+   "run": "01",
+   "session": "sess_aMRk1BQP128qb3PklclHV",
+   "window": "smoke",
+   "accepted": "2026-10-22T02:40:53.876Z",
+   "completed": "2026-10-22T02:51:02.747Z",
+   "durS": 609,
+   "shots": 47,
+   "children": 3,
+   "execs": 3,
+   "model": 81,
+   "modelRoot": 20,
+   "tools": 97,
+   "expired": 0,
+   "released": 0,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [],
+   "stageDur": {
+    "Director": 149,
+    "DP": 267,
+    "Formatter": 77
+   }
+  },
+  {
+   "run": "02",
+   "session": "sess_0rR1QgQFieErBHnuNyS9V",
+   "window": "fault",
+   "accepted": "2026-10-22T03:02:24.777Z",
+   "completed": "2026-10-22T03:12:25.408Z",
+   "durS": 601,
+   "shots": 48,
+   "children": 3,
+   "execs": 3,
+   "model": 67,
+   "modelRoot": 19,
+   "tools": 91,
+   "expired": 0,
+   "released": 2,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [
+    [
+     "root",
+     "released",
+     2,
+     1
+    ],
+    [
+     "Formatter",
+     "released",
+     2,
+     0
+    ]
+   ],
+   "stageDur": {
+    "Director": 174,
+    "DP": 235,
+    "Formatter": 80
+   }
+  },
+  {
+   "run": "03",
+   "session": "sess_cb3amDE6pi9eNoTK3RqAv",
+   "window": "fault",
+   "accepted": "2026-10-22T03:02:54.894Z",
+   "completed": "2026-10-22T03:17:01.513Z",
+   "durS": 847,
+   "shots": 44,
+   "children": 3,
+   "execs": 3,
+   "model": 102,
+   "modelRoot": 17,
+   "tools": 118,
+   "expired": 2,
+   "released": 2,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [
+    [
+     "root",
+     "expired",
+     2,
+     1
+    ],
+    [
+     "root",
+     "released",
+     3,
+     1
+    ],
+    [
+     "DP",
+     "released",
+     2,
+     0
+    ],
+    [
+     "Director",
+     "expired",
+     2,
+     0
+    ]
+   ],
+   "stageDur": {
+    "Director": 267,
+    "DP": 387,
+    "Formatter": 103
+   }
+  },
+  {
+   "run": "04",
+   "session": "sess_SnVVXTQTRWZHcyBnzF4-Z",
+   "window": "fault",
+   "accepted": "2026-10-22T03:03:24.963Z",
+   "completed": "2026-10-22T03:14:34.480Z",
+   "durS": 669,
+   "shots": 47,
+   "children": 3,
+   "execs": 3,
+   "model": 88,
+   "modelRoot": 28,
+   "tools": 104,
+   "expired": 2,
+   "released": 1,
+   "unknown": 1,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [
+    [
+     "root",
+     "expired",
+     2,
+     1
+    ],
+    [
+     "root",
+     "released",
+     3,
+     1
+    ],
+    [
+     "Director",
+     "expired",
+     2,
+     1
+    ]
+   ],
+   "stageDur": {
+    "Director": 235,
+    "DP": 259,
+    "Formatter": 46
+   }
+  },
+  {
+   "run": "05",
+   "session": "sess_EeW7ycS4c9n_A_ye4RjVK",
+   "window": "fault",
+   "accepted": "2026-10-22T03:03:55.105Z",
+   "completed": "2026-10-22T03:15:01.954Z",
+   "durS": 667,
+   "shots": 48,
+   "children": 3,
+   "execs": 3,
+   "model": 77,
+   "modelRoot": 20,
+   "tools": 96,
+   "expired": 2,
+   "released": 1,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [
+    [
+     "root",
+     "expired",
+     2,
+     1
+    ],
+    [
+     "root",
+     "released",
+     3,
+     1
+    ],
+    [
+     "Director",
+     "expired",
+     2,
+     0
+    ]
+   ],
+   "stageDur": {
+    "Director": 266,
+    "DP": 242,
+    "Formatter": 69
+   }
+  },
+  {
+   "run": "06",
+   "session": "sess_BlCdmLnLnVE7BL-YzPeQx",
+   "window": "fault",
+   "accepted": "2026-10-22T03:04:25.191Z",
+   "completed": "2026-10-22T03:16:24.725Z",
+   "durS": 720,
+   "shots": 47,
+   "children": 3,
+   "execs": 3,
+   "model": 91,
+   "modelRoot": 27,
+   "tools": 110,
+   "expired": 2,
+   "released": 1,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [
+    [
+     "root",
+     "expired",
+     2,
+     1
+    ],
+    [
+     "root",
+     "released",
+     3,
+     1
+    ],
+    [
+     "Director",
+     "expired",
+     2,
+     0
+    ]
+   ],
+   "stageDur": {
+    "Director": 263,
+    "DP": 264,
+    "Formatter": 68
+   }
+  },
+  {
+   "run": "07",
+   "session": "sess_qvVoln706DhymxE7G4ifM",
+   "window": "fault",
+   "accepted": "2026-10-22T03:04:55.346Z",
+   "completed": "2026-10-22T03:16:40.677Z",
+   "durS": 705,
+   "shots": 46,
+   "children": 3,
+   "execs": 3,
+   "model": 83,
+   "modelRoot": 21,
+   "tools": 103,
+   "expired": 2,
+   "released": 2,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [
+    [
+     "root",
+     "expired",
+     2,
+     1
+    ],
+    [
+     "root",
+     "released",
+     3,
+     1
+    ],
+    [
+     "DP",
+     "released",
+     2,
+     0
+    ],
+    [
+     "Director",
+     "expired",
+     2,
+     0
+    ]
+   ],
+   "stageDur": {
+    "Director": 228,
+    "DP": 290,
+    "Formatter": 75
+   }
+  },
+  {
+   "run": "08",
+   "session": "sess_fCr6brqfQX4x_QWbiidHV",
+   "window": "baseline",
+   "accepted": "2026-10-22T03:17:54.541Z",
+   "completed": "2026-10-22T03:28:04.160Z",
+   "durS": 610,
+   "shots": 48,
+   "children": 3,
+   "execs": 3,
+   "model": 80,
+   "modelRoot": 20,
+   "tools": 104,
+   "expired": 0,
+   "released": 0,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [],
+   "stageDur": {
+    "Director": 192,
+    "DP": 226,
+    "Formatter": 79
+   }
+  },
+  {
+   "run": "09",
+   "session": "sess_VysycfgrK8Kx7J2RKeZeA",
+   "window": "baseline",
+   "accepted": "2026-10-22T03:18:24.995Z",
+   "completed": "2026-10-22T03:29:31.717Z",
+   "durS": 667,
+   "shots": 48,
+   "children": 3,
+   "execs": 3,
+   "model": 67,
+   "modelRoot": 23,
+   "tools": 90,
+   "expired": 0,
+   "released": 0,
+   "unknown": 0,
+   "business": true,
+   "resume": true,
+   "failed": [],
+   "takeovers": [],
+   "stageDur": {
+    "Director": 243,
+    "DP": 231,
+    "Formatter": 71
+   }
+  }
+ ],
+ "runsEvidence": "evidence/p1-smoke/collected/run-lh-20261022-01.json, evidence/p2/collected/run-lh-20261022-NN.json; summary evidence/run-table.json",
+ "disruptions": [
+  {
+   "action": "kill9",
+   "at": "2026-10-22T03:06:27.700Z",
+   "pod": "oma-runner-6769c55fc8-ktfcg",
+   "pid": "52",
+   "heldAtObserverSample": [
+    {
+     "run": "lh-20261022-03",
+     "kind": "child",
+     "session": "sess_FUiBxXiLJIxsznSi9HFOS",
+     "status": "running"
+    },
+    {
+     "run": "lh-20261022-04",
+     "kind": "child",
+     "session": "sess_qNrRwF9OfFrIS2ODTO3lZ",
+     "status": "running"
+    },
+    {
+     "run": "lh-20261022-05",
+     "kind": "child",
+     "session": "sess_iJAUlyrxTkKg0Z37W-eT0",
+     "status": "running"
+    },
+    {
+     "run": "lh-20261022-06",
+     "kind": "child",
+     "session": "sess_vkOZuwzfj88pJlH6yQhrX",
+     "status": "running"
+    },
+    {
+     "run": "lh-20261022-07",
+     "kind": "child",
+     "session": "sess_eqvGCc6ttyO10vhgSYW6S",
+     "status": "running"
+    }
+   ],
+   "markers": [
+    {
+     "run": "lh-20261022-05",
+     "kind": "child",
+     "session": "sess_iJAUlyrxTkKg0Z37W-eT0",
+     "seq": 144,
+     "ts": "2026-10-22T03:06:52.420Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 0,
+     "latencyS": 24.7
+    },
+    {
+     "run": "lh-20261022-06",
+     "kind": "child",
+     "session": "sess_vkOZuwzfj88pJlH6yQhrX",
+     "seq": 89,
+     "ts": "2026-10-22T03:06:52.424Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 0,
+     "latencyS": 24.7
+    },
+    {
+     "run": "lh-20261022-05",
+     "kind": "root",
+     "session": "sess_EeW7ycS4c9n_A_ye4RjVK",
+     "seq": 107,
+     "ts": "2026-10-22T03:06:57.416Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 1,
+     "latencyS": 29.7
+    },
+    {
+     "run": "lh-20261022-06",
+     "kind": "root",
+     "session": "sess_BlCdmLnLnVE7BL-YzPeQx",
+     "seq": 137,
+     "ts": "2026-10-22T03:06:57.418Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 1,
+     "latencyS": 29.7
+    },
+    {
+     "run": "lh-20261022-04",
+     "kind": "root",
+     "session": "sess_SnVVXTQTRWZHcyBnzF4-Z",
+     "seq": 129,
+     "ts": "2026-10-22T03:06:57.452Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 1,
+     "latencyS": 29.8
+    },
+    {
+     "run": "lh-20261022-03",
+     "kind": "root",
+     "session": "sess_cb3amDE6pi9eNoTK3RqAv",
+     "seq": 86,
+     "ts": "2026-10-22T03:06:57.453Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 1,
+     "latencyS": 29.8
+    },
+    {
+     "run": "lh-20261022-03",
+     "kind": "child",
+     "session": "sess_FUiBxXiLJIxsznSi9HFOS",
+     "seq": 173,
+     "ts": "2026-10-22T03:06:57.457Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 0,
+     "latencyS": 29.8
+    },
+    {
+     "run": "lh-20261022-07",
+     "kind": "child",
+     "session": "sess_eqvGCc6ttyO10vhgSYW6S",
+     "seq": 78,
+     "ts": "2026-10-22T03:06:57.490Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 0,
+     "latencyS": 29.8
+    },
+    {
+     "run": "lh-20261022-07",
+     "kind": "root",
+     "session": "sess_qvVoln706DhymxE7G4ifM",
+     "seq": 112,
+     "ts": "2026-10-22T03:06:57.492Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 1,
+     "latencyS": 29.8
+    },
+    {
+     "run": "lh-20261022-04",
+     "kind": "child",
+     "session": "sess_qNrRwF9OfFrIS2ODTO3lZ",
+     "seq": 99,
+     "ts": "2026-10-22T03:06:57.519Z",
+     "generation": 2,
+     "reason": "expired",
+     "dangling": 1,
+     "latencyS": 29.8
+    }
+   ],
+   "latencyS": {
+    "min": 24.7,
+    "max": 29.8,
+    "median": 29.8
+   },
+   "reasons": {
+    "expired": 10
+   },
+   "reason": null
+  },
+  {
+   "action": "delete",
+   "at": "2026-10-22T03:10:54.851Z",
+   "pod": "oma-runner-6769c55fc8-wtf7m",
+   "pid": null,
+   "heldAtObserverSample": [
+    {
+     "run": "lh-20261022-02",
+     "kind": "child",
+     "session": "sess_Wqm0QVbcBhT6dM-djb3co",
+     "status": "running"
+    },
+    {
+     "run": "lh-20261022-03",
+     "kind": "child",
+     "session": "sess_VDF5wvQTsKN7mIRQNicSd",
+     "status": "running"
+    },
+    {
+     "run": "lh-20261022-07",
+     "kind": "child",
+     "session": "sess_KD6ANNCd46SuwRwuvVF68",
+     "status": "running"
+    }
+   ],
+   "markers": [
+    {
+     "run": "lh-20261022-02",
+     "kind": "child",
+     "session": "sess_Wqm0QVbcBhT6dM-djb3co",
+     "seq": 41,
+     "ts": "2026-10-22T03:11:01.124Z",
+     "generation": 2,
+     "reason": "released",
+     "dangling": 0,
+     "latencyS": 6.3
+    },
+    {
+     "run": "lh-20261022-02",
+     "kind": "root",
+     "session": "sess_0rR1QgQFieErBHnuNyS9V",
+     "seq": 163,
+     "ts": "2026-10-22T03:11:16.572Z",
+     "generation": 2,
+     "reason": "released",
+     "dangling": 1,
+     "latencyS": 21.7
+    },
+    {
+     "run": "lh-20261022-05",
+     "kind": "root",
+     "session": "sess_EeW7ycS4c9n_A_ye4RjVK",
+     "seq": 128,
+     "ts": "2026-10-22T03:11:16.573Z",
+     "generation": 3,
+     "reason": "released",
+     "dangling": 1,
+     "latencyS": 21.7
+    },
+    {
+     "run": "lh-20261022-06",
+     "kind": "root",
+     "session": "sess_BlCdmLnLnVE7BL-YzPeQx",
+     "seq": 157,
+     "ts": "2026-10-22T03:11:16.640Z",
+     "generation": 3,
+     "reason": "released",
+     "dangling": 1,
+     "latencyS": 21.8
+    },
+    {
+     "run": "lh-20261022-07",
+     "kind": "root",
+     "session": "sess_qvVoln706DhymxE7G4ifM",
+     "seq": 132,
+     "ts": "2026-10-22T03:11:16.646Z",
+     "generation": 3,
+     "reason": "released",
+     "dangling": 1,
+     "latencyS": 21.8
+    },
+    {
+     "run": "lh-20261022-03",
+     "kind": "root",
+     "session": "sess_cb3amDE6pi9eNoTK3RqAv",
+     "seq": 106,
+     "ts": "2026-10-22T03:11:16.647Z",
+     "generation": 3,
+     "reason": "released",
+     "dangling": 1,
+     "latencyS": 21.8
+    },
+    {
+     "run": "lh-20261022-04",
+     "kind": "root",
+     "session": "sess_SnVVXTQTRWZHcyBnzF4-Z",
+     "seq": 174,
+     "ts": "2026-10-22T03:11:16.648Z",
+     "generation": 3,
+     "reason": "released",
+     "dangling": 1,
+     "latencyS": 21.8
+    },
+    {
+     "run": "lh-20261022-07",
+     "kind": "child",
+     "session": "sess_KD6ANNCd46SuwRwuvVF68",
+     "seq": 112,
+     "ts": "2026-10-22T03:11:16.671Z",
+     "generation": 2,
+     "reason": "released",
+     "dangling": 0,
+     "latencyS": 21.8
+    },
+    {
+     "run": "lh-20261022-03",
+     "kind": "child",
+     "session": "sess_VDF5wvQTsKN7mIRQNicSd",
+     "seq": 168,
+     "ts": "2026-10-22T03:11:16.685Z",
+     "generation": 2,
+     "reason": "released",
+     "dangling": 0,
+     "latencyS": 21.8
+    }
+   ],
+   "latencyS": {
+    "min": 6.3,
+    "max": 21.8,
+    "median": 21.8
+   },
+   "reasons": {
+    "released": 9
+   },
+   "reason": null
+  },
+  {
+   "action": "rollout",
+   "at": "2026-10-22T03:15:24.860Z",
+   "pod": null,
+   "pid": null,
+   "heldAtObserverSample": [],
+   "markers": [],
+   "latencyS": null,
+   "reasons": null,
+   "reason": null
+  },
+  {
+   "action": "skip-optional-kill9",
+   "at": "2026-10-22T03:17:54Z",
+   "pod": null,
+   "pid": null,
+   "heldAtObserverSample": null,
+   "markers": null,
+   "latencyS": null,
+   "reasons": null,
+   "reason": "All six fault-window roots (02-07) were idle by the 03:16:35Z observer sample, before t0+15.5 min; plan rule: second kill only if >=2 fault-window runs still running."
+  }
+ ],
+ "disruptionsEvidence": "evidence/p2/disruptions.jsonl, evidence/p2/analysis.json, evidence/p2/db/claim-samples.jsonl (pre-kill9/post-kill9/pre-delete/post-delete/pre-rollout)",
+ "otherTenantSessionsAtDisruptions": {
+  "pre-kill9 11:05:15": null,
+  "pre-delete 11:10:16": null,
+  "pre-rollout 11:14:52": null,
+  "nonTestActivityInWindow": "only release-verifier Sessions sess_DctaSOsPzTJU-xLl4o2NT and sess_t4mHn7oz-OMIvxz56yqJT (tenant split-release-1792638022757) at 11:00:23-11:00:41 CST, before t0; 0 turn_resumed; one workspace_storage_error of its own",
+  "recoveryErrorsInNonTestSessions": 0
+ },
+ "outcomeUnknown": [
+  {
+   "run": "04",
+   "session": "sess_qNrRwF9OfFrIS2ODTO3lZ",
+   "role": "Director",
+   "toolUseId": "call_00_FpbecMEpanoxR6wrsMYN8204",
+   "resultSeq": 100,
+   "toolUseCommittedAt": "2026-10-22T03:06:27.004Z",
+   "killAt": "2026-10-22T03:06:27.700Z",
+   "command": "mkdir -p outputs/lh-20261022-04 && cat > /tmp/build_dn.py <<PY ... (29.5 KB script)",
+   "modelNext": "seq 105: ls the output dir and /tmp/build_dn.py (found the 29,521-byte script written at 03:06, output dir empty) -> seq 113: ran python3 /tmp/build_dn.py (SyntaxError) -> seq 122: rewrote the source with write; the original command was never repeated",
+   "rerunOfSameCall": false
+  }
+ ],
+ "conflictChecks": {
+  "turnResumedMarkers": 19,
+  "duplicateTakeoverGeneration": 0,
+  "claimGenerationDecreases": [],
+  "ownerChangeWithoutHigherGeneration": [],
+  "sessionsSampled": 23,
+  "delegationExecutions": 27,
+  "executionsCompleted": 27,
+  "duplicateExecutionPerAgentCall": 0,
+  "executionGenerationEqualsChildLastMarker": true,
+  "previousOwnerWritesAfterTakeover": 0,
+  "runnerLogPatterns": {
+   "oma-runner-5768d79fc7-2hwr9": {
+    "listening": {
+     "count": 1,
+     "first": "2026-10-22T11:16:06.761269751+08:00",
+     "last": "2026-10-22T11:16:06.761269751+08:00"
+    }
+   },
+   "oma-runner-5768d79fc7-w6gpl": {
+    "listening": {
+     "count": 1,
+     "first": "2026-10-22T11:16:43.590539759+08:00",
+     "last": "2026-10-22T11:16:43.590539759+08:00"
+    }
+   },
+   "oma-runner-6769c55fc8-kkjdp": {
+    "sigterm": {
+     "count": 1,
+     "first": "2026-10-22T11:16:23.227140821+08:00",
+     "last": "2026-10-22T11:16:23.227140821+08:00"
+    },
+    "listening": {
+     "count": 1,
+     "first": "2026-10-22T11:11:21.905371988+08:00",
+     "last": "2026-10-22T11:11:21.905371988+08:00"
+    }
+   },
+   "oma-runner-6769c55fc8-ktfcg": {
+    "sigterm": {
+     "count": 1,
+     "first": "2026-10-22T11:16:59.493064937+08:00",
+     "last": "2026-10-22T11:16:59.493064937+08:00"
+    },
+    "listening": {
+     "count": 2,
+     "first": "2026-10-22T10:59:52.998684908+08:00",
+     "last": "2026-10-22T11:06:33.562533159+08:00"
+    }
+   },
+   "oma-runner-6769c55fc8-wtf7m": {
+    "sigterm": {
+     "count": 1,
+     "first": "2026-10-22T11:10:56.478349692+08:00",
+     "last": "2026-10-22T11:10:56.478349692+08:00"
+    },
+    "detached": {
+     "count": 1,
+     "first": "2026-10-22T11:11:16.545505943+08:00",
+     "last": "2026-10-22T11:11:16.545505943+08:00"
+    },
+    "drain_failed": {
+     "count": 2,
+     "first": "2026-10-22T11:11:16.558288755+08:00",
+     "last": "2026-10-22T11:11:16.563336988+08:00"
+    },
+    "pool_ended": {
+     "count": 2,
+     "first": "2026-10-22T11:11:16.558331001+08:00",
+     "last": "2026-10-22T11:11:16.563356989+08:00"
+    }
+   }
+  },
+  "claimLostErrors": 0,
+  "writeFenceRefusals": 0,
+  "pgErrors": 0,
+  "journalFlushErrors": 0,
+  "evidence": "evidence/p2/db/conflict-check-runs01-07.json, evidence/p2/db/claim-generation-check.json, evidence/p2/takeover-writers-and-repeats.json, evidence/p2/analysis.json"
+ },
+ "journalFlush": {
+  "phase2TestSessions": {
+   "n": 2376,
+   "p50": 5,
+   "p90": 13.7,
+   "p99": 36.3,
+   "max": 663.6,
+   "errors": 0,
+   "maxBytes": 128860
+  },
+  "byPod": {
+   "oma-runner-5768d79fc7-2hwr9": {
+    "n": 247,
+    "p50": 5.1,
+    "p90": 12.2,
+    "p99": 17.2,
+    "max": 23.1,
+    "errors": 0,
+    "maxBytes": 92864
+   },
+   "oma-runner-5768d79fc7-w6gpl": {
+    "n": 287,
+    "p50": 4.8,
+    "p90": 11.9,
+    "p99": 17.1,
+    "max": 20.5,
+    "errors": 0,
+    "maxBytes": 89360
+   },
+   "oma-runner-6769c55fc8-ktfcg": {
+    "n": 1277,
+    "p50": 4.9,
+    "p90": 13.1,
+    "p99": 26.9,
+    "max": 663.6,
+    "errors": 0,
+    "maxBytes": 128860
+   },
+   "oma-runner-6769c55fc8-wtf7m": {
+    "n": 565,
+    "p50": 5.8,
+    "p90": 17,
+    "p99": 68.8,
+    "max": 93.1,
+    "errors": 0,
+    "maxBytes": 92393
+   }
+  },
+  "smoke": {
+   "p50": 4.6,
+   "p90": 11.4,
+   "p99": 22.6,
+   "max": 25.7,
+   "events": 463,
+   "bytes": 1263185,
+   "maxBytes": 90235
+  }
+ },
+ "runnerPods": {
+  "oma-runner-6769c55fc8-ktfcg": {
+   "firstSeen": "2026-10-22T03:02:04.770Z",
+   "lastSeen": "2026-10-22T03:17:07.879Z",
+   "notReadySamples": 2,
+   "maxRestarts": 1,
+   "lastTermination": {
+    "reason": "Error",
+    "exitCode": 137,
+    "finishedAt": "2026-10-22T03:06:28Z"
+   },
+   "samples": 60
+  },
+  "oma-runner-6769c55fc8-wtf7m": {
+   "firstSeen": "2026-10-22T03:02:04.770Z",
+   "lastSeen": "2026-10-22T03:11:19.944Z",
+   "notReadySamples": 0,
+   "maxRestarts": 0,
+   "lastTermination": null,
+   "samples": 38
+  },
+  "oma-runner-6769c55fc8-kkjdp": {
+   "firstSeen": "2026-10-22T03:11:04.941Z",
+   "lastSeen": "2026-10-22T03:16:35.038Z",
+   "notReadySamples": 4,
+   "maxRestarts": 0,
+   "lastTermination": null,
+   "samples": 23
+  },
+  "oma-runner-5768d79fc7-2hwr9": {
+   "firstSeen": "2026-10-22T03:15:35.015Z",
+   "lastSeen": "2026-10-22T03:30:53.243Z",
+   "notReadySamples": 4,
+   "maxRestarts": 0,
+   "lastTermination": null,
+   "samples": 61
+  },
+  "oma-runner-5768d79fc7-w6gpl": {
+   "firstSeen": "2026-10-22T03:16:35.038Z",
+   "lastSeen": "2026-10-22T03:30:53.243Z",
+   "notReadySamples": 1,
+   "maxRestarts": 0,
+   "lastTermination": null,
+   "samples": 57
+  }
+ },
+ "resourcePeaks": {
+  "oma-api-7b56b69dbc-prvrz": {
+   "cpu_m": 48.0,
+   "mem_Mi": 161.0
+  },
+  "oma-runner-6769c55fc8-ktfcg": {
+   "cpu_m": 592.0,
+   "mem_Mi": 776.0
+  },
+  "oma-runner-6769c55fc8-wtf7m": {
+   "cpu_m": 763.0,
+   "mem_Mi": 811.0
+  },
+  "redis-6db9fb4575-nmqfs": {
+   "cpu_m": 114.0,
+   "mem_Mi": 43.0
+  },
+  "oma-runner-6769c55fc8-kkjdp": {
+   "cpu_m": 730.0,
+   "mem_Mi": 306.0
+  },
+  "oma-runner-5768d79fc7-2hwr9": {
+   "cpu_m": 509.0,
+   "mem_Mi": 443.0
+  },
+  "oma-runner-5768d79fc7-w6gpl": {
+   "cpu_m": 374.0,
+   "mem_Mi": 445.0
+  }
+ },
+ "db": {
+  "window": [
+   "2026-10-22T11:02:05.771184+08:00",
+   "2026-10-22T11:30:46.120249+08:00"
+  ],
+  "windowSeconds": 1720,
+  "attribution": "No non-test Session wrote events between 11:02:05 and 11:30:46 (SQL: only the release verifier Sessions sess_DctaSOsPzTJU-xLl4o2NT / sess_t4mHn7oz-OMIvxz56yqJT wrote, at 11:00:23-11:00:41, before the window). The 8 roots were created at 11:01:58, 7 s before the before-snapshot; pg_stat counters lag, so sessions.ins (+27) includes 3 of those roots.",
+  "delta": {
+   "agent_files": {
+    "seq": 0,
+    "idx": 204,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "agents": {
+    "seq": 0,
+    "idx": 97,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "api_keys": {
+    "seq": 0,
+    "idx": 1548,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "delegation_commands": {
+    "seq": 973,
+    "idx": 0,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "delegation_environments": {
+    "seq": 1,
+    "idx": 644,
+    "ins": 8,
+    "upd": 67,
+    "hot": 67,
+    "del": 0
+   },
+   "delegation_executions": {
+    "seq": 0,
+    "idx": 3737,
+    "ins": 24,
+    "upd": 104,
+    "hot": 0,
+    "del": 0
+   },
+   "delegation_lock": {
+    "seq": 0,
+    "idx": 274,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "delegation_resource_uses": {
+    "seq": 195,
+    "idx": 169,
+    "ins": 42,
+    "upd": 92,
+    "hot": 89,
+    "del": 42
+   },
+   "delegation_waits": {
+    "seq": 0,
+    "idx": 2891,
+    "ins": 24,
+    "upd": 24,
+    "hot": 0,
+    "del": 0
+   },
+   "event_counters": {
+    "seq": 0,
+    "idx": 11717,
+    "ins": 32,
+    "upd": 3873,
+    "hot": 3873,
+    "del": 0
+   },
+   "events": {
+    "seq": 6,
+    "idx": 4982,
+    "ins": 3873,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "loops": {
+    "seq": 0,
+    "idx": 275,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "pending_events": {
+    "seq": 18050,
+    "idx": 98,
+    "ins": 32,
+    "upd": 1090,
+    "hot": 1090,
+    "del": 32
+   },
+   "session_cleanup": {
+    "seq": 0,
+    "idx": 691,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "sessions": {
+    "seq": 12,
+    "idx": 18724,
+    "ins": 27,
+    "upd": 150,
+    "hot": 66,
+    "del": 0
+   },
+   "skills": {
+    "seq": 0,
+    "idx": 969,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   },
+   "workspaces": {
+    "seq": 0,
+    "idx": 1170,
+    "ins": 0,
+    "upd": 0,
+    "hot": 0,
+    "del": 0
+   }
+  },
+  "inputs": 32,
+  "inputsByKind": {
+   "root": 8,
+   "child": 24
+  },
+  "claimedInputSeconds": 10076,
+  "pendingEventsUpdates": 1090,
+  "updatesPerInput": 34.1,
+  "expectedHeartbeatsAt10s": 1008,
+  "updatesPerExpectedHeartbeat": 1.08,
+  "heartbeatModel": "lease 30 s, renew every 10 s (session-router.ts:346-347); one UPDATE per claimed input per renewal, plus claim/takeover/release updates; ack is a DELETE",
+  "eventsInsertedPerRun": 484
+ },
+ "heartbeatWindows": [
+  {
+   "from": "pre-kill9",
+   "to": "post-kill9",
+   "seconds": 138,
+   "deltaUpdates": 143,
+   "avgLiveClaims": 11.0,
+   "updatesPerClaimPer10s": 0.94
+  },
+  {
+   "from": "post-kill9",
+   "to": "pre-delete",
+   "seconds": 163,
+   "deltaUpdates": 202,
+   "avgLiveClaims": 12.0,
+   "updatesPerClaimPer10s": 1.03
+  },
+  {
+   "from": "pre-delete",
+   "to": "post-delete",
+   "seconds": 110,
+   "deltaUpdates": 144,
+   "avgLiveClaims": 11.5,
+   "updatesPerClaimPer10s": 1.14
+  },
+  {
+   "from": "post-delete",
+   "to": "pre-rollout",
+   "seconds": 166,
+   "deltaUpdates": 182,
+   "avgLiveClaims": 8.0,
+   "updatesPerClaimPer10s": 1.37
+  },
+  {
+   "from": "pre-rollout",
+   "to": "baseline-mid",
+   "seconds": 613,
+   "deltaUpdates": 233,
+   "avgLiveClaims": 4.5,
+   "updatesPerClaimPer10s": 0.85
+  },
+  {
+   "from": "baseline-mid",
+   "to": "after",
+   "seconds": 341,
+   "deltaUpdates": 97,
+   "avgLiveClaims": 2.0,
+   "updatesPerClaimPer10s": 1.42
+  }
+ ],
+ "findings": [
+  {
+   "severity": "low",
+   "title": "Detached Turn settles after the PG pool is closed",
+   "where": "oma-runner-6769c55fc8-wtf7m 2026-10-22T11:11:16.558/.563 CST",
+   "sessions": [
+    "sess_VDF5wvQTsKN7mIRQNicSd (run 03 DP, marker seq 168)",
+    "sess_KD6ANNCd46SuwRwuvVF68 (run 07 DP, marker seq 112)"
+   ],
+   "detail": "Graceful shutdown detached both DP Turns at the 20 s deadline; the detached run later called finishSettledActivity -> PgDelegationStore.releaseResourceUse (session-router.ts:806, :1631) after the pool was ended: \"Runner drain failed: Cannot use a pool after calling end on the pool\". No functional effect: both resource-use rows were rewritten by the new owner (generation 2) and all delegation_resource_uses rows were gone at the end; both DPs completed. Shutdown ordering (close pool after detached settles, or skip the release on a detached attempt) would remove the false error."
+  },
+  {
+   "severity": "info",
+   "title": "Handoff of a Turn in a synchronous delegation wait or a long model request waits for the 20 s deadline",
+   "detail": "8 of 9 released takeovers happened 21.7-21.8 s after the delete (= SIGTERM + 20 s); only the Formatter that reached its model-request gate moved after 28 ms. Matches ADR-0021 (waits and in-flight requests detach at the deadline)."
+  },
+  {
+   "severity": "info",
+   "title": "Journal flush tail after a takeover burst",
+   "detail": "max 663.6 ms (sess_zOjDKD1NRTVgeklyKoPrg on ktfcg at 11:12:07, right after ktfcg took over 9 Turns); p99 36.3 ms over 2376 flushes."
+  }
+ ],
+ "cleanup": {
+  "testSessionsTerminated": 36,
+  "pendingAll": 0,
+  "runningOrWaitingAll": 0,
+  "delegationResourceUses": 0,
+  "rootBindingsCleared": 9,
+  "apiKey": "apikey_d35-mwlEl-kIX-oBRicNb revoked (post-revoke GET 401)",
+  "runners": "2/2 Ready oma-server:194c53a81800",
+  "evidence": "evidence/p2/db/cleanup-verified.json, apikey-revoke.json, evidence/p2/pods-final.txt"
+ }
+}
