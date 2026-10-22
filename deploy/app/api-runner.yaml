@@ -184,7 +184,7 @@ metadata:
   labels:
     app: oma-runner
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: oma-runner
@@ -321,8 +321,9 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 6
         resources:
+          # One Node.js process uses about one core; the 6 GiB heap needs the memory.
           limits:
-            cpu: '4'
+            cpu: '2'
             memory: 8Gi
         command:
         - node
@@ -339,9 +340,14 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 6
-  # Runners never overlap: a new Runner starts after the old one has stopped.
+  # A new Runner is ready before an old one receives SIGTERM, so the old one
+  # can hand its running Turns over instead of leaving them to lease expiry
+  # (ADR-0021).
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
 ---
 apiVersion: v1
 kind: Service

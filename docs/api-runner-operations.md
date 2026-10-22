@@ -49,7 +49,9 @@ cluster's virtual kubelet, `kubectl delete pod --force --grace-period=0` still
 delivers SIGTERM, so it tests the handoff; to test a lost Runner (lease expiry,
 reason `expired`), kill the process with SIGKILL inside the container.
 
-The first split release uses one API and one Runner. `deploy/app/api-runner.yaml`
+Each environment runs one API and two Runners (2 CPU / 8 GiB each). A rolling
+update starts a new Runner before an old one receives SIGTERM, which then hands
+its running Turns over (ADR-0021). `deploy/app/api-runner.yaml`
 provides separate ConfigMaps, Deployments, readiness probes and internal Services;
 `deploy/environments/` adds each environment's namespace and configuration.
 API Pods have no Pi config mount or Sandbox service account. The legacy
@@ -160,7 +162,7 @@ explicitly. The following commands are for the separately authorized release:
    its additive termination-event handling lets open pages reflect remote deletion.
 9. Record cleanup retries (`session_cleanup`), unknown activity retention
    (`sandbox_activities`), PG scan failures and the real image-pair evidence.
-   Return initial production counts to one API/one Runner after staging scale tests.
+   Return production to its configured counts (one API, two Runners) after staging scale tests.
 
 ## Rollback and recovery
 
