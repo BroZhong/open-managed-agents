@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workspaceConfigFromEnv } from "../src/lib/workspace-config.js";
+import { skillBundleStorageConfigFromEnv, workspaceConfigFromEnv } from "../src/lib/workspace-config.js";
 
 const env = {
   WORKSPACE_OSS_REGION: "oss-cn-shanghai", WORKSPACE_OSS_BUCKET: "agentry",
@@ -23,5 +23,10 @@ describe("OSS Workspace startup configuration", () => {
   it("rejects a disabled mount and an SDK request deadline below the ALB window", () => {
     expect(() => workspaceConfigFromEnv({ ...env, SANDBOX_ENABLED: "false" })).toThrow("SANDBOX_ENABLED=true");
     expect(() => workspaceConfigFromEnv({ ...env, E2B_REQUEST_TIMEOUT_MS: "60000" })).toThrow("180000");
+  });
+  it("signs Skill install URLs for the region's internal endpoint unless configured", () => {
+    expect(skillBundleStorageConfigFromEnv(env)).toMatchObject({ bucket: "agentry", internalEndpoint: "https://oss-cn-shanghai-internal.aliyuncs.com" });
+    expect(skillBundleStorageConfigFromEnv({ ...env, WORKSPACE_OSS_INTERNAL_ENDPOINT: " https://oss-cn-shanghai-internal.aliyuncs.com " }).internalEndpoint)
+      .toBe("https://oss-cn-shanghai-internal.aliyuncs.com");
   });
 });

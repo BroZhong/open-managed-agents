@@ -1,4 +1,4 @@
-import type { OSSArtifactStoreOptions } from "@oma-server/store";
+import type { OSSArtifactStoreOptions, OSSSkillBundleStoreOptions } from "@oma-server/store";
 import type { WorkspaceMountSpec } from "@oma-server/sandbox";
 
 type HostEnv = Readonly<Record<string, string | undefined>>;
@@ -21,6 +21,12 @@ export function workspaceStorageConfigFromEnv(env: HostEnv): OSSArtifactStoreOpt
     publicEndpoint: env.WORKSPACE_OSS_PUBLIC_ENDPOINT || `https://${region}.aliyuncs.com`,
   };
   return oss;
+}
+
+/** Skill Bundles share the Workspace Bucket and Host credentials; Sandboxes download them over the internal endpoint (ADR-0022). */
+export function skillBundleStorageConfigFromEnv(env: HostEnv): OSSSkillBundleStoreOptions {
+  const oss = workspaceStorageConfigFromEnv(env);
+  return { ...oss, internalEndpoint: env.WORKSPACE_OSS_INTERNAL_ENDPOINT?.trim() || `https://${oss.region}-internal.aliyuncs.com` };
 }
 
 export function workspaceConfigFromEnv(env: HostEnv) {

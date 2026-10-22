@@ -27,6 +27,7 @@ data:
   WORKSPACE_OSS_BUCKET: agentry
   WORKSPACE_OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
   WORKSPACE_OSS_PUBLIC_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  WORKSPACE_OSS_INTERNAL_ENDPOINT: https://oss-cn-shanghai-internal.aliyuncs.com
   SSE_CATCHUP_INTERVAL_MS: '2000'
 ---
 apiVersion: apps/v1
@@ -162,6 +163,7 @@ data:
   WORKSPACE_OSS_BUCKET: agentry
   WORKSPACE_OSS_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
   WORKSPACE_OSS_PUBLIC_ENDPOINT: https://oss-cn-shanghai.aliyuncs.com
+  WORKSPACE_OSS_INTERNAL_ENDPOINT: https://oss-cn-shanghai-internal.aliyuncs.com
   WORKSPACE_OSS_AGENT_NAME: agentry-workspace
   WORKSPACE_OSS_PV_NAME: agentry-workspace-oss
   WORKSPACE_OSS_CREDENTIAL_PROVIDER: agentry-oss-rw

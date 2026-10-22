@@ -2,7 +2,7 @@ import { modelProviderRoutes } from "./routes/model-providers.js";
 import { modelThinkingOptionsRoutes } from "./routes/model-thinking-options.js";
 import type { ModelProviderService } from "./lib/model-providers.js";
 import { cors } from "hono/cors";
-import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, SkillBundleStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -45,6 +45,7 @@ export interface AppDeps {
   agentFileStore?: AgentFileStore;
   skillStore?: SkillStore;
   skillArtifactStore?: SkillArtifactStore;
+  skillBundleStore?: SkillBundleStore;
   sessionStore?: SessionStore;
   eventLogStore?: EventLogIngressStore;
   pendingEventStore?: PendingEventIngressStore;
