@@ -81,6 +81,7 @@ trap 'rm -rf "${render_dir}"' EXIT
 
 resource_name="auto-story-v2"
 source_manifest="${REPO_ROOT}/sandbox/${resource_name}/sandboxset.yaml"
+policy_manifest="${REPO_ROOT}/sandbox/auto-story-v2/vfs-cli-0.3.20/policy-configmap.yaml"
 manifest="${source_manifest}"
 if [[ -n "${image}" ]]; then
   # The maintained SandboxSet has one container. Replace its pinned image,
@@ -101,11 +102,13 @@ echo "Pool:   ${resource_name}"
 
 if [[ "${apply}" == false ]]; then
   echo "Mode:   server-side dry-run"
+  kubectl_agent_platform apply --dry-run=server -f "${policy_manifest}" -o name
   kubectl_agent_platform apply --dry-run=server -f "${manifest}" -o name
   exit 0
 fi
 
 echo "Mode:   apply"
+kubectl_agent_platform apply -f "${policy_manifest}"
 kubectl_agent_platform apply -f "${manifest}"
 
 deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
