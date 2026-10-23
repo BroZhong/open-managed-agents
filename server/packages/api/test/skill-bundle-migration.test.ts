@@ -1,9 +1,13 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OSSSkillBundleStore, packSkillBundle, type OSSObjectClient, type Pool } from "@oma-server/store";
 import { createPgTestHarness, type PgTestHarness } from "../../store/test/pg-harness.js";
 import { fakeOSS, ossTestOptions } from "../../store/test/oss-harness.js";
 import { MigrationError, safeErrorMessage } from "../src/skill-bundle-migration/errors.js";
 import { fontProblem, loadReplacementFont } from "../src/skill-bundle-migration/fonts.js";
+import { FileOwnershipJournal } from "../src/skill-bundle-migration/journal.js";
 import { SupabaseSkillReader } from "../src/skill-bundle-migration/supabase-reader.js";
 import {
   PgSkillRows,
@@ -79,14 +83,22 @@ describe("migrateSkillBundles", () => {
   let oss: ReturnType<typeof countingOSS>;
   let store: OSSSkillBundleStore;
   let logs: string[];
+  let dir: string;
+  let journals: FileOwnershipJournal[];
 
+  const journalAt = (name = `run-${journals.length + 1}.journal.jsonl`) => {
+    const journal = new FileOwnershipJournal(join(dir, name));
+    journals.push(journal);
+    return journal;
+  };
+  const key = (skillId: string) => `${TENANT}/${skillId}`;
   const seedFiles = (skill: SeedSkill) => {
     for (const [path, body] of Object.entries(skill.files)) storage.put(`${skill.tenantId ?? TENANT}/skills/${skill.skillId}/${path}`, body);
   };
   const reader = () => new SupabaseSkillReader({
     endpoint: "http://storage.internal/storage/v1", serviceKey: SERVICE_KEY, bucket: "workspace-test", fetch: storage.fetch, sleep: async () => {},
   });
-  const deps = () => ({ rows: new PgSkillRows(harness.pool), source: reader(), bundles: store });
+  const deps = () => ({ rows: new PgSkillRows(harness.pool), source: reader(), bundles: store, journal: journalAt() });
   const run = (options: Partial<MigrationRunOptions> = {}) => migrateSkillBundles(deps(), {
     dryRun: false, font, target: TARGET, now: () => new Date("2026-10-10T00:00:00.000Z"), log: (line) => logs.push(line), ...options,
   });
@@ -108,12 +120,18 @@ describe("migrateSkillBundles", () => {
     oss = countingOSS();
     store = new OSSSkillBundleStore({ ...ossTestOptions, client: oss.client, cacheBytes: 0 });
     logs = [];
+    dir = mkdtempSync(join(tmpdir(), "oma-skill-bundle-migration-"));
+    journals = [];
     for (const skill of SEED) {
       await insertSkill(harness.pool, skill);
       seedFiles(skill);
     }
   });
-  afterEach(async () => { await harness.close(); });
+  afterEach(async () => {
+    for (const journal of journals) journal.close();
+    rmSync(dir, { recursive: true, force: true });
+    await harness.close();
+  });
 
   it("dry-runs every Skill: reads, packs, repairs and reports without writing anything", async () => {
     const before = await rows();
@@ -176,7 +194,7 @@ describe("migrateSkillBundles", () => {
     const first = await run();
     const putsAfterFirst = oss.calls.put;
     const stateAfterFirst = await rows();
-    const second = await run({ manifests: [parseManifest(JSON.parse(JSON.stringify(first)), TARGET)] });
+    const second = await run({ manifests: [parseManifest(JSON.stringify(first), TARGET)] });
     expect(second.totals.byStatus).toEqual({ unchanged: 4, failed: 2 });
     expect(second.skills.map((skill) => [skill.skillId, skill.bundleSha256, skill.reason])).toEqual(
       first.skills.map((skill) => [skill.skillId, skill.bundleSha256, skill.reason]));
@@ -200,7 +218,7 @@ describe("migrateSkillBundles", () => {
 
   it("delta processes only Skills updated after T0 and never overwrites a bundle the new API wrote", async () => {
     const full = await run();
-    const manifest = parseManifest(JSON.parse(JSON.stringify(full)), TARGET);
+    const manifest = parseManifest(JSON.stringify(full), TARGET);
     // After T0, the old API edits a fork in Supabase (bumping updated_at) and creates a Skill...
     storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# edited after T0\n"));
     await harness.pool.query("UPDATE skills SET updated_at = $1 WHERE skill_id = 'skill_fork2'", [new Date("2026-10-11T00:00:00.000Z")]);
@@ -231,7 +249,7 @@ describe("migrateSkillBundles", () => {
     });
 
     // A second delta, given both reports, finds nothing left to do.
-    const again = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest, parseManifest(JSON.parse(JSON.stringify(delta)), TARGET)] });
+    const again = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest, parseManifest(JSON.stringify(delta), TARGET)] });
     expect(again.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
       ["skill_bad", "failed"], ["skill_fork2", "unchanged"], ["skill_new", "unchanged"], ["skill_nomd", "failed"], ["skill_other", "kept"],
     ]);
@@ -239,7 +257,7 @@ describe("migrateSkillBundles", () => {
 
   it("delta selects Skills updated within a built-in 10-minute margin before T0, and every Skill without a bundle", async () => {
     const full = await run();
-    const manifest = parseManifest(JSON.parse(JSON.stringify(full)), TARGET);
+    const manifest = parseManifest(JSON.stringify(full), TARGET);
     // The old API bumps updated_at before it writes Supabase, and Pod clocks skew: an edit straddling T0
     // can carry an updated_at a little before T0 while the full run still read the old files.
     storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# edited across T0\n"));
@@ -297,6 +315,65 @@ describe("migrateSkillBundles", () => {
     expect(migrationExitCode({ ...clean, verification: { ...clean.verification, problems: [{ tenantId: TENANT, sha256: "a".repeat(64), problem: "no SKILL.md" }] } })).toBe(2);
   });
 
+  it("journals each claim before its write, so a run that dies midway still owns its rows and the next run takes the journal as manifest", async () => {
+    const full = await run();
+    const fullManifest = parseManifest(JSON.stringify(full), TARGET);
+    storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# fork2 v2\n"));
+    storage.put(`${TENANT}/skills/skill_other/ref/notes.md`, text("notes v2"));
+    // A rerun dies after writing skill_fork2's row and right before writing skill_other's, the last one.
+    const pg = new PgSkillRows(harness.pool);
+    let died!: () => void;
+    const death = new Promise<void>((resolve) => { died = resolve; });
+    const dying = {
+      hasBundleColumns: () => pg.hasBundleColumns(),
+      list: (...args: Parameters<PgSkillRows["list"]>) => pg.list(...args),
+      setBundle(...args: Parameters<PgSkillRows["setBundle"]>) {
+        if (args[0].skillId !== "skill_other") return pg.setBundle(...args);
+        died();
+        return new Promise<boolean>(() => {});
+      },
+    };
+    const journal = journalAt("crashed.journal.jsonl");
+    void migrateSkillBundles({ rows: dying, source: reader(), bundles: store, journal }, {
+      dryRun: false, font, target: TARGET, manifests: [fullManifest], skillConcurrency: 1, now: () => new Date("2026-10-11T00:00:00.000Z"),
+    });
+    await death;
+
+    const lines = readFileSync(journal.path, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+    expect(lines[0]).toMatchObject({ tool: "migrate-skill-bundles", kind: "journal", mode: "full", dryRun: false, target: TARGET, startedAt: "2026-10-11T00:00:00.000Z" });
+    // Unchanged rows are claimed too; Skills that failed are not.
+    expect(lines.slice(1).map((line) => [line.runId, line.skillId])).toEqual(
+      ["skill_fork1", "skill_fork2", "skill_lib", "skill_other"].map((skillId) => [lines[0].runId, skillId]));
+    const crashed = parseManifest(readFileSync(journal.path, "utf8"), TARGET);
+    expect(crashed).toMatchObject({ source: "journal", runId: lines[0].runId, mode: "full", startedAt: new Date("2026-10-11T00:00:00.000Z") });
+    const state = Object.fromEntries((await rows()).map((row) => [row.skill_id, row.bundle_sha256]));
+    expect(state.skill_fork2).toBe(crashed.bundles.get(key("skill_fork2")));
+    expect(state.skill_fork2).not.toBe(entry(full, "skill_fork2").bundleSha256);
+    expect(state.skill_other).toBe(entry(full, "skill_other").bundleSha256);
+
+    // The full report alone does not own the row the crashed run wrote: it would be kept forever.
+    const fullOnly = await run({ dryRun: true, manifests: [fullManifest] });
+    expect(entry(fullOnly, "skill_fork2")).toMatchObject({ status: "kept", reason: expect.stringMatching(/changed since the manifest/) });
+    // With the journal, it is the tool's own; and a claim whose write never happened does not take
+    // skill_other away from the full run that wrote its current bundle.
+    const next = await run({ manifests: [fullManifest, crashed] });
+    expect(next.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork1", "unchanged"], ["skill_fork2", "unchanged"],
+      ["skill_lib", "unchanged"], ["skill_nomd", "failed"], ["skill_other", "written"],
+    ]);
+    expect(entry(next, "skill_other").bundleSha256).toBe(crashed.bundles.get(key("skill_other")));
+    expect(next.manifests).toEqual([
+      { source: "report", runId: full.runId, mode: "full", startedAt: "2026-10-10T00:00:00.000Z", bundles: 4 },
+      { source: "journal", runId: lines[0].runId, mode: "full", startedAt: "2026-10-11T00:00:00.000Z", bundles: 4 },
+    ]);
+  });
+
+  it("refuses a real run without an ownership journal", async () => {
+    const { journal: _journal, ...withoutJournal } = deps();
+    await expect(migrateSkillBundles(withoutJournal, { dryRun: false, font, target: TARGET })).rejects.toThrow(/ownership journal/);
+    expect(oss.objects.size).toBe(0);
+  });
+
   it("reports a compare-and-set lost to a concurrent edit as a conflict and keeps the other writer's bundle", async () => {
     const pg = new PgSkillRows(harness.pool);
     const racing = {
@@ -307,7 +384,7 @@ describe("migrateSkillBundles", () => {
         return pg.setBundle(...args);
       },
     };
-    const report = await migrateSkillBundles({ rows: racing, source: reader(), bundles: store }, { dryRun: false, font, target: TARGET });
+    const report = await migrateSkillBundles({ rows: racing, source: reader(), bundles: store, journal: journalAt() }, { dryRun: false, font, target: TARGET });
     expect(entry(report, "skill_lib")).toMatchObject({ status: "conflict", reason: expect.stringMatching(/changed concurrently/) });
     expect((await rows()).find((row) => row.skill_id === "skill_lib")?.bundle_sha256).toBe("f".repeat(64));
   });
@@ -345,12 +422,12 @@ describe("migrateSkillBundles", () => {
     const legacy = { rows: new PgSkillRows(pool), source: reader(), bundles: store };
     const report = await migrateSkillBundles(legacy, { dryRun: true, font, target: TARGET });
     expect(report.skills.map((skill) => skill.status)).toEqual(["would-write"]);
-    await expect(migrateSkillBundles(legacy, { dryRun: false, font, target: TARGET })).rejects.toThrow(/0022/);
+    await expect(migrateSkillBundles({ ...legacy, journal: journalAt() }, { dryRun: false, font, target: TARGET })).rejects.toThrow(/0022/);
   });
 
   it("guards the delta: it needs a full run's report and a T0 no later than the earliest full run's start", async () => {
-    const first = parseManifest(JSON.parse(JSON.stringify(await run())), TARGET);
-    const second = parseManifest(JSON.parse(JSON.stringify(await run({ manifests: [first], now: () => new Date("2026-10-11T00:00:00.000Z") }))), TARGET);
+    const first = parseManifest(JSON.stringify(await run()), TARGET);
+    const second = parseManifest(JSON.stringify(await run({ manifests: [first], now: () => new Date("2026-10-11T00:00:00.000Z") })), TARGET);
     expect([first.mode, first.startedAt.toISOString(), second.mode, second.startedAt.toISOString()])
       .toEqual(["full", "2026-10-10T00:00:00.000Z", "full", "2026-10-11T00:00:00.000Z"]);
     await expect(run({ since: new Date("2026-10-10T00:00:00.000Z") })).rejects.toThrow(/full run's report/);
@@ -361,7 +438,7 @@ describe("migrateSkillBundles", () => {
       await expect(run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests })).resolves.toMatchObject({ mode: "delta" });
     }
     // A delta's report alone is no full run.
-    const delta = parseManifest(JSON.parse(JSON.stringify(await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [first, second] }))), TARGET);
+    const delta = parseManifest(JSON.stringify(await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [first, second] })), TARGET);
     await expect(run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [delta] })).rejects.toThrow(/full run's report/);
   });
 
@@ -385,7 +462,7 @@ describe("migrateSkillBundles", () => {
       async setBundle(...args: Parameters<PgSkillRows["setBundle"]>) { if (args[0].skillId === "skill_fork2") throw pgError; return pg.setBundle(...args); },
     };
     // One Skill at a time: skill_fork1 uploads the bundle it shares with skill_lib first.
-    const report = await migrateSkillBundles({ rows: failingRows, source: reader(), bundles: failingStore }, {
+    const report = await migrateSkillBundles({ rows: failingRows, source: reader(), bundles: failingStore, journal: journalAt() }, {
       dryRun: false, font, target: TARGET, skillConcurrency: 1, log: (line) => logs.push(line),
     });
     expect(report.skills.map((skill) => [skill.skillId, skill.status, skill.reason])).toEqual([
@@ -432,22 +509,41 @@ describe("parseManifest", () => {
       { tenantId: "t", skillId: "s2", status: "unchanged", bundleSha256: "b".repeat(64) },
       { tenantId: "t", skillId: "s3", status: "kept", bundleSha256: "c".repeat(64) },
       { tenantId: "t", skillId: "s4", status: "failed" },
+      { tenantId: "t", skillId: "s5", status: "failed", claimed: true, bundleSha256: "d".repeat(64) },
+      { tenantId: "t", skillId: "s6", status: "conflict", claimed: true, bundleSha256: "e".repeat(64) },
     ],
     ...overrides,
   });
+  const header = { tool: "migrate-skill-bundles", version: 1, kind: "journal", runId: "run-1", mode: "full", dryRun: false, since: null, target: TARGET, startedAt: "2026-10-10T00:00:00.000Z" };
+  const claim = (skillId: string, sha: string, runId = "run-1") => ({ runId, tenantId: "t", skillId, sha256: sha.repeat(64), size: 10 });
+  const jsonl = (...lines: unknown[]) => lines.map((line) => `${JSON.stringify(line)}\n`).join("");
 
-  it("maps every Skill whose bundle this migration wrote or confirmed", () => {
-    const manifest = parseManifest(report(), TARGET);
-    expect(manifest.mode).toBe("full");
+  it("maps every Skill whose bundle this migration claimed: written, unchanged, or claimed before its write failed", () => {
+    const manifest = parseManifest(JSON.stringify(report({ runId: "run-0" })), TARGET);
+    expect(manifest).toMatchObject({ source: "report", runId: "run-0", mode: "full" });
     expect(manifest.startedAt.toISOString()).toBe("2026-10-10T00:00:00.000Z");
+    expect([...manifest.bundles]).toEqual([["t/s1", "a".repeat(64)], ["t/s2", "b".repeat(64)], ["t/s5", "d".repeat(64)], ["t/s6", "e".repeat(64)]]);
+    // A report of the first version of the tool has no run id.
+    expect(parseManifest(JSON.stringify(report()), TARGET).runId).toBeNull();
+  });
+
+  it("reads an ownership journal, ignoring only a last line torn by a crash", () => {
+    const manifest = parseManifest(`${jsonl(header, claim("s1", "a"), claim("s2", "b"))}{"runId":"run-1","tenan`, TARGET);
+    expect(manifest).toMatchObject({ source: "journal", runId: "run-1", mode: "full", startedAt: new Date("2026-10-10T00:00:00.000Z") });
     expect([...manifest.bundles]).toEqual([["t/s1", "a".repeat(64)], ["t/s2", "b".repeat(64)]]);
+    expect([...parseManifest(jsonl(header), TARGET).bundles]).toEqual([]);
+    expect(() => parseManifest(`${jsonl(header)}{"torn"\n${jsonl(claim("s2", "b"))}`, TARGET)).toThrow(/line 2/);
+    expect(() => parseManifest(jsonl(header, claim("s1", "a", "run-2")), TARGET)).toThrow(/not a claim of run run-1/);
+    expect(() => parseManifest(jsonl({ ...header, target: { ...TARGET, ossBucket: "other" } }), TARGET)).toThrow(/ossBucket "other"/);
+    expect(() => parseManifest(jsonl({ ...header, runId: "" }), TARGET)).toThrow(/run id/);
   });
 
   it("rejects a dry-run, another environment and anything that is not this tool's report", () => {
-    expect(() => parseManifest(report({ dryRun: true }), TARGET)).toThrow(/dry-run/);
-    expect(() => parseManifest(report({ target: { ...TARGET, schema: "oma" } }), TARGET)).toThrow(/oma_test/);
-    expect(() => parseManifest(report({ target: { ...TARGET, supabaseBucket: "workspace" } }), TARGET)).toThrow(/workspace-test/);
-    expect(() => parseManifest({ hello: "world" }, TARGET)).toThrow(/not a migrate-skill-bundles report/);
+    expect(() => parseManifest(JSON.stringify(report({ dryRun: true })), TARGET)).toThrow(/dry-run/);
+    expect(() => parseManifest(JSON.stringify(report({ target: { ...TARGET, schema: "oma" } })), TARGET)).toThrow(/oma_test/);
+    expect(() => parseManifest(JSON.stringify(report({ target: { ...TARGET, supabaseBucket: "workspace" } })), TARGET)).toThrow(/workspace-test/);
+    expect(() => parseManifest(JSON.stringify({ hello: "world" }), TARGET)).toThrow(/not a migrate-skill-bundles report/);
+    expect(() => parseManifest("not json", TARGET)).toThrow(/not a migrate-skill-bundles report/);
   });
 });
 

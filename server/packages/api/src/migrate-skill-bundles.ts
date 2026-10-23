@@ -1,14 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { Agent } from "undici";
-import { OSSSkillBundleStore, createPgPool, pgConfigFromEnv } from "@oma-server/store";
-import { skillBundleStorageConfigFromEnv } from "./lib/workspace-config.js";
-import { MigrationError, safeErrorMessage } from "./skill-bundle-migration/errors.js";
-import { loadReplacementFont } from "./skill-bundle-migration/fonts.js";
-import { SupabaseSkillReader } from "./skill-bundle-migration/supabase-reader.js";
-import {
-  PgSkillRows, formatSummary, migrateSkillBundles, migrationExitCode, parseManifest, parseMigrationArgs,
-} from "./skill-bundle-migration/migration.js";
+import { main } from "./skill-bundle-migration/cli.js";
 
 /*
  * One-time migration of Supabase Skill files into Skill Bundles (#266, ADR-0022).
@@ -18,8 +8,9 @@ import {
  * environment's API Pod, which has PG_*, S3_ENDPOINT/SUPABASE_SERVICE_KEY,
  * S3_BUCKET and WORKSPACE_OSS_*. The deployed image predates this file, so
  * `deploy/scripts/run-skill-bundle-migration.sh` bundles it with esbuild,
- * copies it and the font into the Pod, runs it with node, copies the report
- * back and deletes the copies. Get the font first (see `fonts.ts`):
+ * copies it, the font and the manifests into the Pod, runs it with node,
+ * copies the report and the ownership journal back (also when the run fails)
+ * and deletes the copies. Get the font first (see `fonts.ts`):
  *
  *   curl -fsSLO https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz
  *   tar -xzf liberation-fonts-ttf-2.1.5.tar.gz liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf
@@ -34,8 +25,16 @@ import {
  *                             bumps updated_at before it writes Supabase, and Pod clocks skew), plus every
  *                             Skill without a bundle. T0 is the full run's `startedAt`, as is; a T0 later than
  *                             the earliest full run's `startedAt` among the manifests is refused.
- *   --manifest <report.json>  repeatable: rows whose bundle is still one a previous run recorded may be
- *                             refreshed; any other non-NULL bundle (the new API's) is kept
+ *   --manifest <report.json | journal.jsonl>
+ *                             repeatable: a previous real run's report or, if it died before writing one, its
+ *                             ownership journal. Rows whose bundle is one those runs claimed may be refreshed;
+ *                             any other non-NULL bundle (the new API's) is kept
+ *
+ * Ownership journal: a real run creates `<report>.journal.jsonl` beside the
+ * report (and refuses to start if it exists) and appends, fsynced, one claim
+ * per Skill before writing its row (`skill-bundle-migration/journal.ts`). A
+ * run that dies midway leaves no report, but its journal: pass it as
+ * --manifest to every later run, or the rows it wrote are kept forever.
  *
  * Rollout (ADR-0022): full run at T0 → deploy API + Runner → delta with
  * `--since <full startedAt> --manifest <full report>`. Rerunning with the
@@ -56,68 +55,6 @@ import {
  * failed verification; 1 when the run could not start or broke off.
  */
 
-/** A local input file; Node's own error would be printed as its code only. */
-function readInput(path: string, what: string): Buffer {
-  try {
-    return readFileSync(path);
-  } catch (error) {
-    throw new MigrationError(`Cannot read the ${what} ${path}: ${safeErrorMessage(error)}`);
-  }
-}
-
-/** The environment's own configuration errors name a variable, never its value. */
-function fromEnv<T>(read: () => T): T {
-  try {
-    return read();
-  } catch (error) {
-    throw new MigrationError((error as Error).message);
-  }
-}
-
-function parseJson(text: string, what: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new MigrationError(`The ${what} is not JSON`);
-  }
-}
-
-async function main(): Promise<void> {
-  const args = parseMigrationArgs(process.argv.slice(2), process.env);
-  const font = loadReplacementFont(new Uint8Array(readInput(args.fontPath, "font")));
-  const oss = fromEnv(() => skillBundleStorageConfigFromEnv(process.env));
-  const target = { schema: args.schema, supabaseBucket: args.supabaseBucket, ossBucket: oss.bucket };
-  const manifests = args.manifestPaths.map((path) =>
-    parseManifest(parseJson(readInput(path, "manifest").toString("utf8"), `manifest ${path}`), target));
-  // What the API and Runner Pods set (deploy/app/api-runner.yaml).
-  const endpoint = process.env.S3_ENDPOINT;
-  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
-  if (!endpoint || !serviceKey) throw new MigrationError("Supabase Storage needs S3_ENDPOINT and SUPABASE_SERVICE_KEY");
-  // As in bootstrap: keep internal Storage off any HTTP proxy.
-  const dispatcher = new Agent();
-  const directFetch: typeof fetch = (input, init) => fetch(input, { ...init, dispatcher } as RequestInit);
-  const pool = createPgPool({ ...fromEnv(() => pgConfigFromEnv()), max: 4 });
-  try {
-    const { rows: [connected] } = await pool.query<{ schema: string | null }>("SELECT current_schema() AS schema");
-    if (connected?.schema !== args.schema) throw new MigrationError(`Connected to schema ${connected?.schema}, not ${args.schema}`);
-    const report = await migrateSkillBundles({
-      rows: new PgSkillRows(pool),
-      source: new SupabaseSkillReader({ endpoint, serviceKey, bucket: args.supabaseBucket, fetch: directFetch, concurrency: args.concurrency }),
-      // No cache: the read-back after each upload must be a real OSS read.
-      bundles: new OSSSkillBundleStore({ ...oss, cacheBytes: 0 }),
-    }, { dryRun: args.dryRun, since: args.since, manifests, font, target, log: (line) => console.error(line) });
-    mkdirSync(dirname(args.reportPath), { recursive: true });
-    writeFileSync(args.reportPath, `${JSON.stringify(report, null, 2)}\n`);
-    console.log(formatSummary(report));
-    console.log(`Report: ${args.reportPath}`);
-    process.exitCode = migrationExitCode(report);
-  } finally {
-    await pool.end();
-    await dispatcher.close();
-  }
-}
-
-main().catch((error: unknown) => {
-  console.error(`migrate-skill-bundles: ${safeErrorMessage(error)}`);
-  process.exitCode = 1;
+main(process.argv.slice(2), process.env).then((code) => {
+  process.exitCode = code;
 });
