@@ -164,6 +164,9 @@ importers:
         specifier: 2.24.0
         version: 2.24.0(patch_hash=f2029501b71518fe31d3f9ef87ec63fcb58338c18558f6d315b23cbfa1e7a52e)
     devDependencies:
+      '@oma-server/store-memory':
+        specifier: workspace:*
+        version: link:../store-memory
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
