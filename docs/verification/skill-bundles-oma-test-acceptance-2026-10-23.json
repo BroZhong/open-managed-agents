@@ -1,0 +1,1365 @@
+{
+ "generatedAt": "2026-10-23T03:20Z",
+ "issue": "#270 (parent #259)",
+ "adr": "docs/adr/0022-skill-bundles.md",
+ "environment": {
+  "api": "https://agentry-test.welltop.tech/api",
+  "namespace": "oma-test",
+  "schema": "oma_test",
+  "oss": "bucket agentry, __oma/skills/<tenant>/<sha256>.zip",
+  "images": {
+   "oma-server": "sha256:efc577190e34e7b6a3a98a8fe327420063f107e514da5873339635a67277239b (git e2edb6655355, feat/skill-bundles)",
+   "oma-web": "sha256:77236e3c215d46bb3565fcdd76879061c6afd3deceacffdaf7722c7ecaaa9976",
+   "previous": "395e30e564f0"
+  },
+  "rolledOutAt": "2026-10-23T01:44-01:46Z",
+  "runners": "2 replicas (oma-runner-f954c5877-pq95k, -sk7hg), 2 CPU / 8 Gi, 0 restarts during the test",
+  "migrations": "0022, 0023 applied to oma_test; 77/77 Skills have a bundle"
+ },
+ "fixture": {
+  "agent": "agent_MQphuTegkqyda82d_elSj",
+  "model": "deepseek/deepseek-flash",
+  "thinking": "high",
+  "runtime": "pi-agent",
+  "sandboxTemplate": "oma-scale-test-20261021",
+  "sandboxEnvMatches1021Overrides": {
+   "enabled": true,
+   "image": true,
+   "env": true
+  },
+  "agentUpdatedAt": "2026-10-21T04:33:09.310Z",
+  "workspace": "scale_storyboard_200_20261021",
+  "inputsByteIdenticalTo1021": true,
+  "skills": {
+   "equipped": 19,
+   "withBundle": 19,
+   "totalUncompressedBytes": 4820727,
+   "expectedSetHash": "a49cf741eb6995a5cee4027a9dd1b67aca3ba96fb7f7b4eb47dfee079931299c"
+  },
+  "outputPrefix": "outputs/sk-20261023-NN/"
+ },
+ "windows": {
+  "smoke": {
+   "sent": "2026-10-23T02:31:11.5Z",
+   "completed": "2026-10-23T02:43:36.6Z"
+  },
+  "batch": {
+   "sent": "2026-10-23T02:46:26.8Z..02:51:48.1Z (30 roots, 10 s apart = 6/min)",
+   "lastCompleted": "2026-10-23T03:06:33.1Z"
+  },
+  "scratch": "2026-10-23T02:52:49Z..02:54:47Z",
+  "webConsole": "2026-10-23T02:58Z..03:05Z"
+ },
+ "runs": [
+  {
+   "run": "01",
+   "batch": "smoke",
+   "session": "sess_nlsAhiR7GQLj1s2jJkp87",
+   "durS": 745,
+   "shots": 47,
+   "children": 3,
+   "executions": 4,
+   "model": 79,
+   "tools": 99,
+   "installMs": 1085,
+   "rootRun2ModelMs": 4771,
+   "rootRun2ToolMs": 11296,
+   "childRun2ModelMaxMs": 588,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "02",
+   "batch": "batch",
+   "session": "sess_PNmy_KhBInHa8W8G1jp7C",
+   "durS": 755,
+   "shots": 47,
+   "children": 3,
+   "executions": 3,
+   "model": 86,
+   "tools": 111,
+   "installMs": 958,
+   "rootRun2ModelMs": 198,
+   "rootRun2ToolMs": 6213,
+   "childRun2ModelMaxMs": 517,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "03",
+   "batch": "batch",
+   "session": "sess_3TvveVTFtxga3qJ_BfLdy",
+   "durS": 836,
+   "shots": 48,
+   "children": 3,
+   "executions": 5,
+   "model": 99,
+   "tools": 121,
+   "installMs": 959,
+   "rootRun2ModelMs": 165,
+   "rootRun2ToolMs": 6116,
+   "childRun2ModelMaxMs": 843,
+   "childTurns": 5,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "04",
+   "batch": "batch",
+   "session": "sess_RP_e-wezwPdzMAWE5IsPm",
+   "durS": 1186,
+   "shots": 45,
+   "children": 3,
+   "executions": 3,
+   "model": 111,
+   "tools": 137,
+   "installMs": 916,
+   "rootRun2ModelMs": 179,
+   "rootRun2ToolMs": 5398,
+   "childRun2ModelMaxMs": 637,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "05",
+   "batch": "batch",
+   "session": "sess_s25LOEdRayHh02S7xI7qs",
+   "durS": 713,
+   "shots": 45,
+   "children": 3,
+   "executions": 3,
+   "model": 81,
+   "tools": 101,
+   "installMs": 982,
+   "rootRun2ModelMs": 173,
+   "rootRun2ToolMs": 5790,
+   "childRun2ModelMaxMs": 502,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "06",
+   "batch": "batch",
+   "session": "sess_TAJWFUdc9VReAQL6zU3L3",
+   "durS": 791,
+   "shots": 46,
+   "children": 3,
+   "executions": 3,
+   "model": 97,
+   "tools": 125,
+   "installMs": 954,
+   "rootRun2ModelMs": 149,
+   "rootRun2ToolMs": 5622,
+   "childRun2ModelMaxMs": 781,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "07",
+   "batch": "batch",
+   "session": "sess_SFdOdzutDqZGe2-2FGe9Q",
+   "durS": 821,
+   "shots": 47,
+   "children": 3,
+   "executions": 4,
+   "model": 90,
+   "tools": 109,
+   "installMs": 1770,
+   "rootRun2ModelMs": 392,
+   "rootRun2ToolMs": 7613,
+   "childRun2ModelMaxMs": 681,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "08",
+   "batch": "batch",
+   "session": "sess_3SzkNhtqNnD5ngb4ecxS2",
+   "durS": 786,
+   "shots": 48,
+   "children": 3,
+   "executions": 3,
+   "model": 73,
+   "tools": 94,
+   "installMs": 891,
+   "rootRun2ModelMs": 258,
+   "rootRun2ToolMs": 5697,
+   "childRun2ModelMaxMs": 598,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "09",
+   "batch": "batch",
+   "session": "sess_p-rBLpy3UcnW-uPr0Js0N",
+   "durS": 858,
+   "shots": 45,
+   "children": 3,
+   "executions": 4,
+   "model": 87,
+   "tools": 108,
+   "installMs": 958,
+   "rootRun2ModelMs": 173,
+   "rootRun2ToolMs": 5371,
+   "childRun2ModelMaxMs": 735,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "10",
+   "batch": "batch",
+   "session": "sess_Avb9Q9jvOE9nA-C7MT5ba",
+   "durS": 561,
+   "shots": 46,
+   "children": 3,
+   "executions": 3,
+   "model": 74,
+   "tools": 93,
+   "installMs": 913,
+   "rootRun2ModelMs": 180,
+   "rootRun2ToolMs": 5211,
+   "childRun2ModelMaxMs": 830,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "11",
+   "batch": "batch",
+   "session": "sess_gYqlBNG3fUjW2IriEz9Rd",
+   "durS": 789,
+   "shots": 46,
+   "children": 3,
+   "executions": 4,
+   "model": 77,
+   "tools": 96,
+   "installMs": 916,
+   "rootRun2ModelMs": 150,
+   "rootRun2ToolMs": 5544,
+   "childRun2ModelMaxMs": 534,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "12",
+   "batch": "batch",
+   "session": "sess_yNIdF-VE1xdFjaU_1oycz",
+   "durS": 771,
+   "shots": 46,
+   "children": 3,
+   "executions": 5,
+   "model": 94,
+   "tools": 117,
+   "installMs": 922,
+   "rootRun2ModelMs": 4465,
+   "rootRun2ToolMs": 9470,
+   "childRun2ModelMaxMs": 539,
+   "childTurns": 5,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "13",
+   "batch": "batch",
+   "session": "sess_hxtTVynw8Mb2muF2YzS7-",
+   "durS": 773,
+   "shots": 47,
+   "children": 3,
+   "executions": 4,
+   "model": 86,
+   "tools": 102,
+   "installMs": 1225,
+   "rootRun2ModelMs": 185,
+   "rootRun2ToolMs": 5831,
+   "childRun2ModelMaxMs": 500,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "14",
+   "batch": "batch",
+   "session": "sess_4OxryhxFCYDCeXRQ2sikc",
+   "durS": 670,
+   "shots": 47,
+   "children": 3,
+   "executions": 3,
+   "model": 82,
+   "tools": 106,
+   "installMs": 890,
+   "rootRun2ModelMs": 224,
+   "rootRun2ToolMs": 5818,
+   "childRun2ModelMaxMs": 739,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "15",
+   "batch": "batch",
+   "session": "sess_NTIPk6YqZ2NVFbAkNAt8E",
+   "durS": 742,
+   "shots": 47,
+   "children": 3,
+   "executions": 3,
+   "model": 73,
+   "tools": 99,
+   "installMs": 913,
+   "rootRun2ModelMs": 176,
+   "rootRun2ToolMs": 5479,
+   "childRun2ModelMaxMs": 650,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "16",
+   "batch": "batch",
+   "session": "sess_fbOpBP7NJQOj6KSQ_afFh",
+   "durS": 777,
+   "shots": 47,
+   "children": 3,
+   "executions": 4,
+   "model": 104,
+   "tools": 120,
+   "installMs": 896,
+   "rootRun2ModelMs": 241,
+   "rootRun2ToolMs": 5667,
+   "childRun2ModelMaxMs": 811,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "17",
+   "batch": "batch",
+   "session": "sess_ri04L7YBoD9g0ykPRa1k1",
+   "durS": 685,
+   "shots": 45,
+   "children": 3,
+   "executions": 5,
+   "model": 88,
+   "tools": 105,
+   "installMs": 889,
+   "rootRun2ModelMs": 166,
+   "rootRun2ToolMs": 5954,
+   "childRun2ModelMaxMs": 913,
+   "childTurns": 5,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "18",
+   "batch": "batch",
+   "session": "sess_NklHKTn1yP8zzBE9s68m6",
+   "durS": 631,
+   "shots": 46,
+   "children": 3,
+   "executions": 4,
+   "model": 71,
+   "tools": 94,
+   "installMs": 1047,
+   "rootRun2ModelMs": 168,
+   "rootRun2ToolMs": 5916,
+   "childRun2ModelMaxMs": 869,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "19",
+   "batch": "batch",
+   "session": "sess_4ZssyX8J_WKMI9cMpe-RX",
+   "durS": 673,
+   "shots": 50,
+   "children": 3,
+   "executions": 3,
+   "model": 67,
+   "tools": 94,
+   "installMs": 885,
+   "rootRun2ModelMs": 172,
+   "rootRun2ToolMs": 5855,
+   "childRun2ModelMaxMs": 570,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "20",
+   "batch": "batch",
+   "session": "sess_jn_JNbVooGpaaN-rfsonq",
+   "durS": 780,
+   "shots": 46,
+   "children": 3,
+   "executions": 4,
+   "model": 96,
+   "tools": 110,
+   "installMs": 1267,
+   "rootRun2ModelMs": 215,
+   "rootRun2ToolMs": 6150,
+   "childRun2ModelMaxMs": 620,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "21",
+   "batch": "batch",
+   "session": "sess_fGN8NVW4QkrU-htI1YoYg",
+   "durS": 757,
+   "shots": 47,
+   "children": 3,
+   "executions": 3,
+   "model": 86,
+   "tools": 111,
+   "installMs": 883,
+   "rootRun2ModelMs": 195,
+   "rootRun2ToolMs": 5512,
+   "childRun2ModelMaxMs": 512,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "22",
+   "batch": "batch",
+   "session": "sess_8mZK-EU9Txn7QdHt5pge6",
+   "durS": 749,
+   "shots": 49,
+   "children": 3,
+   "executions": 3,
+   "model": 78,
+   "tools": 97,
+   "installMs": 953,
+   "rootRun2ModelMs": 343,
+   "rootRun2ToolMs": 5961,
+   "childRun2ModelMaxMs": 1042,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "23",
+   "batch": "batch",
+   "session": "sess_Pn-h1o58zW7ucmKCxYNf2",
+   "durS": 801,
+   "shots": 46,
+   "children": 3,
+   "executions": 4,
+   "model": 94,
+   "tools": 123,
+   "installMs": 1293,
+   "rootRun2ModelMs": 463,
+   "rootRun2ToolMs": 6894,
+   "childRun2ModelMaxMs": 4215,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "24",
+   "batch": "batch",
+   "session": "sess_jsP5r6cTZWkfk-Abw1lLl",
+   "durS": 840,
+   "shots": 47,
+   "children": 3,
+   "executions": 4,
+   "model": 92,
+   "tools": 122,
+   "installMs": 881,
+   "rootRun2ModelMs": 390,
+   "rootRun2ToolMs": 5689,
+   "childRun2ModelMaxMs": 533,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "25",
+   "batch": "batch",
+   "session": "sess_VU__LY5xTe-KAR6m6A1OF",
+   "durS": 825,
+   "shots": 46,
+   "children": 3,
+   "executions": 3,
+   "model": 88,
+   "tools": 108,
+   "installMs": 1210,
+   "rootRun2ModelMs": 186,
+   "rootRun2ToolMs": 6020,
+   "childRun2ModelMaxMs": 783,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "26",
+   "batch": "batch",
+   "session": "sess_LoE5WKRJhhdE1J0tviS-c",
+   "durS": 839,
+   "shots": 47,
+   "children": 3,
+   "executions": 3,
+   "model": 100,
+   "tools": 122,
+   "installMs": 895,
+   "rootRun2ModelMs": 241,
+   "rootRun2ToolMs": 5527,
+   "childRun2ModelMaxMs": 561,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "27",
+   "batch": "batch",
+   "session": "sess_spdalUzd8VyV6-YjSb0Z2",
+   "durS": 734,
+   "shots": 46,
+   "children": 3,
+   "executions": 4,
+   "model": 90,
+   "tools": 110,
+   "installMs": 887,
+   "rootRun2ModelMs": 174,
+   "rootRun2ToolMs": 5214,
+   "childRun2ModelMaxMs": 870,
+   "childTurns": 4,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "28",
+   "batch": "batch",
+   "session": "sess_8PgzT2baNvJkdL5oL-6tn",
+   "durS": 725,
+   "shots": 48,
+   "children": 3,
+   "executions": 3,
+   "model": 80,
+   "tools": 101,
+   "installMs": 1274,
+   "rootRun2ModelMs": 503,
+   "rootRun2ToolMs": 7029,
+   "childRun2ModelMaxMs": 632,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "29",
+   "batch": "batch",
+   "session": "sess_k7hMaV4D42evS9ZreMncC",
+   "durS": 643,
+   "shots": 45,
+   "children": 3,
+   "executions": 3,
+   "model": 73,
+   "tools": 99,
+   "installMs": 1238,
+   "rootRun2ModelMs": 266,
+   "rootRun2ToolMs": 5829,
+   "childRun2ModelMaxMs": 520,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "30",
+   "batch": "batch",
+   "session": "sess_qHUALY1jGBba7IlNebF55",
+   "durS": 654,
+   "shots": 48,
+   "children": 3,
+   "executions": 3,
+   "model": 74,
+   "tools": 92,
+   "installMs": 879,
+   "rootRun2ModelMs": 450,
+   "rootRun2ToolMs": 5650,
+   "childRun2ModelMaxMs": 611,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  },
+  {
+   "run": "31",
+   "batch": "batch",
+   "session": "sess_65DiPUO9FssLxFX7rq8yg",
+   "durS": 714,
+   "shots": 45,
+   "children": 3,
+   "executions": 3,
+   "model": 78,
+   "tools": 97,
+   "installMs": 1076,
+   "rootRun2ModelMs": 368,
+   "rootRun2ToolMs": 5998,
+   "childRun2ModelMaxMs": 430,
+   "childTurns": 3,
+   "childInstallSpans": 0,
+   "business": true,
+   "resume": true,
+   "skills": true,
+   "failed": []
+  }
+ ],
+ "aggregate": {
+  "runs": 31,
+  "rootSessions": 31,
+  "childSessions": 93,
+  "checksAllPass": {
+   "threeDistinctChildren": true,
+   "allSync": true,
+   "allExecutionsCompleted": true,
+   "serialExecutions": true,
+   "noNestedDelegation": true,
+   "oneExecutionPerAgentCall": true,
+   "childrenParentedToRoot": true,
+   "oneCompletionPerInput": true,
+   "noRecoveryErrors": true,
+   "noSessionErrors": true,
+   "everyToolUseOneResult": true,
+   "noDuplicateTakeoverGeneration": true,
+   "pendingAcknowledged": true,
+   "singleRootTurn": true,
+   "rootOneInstalledPair": true,
+   "childrenNoInstall": true,
+   "noSkillOrPrepareErrors": true,
+   "csvValid": true,
+   "resultConsistent": true
+  },
+  "durationSBatch": {
+   "n": 30,
+   "p50": 764,
+   "p95": 850,
+   "max": 1186,
+   "min": 561,
+   "mean": 763
+  },
+  "shots": {
+   "n": 31,
+   "p50": 47,
+   "p95": 48,
+   "max": 50,
+   "min": 45,
+   "mean": 47
+  },
+  "executions": {
+   "total": 110,
+   "repairExecutions": 17,
+   "runsWithRepairs": 14
+  },
+  "totals": {
+   "modelRequests": 2648,
+   "toolCalls": 3323,
+   "takeovers": 0,
+   "outcomeUnknown": 0
+  },
+  "outputScope": {
+   "batchNewOutputFiles": 387,
+   "batchStray": [],
+   "smokeStray": [],
+   "identicalCsvGroups": [],
+   "crossRunSharedChildren": []
+  },
+  "peakConcurrency": {
+   "activeRoots": 30,
+   "childrenRunning": 29,
+   "sampledAt": "2026-10-23T02:51:20Z"
+  }
+ },
+ "skillInstallSpans": {
+  "root": {
+   "sessions": 31,
+   "turns": 141,
+   "starts": 31,
+   "ends": 31,
+   "outcomes": {
+    "installed": 31,
+    "failed": 0,
+    "aborted": 0
+   },
+   "installOnFirstTurn": 31
+  },
+  "child": {
+   "sessions": 93,
+   "turns": 110,
+   "starts": 0,
+   "ends": 0
+  }
+ },
+ "install": {
+  "durationMs": {
+   "n": 31,
+   "p50": 953,
+   "p95": 1284,
+   "max": 1770,
+   "min": 879,
+   "mean": 1023
+  },
+  "downloaded": [
+   19
+  ],
+  "bytes": [
+   1978398
+  ],
+  "skills": [
+   19
+  ],
+  "setHashes": [
+   "a49cf741eb6995a5cee4027a9dd1b67aca3ba96fb7f7b4eb47dfee079931299c"
+  ],
+  "batchOnly": {
+   "n": 30,
+   "p50": 938,
+   "p95": 1284,
+   "max": 1770,
+   "min": 879,
+   "mean": 1021
+  }
+ },
+ "latency": {
+  "definition": "status_running event ts (flushed at once) -> first span.model_request_start data.timestamp / first toolResult context_entry data.timestamp; same analyze.mjs for BEFORE and AFTER",
+  "after": {
+   "rootFirstTurn": {
+    "runningToFirstModelRequestMs": {
+     "n": 31,
+     "p50": 198,
+     "p95": 2484,
+     "max": 4771,
+     "min": 149,
+     "mean": 528
+    },
+    "runningToFirstToolResultMs": {
+     "n": 31,
+     "p50": 5829,
+     "p95": 8542,
+     "max": 11296,
+     "min": 5211,
+     "mean": 6172
+    },
+    "firstToolUseToResultMs": {
+     "n": 31,
+     "p50": 4446,
+     "p95": 5396,
+     "max": 6274,
+     "min": 4063,
+     "mean": 4562
+    },
+    "installStartAfterFirstToolUseMs": {
+     "n": 31,
+     "p50": 583,
+     "p95": 808,
+     "max": 1142.0,
+     "min": 417.0,
+     "mean": 608
+    }
+   },
+   "childTurnsAll": {
+    "runningToFirstModelRequestMs": {
+     "n": 110,
+     "p50": 502,
+     "p95": 857,
+     "max": 4215,
+     "min": 350,
+     "mean": 564
+    },
+    "runningToFirstToolResultMs": {
+     "n": 110,
+     "p50": 3606,
+     "p95": 6378,
+     "max": 19236,
+     "min": 3048,
+     "mean": 4103
+    },
+    "firstToolUseToResultMs": {
+     "n": 110,
+     "p50": 2104,
+     "p95": 2404,
+     "max": 3303,
+     "min": 1259,
+     "mean": 2040
+    }
+   },
+   "childFirstTurns": {
+    "runningToFirstModelRequestMs": {
+     "n": 93,
+     "p50": 487,
+     "p95": 846,
+     "max": 4215,
+     "min": 350,
+     "mean": 556
+    },
+    "runningToFirstToolResultMs": {
+     "n": 93,
+     "p50": 3556,
+     "p95": 4140,
+     "max": 8749,
+     "min": 3048,
+     "mean": 3636
+    },
+    "firstToolUseToResultMs": {
+     "n": 93,
+     "p50": 2124,
+     "p95": 2411,
+     "max": 3303,
+     "min": 1962,
+     "mean": 2157
+    }
+   },
+   "rootFirstTurnWarmupOutliers": [
+    {
+     "run": "sk-20261023-01",
+     "runningToFirstModelRequestMs": 4771
+    },
+    {
+     "run": "sk-20261023-12",
+     "runningToFirstModelRequestMs": 4465
+    }
+   ]
+  },
+  "before": {
+   "source": "storyboard-20261022 p1-smoke+p2+p3 (17 roots, 51 children), events re-read 2026-10-23 via GET",
+   "rootFirstTurn": {
+    "runningToFirstModelRequestMs": {
+     "n": 17,
+     "p50": 850,
+     "p95": 4078,
+     "max": 4211,
+     "min": 443,
+     "mean": 1488
+    },
+    "runningToFirstToolResultMs": {
+     "n": 17,
+     "p50": 11248,
+     "p95": 15068,
+     "max": 15258,
+     "min": 9926,
+     "mean": 11925
+    },
+    "firstToolUseToResultMs": {
+     "n": 17,
+     "p50": 9155,
+     "p95": 10412,
+     "max": 10780,
+     "min": 8327,
+     "mean": 9282
+    }
+   },
+   "childTurnsAll": {
+    "runningToFirstModelRequestMs": {
+     "n": 52,
+     "p50": 6668,
+     "p95": 7386,
+     "max": 8491,
+     "min": 5625,
+     "mean": 6699
+    },
+    "runningToFirstToolResultMs": {
+     "n": 52,
+     "p50": 9802,
+     "p95": 10914,
+     "max": 15660,
+     "min": 8802,
+     "mean": 9941
+    },
+    "firstToolUseToResultMs": {
+     "n": 52,
+     "p50": 2082,
+     "p95": 2293,
+     "max": 2537,
+     "min": 1269,
+     "mean": 2077
+    }
+   },
+   "childFirstTurns": {
+    "runningToFirstModelRequestMs": {
+     "n": 50,
+     "p50": 6698,
+     "p95": 7399,
+     "max": 8491,
+     "min": 5625,
+     "mean": 6718
+    },
+    "runningToFirstToolResultMs": {
+     "n": 50,
+     "p50": 9774,
+     "p95": 10673,
+     "max": 11785,
+     "min": 8802,
+     "mean": 9812
+    }
+   }
+  },
+  "beforeProd300_259": "prod300 2026-10-22: 146 active Child Sessions with session.status_running as latest event, oldest ~43 min; sampled Child 34 min without model/tool event; 87 Supabase Storage 544 DatabaseTimeout",
+  "notes": [
+   "inference does not wait for the install (#268): in 31/31 roots span.model_request_start and the first agent.tool_use precede span.skills_install_start; on the existing scratch Sandbox the install (170-195 ms) ran beside the first model request",
+   "root first-Turn tool latency includes Sandbox creation/claim and Skills: AFTER the install starts p50 583 ms (max 1142 ms) after the first tool_use, takes p50 953 ms, then the tool runs; BEFORE (8.3-10.8 s tool_use->result) cannot be split into Sandbox creation and projection (10-22 report: Sandbox available within 10-15 s), so the root difference is not all due to Skill Bundles",
+   "runs 01 and 12 were the first Turn of each Runner process after the rollout (4.8 s / 4.5 s to first model request); all others <= 503 ms",
+   "BEFORE ran at 1-8 concurrent roots; AFTER at up to 30 roots + 29 children",
+   "child running->first model max 4215 ms: run23 DP at 02:55:38Z (peak concurrency), no install; child running->first tool result max 19236 ms: run13 DP repair Turn, model think time (first model request at 500 ms, tool_use->result 1.3 s)"
+  ]
+ },
+ "errors": {
+  "sessionErrorCodes": {},
+  "skills_install_failed": 0,
+  "sandbox_prepare_failed": 0,
+  "takeovers": 0,
+  "outcomeUnknown": 0
+ },
+ "logs": {
+  "window": "--since-time 2026-10-23T02:29:00Z, captured 03:10Z; plus observer increments every 20 s",
+  "runnerLines": {
+   "oma-runner-f954c5877-pq95k": 5424,
+   "oma-runner-f954c5877-sk7hg": 4118
+  },
+  "apiLines": 0,
+  "patterns": {
+   "HTTP 544": 0,
+   "DatabaseTimeout": 0,
+   "storage/v1": 0,
+   "supabase": 0,
+   "skill (any case, non-flush lines)": 0,
+   "skills_install": 0,
+   "sandbox_prepare_failed": 0,
+   "Error": 0,
+   "ClaimLost": 0,
+   "fence": 0,
+   "drain failed": 0,
+   "ECONN": 0,
+   "timeout": 0
+  },
+  "note": "the digits 544 occur 59 times, all inside turn_journal_flush lines (timestamps, bytes, durationMs); every Runner log line in the window is a turn_journal_flush",
+  "journalFlushMs": {
+   "n": 9542,
+   "p50": 9.1,
+   "p90": 38.2,
+   "p99": 329.7,
+   "max": 1187.6,
+   "slow>200msConcentratedAt": "02:55-02:56Z (peak concurrency)"
+  }
+ },
+ "db": {
+  "bindingSampleMidRun": "02:50:03Z: 20 started roots bound, all with the expected set hash, skills_sandbox_id = sandbox_id",
+  "final": {
+   "sampledAt": "2026-10-23T03:13:09.142Z",
+   "expectedSetHash": "a49cf741eb6995a5cee4027a9dd1b67aca3ba96fb7f7b4eb47dfee079931299c",
+   "roots": 31,
+   "rootsWithBinding": 31,
+   "rootsBindingExpectedHashSameSandboxGenerationSet": 31,
+   "distinctSandboxes": 31,
+   "creationPending": 0,
+   "children": 93,
+   "childrenShareRootBinding(delegation.sandboxSessionId = parentSessionId = root)": 93,
+   "childrenOwnBindingRows": 0,
+   "pendingEvents": 0,
+   "activeSessions(running|waiting|rescheduling, whole schema)": 0,
+   "skillsGenerationMin": 1792722679761,
+   "skillsGenerationMax": 1792723911287,
+   "fixtureAfter": {
+    "agentUpdatedAt": "2026-10-21T04:33:09.310Z",
+    "skills": 19,
+    "skillsWithBundle": 19,
+    "skillsMaxUpdatedAt": "2026-10-21T04:32:06.402Z",
+    "libraryPreciseSubtitlesBundle": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa"
+   },
+   "schemaSkills": {
+    "all": 78,
+    "withoutBundle": 0,
+    "note": "77 migrated + the scratch fork (deleted at cleanup)"
+   }
+  }
+ },
+ "scratchScenario": {
+  "agent": "agent_lctZXxxYIndpXC6TL_p2F",
+  "fork": "skill_Ew9L_ig5-z_UYOANvw5-V",
+  "librarySkill": "skill_-QRdxY6eN3Nr_mrnbeSkw (precise-subtitles)",
+  "session": "sess_hHADgjRxSwzPorh3CwTg_",
+  "agentCopied": "model, thinking, runtime, system and sandbox (image + env) copied from the fixture Agent; no credentials added",
+  "turns": [
+   {
+    "turn": 1,
+    "turnId": "turn_1_a1",
+    "installSpans": 2,
+    "install": {
+     "outcome": "installed",
+     "downloaded": 1,
+     "bytes": 238189,
+     "durationMs": 197,
+     "setHash": "9e06b8818fa0869404a10ba57dc398c1ad3e03eaf8d5baceda8d223d2bab3124"
+    },
+    "runningToFirstModelRequestMs": 179
+   },
+   {
+    "turn": 2,
+    "turnId": "turn_26_a1",
+    "installSpans": 0,
+    "install": null,
+    "runningToFirstModelRequestMs": 380
+   },
+   {
+    "turn": 3,
+    "turnId": "turn_47_a1",
+    "installSpans": 2,
+    "install": {
+     "outcome": "installed",
+     "downloaded": 1,
+     "bytes": 238618,
+     "durationMs": 170,
+     "setHash": "a262b2e2b83be4c93da1e86501b3f81c0d5b23985675bf2d9961751c38db5e7e"
+    },
+    "runningToFirstModelRequestMs": 497
+   },
+   {
+    "turn": 4,
+    "turnId": "turn_71_a1",
+    "installSpans": 2,
+    "install": {
+     "outcome": "installed",
+     "downloaded": 1,
+     "bytes": 238627,
+     "durationMs": 195,
+     "setHash": "6bbfe133ae33db54b9c45b45a746c246f58eb160351e13bcbf66a87149dd7588"
+    },
+    "runningToFirstModelRequestMs": 656
+   }
+  ],
+  "sandboxFacts": {
+   "turn1": {
+    "skillsSymlink": "/skills -> /opt/oma/skills/9e06b8818fa0869404a10ba57dc398c1ad3e03eaf8d5baceda8d223d2bab3124",
+    "ttfSha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+    "ttfMatchesOfficial": true,
+    "ttfHeader": "00 01 00 00",
+    "ttfBytes": 410712,
+    "skillMdOwnerMode": "root 444",
+    "dirs": "dr-xr-xr-x root root",
+    "touch": "touch: cannot touch '/skills/precise-subtitles/x': Permission denied",
+    "user": "user"
+   },
+   "turn2": "identical output, no install span",
+   "edit": {
+    "put": "PUT files/content notes/acceptance.md (200)",
+    "upload": "POST files/upload notes/pixel.png multipart (200, skipped [])",
+    "forkBundleAfter": "14ba315418c9ab856f0eb011fed6688ef6f7a734ee8851b5fe914e2775a5f690 (466504 B)",
+    "libraryAndFixtureForkUnchanged": true
+   },
+   "turn3": {
+    "skillsSymlink": "/opt/oma/skills/a262b2e2b83be4c93da1e86501b3f81c0d5b23985675bf2d9961751c38db5e7e",
+    "notes": "acceptance.md 113 B and pixel.png 100 B, both root 444",
+    "pngSha256": "52f719c8329774d7ee65dd2b5b11b0bc1c108a2790f28bda9b7de5b30c2f7069",
+    "pngMatchesUpload": true,
+    "ttfUnchanged": true,
+    "note": "the model left out the cat of acceptance.md because the prompt also forbade printing Skill file bodies; its sha256 is checked in turn 4"
+   },
+   "turn4": {
+    "afterEditorOps": "overwrite, create+delete notes/tmp-delete.txt, rename acceptance.md -> acceptance-renamed.md",
+    "skillsSymlink": "/opt/oma/skills/6bbfe133ae33db54b9c45b45a746c246f58eb160351e13bcbf66a87149dd7588",
+    "renamedMdSha256": "088c43c0fb9c164073fab2462667fd9985bdf359bbee73bed645e83ec08b81a5",
+    "matchesEditorWrite": true,
+    "tmpDeleteTxt": "No such file or directory",
+    "oldName": "absent"
+   }
+  },
+  "bindingAfter": {
+   "skills_set_hash": "6bbfe133ae33db54b9c45b45a746c246f58eb160351e13bcbf66a87149dd7588",
+   "skills_sandbox_id = sandbox_id": true,
+   "generation": 1792724076968
+  },
+  "setHashesVerifiedLocally": true
+ },
+ "editorEndpoints": {
+  "textRead": {
+   "status": 200,
+   "hasContent": true,
+   "sha256": "afce10e5c4396d970a58f83a4a7a0f83ae973653e51902e03c197014556cd820",
+   "matchesWritten": true
+  },
+  "skillMdRead": {
+   "status": 200,
+   "isText": true,
+   "chars": 2766
+  },
+  "textWrite": {
+   "status": 200
+  },
+  "textWriteReadBack": {
+   "status": 200,
+   "matches": true
+  },
+  "tmpCreate": {
+   "status": 200
+  },
+  "delete": {
+   "status": 200,
+   "body": {
+    "type": "skill_file_deleted",
+    "id": "skill_Ew9L_ig5-z_UYOANvw5-V",
+    "path": "notes/tmp-delete.txt"
+   }
+  },
+  "deletedReadBack": {
+   "status": 404
+  },
+  "rename": {
+   "status": 200,
+   "body": {
+    "type": "skill_file_renamed",
+    "id": "skill_Ew9L_ig5-z_UYOANvw5-V",
+    "from": "notes/acceptance.md",
+    "to": "notes/acceptance-renamed.md"
+   }
+  },
+  "renameOldPath": {
+   "status": 404
+  },
+  "renameNewPath": {
+   "status": 200,
+   "matches": true
+  },
+  "pngContent": {
+   "status": 200,
+   "binary": true,
+   "contentType": "image/png",
+   "size": 100,
+   "noContentField": true
+  },
+  "pngRaw": {
+   "status": 200,
+   "bytes": 100,
+   "sha256": "52f719c8329774d7ee65dd2b5b11b0bc1c108a2790f28bda9b7de5b30c2f7069",
+   "byteIdentical": true,
+   "expectedSha256": "52f719c8329774d7ee65dd2b5b11b0bc1c108a2790f28bda9b7de5b30c2f7069",
+   "contentType": "image/png",
+   "csp": "default-src 'none'; sandbox",
+   "nosniff": "nosniff",
+   "disposition": "inline",
+   "cacheControl": "no-store"
+  },
+  "ttfContent": {
+   "status": 200,
+   "binary": true,
+   "contentType": "font/ttf",
+   "size": 410712,
+   "noContentField": true
+  },
+  "ttfRaw": {
+   "status": 200,
+   "bytes": 410712,
+   "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+   "byteIdentical": true,
+   "expectedSha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+   "ttfHeader": "00010000",
+   "contentType": "font/ttf",
+   "csp": "default-src 'none'; sandbox",
+   "nosniff": "nosniff",
+   "disposition": "inline",
+   "cacheControl": "no-store"
+  },
+  "pngRawDownload": {
+   "status": 200,
+   "disposition": "attachment; filename=\"pixel.png\""
+  },
+  "pycRejected": {
+   "status": 400,
+   "code": "invalid_skill_file"
+  },
+  "traversalRejected": {
+   "status": 400
+  },
+  "skillMdDeleteRejected": {
+   "status": 400
+  },
+  "fileList": {
+   "count": 13,
+   "notes": [
+    "notes/acceptance-renamed.md",
+    "notes/pixel.png"
+   ]
+  }
+ },
+ "webConsole": {
+  "tool": "browser-harness, own new tab, logged-in test console",
+  "agentPage": "scratch Agent shows precise-subtitles equipped",
+  "skillEditor": "/agents/<agent>/skills/<fork>: tree shows notes/acceptance-renamed.md, notes/pixel.png",
+  "pngPreview": "blob image naturalWidth 4 x 4 rendered (06-png-preview.png)",
+  "ttfPreview": "Not a previewable media type · 401.1 KB · font/ttf · Download (09-ttf.png)",
+  "textEdit": "Edit -> appended a line -> Save -> \"Saved\"; API GET returns the new content",
+  "binaryUpload": {
+   "path": "notes/ui-upload.png",
+   "rawStatus": 200,
+   "rawSha256": "4b2ce68ffee5ec371c85d3fb64d104f03be5e9e241624d75bb19955d72584933",
+   "localSha256": "4b2ce68ffee5ec371c85d3fb64d104f03be5e9e241624d75bb19955d72584933",
+   "byteIdentical": true,
+   "csp": "default-src 'none'; sandbox",
+   "nosniff": "nosniff"
+  },
+  "binaryUploadContent": {
+   "path": "notes/ui-upload.png",
+   "binary": true,
+   "size": 73,
+   "contentType": "image/png"
+  }
+ },
+ "checklist270": [
+  {
+   "item": "多阶段拆分镜批量运行时没有 Storage 544，子 Turn 不重复安装",
+   "result": "pass",
+   "evidence": "31 runs/124 Sessions; logs 0 HTTP 544/DatabaseTimeout/storage/v1; session.error 0; child install spans 0 over 110 child Turns; 93/93 children share the root binding"
+  },
+  {
+   "item": "首次安装耗时 p50/p95 和首个模型事件延迟，与改造前对比",
+   "result": "pass",
+   "evidence": "install p50 953 / p95 1284 / max 1770 ms; child running->model p50 502 ms vs 6668 ms before"
+  },
+  {
+   "item": "precise-subtitles 字体在 Sandbox 中有效；编辑器文本编辑、二进制上传和预览可用",
+   "result": "pass",
+   "evidence": "scratch turn 1 sha/header/perm; editorEndpoints; webConsole"
+  },
+  {
+   "item": "验收报告写入 docs/verification",
+   "result": "pass",
+   "evidence": "docs/verification/skill-bundles-oma-test-acceptance-2026-10-23.md"
+  },
+  {
+   "item": "PR 已开，CI 全绿",
+   "result": "not in scope",
+   "evidence": "this task commits only the report and does not push"
+  }
+ ],
+ "problems": [
+  {
+   "severity": "none",
+   "text": "no Skill Bundle defect found"
+  },
+  {
+   "severity": "info",
+   "text": "first Turn of each Runner process after rollout: 4.5-4.8 s from status_running to first model request (runs 01, 12); later Turns 0.15-0.5 s; not the install"
+  },
+  {
+   "severity": "info",
+   "text": "journal flush p99 330 ms / max 1.19 s at peak concurrency (02:55-02:56Z, ~60 active Sessions on 2 Runners), no flush error; 10-22 at 6-way: p99 36 ms"
+  },
+  {
+   "severity": "low (cosmetic, not verified as new)",
+   "text": "web Skill editor Preview of SKILL.md renders the YAML front matter as a bold heading line"
+  },
+  {
+   "severity": "info (not reproduced)",
+   "text": "one web-editor typing attempt without a focused textarea navigated the page to the Session view; with the textarea focused the edit saved normally"
+  },
+  {
+   "severity": "not verified",
+   "text": "existing Sandboxes with a legacy projected /skills directory were not exercised (boundary: only Sandboxes of this test); changed-set reinstall on an existing Sandbox was verified with the scratch Session (turns 3, 4)"
+  }
+ ],
+ "cleanup": {
+  "sessionsTerminated": "125 (31 roots, 93 children, 1 scratch); SQL: 125/125 terminated, active 0, pending 0",
+  "scratch": "Session terminated, fork unequipped (deleted), Agent deleted; GET agent/fork 404; bundles kept by design (#273)",
+  "apiKey": "apikey_nk96z87Mk_mGQf37reVBL revoked; GET returns 401",
+  "browserTab": "closed",
+  "fixture": "Agent/Workspace unchanged (updatedAt 2026-10-21T04:33:09Z, 19 Skills on unchanged bundles); outputs only under outputs/sk-20261023-NN/",
+  "runners": "2/2 Ready, 0 restarts"
+ },
+ "evidence": "private local directory oma-wt/storyboard-20261023-skills/ (not committed)"
+}
