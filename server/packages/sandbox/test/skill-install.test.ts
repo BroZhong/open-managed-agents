@@ -194,6 +194,18 @@ describe("Skill Installer: skip, single flight, retry and record", () => {
     expect(await client.readFile(id, "/skills/writer/SKILL.md")).toBe("x");
   });
 
+  it("downloads a failing bundle once per attempt: the Host's single retry is the only one", async () => {
+    const { client, id, bundles } = await setUp();
+    const skill = await bundles.add("writer", [text("SKILL.md", "x")]);
+    bundles.createInstallUrl = async () => "https://agentry.oss-cn-shanghai-internal.aliyuncs.com/b.zip?Signature=unreachable";
+    const downloads: string[] = [];
+    client.skillInstallFault = (stage) => { if (stage === "download") downloads.push(stage); };
+    const book = await ledger(); await book.bind(id);
+    const failure = await new SkillInstaller({ client, bundles }).ensure("binding", book, { sandboxId: id, tenantId: TENANT }, skillSetOf([skill])).catch((error) => error);
+    expect(failure).toMatchObject({ name: "SkillInstallError", stage: "download" });
+    expect(downloads).toHaveLength(2);
+  });
+
   it("runs one install per binding in a process; a waiter re-checks what it recorded", async () => {
     const { client, id, bundles, installs } = await setUp();
     const skill = await bundles.add("writer", [text("SKILL.md", "x")]);

@@ -413,24 +413,18 @@ export class FakeSandboxClient implements SandboxClient {
         const missing = [...new Set(request.records.map((record) => record.sha256))].filter((sha) => !skills.bundles.has(sha));
         const fetched = new Map<string, Uint8Array>();
         if (missing.length) {
-          let problem: { stage: SkillInstallStage; reason: string } | undefined;
-          for (let round = 1; round <= 2 && fetched.size < missing.length; round++) {
-            yield enter("download");
-            await work();
-            const results = new Map<string, Uint8Array | string>();
-            for (const sha of missing.filter((sha) => !fetched.has(sha))) {
-              results.set(sha, await download(request.records.find((record) => record.sha256 === sha)!.url));
-            }
-            yield enter("verify");
-            await work();
-            problem = undefined;
-            for (const [sha, body] of results) {
-              if (typeof body === "string") problem = { stage: "download", reason: `${body} for bundle ${sha.slice(0, 12)}` };
-              else if (createHash("sha256").update(body).digest("hex") !== sha) problem = { stage: "verify", reason: `sha256 mismatch for bundle ${sha.slice(0, 12)}` };
-              else fetched.set(sha, body);
-            }
+          // One round, as the script: the Host's retry is the only one.
+          yield enter("download");
+          await work();
+          const results = new Map<string, Uint8Array | string>();
+          for (const sha of missing) results.set(sha, await download(request.records.find((record) => record.sha256 === sha)!.url));
+          yield enter("verify");
+          await work();
+          for (const [sha, body] of results) {
+            if (typeof body === "string") { stage = "download"; yield failure(`${body} for bundle ${sha.slice(0, 12)}`); opts?.onExit?.({ exitCode: 1 }); return; }
+            if (createHash("sha256").update(body).digest("hex") !== sha) { yield failure(`sha256 mismatch for bundle ${sha.slice(0, 12)}`); opts?.onExit?.({ exitCode: 1 }); return; }
+            fetched.set(sha, body);
           }
-          if (problem && fetched.size < missing.length) { stage = problem.stage; yield failure(problem.reason); opts?.onExit?.({ exitCode: 1 }); return; }
         }
         yield enter("extract");
         await work();

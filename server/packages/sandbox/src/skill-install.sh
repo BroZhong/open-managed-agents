@@ -88,41 +88,31 @@ if [[ ! -d $dest ]]; then
     [[ -d $root/bundles/$sha ]] || missing+=("$sha")
   done
 
-  pending=("${missing[@]}")
-  last=""
-  for round in 1 2; do
-    ((${#pending[@]} > 0)) || break
-    ((round == 1)) || sleep 1 9>&-
+  # One download round: the Host's single retry of the whole install is the
+  # only retry (ADR-0022).
+  if ((${#missing[@]} > 0)); then
     step download
-    report=$(exec 9>&-; for sha in "${pending[@]}"; do
+    report=$(exec 9>&-; for sha in "${missing[@]}"; do
         printf 'url = "%s"\noutput = "%s/dl/%s.zip"\n' "${url_of[$sha]}" "$work" "$sha"
       done | curl --noproxy '*' --config - --parallel --parallel-max 8 --silent \
         --connect-timeout 5 --max-time "$budget" \
         --write-out '%{http_code} %{exitcode} %{filename_effective}\n' 2>/dev/null) || true
-    unset result
     declare -A result=()
     while read -r http code file; do
       [[ ${file:-} =~ /dl/([0-9a-f]{64})\.zip$ ]] || continue
       result[${BASH_REMATCH[1]}]="$http $code"
     done <<<"$report"
     step verify
-    retry=()
-    for sha in "${pending[@]}"; do
+    for sha in "${missing[@]}"; do
       f=$work/dl/$sha.zip
       outcome=${result[$sha]:-"000 none"}
       if [[ $outcome != "200 0" || ! -f $f ]]; then
-        last="download:HTTP ${outcome% *}, curl exit ${outcome#* } for bundle ${sha:0:12}"
-      elif [[ $(exec 9>&-; sha256sum "$f" | cut -d' ' -f1) != "$sha" ]]; then
-        last="verify:sha256 mismatch for bundle ${sha:0:12}"
-      else
-        continue
+        stage=download
+        fail "HTTP ${outcome% *}, curl exit ${outcome#* } for bundle ${sha:0:12}"
       fi
-      rm -f "$f" 9>&-
-      retry+=("$sha")
+      [[ $(exec 9>&-; sha256sum "$f" | cut -d' ' -f1) == "$sha" ]] || fail "sha256 mismatch for bundle ${sha:0:12}"
     done
-    pending=("${retry[@]}")
-  done
-  if ((${#pending[@]} > 0)); then stage=${last%%:*}; fail "${last#*:}"; fi
+  fi
 
   step extract
   for sha in "${missing[@]}"; do
