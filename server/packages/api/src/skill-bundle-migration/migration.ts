@@ -1,15 +1,18 @@
+import { parseArgs } from "node:util";
 import {
-  packSkillBundle,
-  skillBundleObjectKey,
-  unpackSkillBundle,
+  assertSkillBundleIdentity,
+  isFilteredSkillPath,
   isSkillBundleSha256,
+  packSkillBundle,
+  unpackSkillBundle,
   type PackedSkillBundle,
   type Pool,
   type SkillBundleFile,
   type SkillBundleStore,
+  type SkillOwnerType,
 } from "@oma-server/store";
 import { fontProblem, isFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
-import type { SupabaseReadStats } from "./supabase-reader.js";
+import { Semaphore, type SupabaseReadStats } from "./supabase-reader.js";
 
 /**
  * The one-time Skill Bundle migration (#266, ADR-0022): for each Skill row,
@@ -33,7 +36,7 @@ export interface SkillRow {
   tenantId: string;
   skillId: string;
   name: string;
-  ownerType: string;
+  ownerType: SkillOwnerType;
   sourceSkillId: string | null;
   updatedAt: Date;
   /** Null when the row has no bundle, or the schema predates migration 0022. */
@@ -96,7 +99,7 @@ export interface SkillReportEntry {
   tenantId: string;
   skillId: string;
   name: string;
-  ownerType: string;
+  ownerType: SkillOwnerType;
   sourceSkillId: string | null;
   updatedAt: string;
   status: SkillStatus;
@@ -170,7 +173,7 @@ export interface MigrationReport {
 }
 
 const TOOL = "migrate-skill-bundles";
-/** Any valid digest: lets the store's own key validation judge a tenant id before anything is read. */
+/** Any valid digest: lets the store's own identity validation judge a tenant id before anything is read. */
 const PROBE_SHA256 = "0".repeat(64);
 const MAX_REASON = 300;
 
@@ -193,25 +196,12 @@ function memo<T>(cache: Map<string, Promise<T>>, key: string, create: () => Prom
   return promise;
 }
 
-async function mapPool<T, R>(items: readonly T[], limit: number, task: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await task(items[index], index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 /** What must hold for every migrated bundle. */
 function bundleProblems(files: readonly SkillBundleFile[]): string[] {
   const problems: string[] = [];
   if (!files.some((file) => file.path === "SKILL.md")) problems.push("no SKILL.md");
   for (const file of files) {
-    if (file.path.endsWith(".pyc") || file.path.split("/").includes("__pycache__")) problems.push(`compiled Python present: ${file.path}`);
+    if (isFilteredSkillPath(file.path)) problems.push(`compiled Python present: ${file.path}`);
     if (isFontPath(file.path)) {
       const problem = fontProblem(file.body);
       if (problem) problems.push(`invalid font ${file.path}: ${problem}`);
@@ -239,7 +229,7 @@ export class PgSkillRows implements SkillRowStore {
   async list(since?: Date): Promise<SkillRow[]> {
     const bundle = (await this.hasBundleColumns()) ? "bundle_sha256" : "NULL AS bundle_sha256";
     const { rows } = await this.pool.query<{
-      tenant_id: string; skill_id: string; name: string; owner_type: string; source_skill_id: string | null;
+      tenant_id: string; skill_id: string; name: string; owner_type: SkillOwnerType; source_skill_id: string | null;
       updated_at: Date; bundle_sha256: string | null;
     }>(
       `SELECT tenant_id, skill_id, name, owner_type, source_skill_id, updated_at, ${bundle}
@@ -334,8 +324,9 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
     });
 
   const rows = await deps.rows.list(options.since);
+  const slots = new Semaphore(options.skillConcurrency ?? 4);
   let done = 0;
-  const skills = await mapPool(rows, options.skillConcurrency ?? 4, async (row) => {
+  const skills = await Promise.all(rows.map((row) => slots.run(async () => {
     const entry: SkillReportEntry = {
       tenantId: row.tenantId, skillId: row.skillId, name: row.name, ownerType: row.ownerType, sourceSkillId: row.sourceSkillId,
       updatedAt: row.updatedAt.toISOString(), status: "failed", previousBundleSha256: row.bundleSha256,
@@ -349,9 +340,9 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
     } else {
       try {
         try {
-          skillBundleObjectKey(row.tenantId, PROBE_SHA256);
+          assertSkillBundleIdentity(row.tenantId, PROBE_SHA256);
         } catch {
-          throw new SkillFailure("tenant id is not a valid Skill Bundle key segment (^[A-Za-z0-9_-]{1,128}$)");
+          throw new SkillFailure("tenant id is not a valid Skill Bundle key segment");
         }
         const paths = await deps.source.list(row.tenantId, row.skillId);
         entry.objects = paths.length;
@@ -391,7 +382,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
     log(`[${done}/${rows.length}] ${row.tenantId}/${row.skillId} ${entry.status}` +
       `${entry.bundleSha256 ? ` ${entry.bundleSha256.slice(0, 12)}` : ""}${entry.reason ? ` (${entry.reason})` : ""}`);
     return entry;
-  });
+  })));
 
   const byStatus: Partial<Record<SkillStatus, number>> = {};
   for (const skill of skills) byStatus[skill.status] = (byStatus[skill.status] ?? 0) + 1;
@@ -440,7 +431,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       uploadedZipBytes: uploaded.reduce<number>((total, bytes) => total + (bytes ?? 0), 0),
     },
     sharedBundles: [...groups.values()].filter((group) => group.skillIds.length > 1)
-      .map((group) => ({ ...group, skillIds: group.skillIds.sort(byCodeUnit) }))
+      .map((group) => ({ ...group, skillIds: group.skillIds.sort() }))
       .sort((a, b) => byCodeUnit(a.tenantId, b.tenantId) || byCodeUnit(a.sha256, b.sha256)),
     forks,
     verification: {
@@ -492,7 +483,7 @@ export function formatSummary(report: MigrationReport): string {
 
 export interface MigrationArgs {
   schema: string;
-  bucket: string;
+  supabaseBucket: string;
   fontPath: string;
   reportPath: string;
   dryRun: boolean;
@@ -501,55 +492,60 @@ export interface MigrationArgs {
   concurrency: number;
 }
 
-export const USAGE = "Usage: migrate-skill-bundles --schema <PG_SCHEMA> --bucket <S3_BUCKET> --font <LiberationSans-Regular.ttf> " +
-  "--report <report.json> [--dry-run] [--since <ISO T0> --manifest <full-run report.json> [--manifest <report.json>...]] [--concurrency <1-16>]";
+export const USAGE = "Usage: migrate-skill-bundles --schema <PG_SCHEMA> --supabase-bucket <S3_BUCKET> --font <LiberationSans-Regular.ttf> " +
+  "--report <report.json> [--dry-run] [--since <ISO T0> --manifest <full run report.json> [--manifest <report.json>...]] [--concurrency <1-16>]";
 
 const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/;
 
 /**
- * Parse the command line. `--schema` and `--bucket` must name what the
- * environment points at (PG_SCHEMA, S3_BUCKET; defaults `oma`, `workspace`),
- * so a run in the wrong Pod fails before it reads anything.
+ * Parse the command line. `--schema` and `--supabase-bucket` must name what
+ * the environment points at (PG_SCHEMA, S3_BUCKET; defaults `oma`,
+ * `workspace`), so a run in the wrong Pod fails before it reads anything.
  */
 export function parseMigrationArgs(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): MigrationArgs {
-  const values = new Map<string, string>();
-  const manifestPaths: string[] = [];
-  let dryRun = false;
-  for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index];
-    if (flag === "--dry-run") { dryRun = true; continue; }
-    if (!["--schema", "--bucket", "--font", "--report", "--since", "--manifest", "--concurrency"].includes(flag)) {
-      throw new Error(`Unknown argument ${flag}\n${USAGE}`);
-    }
-    const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} needs a value\n${USAGE}`);
-    index += 1;
-    if (flag === "--manifest") manifestPaths.push(value);
-    else values.set(flag, value);
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args: [...argv],
+      strict: true,
+      allowPositionals: false,
+      options: {
+        schema: { type: "string" },
+        "supabase-bucket": { type: "string" },
+        font: { type: "string" },
+        report: { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        since: { type: "string" },
+        manifest: { type: "string", multiple: true, default: [] },
+        concurrency: { type: "string", default: "4" },
+      },
+    }));
+  } catch (error) {
+    throw new Error(`${(error as Error).message}\n${USAGE}`);
   }
-  const required = (flag: string) => {
-    const value = values.get(flag);
-    if (!value) throw new Error(`Missing ${flag}\n${USAGE}`);
+  const required = (flag: "schema" | "supabase-bucket" | "font" | "report") => {
+    const value = values[flag];
+    if (!value) throw new Error(`Missing --${flag}\n${USAGE}`);
     return value;
   };
-  const schema = required("--schema");
-  const bucket = required("--bucket");
-  const fontPath = required("--font");
-  const reportPath = required("--report");
+  const schema = required("schema");
+  const supabaseBucket = required("supabase-bucket");
+  const fontPath = required("font");
+  const reportPath = required("report");
+  const manifestPaths = values.manifest;
   const envSchema = env.PG_SCHEMA || "oma";
   const envBucket = env.S3_BUCKET || "workspace";
   if (schema !== envSchema) throw new Error(`--schema ${schema} does not match the environment: PG_SCHEMA is "${envSchema}"`);
-  if (bucket !== envBucket) throw new Error(`--bucket ${bucket} does not match the environment: S3_BUCKET is "${envBucket}"`);
+  if (supabaseBucket !== envBucket) throw new Error(`--supabase-bucket ${supabaseBucket} does not match the environment: S3_BUCKET is "${envBucket}"`);
   let since: Date | undefined;
-  const sinceRaw = values.get("--since");
-  if (sinceRaw !== undefined) {
-    since = new Date(sinceRaw);
-    if (!ISO_WITH_ZONE.test(sinceRaw) || Number.isNaN(since.getTime())) {
+  if (values.since !== undefined) {
+    since = new Date(values.since);
+    if (!ISO_WITH_ZONE.test(values.since) || Number.isNaN(since.getTime())) {
       throw new Error("--since must be an ISO 8601 timestamp with a time zone, e.g. 2026-10-23T08:00:00.000Z");
     }
     if (!manifestPaths.length) throw new Error("--since needs the full run's report as --manifest");
   }
-  const concurrency = Number(values.get("--concurrency") ?? 4);
+  const concurrency = Number(values.concurrency);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error("--concurrency must be an integer from 1 to 16");
-  return { schema, bucket, fontPath, reportPath, dryRun, since, manifestPaths, concurrency };
+  return { schema, supabaseBucket, fontPath, reportPath, dryRun: values["dry-run"], since, manifestPaths, concurrency };
 }

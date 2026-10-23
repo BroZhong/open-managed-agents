@@ -54,7 +54,8 @@ interface ListEntry {
   metadata?: object | null;
 }
 
-class Semaphore {
+/** At most `limit` tasks at once, started in call order. */
+export class Semaphore {
   private active = 0;
   private readonly waiting: Array<() => void> = [];
   constructor(private readonly limit: number) {}
@@ -184,12 +185,12 @@ export class SupabaseSkillReader {
     }
   }
 
-  /** Every file of the Skill, as Skill-relative paths in code-unit order. */
+  /** Every file of the Skill, as Skill-relative paths in code-unit order (the default sort). */
   async list(tenantId: string, skillId: string): Promise<string[]> {
     const base = `${this.prefix(tenantId, skillId)}/`;
     const paths: string[] = [];
     await this.listFolder(base, (key) => paths.push(key.slice(base.length)));
-    return paths.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return paths.sort();
   }
 
   /** One file's bytes. A listed file that is gone throws {@link SupabaseObjectMissingError}. */

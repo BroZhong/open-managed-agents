@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
-import { OFFICIAL_LIBERATION_SANS_REGULAR } from "../../src/skill-bundle-migration/fonts.js";
+import { OFFICIAL_LIBERATION_SANS_REGULAR, sha256Hex as sha256 } from "../../src/skill-bundle-migration/fonts.js";
 
-export const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+export { sha256 };
 export const text = (value: string) => new TextEncoder().encode(value);
 
 /** A minimal well-formed sfnt: a directory of `head` + `name`, `head` carrying its magic number. */

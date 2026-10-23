@@ -10,7 +10,7 @@
 # predates it), copies it, the font and any manifests into a fresh directory of the API Pod,
 # runs it with node against the Pod's PG_*, S3_* and WORKSPACE_OSS_* environment, copies the
 # JSON report back to <local report.json> (summary beside it as .txt) and deletes the copies.
-# --schema/--bucket are filled in per environment and checked by the tool against PG_SCHEMA
+# --schema/--supabase-bucket are filled in per environment and checked by the tool against PG_SCHEMA
 # and S3_BUCKET. Cluster: OMA_KUBECONFIG (default ~/.kube/agent-platform-config), never the ambient
 # KUBECONFIG. Every kubectl call has --request-timeout (OMA_KUBECTL_REQUEST_TIMEOUT, default 30s);
 # it bounds each API request, not the streamed run. Production needs separate authorization (#271):
@@ -22,10 +22,10 @@ usage() { sed -n '2,8p' "$0" >&2; exit 64; }
 env_name=$1 report=$2
 shift 2
 case $env_name in
-  test) ns=oma-test schema=oma_test bucket=workspace-test ;;
+  test) ns=oma-test schema=oma_test supabase_bucket=workspace-test ;;
   production)
     [ "${OMA_ALLOW_PRODUCTION_MIGRATION:-}" = yes ] || { echo "Production needs OMA_ALLOW_PRODUCTION_MIGRATION=yes (#271)" >&2; exit 1; }
-    ns=oma-infra schema=oma bucket=workspace ;;
+    ns=oma-infra schema=oma supabase_bucket=workspace ;;
   *) usage ;;
 esac
 font=${OMA_FONT:?Set OMA_FONT to the official LiberationSans-Regular.ttf (see server/packages/api/src/skill-bundle-migration/fonts.ts)}
@@ -52,7 +52,7 @@ trap cleanup EXIT
 kc exec "$pod" -- mkdir -p "$dir"
 kc cp "$build/migrate-skill-bundles.mjs" "$pod:$dir/migrate-skill-bundles.mjs" >/dev/null
 kc cp "$font" "$pod:$dir/LiberationSans-Regular.ttf" >/dev/null
-args=(--schema "$schema" --bucket "$bucket" --font "$dir/LiberationSans-Regular.ttf" --report "$dir/report.json")
+args=(--schema "$schema" --supabase-bucket "$supabase_bucket" --font "$dir/LiberationSans-Regular.ttf" --report "$dir/report.json")
 manifests=0
 while [ $# -gt 0 ]; do
   case $1 in

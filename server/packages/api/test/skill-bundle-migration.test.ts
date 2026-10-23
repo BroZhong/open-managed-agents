@@ -333,27 +333,31 @@ describe("parseManifest", () => {
 
 describe("parseMigrationArgs", () => {
   const env = { PG_SCHEMA: "oma_test", S3_BUCKET: "workspace-test" };
-  const base = ["--schema", "oma_test", "--bucket", "workspace-test", "--font", "/tmp/LiberationSans-Regular.ttf", "--report", "/tmp/r.json"];
+  const base = ["--schema", "oma_test", "--supabase-bucket", "workspace-test", "--font", "/tmp/LiberationSans-Regular.ttf", "--report", "/tmp/r.json"];
 
   it("parses a full, dry-run and delta invocation", () => {
     expect(parseMigrationArgs(base, env)).toEqual({
-      schema: "oma_test", bucket: "workspace-test", fontPath: "/tmp/LiberationSans-Regular.ttf", reportPath: "/tmp/r.json",
+      schema: "oma_test", supabaseBucket: "workspace-test", fontPath: "/tmp/LiberationSans-Regular.ttf", reportPath: "/tmp/r.json",
       dryRun: false, since: undefined, manifestPaths: [], concurrency: 4,
     });
     expect(parseMigrationArgs([...base, "--dry-run", "--concurrency", "2"], env)).toMatchObject({ dryRun: true, concurrency: 2 });
-    expect(parseMigrationArgs([...base, "--since", "2026-10-23T08:00:00.000Z", "--manifest", "/tmp/a.json", "--manifest", "/tmp/b.json"], env))
-      .toMatchObject({ since: new Date("2026-10-23T08:00:00.000Z"), manifestPaths: ["/tmp/a.json", "/tmp/b.json"] });
+    expect(parseMigrationArgs([...base, "--since", "2026-10-23T08:00:00.000Z", "--manifest", "/tmp/a.json", "--manifest", "/tmp/b.jsonl"], env))
+      .toMatchObject({ since: new Date("2026-10-23T08:00:00.000Z"), manifestPaths: ["/tmp/a.json", "/tmp/b.jsonl"] });
+    expect(parseMigrationArgs([...base.slice(0, 2), "--supabase-bucket=workspace-test", ...base.slice(4)], env)).toMatchObject({ supabaseBucket: "workspace-test" });
   });
 
-  it("requires the operator to name the schema and bucket the environment actually points at", () => {
+  it("requires the operator to name the schema and Supabase bucket the environment actually points at", () => {
     expect(() => parseMigrationArgs(base, { PG_SCHEMA: "oma", S3_BUCKET: "workspace-test" })).toThrow(/PG_SCHEMA is "oma"/);
     expect(() => parseMigrationArgs(base, { PG_SCHEMA: "oma_test", S3_BUCKET: "workspace" })).toThrow(/S3_BUCKET is "workspace"/);
     expect(() => parseMigrationArgs(base, {})).toThrow(/PG_SCHEMA is "oma"/);
   });
 
-  it("rejects missing flags, unknown flags, a zoneless T0 and a delta without a manifest", () => {
-    expect(() => parseMigrationArgs(base.slice(2), env)).toThrow(/--schema/);
-    expect(() => parseMigrationArgs([...base, "--apply"], env)).toThrow(/Unknown argument --apply/);
+  it("rejects missing flags, unknown flags, the old --bucket, a value-less flag, a zoneless T0 and a delta without a manifest", () => {
+    expect(() => parseMigrationArgs(base.slice(2), env)).toThrow(/Missing --schema/);
+    expect(() => parseMigrationArgs([...base, "--apply"], env)).toThrow(/Unknown option '--apply'[\s\S]*Usage:/);
+    expect(() => parseMigrationArgs(["--bucket", "workspace-test", ...base], env)).toThrow(/Unknown option '--bucket'/);
+    expect(() => parseMigrationArgs(["--schema", "--dry-run", ...base.slice(2)], env)).toThrow(/--schema/);
+    expect(() => parseMigrationArgs([...base, "stray"], env)).toThrow(/positional/);
     expect(() => parseMigrationArgs([...base, "--since", "2026-10-23 08:00", "--manifest", "/tmp/a.json"], env)).toThrow(/ISO/);
     expect(() => parseMigrationArgs([...base, "--since", "2026-10-23T08:00:00Z"], env)).toThrow(/--manifest/);
     expect(() => parseMigrationArgs([...base, "--concurrency", "0"], env)).toThrow(/--concurrency/);

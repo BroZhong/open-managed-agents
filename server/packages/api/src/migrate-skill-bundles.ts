@@ -46,11 +46,12 @@ async function main(): Promise<void> {
   const args = parseMigrationArgs(process.argv.slice(2), process.env);
   const font = loadReplacementFont(new Uint8Array(readFileSync(args.fontPath)));
   const oss = skillBundleStorageConfigFromEnv(process.env);
-  const target = { schema: args.schema, supabaseBucket: args.bucket, ossBucket: oss.bucket };
+  const target = { schema: args.schema, supabaseBucket: args.supabaseBucket, ossBucket: oss.bucket };
   const manifests = args.manifestPaths.map((path) => parseManifest(JSON.parse(readFileSync(path, "utf8")), target));
-  const endpoint = process.env.S3_ENDPOINT || process.env.SUPABASE_STORAGE_URL;
-  const serviceKey = process.env.S3_SERVICE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  if (!endpoint || !serviceKey) throw new Error("Supabase Storage needs S3_ENDPOINT and S3_SERVICE_KEY (or SUPABASE_SERVICE_KEY)");
+  // What the API and Runner Pods set (deploy/app/api-runner.yaml).
+  const endpoint = process.env.S3_ENDPOINT;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+  if (!endpoint || !serviceKey) throw new Error("Supabase Storage needs S3_ENDPOINT and SUPABASE_SERVICE_KEY");
   // As in bootstrap: keep internal Storage off any HTTP proxy.
   const dispatcher = new Agent();
   const directFetch: typeof fetch = (input, init) => fetch(input, { ...init, dispatcher } as RequestInit);
@@ -60,7 +61,7 @@ async function main(): Promise<void> {
     if (connected?.schema !== args.schema) throw new Error(`Connected to schema ${connected?.schema}, not ${args.schema}`);
     const report = await migrateSkillBundles({
       rows: new PgSkillRows(pool),
-      source: new SupabaseSkillReader({ endpoint, serviceKey, bucket: args.bucket, fetch: directFetch, concurrency: args.concurrency }),
+      source: new SupabaseSkillReader({ endpoint, serviceKey, bucket: args.supabaseBucket, fetch: directFetch, concurrency: args.concurrency }),
       // No cache: the read-back after each upload must be a real OSS read.
       bundles: new OSSSkillBundleStore({ ...oss, cacheBytes: 0 }),
     }, { dryRun: args.dryRun, since: args.since, manifests, font, target, log: (line) => console.error(line) });
