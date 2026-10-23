@@ -90,10 +90,9 @@ cleanup() {
   # No `exit` here: the script's exit status stands. Every step tolerates failure.
   set +e
   if [ -n "$created" ]; then
-    if kc exec "$pod" -- sh -c 'test -f "$1/pid" && kill -0 "$(cat "$1/pid")" 2>/dev/null' sh "$dir"; then
-      echo "WARNING: the migration is still running in $ns/$pod; left $dir in place. When it ends, copy report.json" \
-        "and report.journal.jsonl from there, then delete it" >&2
-    else
+    running=$(kc exec "$pod" -- sh -c 'if [ -f "$1/pid" ] && kill -0 "$(cat "$1/pid")" 2>/dev/null; then echo yes; else echo no; fi' sh "$dir") ||
+      running=
+    if [ "$running" = no ]; then
       copied=yes
       copy_back report.json "$report" || copied=
       copy_back report.journal.jsonl "$journal" || copied=
@@ -102,6 +101,11 @@ cleanup() {
       else
         echo "WARNING: left $ns/$pod:$dir in place: copy it by hand, then delete it" >&2
       fi
+    elif [ "$running" = yes ]; then
+      echo "WARNING: the migration is still running in $ns/$pod; left $dir in place. When it ends, copy report.json" \
+        "and report.journal.jsonl from there, then delete it" >&2
+    else
+      echo "WARNING: could not reach $ns/$pod; left $dir in place: copy report.json and report.journal.jsonl by hand" >&2
     fi
   fi
   rm -rf "$build"
