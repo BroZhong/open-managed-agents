@@ -28,9 +28,12 @@ import { PgSkillRows, formatSummary, migrateSkillBundles, parseManifest, parseMi
  *   --dry-run                 read, repair, pack and verify in memory; write nothing (works before migration 0022)
  *   (no mode flag)            full: every Skill; needs migration 0022 applied to the schema
  *   --since <T0> --manifest <full report.json>
- *                             delta: only Skills with updated_at > T0. T0 is the full run's `startedAt`.
- *   --manifest <report.json>  repeatable, oldest first: rows whose bundle is still the one a previous run
- *                             recorded may be refreshed; any other non-NULL bundle (the new API's) is kept
+ *                             delta: Skills with updated_at > T0 - 10 min (a built-in margin: the old API
+ *                             bumps updated_at before it writes Supabase, and Pod clocks skew), plus every
+ *                             Skill without a bundle. T0 is the full run's `startedAt`, as is; a T0 later than
+ *                             the earliest full run's `startedAt` among the manifests is refused.
+ *   --manifest <report.json>  repeatable: rows whose bundle is still one a previous run recorded may be
+ *                             refreshed; any other non-NULL bundle (the new API's) is kept
  *
  * Rollout (ADR-0022): full run at T0 → deploy API + Runner → delta with
  * `--since <full startedAt> --manifest <full report>`. Rerunning with the

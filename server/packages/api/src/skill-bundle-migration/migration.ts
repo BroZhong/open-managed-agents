@@ -48,8 +48,8 @@ export interface SkillRow {
 
 export interface SkillRowStore {
   hasBundleColumns(): Promise<boolean>;
-  /** Every Skill, or those with `updated_at > since`, ordered by tenant and id. */
-  list(since?: Date): Promise<SkillRow[]>;
+  /** Every Skill or, with `updatedAfter`, those updated after it or without a bundle; ordered by tenant and id. */
+  list(updatedAfter?: Date): Promise<SkillRow[]>;
   /** Compare-and-set on `bundle_sha256`; false when the row no longer holds `expected`. */
   setBundle(row: Pick<SkillRow, "tenantId" | "skillId">, expected: string | null, bundle: { sha256: string; size: number }): Promise<boolean>;
 }
@@ -76,9 +76,22 @@ export interface Manifest {
   bundles: Map<string, string>;
 }
 
+/**
+ * A delta also selects Skills updated up to this long before `--since`. The
+ * old API bumps `updated_at` before it writes Supabase, and Pod clocks skew,
+ * so an edit straddling T0 can carry an `updated_at` a little before T0 while
+ * the full run read the old files. A Skill selected needlessly repacks to its
+ * current bundle and is `unchanged`.
+ */
+export const DELTA_MARGIN_MS = 10 * 60 * 1000;
+
 export interface MigrationRunOptions {
   dryRun: boolean;
-  /** Delta: only Skills with `updated_at > since`. Requires the full run's report as a manifest. */
+  /**
+   * Delta: only Skills with `updated_at > since - DELTA_MARGIN_MS`, plus every
+   * Skill without a bundle. Needs a full run's report as a manifest, and must
+   * not be later than the earliest full run's `startedAt` among them.
+   */
   since?: Date;
   /** Reports of previous non-dry runs, oldest first; later entries win. */
   manifests?: Manifest[];
@@ -140,7 +153,12 @@ export interface MigrationReport {
   version: 1;
   mode: "full" | "delta";
   dryRun: boolean;
+  /** The operator's T0; null for a full run. */
   since: string | null;
+  /** {@link DELTA_MARGIN_MS} for a delta. */
+  deltaMarginMs: number | null;
+  /** `since - deltaMarginMs`: the delta selected `updated_at >` this, or no bundle. */
+  selectedUpdatedAfter: string | null;
   target: MigrationTarget;
   manifests: Array<{ mode: string; startedAt: string; bundles: number }>;
   font: { fileName: string; sha256: string };
@@ -234,15 +252,17 @@ export class PgSkillRows implements SkillRowStore {
     return this.columns;
   }
 
-  async list(since?: Date): Promise<SkillRow[]> {
-    const bundle = (await this.hasBundleColumns()) ? "bundle_sha256" : "NULL AS bundle_sha256";
+  async list(updatedAfter?: Date): Promise<SkillRow[]> {
+    const columns = await this.hasBundleColumns();
+    // Before migration 0022 no Skill has a bundle, so a delta selects them all.
+    const where = updatedAfter && columns ? "WHERE updated_at > $1 OR bundle_sha256 IS NULL" : "";
     const { rows } = await this.pool.query<{
       tenant_id: string; skill_id: string; name: string; owner_type: SkillOwnerType; source_skill_id: string | null;
       updated_at: Date; bundle_sha256: string | null;
     }>(
-      `SELECT tenant_id, skill_id, name, owner_type, source_skill_id, updated_at, ${bundle}
-       FROM skills ${since ? "WHERE updated_at > $1" : ""} ORDER BY tenant_id, skill_id`,
-      since ? [since] : [],
+      `SELECT tenant_id, skill_id, name, owner_type, source_skill_id, updated_at, ${columns ? "bundle_sha256" : "NULL AS bundle_sha256"}
+       FROM skills ${where} ORDER BY tenant_id, skill_id`,
+      where ? [updatedAfter] : [],
     );
     return rows.map((row) => ({
       tenantId: row.tenant_id, skillId: row.skill_id, name: row.name, ownerType: row.owner_type,
@@ -294,12 +314,13 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
   if (options.since) {
     const fulls = manifests.filter((manifest) => manifest.mode === "full");
     if (!fulls.length) throw new MigrationError("A delta (--since) needs the full run's report as --manifest");
-    const lastFull = new Date(Math.max(...fulls.map((manifest) => manifest.startedAt.getTime())));
-    if (options.since > lastFull) {
-      throw new MigrationError(`--since ${options.since.toISOString()} is later than the full run started (${lastFull.toISOString()}): ` +
-        "Skills edited during the full run would be missed");
+    const earliest = new Date(Math.min(...fulls.map((manifest) => manifest.startedAt.getTime())));
+    if (options.since > earliest) {
+      throw new MigrationError(`--since ${options.since.toISOString()} is later than the earliest full run's start (${earliest.toISOString()}): ` +
+        "Skills edited during that run would be missed");
     }
   }
+  const selectedUpdatedAfter = options.since && new Date(options.since.getTime() - DELTA_MARGIN_MS);
   if (!options.dryRun && !(await deps.rows.hasBundleColumns())) {
     throw new MigrationError(`skills.bundle_sha256 / bundle_size are missing in schema ${options.target.schema}: apply deploy/migrations/0022_skill_bundles.sql first`);
   }
@@ -331,7 +352,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       return packed.bytes.byteLength;
     });
 
-  const rows = await deps.rows.list(options.since);
+  const rows = await deps.rows.list(selectedUpdatedAfter);
   const slots = new Semaphore(options.skillConcurrency ?? 4);
   let done = 0;
   const skills = await Promise.all(rows.map((row) => slots.run(async () => {
@@ -420,6 +441,8 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
     mode: options.since ? "delta" : "full",
     dryRun: options.dryRun,
     since: options.since?.toISOString() ?? null,
+    deltaMarginMs: options.since ? DELTA_MARGIN_MS : null,
+    selectedUpdatedAfter: selectedUpdatedAfter?.toISOString() ?? null,
     target: options.target,
     manifests: manifests.map((manifest) => ({ mode: manifest.mode, startedAt: manifest.startedAt.toISOString(), bundles: manifest.bundles.size })),
     font: { fileName: options.font.fileName, sha256: options.font.sha256 },
@@ -464,9 +487,13 @@ export function formatSummary(report: MigrationReport): string {
   const fontLines = [...fontCounts].map(([key, count]) => `${count} x ${key}`);
   const statuses = (["written", "would-write", "unchanged", "kept", "conflict", "failed"] as const)
     .map((status) => `${status} ${totals.byStatus[status] ?? 0}`).join(", ");
+  const delta = report.since
+    ? `; since ${report.since}: Skills with updated_at > ${report.selectedUpdatedAfter} ` +
+      `(built-in margin ${(report.deltaMarginMs ?? 0) / 60_000} min) or without a bundle`
+    : "";
   const lines = [
     `${TOOL} ${report.mode}${report.dryRun ? " (dry-run)" : ""}: schema ${report.target.schema}, Supabase bucket ${report.target.supabaseBucket}, ` +
-      `OSS bucket ${report.target.ossBucket}${report.since ? `, since ${report.since}` : ""}`,
+      `OSS bucket ${report.target.ossBucket}${delta}`,
     `Started ${report.startedAt}, finished ${report.finishedAt}; manifests: ${report.manifests.length}`,
     `Skills: ${totals.skills} (${statuses})`,
     `Supabase objects: ${totals.supabaseObjects}, bytes read: ${totals.supabaseBytes}; requests ${report.supabase.requests}, ` +

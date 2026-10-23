@@ -215,9 +215,10 @@ describe("migrateSkillBundles", () => {
     storage.put(`${TENANT}/skills/skill_lib/SKILL.md`, text("# not selected\n"));
 
     const delta = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest] });
-    expect(delta).toMatchObject({ mode: "delta", since: "2026-10-10T00:00:00.000Z" });
+    expect(delta).toMatchObject({ mode: "delta", since: "2026-10-10T00:00:00.000Z", deltaMarginMs: 600_000, selectedUpdatedAfter: "2026-10-09T23:50:00.000Z" });
+    // skill_bad and skill_nomd failed in the full run: still without a bundle, every delta retries them.
     expect(delta.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
-      ["skill_fork2", "written"], ["skill_new", "written"], ["skill_other", "kept"],
+      ["skill_bad", "failed"], ["skill_fork2", "written"], ["skill_new", "written"], ["skill_nomd", "failed"], ["skill_other", "kept"],
     ]);
     expect(entry(delta, "skill_fork2").previousBundleSha256).toBe(entry(full, "skill_fork2").bundleSha256);
     expect(entry(delta, "skill_fork2").bundleSha256).not.toBe(entry(full, "skill_fork2").bundleSha256);
@@ -231,8 +232,34 @@ describe("migrateSkillBundles", () => {
     // A second delta, given both reports, finds nothing left to do.
     const again = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest, parseManifest(JSON.parse(JSON.stringify(delta)), TARGET)] });
     expect(again.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
-      ["skill_fork2", "unchanged"], ["skill_new", "unchanged"], ["skill_other", "kept"],
+      ["skill_bad", "failed"], ["skill_fork2", "unchanged"], ["skill_new", "unchanged"], ["skill_nomd", "failed"], ["skill_other", "kept"],
     ]);
+  });
+
+  it("delta selects Skills updated within a built-in 10-minute margin before T0, and every Skill without a bundle", async () => {
+    const full = await run();
+    const manifest = parseManifest(JSON.parse(JSON.stringify(full)), TARGET);
+    // The old API bumps updated_at before it writes Supabase, and Pod clocks skew: an edit straddling T0
+    // can carry an updated_at a little before T0 while the full run still read the old files.
+    storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# edited across T0\n"));
+    await harness.pool.query("UPDATE skills SET updated_at = $1 WHERE skill_id = 'skill_fork2'", [new Date("2026-10-09T23:55:00.000Z")]);
+    // Outside the margin: an edit this old was read by the full run, so it is not selected.
+    storage.put(`${TENANT}/skills/skill_fork1/SKILL.md`, text("# not selected\n"));
+    await harness.pool.query("UPDATE skills SET updated_at = $1 WHERE skill_id = 'skill_fork1'", [new Date("2026-10-09T23:49:59.999Z")]);
+    // A Skill without a bundle is selected whatever its updated_at.
+    const old = { skillId: "skill_old", name: "old", updatedAt: "2026-09-01T00:00:00.000Z", files: { "SKILL.md": text("# old\n") } };
+    await insertSkill(harness.pool, old);
+    seedFiles(old);
+
+    const delta = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest] });
+    expect(delta.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork2", "written"], ["skill_nomd", "failed"], ["skill_old", "written"],
+    ]);
+    expect(entry(delta, "skill_fork2").bundleSha256).not.toBe(entry(full, "skill_fork2").bundleSha256);
+    expect(formatSummary(delta)).toContain(
+      "since 2026-10-10T00:00:00.000Z: Skills with updated_at > 2026-10-09T23:50:00.000Z (built-in margin 10 min) or without a bundle");
+    const state = Object.fromEntries((await rows()).map((row) => [row.skill_id, row.bundle_sha256]));
+    expect(state).toMatchObject({ skill_fork1: entry(full, "skill_fork1").bundleSha256, skill_old: entry(delta, "skill_old").bundleSha256 });
   });
 
   it("reports a compare-and-set lost to a concurrent edit as a conflict and keeps the other writer's bundle", async () => {
@@ -286,10 +313,21 @@ describe("migrateSkillBundles", () => {
     await expect(migrateSkillBundles(legacy, { dryRun: false, font, target: TARGET })).rejects.toThrow(/0022/);
   });
 
-  it("guards the delta: it needs the full run's report and a T0 no later than that run's start", async () => {
-    const full = parseManifest(JSON.parse(JSON.stringify(await run())), TARGET);
+  it("guards the delta: it needs a full run's report and a T0 no later than the earliest full run's start", async () => {
+    const first = parseManifest(JSON.parse(JSON.stringify(await run())), TARGET);
+    const second = parseManifest(JSON.parse(JSON.stringify(await run({ manifests: [first], now: () => new Date("2026-10-11T00:00:00.000Z") }))), TARGET);
+    expect([first.mode, first.startedAt.toISOString(), second.mode, second.startedAt.toISOString()])
+      .toEqual(["full", "2026-10-10T00:00:00.000Z", "full", "2026-10-11T00:00:00.000Z"]);
     await expect(run({ since: new Date("2026-10-10T00:00:00.000Z") })).rejects.toThrow(/full run's report/);
-    await expect(run({ since: new Date("2026-10-10T00:00:00.001Z"), manifests: [full] })).rejects.toThrow(/later than the full run started/);
+    // Later than the first full run, though not than the second: in whichever order the reports are given.
+    for (const manifests of [[first, second], [second, first]]) {
+      await expect(run({ since: new Date("2026-10-10T00:00:00.001Z"), manifests })).rejects
+        .toThrow("--since 2026-10-10T00:00:00.001Z is later than the earliest full run's start (2026-10-10T00:00:00.000Z)");
+      await expect(run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests })).resolves.toMatchObject({ mode: "delta" });
+    }
+    // A delta's report alone is no full run.
+    const delta = parseManifest(JSON.parse(JSON.stringify(await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [first, second] }))), TARGET);
+    await expect(run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [delta] })).rejects.toThrow(/full run's report/);
   });
 
   it("keeps raw OSS and PostgreSQL error text out of the report, the summary and the log: name, code and HTTP status only", async () => {
