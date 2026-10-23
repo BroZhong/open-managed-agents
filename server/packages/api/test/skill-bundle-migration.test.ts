@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OSSSkillBundleStore, packSkillBundle, type OSSObjectClient, type Pool } from "@oma-server/store";
 import { createPgTestHarness, type PgTestHarness } from "../../store/test/pg-harness.js";
 import { fakeOSS, ossTestOptions } from "../../store/test/oss-harness.js";
+import { MigrationError, safeErrorMessage } from "../src/skill-bundle-migration/errors.js";
 import { fontProblem, loadReplacementFont } from "../src/skill-bundle-migration/fonts.js";
 import { SupabaseSkillReader } from "../src/skill-bundle-migration/supabase-reader.js";
 import {
@@ -291,6 +292,41 @@ describe("migrateSkillBundles", () => {
     await expect(run({ since: new Date("2026-10-10T00:00:00.001Z"), manifests: [full] })).rejects.toThrow(/later than the full run started/);
   });
 
+  it("keeps raw OSS and PostgreSQL error text out of the report, the summary and the log: name, code and HTTP status only", async () => {
+    const host = "agentry.oss-cn-shanghai-internal.aliyuncs.com";
+    // What ali-oss/urllib and pg throw: the request line with the bucket host and object key, the raw XML body, the SQL.
+    const ossError = Object.assign(
+      new Error(`AccessDenied: PUT https://${host}/__oma/skills/${TENANT}/${"a".repeat(64)}.zip raw xml: <Error><HostId>${host}</HostId></Error>`),
+      { name: "AccessDeniedError", code: "AccessDenied", status: 403, hostId: host, requestId: "68F9A1" },
+    );
+    const pgError = Object.assign(new Error("canceling statement due to statement timeout: UPDATE skills SET bundle_sha256 = $1"), { name: "error", code: "57014" });
+    let puts = 0;
+    const failingStore = {
+      async put(...args: Parameters<OSSSkillBundleStore["put"]>) { if (++puts === 1) throw ossError; return store.put(...args); },
+      get: (...args: Parameters<OSSSkillBundleStore["get"]>) => store.get(...args),
+    };
+    const pg = new PgSkillRows(harness.pool);
+    const failingRows = {
+      hasBundleColumns: () => pg.hasBundleColumns(),
+      list: (...args: Parameters<PgSkillRows["list"]>) => pg.list(...args),
+      async setBundle(...args: Parameters<PgSkillRows["setBundle"]>) { if (args[0].skillId === "skill_fork2") throw pgError; return pg.setBundle(...args); },
+    };
+    // One Skill at a time: skill_fork1 uploads the bundle it shares with skill_lib first.
+    const report = await migrateSkillBundles({ rows: failingRows, source: reader(), bundles: failingStore }, {
+      dryRun: false, font, target: TARGET, skillConcurrency: 1, log: (line) => logs.push(line),
+    });
+    expect(report.skills.map((skill) => [skill.skillId, skill.status, skill.reason])).toEqual([
+      ["skill_bad", "failed", "tenant id is not a valid Skill Bundle key segment"],
+      ["skill_fork1", "failed", "AccessDeniedError code AccessDenied HTTP 403"],
+      ["skill_fork2", "failed", "error code 57014"],
+      ["skill_lib", "failed", "AccessDeniedError code AccessDenied HTTP 403"],
+      ["skill_nomd", "failed", "no SKILL.md"],
+      ["skill_other", "written", undefined],
+    ]);
+    const output = [JSON.stringify(report), formatSummary(report), ...logs].join("\n");
+    for (const leak of ["https://", host, "raw xml", "HostId", "68F9A1", "statement timeout", "UPDATE skills"]) expect(output).not.toContain(leak);
+  });
+
   it("never puts a credential or Skill file content into the report, the summary or the log", async () => {
     const secretBody = "TOP-SECRET-SKILL-BODY";
     storage.put(`${TENANT}/skills/skill_other/ref/notes.md`, text(secretBody));
@@ -301,6 +337,17 @@ describe("migrateSkillBundles", () => {
     }
     expect(formatSummary(report)).toMatch(/Skills: 6/);
     expect(formatSummary(report)).toMatch(/distinct bundles: 3/);
+  });
+});
+
+describe("safeErrorMessage", () => {
+  it("prints the tool's own messages and reduces anything else to name, code and HTTP status", () => {
+    expect(safeErrorMessage(new MigrationError("--since is later than the earliest full run"))).toBe("--since is later than the earliest full run");
+    expect(safeErrorMessage(Object.assign(new Error("GET https://bucket.host/key"), { name: "NoSuchKeyError", code: "NoSuchKey", status: 404 })))
+      .toBe("NoSuchKeyError code NoSuchKey HTTP 404");
+    expect(safeErrorMessage(Object.assign(new Error("connect ECONNREFUSED 10.0.0.7:5432"), { code: "ECONNREFUSED" }))).toBe("Error code ECONNREFUSED");
+    expect(safeErrorMessage(Object.assign(new Error("x"), { name: "Bad name: https://host", code: "has spaces https://h" }))).toBe("Error");
+    expect(safeErrorMessage("postgres://oma:secret@pg/oma")).toBe("Error");
   });
 });
 

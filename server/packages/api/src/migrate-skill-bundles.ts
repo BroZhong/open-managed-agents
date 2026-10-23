@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Agent } from "undici";
 import { OSSSkillBundleStore, createPgPool, pgConfigFromEnv } from "@oma-server/store";
 import { skillBundleStorageConfigFromEnv } from "./lib/workspace-config.js";
+import { MigrationError, safeErrorMessage } from "./skill-bundle-migration/errors.js";
 import { loadReplacementFont } from "./skill-bundle-migration/fonts.js";
 import { SupabaseSkillReader } from "./skill-bundle-migration/supabase-reader.js";
 import { PgSkillRows, formatSummary, migrateSkillBundles, parseManifest, parseMigrationArgs } from "./skill-bundle-migration/migration.js";
@@ -42,23 +43,50 @@ import { PgSkillRows, formatSummary, migrateSkillBundles, parseManifest, parseMi
  * bundle failed verification.
  */
 
+/** A local input file; Node's own error would be printed as its code only. */
+function readInput(path: string, what: string): Buffer {
+  try {
+    return readFileSync(path);
+  } catch (error) {
+    throw new MigrationError(`Cannot read the ${what} ${path}: ${safeErrorMessage(error)}`);
+  }
+}
+
+/** The environment's own configuration errors name a variable, never its value. */
+function fromEnv<T>(read: () => T): T {
+  try {
+    return read();
+  } catch (error) {
+    throw new MigrationError((error as Error).message);
+  }
+}
+
+function parseJson(text: string, what: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new MigrationError(`The ${what} is not JSON`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseMigrationArgs(process.argv.slice(2), process.env);
-  const font = loadReplacementFont(new Uint8Array(readFileSync(args.fontPath)));
-  const oss = skillBundleStorageConfigFromEnv(process.env);
+  const font = loadReplacementFont(new Uint8Array(readInput(args.fontPath, "font")));
+  const oss = fromEnv(() => skillBundleStorageConfigFromEnv(process.env));
   const target = { schema: args.schema, supabaseBucket: args.supabaseBucket, ossBucket: oss.bucket };
-  const manifests = args.manifestPaths.map((path) => parseManifest(JSON.parse(readFileSync(path, "utf8")), target));
+  const manifests = args.manifestPaths.map((path) =>
+    parseManifest(parseJson(readInput(path, "manifest").toString("utf8"), `manifest ${path}`), target));
   // What the API and Runner Pods set (deploy/app/api-runner.yaml).
   const endpoint = process.env.S3_ENDPOINT;
   const serviceKey = process.env.SUPABASE_SERVICE_KEY;
-  if (!endpoint || !serviceKey) throw new Error("Supabase Storage needs S3_ENDPOINT and SUPABASE_SERVICE_KEY");
+  if (!endpoint || !serviceKey) throw new MigrationError("Supabase Storage needs S3_ENDPOINT and SUPABASE_SERVICE_KEY");
   // As in bootstrap: keep internal Storage off any HTTP proxy.
   const dispatcher = new Agent();
   const directFetch: typeof fetch = (input, init) => fetch(input, { ...init, dispatcher } as RequestInit);
-  const pool = createPgPool({ ...pgConfigFromEnv(), max: 4 });
+  const pool = createPgPool({ ...fromEnv(() => pgConfigFromEnv()), max: 4 });
   try {
     const { rows: [connected] } = await pool.query<{ schema: string | null }>("SELECT current_schema() AS schema");
-    if (connected?.schema !== args.schema) throw new Error(`Connected to schema ${connected?.schema}, not ${args.schema}`);
+    if (connected?.schema !== args.schema) throw new MigrationError(`Connected to schema ${connected?.schema}, not ${args.schema}`);
     const report = await migrateSkillBundles({
       rows: new PgSkillRows(pool),
       source: new SupabaseSkillReader({ endpoint, serviceKey, bucket: args.supabaseBucket, fetch: directFetch, concurrency: args.concurrency }),
@@ -77,6 +105,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(`migrate-skill-bundles: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`migrate-skill-bundles: ${safeErrorMessage(error)}`);
   process.exitCode = 1;
 });

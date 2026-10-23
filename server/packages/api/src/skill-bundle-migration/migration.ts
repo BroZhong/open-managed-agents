@@ -1,5 +1,7 @@
 import { parseArgs } from "node:util";
 import {
+  InvalidSkillFileError,
+  SkillBundleTooLargeError,
   assertSkillBundleIdentity,
   isFilteredSkillPath,
   isSkillBundleSha256,
@@ -11,6 +13,7 @@ import {
   type SkillBundleStore,
   type SkillOwnerType,
 } from "@oma-server/store";
+import { MigrationError, safeErrorMessage } from "./errors.js";
 import { fontProblem, isFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
 import { Semaphore, type SupabaseReadStats } from "./supabase-reader.js";
 
@@ -180,11 +183,16 @@ const MAX_REASON = 300;
 const rowKey = (tenantId: string, skillId: string) => `${tenantId}/${skillId}`;
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-class SkillFailure extends Error {}
+/** A Skill the tool cannot migrate; the run goes on. */
+class SkillFailure extends MigrationError {}
 
-function reasonOf(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s+/g, " ").slice(0, MAX_REASON);
+/** The tool's own message in full; any other error as name, code and HTTP status (see `errors.ts`). */
+const reasonOf = (error: unknown) => safeErrorMessage(error).replace(/\s+/g, " ").slice(0, MAX_REASON);
+
+/** The store's packing errors name a path or a size, never a URL: keep their message. */
+function packFailure(error: unknown): never {
+  if (error instanceof SkillBundleTooLargeError || error instanceof InvalidSkillFileError) throw new SkillFailure(error.message);
+  throw error;
 }
 
 function memo<T>(cache: Map<string, Promise<T>>, key: string, create: () => Promise<T>): Promise<T> {
@@ -259,16 +267,16 @@ export class PgSkillRows implements SkillRowStore {
 export function parseManifest(json: unknown, target: MigrationTarget): Manifest {
   const report = json as Partial<MigrationReport> | null;
   if (!report || typeof report !== "object" || report.tool !== TOOL || report.version !== 1 || !Array.isArray(report.skills)) {
-    throw new Error(`The manifest is not a ${TOOL} report`);
+    throw new MigrationError(`The manifest is not a ${TOOL} report`);
   }
-  if (report.dryRun !== false) throw new Error("A dry-run report cannot be a manifest: it recorded no bundle");
+  if (report.dryRun !== false) throw new MigrationError("A dry-run report cannot be a manifest: it recorded no bundle");
   for (const field of ["schema", "supabaseBucket", "ossBucket"] as const) {
     if (report.target?.[field] !== target[field]) {
-      throw new Error(`The manifest is for ${field} ${JSON.stringify(report.target?.[field])}, not ${JSON.stringify(target[field])}`);
+      throw new MigrationError(`The manifest is for ${field} ${JSON.stringify(report.target?.[field])}, not ${JSON.stringify(target[field])}`);
     }
   }
   const startedAt = new Date(String(report.startedAt));
-  if (Number.isNaN(startedAt.getTime()) || (report.mode !== "full" && report.mode !== "delta")) throw new Error(`The manifest is not a ${TOOL} report`);
+  if (Number.isNaN(startedAt.getTime()) || (report.mode !== "full" && report.mode !== "delta")) throw new MigrationError(`The manifest is not a ${TOOL} report`);
   const bundles = new Map<string, string>();
   for (const skill of report.skills) {
     if ((skill.status === "written" || skill.status === "unchanged") && isSkillBundleSha256(skill.bundleSha256)) {
@@ -285,15 +293,15 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
   const startedAt = now();
   if (options.since) {
     const fulls = manifests.filter((manifest) => manifest.mode === "full");
-    if (!fulls.length) throw new Error("A delta (--since) needs the full run's report as --manifest");
+    if (!fulls.length) throw new MigrationError("A delta (--since) needs the full run's report as --manifest");
     const lastFull = new Date(Math.max(...fulls.map((manifest) => manifest.startedAt.getTime())));
     if (options.since > lastFull) {
-      throw new Error(`--since ${options.since.toISOString()} is later than the full run started (${lastFull.toISOString()}): ` +
+      throw new MigrationError(`--since ${options.since.toISOString()} is later than the full run started (${lastFull.toISOString()}): ` +
         "Skills edited during the full run would be missed");
     }
   }
   if (!options.dryRun && !(await deps.rows.hasBundleColumns())) {
-    throw new Error(`skills.bundle_sha256 / bundle_size are missing in schema ${options.target.schema}: apply deploy/migrations/0022_skill_bundles.sql first`);
+    throw new MigrationError(`skills.bundle_sha256 / bundle_size are missing in schema ${options.target.schema}: apply deploy/migrations/0022_skill_bundles.sql first`);
   }
   const owned = new Map<string, string>();
   for (const manifest of manifests) for (const [key, sha256] of manifest.bundles) owned.set(key, sha256);
@@ -351,7 +359,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
         const files = await Promise.all(paths.map(async (path) => ({ path, body: await deps.source.read(row.tenantId, row.skillId, path) })));
         entry.bytes = files.reduce((total, file) => total + file.body.byteLength, 0);
         const repaired = repairFonts(files, options.font);
-        const packed = await packSkillBundle(repaired.files);
+        const packed = await packSkillBundle(repaired.files).catch(packFailure);
         Object.assign(entry, {
           bundleSha256: packed.sha256, bundleSize: packed.size, bundleFiles: packed.files, zipBytes: packed.bytes.byteLength,
           filtered: packed.filtered, replacedFonts: repaired.replaced, corruptFonts: repaired.corrupt,
@@ -521,11 +529,12 @@ export function parseMigrationArgs(argv: readonly string[], env: Readonly<Record
       },
     }));
   } catch (error) {
-    throw new Error(`${(error as Error).message}\n${USAGE}`);
+    // node:util's messages quote only the command line.
+    throw new MigrationError(`${(error as Error).message}\n${USAGE}`);
   }
   const required = (flag: "schema" | "supabase-bucket" | "font" | "report") => {
     const value = values[flag];
-    if (!value) throw new Error(`Missing --${flag}\n${USAGE}`);
+    if (!value) throw new MigrationError(`Missing --${flag}\n${USAGE}`);
     return value;
   };
   const schema = required("schema");
@@ -535,17 +544,17 @@ export function parseMigrationArgs(argv: readonly string[], env: Readonly<Record
   const manifestPaths = values.manifest;
   const envSchema = env.PG_SCHEMA || "oma";
   const envBucket = env.S3_BUCKET || "workspace";
-  if (schema !== envSchema) throw new Error(`--schema ${schema} does not match the environment: PG_SCHEMA is "${envSchema}"`);
-  if (supabaseBucket !== envBucket) throw new Error(`--supabase-bucket ${supabaseBucket} does not match the environment: S3_BUCKET is "${envBucket}"`);
+  if (schema !== envSchema) throw new MigrationError(`--schema ${schema} does not match the environment: PG_SCHEMA is "${envSchema}"`);
+  if (supabaseBucket !== envBucket) throw new MigrationError(`--supabase-bucket ${supabaseBucket} does not match the environment: S3_BUCKET is "${envBucket}"`);
   let since: Date | undefined;
   if (values.since !== undefined) {
     since = new Date(values.since);
     if (!ISO_WITH_ZONE.test(values.since) || Number.isNaN(since.getTime())) {
-      throw new Error("--since must be an ISO 8601 timestamp with a time zone, e.g. 2026-10-23T08:00:00.000Z");
+      throw new MigrationError("--since must be an ISO 8601 timestamp with a time zone, e.g. 2026-10-23T08:00:00.000Z");
     }
-    if (!manifestPaths.length) throw new Error("--since needs the full run's report as --manifest");
+    if (!manifestPaths.length) throw new MigrationError("--since needs the full run's report as --manifest");
   }
   const concurrency = Number(values.concurrency);
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error("--concurrency must be an integer from 1 to 16");
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new MigrationError("--concurrency must be an integer from 1 to 16");
   return { schema, supabaseBucket, fontPath, reportPath, dryRun: values["dry-run"], since, manifestPaths, concurrency };
 }

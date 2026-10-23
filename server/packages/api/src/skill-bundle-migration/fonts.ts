@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { MigrationError } from "./errors.js";
 
 /**
  * The font fix of the Skill Bundle migration (#266, ADR-0022). The old upload
@@ -93,10 +94,10 @@ export function fontProblem(bytes: Uint8Array): string | null {
 export function loadReplacementFont(body: Uint8Array, pinned: PinnedFont = OFFICIAL_LIBERATION_SANS_REGULAR): ReplacementFont {
   const digest = sha256Hex(body);
   if (digest !== pinned.sha256 || body.byteLength !== pinned.size) {
-    throw new Error(`The replacement font is not the official ${pinned.fileName}: sha256 ${digest}, expected ${pinned.sha256}`);
+    throw new MigrationError(`The replacement font is not the official ${pinned.fileName}: sha256 ${digest}, expected ${pinned.sha256}`);
   }
   const problem = fontProblem(body);
-  if (problem) throw new Error(`The pinned ${pinned.fileName} is not a valid font: ${problem}`);
+  if (problem) throw new MigrationError(`The pinned ${pinned.fileName} is not a valid font: ${problem}`);
   return { fileName: pinned.fileName, sha256: digest, body };
 }
 
