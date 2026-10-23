@@ -9,6 +9,7 @@ export interface QueuedInput {
   /** Stable identity — the Host's pending-event id. */
   id: string;
   text: string;
+  source?: "user" | "subagent";
 }
 
 interface MessageInputProps {
@@ -195,11 +196,7 @@ export function MessageInput({
           aria-label="Queued input"
         >
           {queuedInput.map((entry) => (
-            <div key={entry.id} className="flex items-center gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
-              <Clock className="h-3.5 w-3.5 flex-shrink-0" />
-              <span className="session-queued-text" title={entry.text}>{entry.text}</span>
-              <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
-            </div>
+            <QueuedInputRow key={entry.id} entry={entry} />
           ))}
           {hasMoreQueuedInput && (
             <p className="px-3 text-xs text-[var(--color-fg-subtle)]">
@@ -314,6 +311,35 @@ export function MessageInput({
         </div>
         {disabled && <p className="session-composer-help">Start a new session to continue</p>}
       </div>
+    </div>
+  );
+}
+
+function QueuedInputRow({ entry }: { entry: QueuedInput }) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = entry.text.replace(/\s+/g, " ").trim();
+  const isLong = summary.length > 160 || entry.text.split("\n").length > 2;
+  const preview = summary.length > 160 ? `${summary.slice(0, 160)}…` : summary;
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)]">
+      <Clock className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+      <span className="flex-shrink-0 font-medium">{entry.source ?? "user"}</span>
+      {isLong ? (
+        <button
+          type="button"
+          className="session-queued-message min-w-0 flex-1 cursor-pointer text-left"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span className={expanded ? "session-queued-full" : "session-queued-text"}>
+            {expanded ? entry.text : preview}
+          </span>
+          <span className="text-xs underline">{expanded ? "Collapse" : "Expand"}</span>
+        </button>
+      ) : (
+        <span className="session-queued-full min-w-0 flex-1">{entry.text}</span>
+      )}
+      <span className="ml-auto flex-shrink-0 text-xs text-[var(--color-fg-subtle)]">queued</span>
     </div>
   );
 }

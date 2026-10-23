@@ -24,13 +24,21 @@ import { useAgentSkills } from "@/lib/hooks/use-skills";
 import { useQueuedInput } from "@/lib/hooks/use-queued-input";
 import { cn } from "@/lib/utils";
 
-/** Read the display text out of a `user.message` event payload. */
+/** Pending input includes both user messages and internal delegation results. */
 function messageText(data: unknown): string {
-  if (!data || typeof data !== "object") return "";
-  const content = (data as { content?: unknown }).content;
-  if (!Array.isArray(content)) return "";
-  const first = content[0] as { text?: unknown } | undefined;
-  return typeof first?.text === "string" ? first.text : "";
+  if (!data || typeof data !== "object") return "No message text";
+  const payload = data as {
+    content?: Array<{ type?: string; text?: string }>;
+    result?: { output?: string; reason?: string; status?: string };
+  };
+  if (payload.result) {
+    return [payload.result.reason, payload.result.output]
+      .filter((text) => typeof text === "string" && text.trim()).join("\n\n")
+      || payload.result.status || "Subagent result received";
+  }
+  return (Array.isArray(payload.content) ? payload.content
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text).join("\n") : "") || "No message text";
 }
 type ChildTab = { execution: DelegationExecution; label: string };
 
@@ -143,6 +151,7 @@ function SessionConversation({ id, session, stream, openWorkspaceFile }: {
 
   const queuedInput = serverQueued.map((entry) => ({
     id: entry.id,
+    source: entry.type.startsWith("user.") ? "user" as const : "subagent" as const,
     text: messageText(entry.data),
   }));
 
