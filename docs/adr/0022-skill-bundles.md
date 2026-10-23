@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed for #262 (parent #259), pending the user's review. The design was
-settled in review on 2026-10-23. #261 measures the Sandbox-side download and
-calibrates the install budget; #263–#273 implement and roll it out.
+Accepted 2026-10-23: approved by the maintainer for #262 (parent #259). The
+design was settled in review on 2026-10-23; #261 measured the Sandbox-side
+download and calibrated the install budget, and #263–#270 implemented it and
+accepted it on oma-test. It is live in production since 2026-10-23
+(#271). #272 (Supabase teardown) and #273 (bundle collection) follow.
 
 Supersedes ADR-0005 §3 and §4 (Read-only Projection, Provision Source) and
 ADR-0008's Skills paragraph. Revises ADR-0019's per-Turn Skills refresh and
@@ -192,6 +194,16 @@ This is informational; the release tickets own the procedure.
 - Storage grows with versions, not with equips: forks share bundles, and every
   edit, even a one-line one, writes a complete new bundle. Old bundles
   accumulate until #273.
+- The binding's record can lag what `/skills` points at, never lead it: it is
+  written after the switch, outside any transaction. A lag costs one
+  reinstall when the next Turn's Skill Set differs from the record. It can
+  cause a wrong skip only if a switch completed and its record was lost (a
+  Runner crash, a lost PG write, or a cancellation between the switch and the
+  record, a window of milliseconds) and the Agent's Skill Set later returns
+  to the recorded one before any other install on that binding. That stale
+  view lasts until the next install on the binding or a Sandbox rebuild.
+  Accepted as a rare, brief inconsistency; a Host-assigned install intent
+  that the skip rule compares would close it.
 - The skip rule trusts the Sandbox's local disk for as long as its ID stays
   bound, while ADR-0019 gives local files no preservation guarantee. A Sandbox
   that kept its ID but lost `/opt/oma/skills` would keep a dangling `/skills`
