@@ -9,6 +9,7 @@ import {
   PgSkillRows,
   formatSummary,
   migrateSkillBundles,
+  migrationExitCode,
   parseManifest,
   parseMigrationArgs,
   type MigrationReport,
@@ -260,6 +261,40 @@ describe("migrateSkillBundles", () => {
       "since 2026-10-10T00:00:00.000Z: Skills with updated_at > 2026-10-09T23:50:00.000Z (built-in margin 10 min) or without a bundle");
     const state = Object.fromEntries((await rows()).map((row) => [row.skill_id, row.bundle_sha256]));
     expect(state).toMatchObject({ skill_fork1: entry(full, "skill_fork1").bundleSha256, skill_old: entry(delta, "skill_old").bundleSha256 });
+  });
+
+  it("publishes a Skill whose corrupt font is not LiberationSans as stored, with a warning that does not fail the run", async () => {
+    await harness.pool.query("DELETE FROM skills WHERE skill_id IN ('skill_bad', 'skill_nomd')");
+    const noto = utf8Mangled(syntheticFont(0x00010000, 11));
+    const skill = { skillId: "skill_noto", name: "noto", updatedAt: "2026-10-07T00:00:00.000Z", files: { "SKILL.md": text("# noto\n"), "fonts/NotoSans.ttf": noto } };
+    await insertSkill(harness.pool, skill);
+    seedFiles(skill);
+    const report = await run();
+    expect(entry(report, "skill_noto")).toMatchObject({
+      status: "written",
+      corruptFonts: [{ path: "fonts/NotoSans.ttf", sha256: sha256(noto), size: noto.byteLength, problem: expect.any(String) }],
+      warnings: [expect.stringMatching(/^corrupt font fonts\/NotoSans\.ttf kept as stored: /)],
+    });
+    const stored = (await store.readAll(TENANT, entry(report, "skill_noto").bundleSha256!))!;
+    expect(Buffer.from(stored.find((file) => file.path === "fonts/NotoSans.ttf")!.body).equals(Buffer.from(noto))).toBe(true);
+    expect(report.totals).toMatchObject({ corruptFonts: 1, warnings: 1, byStatus: { written: 5 } });
+    expect(report.verification.problems).toEqual([]);
+    expect(report.verification.fonts.find((verified) => verified.path === "fonts/NotoSans.ttf")?.problem).toEqual(expect.any(String));
+    expect(migrationExitCode(report)).toBe(0);
+    const summary = formatSummary(report);
+    expect(summary).toMatch(/  warning f00c7d5a-dd14-43e6-b791-e561c192d312\/skill_noto \(noto\): corrupt font fonts\/NotoSans\.ttf kept as stored: /);
+    expect(summary.split("\n").at(-1)).toBe("Result: success with 1 warning (exit 0)");
+  });
+
+  it("exits 2 only for a failed or conflicting Skill or a verification problem", async () => {
+    const report = await run();
+    expect(migrationExitCode(report)).toBe(2);
+    expect(formatSummary(report).split("\n").at(-1)).toBe("Result: 2 failed, 0 conflicts, 0 verification problems; 0 warnings (exit 2)");
+    const clean = { ...report, totals: { ...report.totals, byStatus: { written: 4 } } };
+    expect(migrationExitCode(clean)).toBe(0);
+    expect(formatSummary(clean).split("\n").at(-1)).toBe("Result: success (exit 0)");
+    expect(migrationExitCode({ ...clean, totals: { ...clean.totals, byStatus: { written: 3, conflict: 1 } } })).toBe(2);
+    expect(migrationExitCode({ ...clean, verification: { ...clean.verification, problems: [{ tenantId: TENANT, sha256: "a".repeat(64), problem: "no SKILL.md" }] } })).toBe(2);
   });
 
   it("reports a compare-and-set lost to a concurrent edit as a conflict and keeps the other writer's bundle", async () => {

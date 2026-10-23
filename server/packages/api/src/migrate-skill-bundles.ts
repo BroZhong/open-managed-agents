@@ -6,7 +6,9 @@ import { skillBundleStorageConfigFromEnv } from "./lib/workspace-config.js";
 import { MigrationError, safeErrorMessage } from "./skill-bundle-migration/errors.js";
 import { loadReplacementFont } from "./skill-bundle-migration/fonts.js";
 import { SupabaseSkillReader } from "./skill-bundle-migration/supabase-reader.js";
-import { PgSkillRows, formatSummary, migrateSkillBundles, parseManifest, parseMigrationArgs } from "./skill-bundle-migration/migration.js";
+import {
+  PgSkillRows, formatSummary, migrateSkillBundles, migrationExitCode, parseManifest, parseMigrationArgs,
+} from "./skill-bundle-migration/migration.js";
 
 /*
  * One-time migration of Supabase Skill files into Skill Bundles (#266, ADR-0022).
@@ -42,8 +44,16 @@ import { PgSkillRows, formatSummary, migrateSkillBundles, parseManifest, parseMi
  * Output: the JSON report at --report (per-Skill bundle sha256/size, filtered
  * and replaced files, skipped/failed Skills with reasons, Supabase retries) and
  * a summary on stdout; progress on stderr. No credential, URL or Skill file
- * content is printed. Exit code 2 when a Skill failed or conflicted, or a
- * bundle failed verification.
+ * content is printed: an error the tool did not compose itself (ali-oss, pg)
+ * is reported by name, code and HTTP status only.
+ *
+ * Fonts: every corrupted LiberationSans-Regular.ttf is replaced by the official
+ * file. Any other corrupt font is published as stored (it was already corrupt;
+ * blocking its Skill would be worse) and reported as a warning.
+ *
+ * Exit code: 0 on success, warnings included (the summary's last line says
+ * "success with N warnings"); 2 when a Skill failed or conflicted, or a bundle
+ * failed verification; 1 when the run could not start or broke off.
  */
 
 /** A local input file; Node's own error would be printed as its code only. */
@@ -100,7 +110,7 @@ async function main(): Promise<void> {
     writeFileSync(args.reportPath, `${JSON.stringify(report, null, 2)}\n`);
     console.log(formatSummary(report));
     console.log(`Report: ${args.reportPath}`);
-    if (report.totals.byStatus.failed || report.totals.byStatus.conflict || report.verification.problems.length) process.exitCode = 2;
+    process.exitCode = migrationExitCode(report);
   } finally {
     await pool.end();
     await dispatcher.close();

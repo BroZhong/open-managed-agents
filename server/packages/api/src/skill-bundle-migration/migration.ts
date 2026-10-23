@@ -14,7 +14,7 @@ import {
   type SkillOwnerType,
 } from "@oma-server/store";
 import { MigrationError, safeErrorMessage } from "./errors.js";
-import { fontProblem, isFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
+import { fontProblem, isFontPath, isReplacementFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
 import { Semaphore, type SupabaseReadStats } from "./supabase-reader.js";
 
 /**
@@ -132,7 +132,10 @@ export interface SkillReportEntry {
   zipBytes?: number;
   filtered?: string[];
   replacedFonts?: FontReplacement[];
+  /** Corrupt fonts other than the replacement font, published as stored. */
   corruptFonts?: CorruptFont[];
+  /** What was published although it is not right, e.g. those fonts. Never fails the run. */
+  warnings?: string[];
 }
 
 /** A font file of a verified bundle, as unpacked from it. */
@@ -173,6 +176,7 @@ export interface MigrationReport {
     filteredFiles: number;
     replacedFonts: number;
     corruptFonts: number;
+    warnings: number;
     distinctBundles: number;
     bundlesUploaded: number;
     uploadedZipBytes: number;
@@ -222,13 +226,16 @@ function memo<T>(cache: Map<string, Promise<T>>, key: string, create: () => Prom
   return promise;
 }
 
-/** What must hold for every migrated bundle. */
-function bundleProblems(files: readonly SkillBundleFile[]): string[] {
+/**
+ * What must hold for every migrated bundle. Another corrupt font is no
+ * problem: it was published as stored, with a warning.
+ */
+function bundleProblems(files: readonly SkillBundleFile[], font: ReplacementFont): string[] {
   const problems: string[] = [];
   if (!files.some((file) => file.path === "SKILL.md")) problems.push("no SKILL.md");
   for (const file of files) {
     if (isFilteredSkillPath(file.path)) problems.push(`compiled Python present: ${file.path}`);
-    if (isFontPath(file.path)) {
+    if (isFontPath(file.path) && isReplacementFontPath(file.path, font)) {
       const problem = fontProblem(file.body);
       if (problem) problems.push(`invalid font ${file.path}: ${problem}`);
     }
@@ -337,7 +344,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       const bytes = await load();
       if (!bytes) throw new SkillFailure(`bundle ${sha256} is missing from the bundle store`);
       const files = await unpackSkillBundle(bytes);
-      for (const problem of bundleProblems(files)) problems.push({ tenantId, sha256, problem });
+      for (const problem of bundleProblems(files, options.font)) problems.push({ tenantId, sha256, problem });
       for (const file of files.filter((entry) => isFontPath(entry.path))) {
         fonts.push({
           tenantId, bundleSha256: sha256, path: file.path, sha256: sha256Hex(file.body), size: file.body.byteLength,
@@ -385,6 +392,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
           bundleSha256: packed.sha256, bundleSize: packed.size, bundleFiles: packed.files, zipBytes: packed.bytes.byteLength,
           filtered: packed.filtered, replacedFonts: repaired.replaced, corruptFonts: repaired.corrupt,
         });
+        if (repaired.corrupt.length) entry.warnings = repaired.corrupt.map((corrupt) => `corrupt font ${corrupt.path} kept as stored: ${corrupt.problem}`);
         const stored = () => deps.bundles.get(row.tenantId, packed.sha256);
         if (options.dryRun) {
           await verify(row.tenantId, packed.sha256, async () => packed.bytes);
@@ -457,6 +465,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       filteredFiles: sum((skill) => skill.filtered?.length),
       replacedFonts: sum((skill) => skill.replacedFonts?.length),
       corruptFonts: sum((skill) => skill.corruptFonts?.length),
+      warnings: sum((skill) => skill.warnings?.length),
       distinctBundles: groups.size,
       bundlesUploaded: uploaded.filter((bytes) => bytes !== null).length,
       uploadedZipBytes: uploaded.reduce<number>((total, bytes) => total + (bytes ?? 0), 0),
@@ -474,6 +483,12 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
     supabase: { ...deps.source.stats, retriesByCause: { ...deps.source.stats.retriesByCause } },
     skills,
   };
+}
+
+/** 2 when a Skill failed or conflicted, or a bundle failed verification; 0 otherwise, warnings included. */
+export function migrationExitCode(report: MigrationReport): 0 | 2 {
+  const { failed, conflict } = report.totals.byStatus;
+  return failed || conflict || report.verification.problems.length ? 2 : 0;
 }
 
 /** The human summary printed after a run. */
@@ -503,7 +518,8 @@ export function formatSummary(report: MigrationReport): string {
     `Forks: ${report.forks.total} (same bundle as source ${report.forks.sameBundleAsSource.length}, ` +
       `different ${report.forks.differentFromSource.length}, source not packed ${report.forks.sourceNotPacked.length})`,
     `Filtered files (.pyc, __pycache__): ${totals.filteredFiles}`,
-    `Replaced fonts: ${totals.replacedFonts} (with ${report.font.fileName} ${report.font.sha256}); corrupt fonts not replaced: ${totals.corruptFonts}`,
+    `Replaced fonts: ${totals.replacedFonts} (with ${report.font.fileName} ${report.font.sha256}); ` +
+      `other corrupt fonts kept as stored: ${totals.corruptFonts}`,
     `Verification (${report.verification.source}): ${report.verification.bundles} bundles, ${report.verification.problems.length} problems`,
     `Fonts in verified bundles: ${fontLines.length ? fontLines.join(", ") : "none"}`,
   ];
@@ -512,6 +528,15 @@ export function formatSummary(report: MigrationReport): string {
     if (skill.status === "failed" || skill.status === "conflict" || skill.status === "kept") {
       lines.push(`  ${skill.status} ${skill.tenantId}/${skill.skillId} (${skill.name}): ${skill.reason}`);
     }
+    for (const warning of skill.warnings ?? []) lines.push(`  warning ${skill.tenantId}/${skill.skillId} (${skill.name}): ${warning}`);
+  }
+  const warnings = `${totals.warnings} warning${totals.warnings === 1 ? "" : "s"}`;
+  if (migrationExitCode(report)) {
+    const count = (n: number | undefined, noun: string) => `${n ?? 0} ${noun}${n === 1 ? "" : "s"}`;
+    lines.push(`Result: ${totals.byStatus.failed ?? 0} failed, ${count(totals.byStatus.conflict, "conflict")}, ` +
+      `${count(report.verification.problems.length, "verification problem")}; ${warnings} (exit 2)`);
+  } else {
+    lines.push(`Result: success${totals.warnings ? ` with ${warnings}` : ""} (exit 0)`);
   }
   return lines.join("\n");
 }
