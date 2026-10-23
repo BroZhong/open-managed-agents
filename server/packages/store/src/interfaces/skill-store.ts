@@ -10,10 +10,9 @@ export type SkillOwnerType = "library" | "agent";
 
 /**
  * A Skill: a reusable, instruction-only capability (a directory with a
- * `SKILL.md`). Metadata lives in this store; the file bodies live in S3 under
- * `<tenantId>/skills/<skillId>/…` (a distinct namespace from Workspace
- * artifacts). ADR-0022 moves them into immutable Skill Bundles: `bundleSha256`
- * names the current version in the tenant's `SkillBundleStore`.
+ * `SKILL.md`). Metadata lives in this store; the files are the Skill's current
+ * Skill Bundle (ADR-0022), an immutable zip that `bundleSha256` names in the
+ * tenant's `SkillBundleStore`, outside every Workspace prefix.
  *
  * Per ADR-0004 every Skill has an owner. A Library Skill
  * (`ownerType='library'`) lives in the tenant's Library. Equipping it onto an

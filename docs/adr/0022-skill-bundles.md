@@ -79,16 +79,17 @@ the [read-only OSS mount verification](../verification/skills-oss-mount-2026-10-
 - The **Skill Set** is the Agent's equipped Skills as (name, `bundle_sha256`)
   pairs. Its hash is order-independent: it is computed over the pairs sorted by
   name. The Host computes it from PG at the start of each Turn.
-- The environment binding records what its Sandbox holds, in two new columns:
-  `delegation_environments.skills_sandbox_id` and `skills_set_hash`. When both
-  match (the same Sandbox, the same Skill Set) the install is skipped entirely,
-  with zero OSS and Sandbox calls. Child Sessions share their parent's binding,
+- The environment binding records what its Sandbox holds, in three new
+  columns: `delegation_environments.skills_sandbox_id`, `skills_set_hash` and
+  `skills_generation`. When the first two match (the same Sandbox, the same
+  Skill Set) the install is skipped entirely, with zero OSS and Sandbox calls. Child Sessions share their parent's binding,
   so they never reinstall an unchanged Skill Set.
 - Otherwise the Sandbox pulls the bundles itself, in a **Skill Install**. The
   Host signs a short-lived presigned GET URL for the OSS internal endpoint for
-  each bundle the Sandbox does not already hold, and passes the URLs to a root
-  exec through stdin, never in argv or logs. The exec downloads with
-  `curl --noproxy '*'`, extracts into `/opt/oma/skills/<setHash>`, makes the
+  each bundle of the Set (signing is local and reads no object), and passes the
+  URLs to a root exec through stdin, never in argv or logs. The exec downloads
+  only the bundles the Sandbox does not already hold in its per-bundle cache,
+  with `curl --noproxy '*'`, assembles `/opt/oma/skills/<setHash>`, makes the
   copy read-only (owned by root; directories and executables 0555, other files
   0444) and then atomically switches the `/skills` symlink to it. The Sandbox
   holds no OSS credentials. The Workspace signer signs only for public endpoints
@@ -101,7 +102,12 @@ the [read-only OSS mount verification](../verification/skills-oss-mount-2026-10-
   repeated install. Within a process, one install per binding runs at a time.
   Two Runners can still install the same set into one Sandbox at once, so a
   version directory is used only once it is complete, and a complete one is
-  never rewritten.
+  never rewritten. Two Runners installing different sets switch `/skills` in
+  the order of the Sandbox's install lock but may record in either order, so
+  every switch takes the Sandbox's next switch generation under that lock, and
+  an install records only over another Sandbox's record or a lower
+  generation. The record therefore names what `/skills` points at; an install
+  whose record lost to a later switch is not a failure.
 - On an existing Sandbox, the legacy `/skills` directory left by projection is
   moved aside and cleaned up. After a switch the previous version's directory
   is kept.
@@ -190,7 +196,11 @@ This is informational; the release tickets own the procedure.
   until its Skill Set changes or it is rebuilt.
 - `/skills` is read-only to accidental writes, not a security boundary: the
   Sandbox user has passwordless sudo (mount verification). A modified copy
-  affects only that Sandbox and stays until the next install.
+  affects only that Sandbox. Version directories are hard links into the
+  Sandbox's per-bundle cache, which is keyed by sha256 and not re-verified, so
+  a modified file persists, also in later versions that reuse its bundle,
+  until that bundle leaves the cache (neither the current nor the previous
+  version references it) or the Sandbox is rebuilt.
 - The test environment shares the `agentry` bucket with production, and bundle
   keys carry no environment. Equal keys hold equal bytes, so sharing is
   harmless for writes, but #273 must not collect a bundle that the other
