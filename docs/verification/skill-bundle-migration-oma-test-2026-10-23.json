@@ -3220,5 +3220,157 @@
         "corruptFonts": []
       }
     ]
+  },
+  "afterReviewFixes": {
+    "commits": {
+      "from": "69cd7a9",
+      "to": "6ae989e",
+      "wrapperBuiltFrom": [
+        "37d419e",
+        "6ae989e"
+      ]
+    },
+    "pod": "oma-test/oma-api-976cfcb59-whwkg",
+    "image": "oma-server:395e30e564f0",
+    "runs": [
+      {
+        "name": "dry-run",
+        "runId": "aac64fb6-78b3-4002-af51-b56977b9490c",
+        "mode": "full",
+        "dryRun": true,
+        "since": null,
+        "selectedUpdatedAfter": null,
+        "startedAt": "2026-10-23T01:26:54.902Z",
+        "finishedAt": "2026-10-23T01:27:07.925Z",
+        "manifests": [
+          {
+            "source": "report",
+            "runId": null,
+            "mode": "full",
+            "startedAt": "2026-10-22T20:43:54.532Z",
+            "bundles": 77
+          }
+        ],
+        "totals": {
+          "skills": 77,
+          "byStatus": {
+            "unchanged": 77
+          },
+          "supabaseObjects": 1293,
+          "supabaseBytes": 20143894,
+          "packedFiles": 1261,
+          "filteredFiles": 32,
+          "replacedFonts": 4,
+          "corruptFonts": 0,
+          "warnings": 0,
+          "distinctBundles": 20,
+          "bundlesUploaded": 0,
+          "uploadedZipBytes": 0
+        },
+        "exitCode": 0,
+        "journalLines": null
+      },
+      {
+        "name": "delta-t0",
+        "runId": "627229bf-66c0-47ec-b6b9-4858b4202eaa",
+        "mode": "delta",
+        "dryRun": false,
+        "since": "2026-10-22T20:43:54.532Z",
+        "selectedUpdatedAfter": "2026-10-22T20:33:54.532Z",
+        "startedAt": "2026-10-23T01:27:57.107Z",
+        "finishedAt": "2026-10-23T01:27:57.116Z",
+        "manifests": [
+          {
+            "source": "report",
+            "runId": null,
+            "mode": "full",
+            "startedAt": "2026-10-22T20:43:54.532Z",
+            "bundles": 77
+          }
+        ],
+        "totals": {
+          "skills": 0,
+          "byStatus": {},
+          "supabaseObjects": 0,
+          "supabaseBytes": 0,
+          "packedFiles": 0,
+          "filteredFiles": 0,
+          "replacedFonts": 0,
+          "corruptFonts": 0,
+          "warnings": 0,
+          "distinctBundles": 0,
+          "bundlesUploaded": 0,
+          "uploadedZipBytes": 0
+        },
+        "exitCode": 0,
+        "journalLines": 1
+      },
+      {
+        "name": "delta-margin",
+        "runId": "d09760d4-870f-46ff-b472-253a1778f195",
+        "mode": "delta",
+        "dryRun": false,
+        "since": "2026-10-22T06:40:20.000Z",
+        "selectedUpdatedAfter": "2026-10-22T06:30:20.000Z",
+        "startedAt": "2026-10-23T01:28:16.520Z",
+        "finishedAt": "2026-10-23T01:28:18.180Z",
+        "manifests": [
+          {
+            "source": "report",
+            "runId": null,
+            "mode": "full",
+            "startedAt": "2026-10-22T20:43:54.532Z",
+            "bundles": 77
+          }
+        ],
+        "totals": {
+          "skills": 8,
+          "byStatus": {
+            "unchanged": 8
+          },
+          "supabaseObjects": 169,
+          "supabaseBytes": 1913609,
+          "packedFiles": 167,
+          "filteredFiles": 2,
+          "replacedFonts": 0,
+          "corruptFonts": 0,
+          "warnings": 0,
+          "distinctBundles": 8,
+          "bundlesUploaded": 0,
+          "uploadedZipBytes": 0
+        },
+        "exitCode": 0,
+        "journalLines": 9
+      },
+      {
+        "name": "delta-late",
+        "since": "2026-10-22T20:43:54.533Z",
+        "exitCode": 1,
+        "error": "--since 2026-10-22T20:43:54.533Z is later than the earliest full run's start (2026-10-22T20:43:54.532Z): Skills edited during that run would be missed"
+      }
+    ],
+    "dryRunMatchesFullReport": true,
+    "pg": {
+      "before": {
+        "skills": 77,
+        "nullBundleSha256": 0,
+        "nullBundleSize": 0,
+        "distinctBundles": 20,
+        "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+        "updatedAtFingerprint": "b96bb2277ed46084108fe4faa4826864"
+      },
+      "after": {
+        "skills": 77,
+        "nullBundleSha256": 0,
+        "nullBundleSize": 0,
+        "distinctBundles": 20,
+        "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+        "updatedAtFingerprint": "b96bb2277ed46084108fe4faa4826864"
+      }
+    },
+    "podLeftovers": {
+      "dirs": 0,
+      "processes": 0
+    }
   }
 }

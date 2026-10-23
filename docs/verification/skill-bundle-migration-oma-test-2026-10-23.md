@@ -7,13 +7,14 @@
 ## 给 #270 上线的要点
 
 1. **oma-test 的全量已完成，T0 = `2026-10-22T20:43:54.532Z`**，即全量报告的 `startedAt`。oma-test 现在仍运行旧 API（镜像 `oma-server:395e30e564f0`），在部署 feat/skill-bundles 的 API 和 Runner 之前，旧 API 的编辑仍然写入 Supabase 并推进 `updated_at`。部署完成后要**立即**跑增量（命令见下文）。在增量跑完之前：T0 之后新建的 Skill 没有包；T0 之后被旧 API 改过的 Skill，在新 API 里仍是全量时的版本。如果新 API 在增量之前又改了这样的 Skill，增量会把它判为 `kept` 并保留新 API 的版本，旧 API 在 T0 之后的那次修改不会合入。
-2. **T0 留出余量。** 旧 API 的 `PUT /v1/skills/:id/files/content` 先调用 `skillStore.update` 推进 `updated_at`，再写 Supabase。如果某次编辑恰好跨过全量开始的时刻，全量可能读到旧内容，而这行的 `updated_at` 又早于 T0。工具接受任何不晚于全量 `startedAt` 的 `--since`，所以建议用 `startedAt` 往前推几分钟作为 `--since`。多选进来的 Skill 重新打包后得到相同的包，状态为 `unchanged`，不会写入。
-3. **manifest 决定哪些行归工具管。** 只有两类行会被改写：`bundle_sha256` 为 NULL，或者仍等于某份 manifest 记录的值。其他非空的包被视为新 API 发布的版本，原样保留（`kept`），而且不读 Supabase。不带 manifest 重跑时，77 行全部 `kept`，0 次 Supabase 请求。
-4. **正式服**需要另行授权（#271）：先对 schema `oma` 应用 `deploy/migrations/0022_skill_bundles.sql`，再设置 `OMA_ALLOW_PRODUCTION_MIGRATION=yes` 用 `production` 跑 wrapper（namespace `oma-infra`、schema `oma`、bucket `workspace`），同样先跑 dry-run。测试服 1,293 个对象的全量耗时 11.5 s。issue 给出的正式服规模是 351 个 Skill、3,617 个对象，这个数字可能也已过时（见下文对测试服 970 的解释）。
-5. **新镜像自带工具之后**，可以在新 Pod 里直接运行源码，不再需要 esbuild：镜像的 WORKDIR 是 `/app/server/packages/api`，API 入口就是 `node --import tsx src/api-server.ts`。字体和 manifest 仍要先用 `kubectl cp` 拷进 Pod，命令见下文。wrapper 与镜像版本无关，任何时候都能用。
-6. **退出码：** 0 表示成功；2 表示有 Skill `failed` 或 `conflict`，或包校验出问题；1 表示启动前的错误，例如 schema 或 bucket 与 Pod 环境不符、字体不是官方文件、缺少 0022 列、`--since` 晚于全量开始时间。
-7. 运行时 stderr 会出现一行 `pg` 的 `DeprecationWarning`（`client.query()` 并发调用），来源是 `createPgPool` 在 `connect` 事件里不等待地执行 `SET search_path`，和本工具无关，也无害。
-8. 测试服与正式服共用 bucket `agentry`，key 里不带环境。本次在两个测试租户下写入了 20 个对象（`cee644c5…` 下 1 个，`f00c7d5a…` 下 19 个）。#273 做回收时需要考虑这一点。
+2. **T0 的余量由工具自带。** 旧 API 的 `PUT /v1/skills/:id/files/content` 先调用 `skillStore.update` 推进 `updated_at`，再写 Supabase，而且各 Pod 的时钟可能有偏差。如果某次编辑恰好跨过全量开始的时刻，全量可能读到旧内容，而这行的 `updated_at` 又略早于 T0。因此增量选中 `updated_at > since − 10 分钟` 的行，再加上所有 `bundle_sha256` 为 NULL 的行（不论 `updated_at`）；摘要和报告（`deltaMarginMs`、`selectedUpdatedAfter`）会写明实际的选择条件。`--since` 直接用全量的 `startedAt`，不要再自己往前推；晚于 manifest 中最早一次全量 `startedAt` 的值会被拒绝。多选进来的 Skill 重新打包后得到相同的包，状态为 `unchanged`，不会写入。
+3. **manifest 决定哪些行归工具管。** 只有两类行会被改写：`bundle_sha256` 为 NULL，或者等于某份 manifest 认领过的值。其他非空的包被视为新 API 发布的版本，原样保留（`kept`），而且不读 Supabase。不带 manifest 重跑时，77 行全部 `kept`，0 次 Supabase 请求。
+4. **归属日志（ownership journal）。** 每次真实运行都在报告旁边写 `<report>.journal.jsonl`：先写一行表头，之后每个 Skill 在 PG compare-and-set 写入之前追加一行认领（run id、租户、skill_id、sha256、大小）并 fsync；`unchanged` 的 Skill 也认领。报告只在结束时才写，所以运行中途崩溃时只有日志。wrapper 退出时（包括失败和 Ctrl-C）先把报告和日志拷回本地，再删除 Pod 里的目录；如果工具还在 Pod 里运行，或者拷贝失败，就保留目录。崩溃那次的日志要作为 `--manifest` 传给之后的每次运行，否则它写入的行会一直被判为 `kept`。`--manifest` 既接受报告，也接受日志。
+5. **正式服**需要另行授权（#271）：先对 schema `oma` 应用 `deploy/migrations/0022_skill_bundles.sql`，再设置 `OMA_ALLOW_PRODUCTION_MIGRATION=yes` 用 `production` 跑 wrapper（namespace `oma-infra`、schema `oma`、Supabase bucket `workspace`），同样先跑 dry-run。工作区必须没有未提交的修改（`git diff --quiet HEAD`），工具源码路径下也不能有未跟踪的文件；wrapper 会打印构建所用的提交。测试服 1,293 个对象的全量耗时 11.5 s。issue 给出的正式服规模是 351 个 Skill、3,617 个对象，这个数字可能也已过时（见下文对测试服 970 的解释）。
+6. **新镜像自带工具之后**，可以在新 Pod 里直接运行源码，不再需要 esbuild：镜像的 WORKDIR 是 `/app/server/packages/api`，API 入口就是 `node --import tsx src/api-server.ts`。字体和 manifest 仍要先用 `kubectl cp` 拷进 Pod，命令见下文。wrapper 与镜像版本无关，任何时候都能用。
+7. **退出码：** 0 表示成功，只有警告时也是 0（摘要最后一行是 `Result: success with N warnings (exit 0)`）；2 表示有 Skill `failed` 或 `conflict`，或包校验出问题；1 表示没能开始或中途中断，例如 schema 或 Supabase bucket 与 Pod 的 `PG_SCHEMA`/`S3_BUCKET` 不符、字体不是官方文件、缺少 0022 列、`--since` 晚于最早一次全量的开始时间、日志文件已存在。**字体：** 所有损坏的 `LiberationSans-Regular.ttf` 换成官方文件；其他损坏的字体照原样发布（它本来就是坏的，阻塞整个 Skill 更糟），记为警告，不影响退出码。
+8. 运行时 stderr 会出现一行 `pg` 的 `DeprecationWarning`（`client.query()` 并发调用），来源是 `createPgPool` 在 `connect` 事件里不等待地执行 `SET search_path`，和本工具无关，也无害。
+9. 测试服与正式服共用 bucket `agentry`，key 里不带环境。本次在两个测试租户下写入了 20 个对象（`cee644c5…` 下 1 个，`f00c7d5a…` 下 19 个）。#273 做回收时需要考虑这一点。
 
 ## 方法
 
@@ -94,49 +95,53 @@ tar -xzf liberation-fonts-ttf-2.1.5.tar.gz liberation-fonts-ttf-2.1.5/Liberation
 export OMA_FONT=$PWD/liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf
 ```
 
-各模式（本次就是这样运行的，报告路径换成了本地临时目录）：
+各模式（与本次的运行相同，报告路径换成了本地临时目录；本地已有的报告或日志不会被覆盖，每次换一个报告路径）：
 
 ```bash
-# dry-run：读取、修复、打包，在内存中校验，不写入任何东西（应用 0022 之前也能跑）
-deploy/scripts/run-skill-bundle-migration.sh test dry-run.json --dry-run 2> dry-run.log
-# 全量：需要先应用 0022。T0 = full.json 的 startedAt
+# dry-run：读取、修复、打包，在内存中校验，不写入任何东西（应用 0022 之前也能跑）。
+# 不带 manifest 时，已有包的行都是 kept；带上 manifest 才会与已写入的包比较
+deploy/scripts/run-skill-bundle-migration.sh test dry-run.json --dry-run --manifest full.json 2> dry-run.log
+# 全量：需要先应用 0022。T0 = full.json 的 startedAt；归属日志在 full.journal.jsonl
 deploy/scripts/run-skill-bundle-migration.sh test full.json 2> full.log
-# 重跑（幂等检查）：把之前的非 dry-run 报告作为 manifest，按从旧到新的顺序传入
+# 重跑（幂等检查）：把之前的非 dry-run 报告（或崩溃那次的日志）都作为 manifest 传入
 deploy/scripts/run-skill-bundle-migration.sh test rerun.json --manifest full.json 2> rerun.log
-# 增量：只处理 updated_at > --since 的 Skill；--since 不能晚于全量的 startedAt
-deploy/scripts/run-skill-bundle-migration.sh test delta.json --since 2026-10-22T06:30:20.000Z --manifest full.json 2> delta.log
+# 增量：处理 updated_at > --since − 10 分钟的 Skill，以及没有包的 Skill；--since 直接用 T0
+deploy/scripts/run-skill-bundle-migration.sh test delta.json --since 2026-10-22T20:43:54.532Z --manifest full.json 2> delta.log
 ```
 
-wrapper 在 Pod 里实际执行的命令（`<dir>` 是 `/tmp/oma-skill-bundle-migration-<epoch>-<pid>`）：
+wrapper 在 Pod 里实际执行的命令（`<dir>` 是 `/tmp/oma-skill-bundle-migration-<epoch>-<pid>`；真实运行的日志在 `<dir>/report.journal.jsonl`）：
 
 ```bash
-node <dir>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test \
+node <dir>/migrate-skill-bundles.mjs --schema oma_test --supabase-bucket workspace-test \
   --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json \
-  [--dry-run | --manifest <dir>/manifest-1.json [--since <T0>]]
+  [--dry-run] [--since <T0>] [--manifest <dir>/manifest-1 ...]
 ```
 
-**oma-test 部署之后的增量**（#270）。从本次的 JSON 取出全量报告作为 manifest，`--since` 取 T0 往前推 5 分钟：
+**oma-test 部署之后的增量**（#270）。从本次的 JSON 取出全量报告作为 manifest，`--since` 就用 T0 本身（10 分钟余量由工具自带）：
 
 ```bash
 jq '.fullReport' docs/verification/skill-bundle-migration-oma-test-2026-10-23.json > full.json
 deploy/scripts/run-skill-bundle-migration.sh test delta.json \
-  --since 2026-10-22T20:38:54.532Z --manifest full.json 2> delta.log
+  --since 2026-10-22T20:43:54.532Z --manifest full.json 2> delta.log
 ```
 
-如果部署之前在 T0' 又跑了一次全量（带 `--manifest full.json`，结果会收敛），就把那次的报告也作为 manifest 加在后面，`--since` 取 T0' 往前推几分钟。
+如果部署之前在 T0' 又跑了一次全量（带 `--manifest full.json`，结果会收敛），就把那次的报告也作为 manifest 加在后面；`--since` 不能晚于最早一次全量的开始时间，所以仍用 T0。任何一次运行崩溃了，都把它的 `.journal.jsonl` 加进之后每次运行的 manifest。
 
-**镜像自带工具之后**，也可以不经过 esbuild，直接在新 Pod 里运行：
+**镜像自带工具之后**，也可以不经过 esbuild，直接在新 Pod 里运行（选一个 Running、Ready 且不在终止中的 Pod）：
 
 ```bash
 export KUBECONFIG=~/.kube/agent-platform-config
-pod=$(kubectl --request-timeout=30s -n oma-test get pod -l app=oma-api --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
-kubectl --request-timeout=30s -n oma-test exec "$pod" -- mkdir -p /tmp/m266
+pod=$(kubectl --request-timeout=30s -n oma-test get pod -l app=oma-api -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{.metadata.deletionTimestamp}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' |
+  awk -F'\t' '$2 == "Running" && $3 == "" && $4 == "True" { print $1; exit }')
+kubectl --request-timeout=30s -n oma-test exec "$pod" -- mkdir /tmp/m266
 kubectl --request-timeout=30s -n oma-test cp "$OMA_FONT" "$pod:/tmp/m266/LiberationSans-Regular.ttf"
 kubectl --request-timeout=30s -n oma-test cp full.json "$pod:/tmp/m266/full.json"
 kubectl --request-timeout=30s -n oma-test exec "$pod" -- node --import tsx src/migrate-skill-bundles.ts \
-  --schema oma_test --bucket workspace-test --font /tmp/m266/LiberationSans-Regular.ttf --report /tmp/m266/delta.json \
-  --since <T0 往前几分钟> --manifest /tmp/m266/full.json
+  --schema oma_test --supabase-bucket workspace-test --font /tmp/m266/LiberationSans-Regular.ttf --report /tmp/m266/delta.json \
+  --since 2026-10-22T20:43:54.532Z --manifest /tmp/m266/full.json
+# 无论成功与否，都先取回报告和日志，再删除目录
 kubectl --request-timeout=30s -n oma-test cp "$pod:/tmp/m266/delta.json" delta.json
+kubectl --request-timeout=30s -n oma-test cp "$pod:/tmp/m266/delta.journal.jsonl" delta.journal.jsonl
 kubectl --request-timeout=30s -n oma-test exec "$pod" -- rm -rf /tmp/m266
 ```
 
@@ -155,7 +160,34 @@ FROM oma_test.skills;
 |---|---|
 | 在 oma_test 上试跑，报告与源数据计数一致 | dry-run 和全量都是 77 个 Skill、1,293 个对象、20,143,894 字节，与 `oma_test.skills` 和 `storage.objects` 的独立计数一致；PG 中每行的包与报告一致 |
 | 重复运行不产生新对象，结果不变 | 77 个 `unchanged`，上传 0 个；OSS 列表和 PG 指纹都不变；逐个 Skill 的结果与全量相同 |
-| 增量只处理 T0 之后更新的 Skill | 8 / 77，正好是 `updated_at > T0` 的行；manifest 不符的行被 `kept`；compare-and-set 由单元测试覆盖 |
+| 增量只处理 T0 之后更新的 Skill | 8 / 77，正好是 `updated_at > T0` 的行；manifest 不符的行被 `kept`；compare-and-set 由单元测试覆盖。评审修复之后，增量还会选中 T0 之前 10 分钟内更新的行和没有包的行，见下文 |
 | 字体是有效 TTF，`.pyc` 不再存在 | 从 OSS 读回：文件头 `00 01 00 00`，sha256 与官方一致；20 个包里没有 `.pyc` 或 `__pycache__` 条目 |
 | 内容相同的 Library Skill 与 Agent 副本得到同一个包 | 57 / 57 个副本与源 Skill 共用包；`precise-subtitles` 的 4 行只有 1 个包 |
 | 不打印凭证或签名 URL | 所有报告、摘要和日志中都没有出现 `Signature`、`x-oss-`、`Bearer`、`eyJ`、`LTAI`、`password` 或任何 URL。本 JSON 中唯一的 URL 是公开的字体发布包地址 |
+
+## 评审修复之后（2026-10-23）
+
+代码评审之后修复了以下问题（提交 `69cd7a9` 至 `6ae989e`），并用修复后的工具在 oma-test 上重新验证。
+
+1. 复用 `@oma-server/store` 的 `isFilteredSkillPath`、`assertSkillBundleIdentity` 和 `SkillOwnerType`；命令行改用 `node:util` 的 `parseArgs`（strict，`--manifest` 可重复）；只保留一个并发限制器。
+2. 工具自己组织的错误信息照常输出。其他错误（ali-oss、urllib、pg）只保留名称、code 和 HTTP 状态，所以报告、摘要和 stderr 里不会再出现请求 URL 或 `raw xml`。
+3. 增量自带 10 分钟余量，并且总会选中 `bundle_sha256` 为 NULL 的行；`--since` 与 manifest 中最早一次全量的 `startedAt` 比较（见要点 2）。
+4. 归属日志，以及 wrapper 在退出 trap 里拷回报告和日志（见要点 4）。wrapper 改为选择 Running、Ready 且没有 `deletionTimestamp` 的 Pod，并且先创建本地目录，再 `tee` 摘要。
+5. 字体警告和退出码（见要点 7）。
+6. 正式服的保护（见要点 5）。CLI 参数 `--bucket` 改名为 `--supabase-bucket`；去掉了 `SUPABASE_STORAGE_URL`/`S3_SERVICE_KEY` 回退，Pod 只设置 `S3_ENDPOINT` 和 `SUPABASE_SERVICE_KEY`。esbuild 改为从 `@oma-server/api` 的 devDependency `tsx` 所声明的依赖解析：`pnpm --dir server exec esbuild` 找不到它，因为没有 workspace 包直接声明 esbuild。
+
+**重新验证**：通过 wrapper 运行（提交 `37d419e`、`6ae989e`，工作区干净），Pod `oma-api-976cfcb59-whwkg`，镜像仍是旧 API `395e30e564f0`。
+
+| 运行 | 开始（UTC，10-23） | 选中 | 状态 | Supabase 对象 / 字节 | 上传 | PG 写入 | 退出码 |
+|---|---|---|---|---|---|---|---|
+| dry-run，`--manifest full.json` | 01:26:54.902 | 77 | unchanged 77 | 1,293 / 20,143,894 | 0 | 0 | 0 |
+| 增量，`--since 2026-10-22T20:43:54.532Z`（T0 本身） | 01:27:57.107 | 0 | — | 0 / 0 | 0 | 0 | 0 |
+| 增量，`--since 2026-10-22T06:40:20.000Z`（检验余量） | 01:28:16.520 | 8 | unchanged 8 | 169 / 1,913,609 | 0 | 0 | 0 |
+| 增量，`--since 2026-10-22T20:43:54.533Z` | — | — | 被拒绝：晚于全量开始 1 ms | — | — | — | 1 |
+
+- **dry-run 与全量结果相同：** 77 个 Skill 的包 sha256、大小、文件数、zip 字节数、对象数、字节数、过滤列表和字体替换都与全量报告逐一相同；`verification`（`source` 字段除外，dry-run 为 `packed`）、`sharedBundles`、`forks` 也相同。
+- **T0 增量：** 选择条件是 `updated_at > 2026-10-22T20:33:54.532Z` 或没有包，PG 中没有这样的行，所以什么也没读、没写。本地留下了只有表头的 `delta-t0.journal.jsonl`。
+- **余量：** `06:40:20` 减去 10 分钟正好是上次增量用的 `06:30:20`。选中的是同样的 8 行（对象数、字节数和 202 次请求都与上次相同），都是 `unchanged`，包与全量相同。日志是表头加 8 行认领，sha256 与全量一致；报告里这 8 个 Skill 都是 `claimed: true`。
+- **PG**（只读 SQL，只查 `oma_test`）：运行前后都是 77 行，`bundle_sha256` 和 `bundle_size` 为 NULL 的行都是 0，不同的包 20 个。包指纹 `64328166…c6c6` 前后不变，与全量报告按同样规则算出的值相同。`updated_at` 指纹前后都是 `b96bb227…4864`（本次按 SQL 会话的时区格式化，所以与上文的值不同）。
+- **Pod：** 运行后 `/tmp` 下没有 `oma-skill-bundle-migration-*` 目录，也没有残留的 node 进程。报告、摘要、日志文件和 stderr 中都没有 URL、`Signature`、`x-oss-`、`Bearer`、`eyJ`、`LTAI` 或 `password`。
+- **测试：** `server/packages/api/test/skill-bundle-migration*.test.ts` 共 49 个测试通过。新增的测试覆盖 `main()` 的退出码 0/2/1、`--schema`/`--supabase-bucket` 与 `PG_SCHEMA`/`S3_BUCKET` 的校验、运行中途崩溃留下的日志被下一次运行当作 manifest 使用、多份全量报告下的 `--since` 检查、错误信息脱敏、增量选中没有包的行，以及字体警告。
