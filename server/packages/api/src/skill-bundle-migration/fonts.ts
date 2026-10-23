@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { MigrationError } from "./errors.js";
 
 /**
  * The font fix of the Skill Bundle migration (#266, ADR-0022). The old upload
@@ -9,7 +10,10 @@ import { createHash } from "node:crypto";
  *
  * Every corrupted copy of `LiberationSans-Regular.ttf` (the font of the
  * `precise-subtitles` Skill and its Agent forks) is replaced by the official
- * release file, pinned below. Other corrupted fonts are reported, never guessed.
+ * release file, pinned below. A replacement for any other corrupted font is
+ * never guessed: the file is published as stored (it was already corrupt, and
+ * blocking its Skill would be worse) and reported as a warning, which does not
+ * fail the run.
  */
 
 /**
@@ -64,7 +68,9 @@ export const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(byte
 
 export const isFontPath = (path: string) => /\.(ttf|otf)$/i.test(path);
 
-const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+/** Whether `path` names the replacement font: matched by file name, in any folder. */
+export const isReplacementFontPath = (path: string, font: Pick<ReplacementFont, "fileName">) =>
+  path.slice(path.lastIndexOf("/") + 1) === font.fileName;
 
 /** Why `bytes` is not a structurally valid single sfnt font (TrueType / OpenType); null if it is. */
 export function fontProblem(bytes: Uint8Array): string | null {
@@ -93,10 +99,10 @@ export function fontProblem(bytes: Uint8Array): string | null {
 export function loadReplacementFont(body: Uint8Array, pinned: PinnedFont = OFFICIAL_LIBERATION_SANS_REGULAR): ReplacementFont {
   const digest = sha256Hex(body);
   if (digest !== pinned.sha256 || body.byteLength !== pinned.size) {
-    throw new Error(`The replacement font is not the official ${pinned.fileName}: sha256 ${digest}, expected ${pinned.sha256}`);
+    throw new MigrationError(`The replacement font is not the official ${pinned.fileName}: sha256 ${digest}, expected ${pinned.sha256}`);
   }
   const problem = fontProblem(body);
-  if (problem) throw new Error(`The pinned ${pinned.fileName} is not a valid font: ${problem}`);
+  if (problem) throw new MigrationError(`The pinned ${pinned.fileName} is not a valid font: ${problem}`);
   return { fileName: pinned.fileName, sha256: digest, body };
 }
 
@@ -113,7 +119,7 @@ export function repairFonts<T extends { path: string; body: Uint8Array }>(files:
     if (!isFontPath(file.path)) return file;
     const problem = fontProblem(file.body);
     if (!problem) return file;
-    if (basename(file.path) !== font.fileName) {
+    if (!isReplacementFontPath(file.path, font)) {
       corrupt.push({ path: file.path, sha256: sha256Hex(file.body), size: file.body.byteLength, problem });
       return file;
     }

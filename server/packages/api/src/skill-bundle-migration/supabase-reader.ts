@@ -10,6 +10,7 @@
  * retried with exponential backoff. Errors carry the HTTP status and Supabase's
  * error code only: never a URL, a header or a response body.
  */
+import { MigrationError } from "./errors.js";
 
 export interface SupabaseSkillReaderOptions {
   /** Supabase Storage REST base, e.g. `http://host:80/storage/v1`. */
@@ -36,7 +37,10 @@ export interface SupabaseReadStats {
   retriesByCause: Record<string, number>;
 }
 
-export class SupabaseObjectMissingError extends Error {
+/** The reader's own errors: a status, Supabase's error code or a Skill path, never a URL or a body. */
+export class SupabaseReadError extends MigrationError {}
+
+export class SupabaseObjectMissingError extends SupabaseReadError {
   constructor(readonly path: string) {
     super(`Supabase object listed for the Skill is missing: ${path}`);
     this.name = "SupabaseObjectMissingError";
@@ -45,16 +49,14 @@ export class SupabaseObjectMissingError extends Error {
 
 type Outcome<T> = { kind: "ok"; value: T } | { kind: "missing" } | { kind: "error"; status: number; code: string };
 
-/** A final, non-retryable answer. */
-class SupabaseRequestError extends Error {}
-
 interface ListEntry {
   name: string;
   id?: string | null;
   metadata?: object | null;
 }
 
-class Semaphore {
+/** At most `limit` tasks at once, started in call order. */
+export class Semaphore {
   private active = 0;
   private readonly waiting: Array<() => void> = [];
   constructor(private readonly limit: number) {}
@@ -110,9 +112,9 @@ export class SupabaseSkillReader {
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: SupabaseSkillReaderOptions) {
-    if (!options.endpoint) throw new Error("Supabase Storage endpoint is required");
-    if (!options.serviceKey) throw new Error("Supabase Storage service key is required");
-    if (!options.bucket) throw new Error("Supabase Storage bucket is required");
+    if (!options.endpoint) throw new SupabaseReadError("Supabase Storage endpoint is required");
+    if (!options.serviceKey) throw new SupabaseReadError("Supabase Storage service key is required");
+    if (!options.bucket) throw new SupabaseReadError("Supabase Storage bucket is required");
     this.endpoint = options.endpoint.replace(/\/+$/, "");
     this.serviceKey = options.serviceKey;
     this.bucket = options.bucket;
@@ -151,15 +153,16 @@ export class SupabaseSkillReader {
         });
         if (result.kind === "ok") return result.value;
         if (result.kind === "missing") throw new SupabaseObjectMissingError("");
-        if (!RETRYABLE(result.status)) throw new SupabaseRequestError(`Supabase ${operation} failed: HTTP ${result.status}${result.code}`);
+        if (!RETRYABLE(result.status)) throw new SupabaseReadError(`Supabase ${operation} failed: HTTP ${result.status}${result.code}`);
         cause = String(result.status);
         detail = `HTTP ${result.status}${result.code}`;
       } catch (error) {
-        if (error instanceof SupabaseObjectMissingError || error instanceof SupabaseRequestError) throw error;
+        // A final answer; anything else is a network error, reported by its name only.
+        if (error instanceof SupabaseReadError) throw error;
         cause = "network";
         detail = `network error (${(error as Error).name})`;
       }
-      if (attempt >= this.maxAttempts) throw new Error(`Supabase ${operation} failed after ${attempt} attempts: ${detail}`);
+      if (attempt >= this.maxAttempts) throw new SupabaseReadError(`Supabase ${operation} failed after ${attempt} attempts: ${detail}`);
       this.stats.retries += 1;
       this.stats.retriesByCause[cause] = (this.stats.retriesByCause[cause] ?? 0) + 1;
       const delay = this.backoffMs * 2 ** (attempt - 1);
@@ -184,12 +187,12 @@ export class SupabaseSkillReader {
     }
   }
 
-  /** Every file of the Skill, as Skill-relative paths in code-unit order. */
+  /** Every file of the Skill, as Skill-relative paths in code-unit order (the default sort). */
   async list(tenantId: string, skillId: string): Promise<string[]> {
     const base = `${this.prefix(tenantId, skillId)}/`;
     const paths: string[] = [];
     await this.listFolder(base, (key) => paths.push(key.slice(base.length)));
-    return paths.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return paths.sort();
   }
 
   /** One file's bytes. A listed file that is gone throws {@link SupabaseObjectMissingError}. */

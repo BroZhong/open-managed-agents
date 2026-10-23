@@ -1,15 +1,23 @@
+import { randomUUID } from "node:crypto";
+import { parseArgs } from "node:util";
 import {
-  packSkillBundle,
-  skillBundleObjectKey,
-  unpackSkillBundle,
+  InvalidSkillFileError,
+  SkillBundleTooLargeError,
+  assertSkillBundleIdentity,
+  isFilteredSkillPath,
   isSkillBundleSha256,
+  packSkillBundle,
+  unpackSkillBundle,
   type PackedSkillBundle,
   type Pool,
   type SkillBundleFile,
   type SkillBundleStore,
+  type SkillOwnerType,
 } from "@oma-server/store";
-import { fontProblem, isFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
-import type { SupabaseReadStats } from "./supabase-reader.js";
+import { MigrationError, safeErrorMessage } from "./errors.js";
+import type { JournalHeader, OwnershipJournal } from "./journal.js";
+import { fontProblem, isFontPath, isReplacementFontPath, repairFonts, sha256Hex, type CorruptFont, type FontReplacement, type ReplacementFont } from "./fonts.js";
+import { Semaphore, type SupabaseReadStats } from "./supabase-reader.js";
 
 /**
  * The one-time Skill Bundle migration (#266, ADR-0022): for each Skill row,
@@ -20,9 +28,11 @@ import type { SupabaseReadStats } from "./supabase-reader.js";
  * leaves `updated_at` alone.
  *
  * Ownership rule: a row is rewritten only when its bundle is NULL or is still
- * the bundle a previous run of this tool recorded (the `--manifest` reports).
- * Any other bundle was published by someone else (the new API) and is kept
- * without reading Supabase. A rerun therefore converges: bundles are
+ * a bundle a previous run of this tool claimed (the `--manifest` reports and
+ * ownership journals, see `journal.ts`). Any other bundle was published by
+ * someone else (the new API) and is kept without reading Supabase. A real run
+ * journals each claim durably before the row's write, so a run that dies
+ * midway still owns what it wrote. A rerun therefore converges: bundles are
  * content-addressed and deterministic, so an unchanged Skill repacks to its
  * current bundle and nothing is written.
  */
@@ -33,7 +43,7 @@ export interface SkillRow {
   tenantId: string;
   skillId: string;
   name: string;
-  ownerType: string;
+  ownerType: SkillOwnerType;
   sourceSkillId: string | null;
   updatedAt: Date;
   /** Null when the row has no bundle, or the schema predates migration 0022. */
@@ -42,8 +52,8 @@ export interface SkillRow {
 
 export interface SkillRowStore {
   hasBundleColumns(): Promise<boolean>;
-  /** Every Skill, or those with `updated_at > since`, ordered by tenant and id. */
-  list(since?: Date): Promise<SkillRow[]>;
+  /** Every Skill or, with `updatedAfter`, those updated after it or without a bundle; ordered by tenant and id. */
+  list(updatedAfter?: Date): Promise<SkillRow[]>;
   /** Compare-and-set on `bundle_sha256`; false when the row no longer holds `expected`. */
   setBundle(row: Pick<SkillRow, "tenantId" | "skillId">, expected: string | null, bundle: { sha256: string; size: number }): Promise<boolean>;
 }
@@ -63,23 +73,42 @@ export interface MigrationTarget {
   ossBucket: string;
 }
 
+/** What a previous real run claimed, from its report or, if it died before writing one, its journal. */
 export interface Manifest {
+  source: "report" | "journal";
+  /** Null for a report of the tool's first version. */
+  runId: string | null;
   mode: "full" | "delta";
   startedAt: Date;
-  /** `<tenantId>/<skillId>` → the bundle this tool recorded for the row. */
+  /** `<tenantId>/<skillId>` → the bundle the run claimed for the row. */
   bundles: Map<string, string>;
 }
 
+/**
+ * A delta also selects Skills updated up to this long before `--since`. The
+ * old API bumps `updated_at` before it writes Supabase, and Pod clocks skew,
+ * so an edit straddling T0 can carry an `updated_at` a little before T0 while
+ * the full run read the old files. A Skill selected needlessly repacks to its
+ * current bundle and is `unchanged`.
+ */
+export const DELTA_MARGIN_MS = 10 * 60 * 1000;
+
 export interface MigrationRunOptions {
   dryRun: boolean;
-  /** Delta: only Skills with `updated_at > since`. Requires the full run's report as a manifest. */
+  /**
+   * Delta: only Skills with `updated_at > since - DELTA_MARGIN_MS`, plus every
+   * Skill without a bundle. Needs a full run's report as a manifest, and must
+   * not be later than the earliest full run's `startedAt` among them.
+   */
   since?: Date;
-  /** Reports of previous non-dry runs, oldest first; later entries win. */
+  /** Previous real runs: a row whose bundle any of them claimed is the tool's own. */
   manifests?: Manifest[];
   font: ReplacementFont;
   target: MigrationTarget;
   /** Skills processed at once; Supabase requests are bounded by the reader. Default 4. */
   skillConcurrency?: number;
+  /** Default: a random UUID. */
+  runId?: string;
   now?: () => Date;
   /** Progress lines: ids, statuses and digests only. */
   log?: (line: string) => void;
@@ -90,17 +119,21 @@ export interface MigrationDeps {
   source: SkillFileSource;
   /** Must not serve reads from a cache, so the read-back is a real read. */
   bundles: Pick<SkillBundleStore, "put" | "get">;
+  /** Required for a real run. */
+  journal?: OwnershipJournal;
 }
 
 export interface SkillReportEntry {
   tenantId: string;
   skillId: string;
   name: string;
-  ownerType: string;
+  ownerType: SkillOwnerType;
   sourceSkillId: string | null;
   updatedAt: string;
   status: SkillStatus;
   reason?: string;
+  /** The ownership journal holds this Skill's bundle: the run may have written it, even if it then failed. */
+  claimed?: boolean;
   /** `bundle_sha256` when the row was selected. */
   previousBundleSha256: string | null;
   /** Supabase objects listed and bytes read. */
@@ -113,7 +146,10 @@ export interface SkillReportEntry {
   zipBytes?: number;
   filtered?: string[];
   replacedFonts?: FontReplacement[];
+  /** Corrupt fonts other than the replacement font, published as stored. */
   corruptFonts?: CorruptFont[];
+  /** What was published although it is not right, e.g. those fonts. Never fails the run. */
+  warnings?: string[];
 }
 
 /** A font file of a verified bundle, as unpacked from it. */
@@ -132,11 +168,18 @@ export interface VerifiedFont {
 export interface MigrationReport {
   tool: "migrate-skill-bundles";
   version: 1;
+  /** Also in every line of the run's ownership journal. */
+  runId: string;
   mode: "full" | "delta";
   dryRun: boolean;
+  /** The operator's T0; null for a full run. */
   since: string | null;
+  /** {@link DELTA_MARGIN_MS} for a delta. */
+  deltaMarginMs: number | null;
+  /** `since - deltaMarginMs`: the delta selected `updated_at >` this, or no bundle. */
+  selectedUpdatedAfter: string | null;
   target: MigrationTarget;
-  manifests: Array<{ mode: string; startedAt: string; bundles: number }>;
+  manifests: Array<{ source: Manifest["source"]; runId: string | null; mode: string; startedAt: string; bundles: number }>;
   font: { fileName: string; sha256: string };
   startedAt: string;
   finishedAt: string;
@@ -149,6 +192,7 @@ export interface MigrationReport {
     filteredFiles: number;
     replacedFonts: number;
     corruptFonts: number;
+    warnings: number;
     distinctBundles: number;
     bundlesUploaded: number;
     uploadedZipBytes: number;
@@ -170,18 +214,23 @@ export interface MigrationReport {
 }
 
 const TOOL = "migrate-skill-bundles";
-/** Any valid digest: lets the store's own key validation judge a tenant id before anything is read. */
+/** Any valid digest: lets the store's own identity validation judge a tenant id before anything is read. */
 const PROBE_SHA256 = "0".repeat(64);
 const MAX_REASON = 300;
 
 const rowKey = (tenantId: string, skillId: string) => `${tenantId}/${skillId}`;
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-class SkillFailure extends Error {}
+/** A Skill the tool cannot migrate; the run goes on. */
+class SkillFailure extends MigrationError {}
 
-function reasonOf(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s+/g, " ").slice(0, MAX_REASON);
+/** The tool's own message in full; any other error as name, code and HTTP status (see `errors.ts`). */
+const reasonOf = (error: unknown) => safeErrorMessage(error).replace(/\s+/g, " ").slice(0, MAX_REASON);
+
+/** The store's packing errors name a path or a size, never a URL: keep their message. */
+function packFailure(error: unknown): never {
+  if (error instanceof SkillBundleTooLargeError || error instanceof InvalidSkillFileError) throw new SkillFailure(error.message);
+  throw error;
 }
 
 function memo<T>(cache: Map<string, Promise<T>>, key: string, create: () => Promise<T>): Promise<T> {
@@ -193,26 +242,16 @@ function memo<T>(cache: Map<string, Promise<T>>, key: string, create: () => Prom
   return promise;
 }
 
-async function mapPool<T, R>(items: readonly T[], limit: number, task: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await task(items[index], index);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
-/** What must hold for every migrated bundle. */
-function bundleProblems(files: readonly SkillBundleFile[]): string[] {
+/**
+ * What must hold for every migrated bundle. Another corrupt font is no
+ * problem: it was published as stored, with a warning.
+ */
+function bundleProblems(files: readonly SkillBundleFile[], font: ReplacementFont): string[] {
   const problems: string[] = [];
   if (!files.some((file) => file.path === "SKILL.md")) problems.push("no SKILL.md");
   for (const file of files) {
-    if (file.path.endsWith(".pyc") || file.path.split("/").includes("__pycache__")) problems.push(`compiled Python present: ${file.path}`);
-    if (isFontPath(file.path)) {
+    if (isFilteredSkillPath(file.path)) problems.push(`compiled Python present: ${file.path}`);
+    if (isFontPath(file.path) && isReplacementFontPath(file.path, font)) {
       const problem = fontProblem(file.body);
       if (problem) problems.push(`invalid font ${file.path}: ${problem}`);
     }
@@ -236,15 +275,17 @@ export class PgSkillRows implements SkillRowStore {
     return this.columns;
   }
 
-  async list(since?: Date): Promise<SkillRow[]> {
-    const bundle = (await this.hasBundleColumns()) ? "bundle_sha256" : "NULL AS bundle_sha256";
+  async list(updatedAfter?: Date): Promise<SkillRow[]> {
+    const columns = await this.hasBundleColumns();
+    // Before migration 0022 no Skill has a bundle, so a delta selects them all.
+    const where = updatedAfter && columns ? "WHERE updated_at > $1 OR bundle_sha256 IS NULL" : "";
     const { rows } = await this.pool.query<{
-      tenant_id: string; skill_id: string; name: string; owner_type: string; source_skill_id: string | null;
+      tenant_id: string; skill_id: string; name: string; owner_type: SkillOwnerType; source_skill_id: string | null;
       updated_at: Date; bundle_sha256: string | null;
     }>(
-      `SELECT tenant_id, skill_id, name, owner_type, source_skill_id, updated_at, ${bundle}
-       FROM skills ${since ? "WHERE updated_at > $1" : ""} ORDER BY tenant_id, skill_id`,
-      since ? [since] : [],
+      `SELECT tenant_id, skill_id, name, owner_type, source_skill_id, updated_at, ${columns ? "bundle_sha256" : "NULL AS bundle_sha256"}
+       FROM skills ${where} ORDER BY tenant_id, skill_id`,
+      where ? [updatedAfter] : [],
     );
     return rows.map((row) => ({
       tenantId: row.tenant_id, skillId: row.skill_id, name: row.name, ownerType: row.owner_type,
@@ -265,48 +306,110 @@ export class PgSkillRows implements SkillRowStore {
   }
 }
 
-/** A previous non-dry run's report of the same environment, as the set of rows this tool owns. */
-export function parseManifest(json: unknown, target: MigrationTarget): Manifest {
-  const report = json as Partial<MigrationReport> | null;
-  if (!report || typeof report !== "object" || report.tool !== TOOL || report.version !== 1 || !Array.isArray(report.skills)) {
-    throw new Error(`The manifest is not a ${TOOL} report`);
+type Json = Record<string, unknown>;
+
+function parseObject(text: string): Json | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Json : undefined;
+  } catch {
+    return undefined;
   }
-  if (report.dryRun !== false) throw new Error("A dry-run report cannot be a manifest: it recorded no bundle");
+}
+
+const notOurs = () => new MigrationError(`The manifest is not a ${TOOL} report or journal`);
+
+/** The run a report or journal header describes, checked against this environment. */
+function parseRun(run: Json, target: MigrationTarget): Pick<Manifest, "mode" | "startedAt"> {
+  if (run.tool !== TOOL || run.version !== 1) throw notOurs();
+  if (run.dryRun !== false) throw new MigrationError("A dry-run report cannot be a manifest: it recorded no bundle");
+  const runTarget = run.target as Partial<MigrationTarget> | undefined;
   for (const field of ["schema", "supabaseBucket", "ossBucket"] as const) {
-    if (report.target?.[field] !== target[field]) {
-      throw new Error(`The manifest is for ${field} ${JSON.stringify(report.target?.[field])}, not ${JSON.stringify(target[field])}`);
+    if (runTarget?.[field] !== target[field]) {
+      throw new MigrationError(`The manifest is for ${field} ${JSON.stringify(runTarget?.[field])}, not ${JSON.stringify(target[field])}`);
     }
   }
-  const startedAt = new Date(String(report.startedAt));
-  if (Number.isNaN(startedAt.getTime()) || (report.mode !== "full" && report.mode !== "delta")) throw new Error(`The manifest is not a ${TOOL} report`);
+  const startedAt = new Date(String(run.startedAt));
+  if (Number.isNaN(startedAt.getTime()) || (run.mode !== "full" && run.mode !== "delta")) throw notOurs();
+  return { mode: run.mode, startedAt };
+}
+
+function parseJournal(header: Json, lines: string[], target: MigrationTarget): Manifest {
+  const run = parseRun(header, target);
+  const runId = header.runId;
+  if (typeof runId !== "string" || !runId) throw new MigrationError("The journal has no run id");
+  if (lines.at(-1) === "") lines.pop();
   const bundles = new Map<string, string>();
-  for (const skill of report.skills) {
-    if ((skill.status === "written" || skill.status === "unchanged") && isSkillBundleSha256(skill.bundleSha256)) {
+  lines.forEach((line, index) => {
+    const claim = parseObject(line);
+    if (claim?.runId === runId && typeof claim.tenantId === "string" && typeof claim.skillId === "string" && isSkillBundleSha256(claim.sha256)) {
+      bundles.set(rowKey(claim.tenantId, claim.skillId), claim.sha256);
+    } else if (claim || index < lines.length - 1) {
+      // Only the last line can be torn by a crash mid-append.
+      throw new MigrationError(`The journal's line ${index + 2} is not a claim of run ${runId}`);
+    }
+  });
+  return { source: "journal", runId, ...run, bundles };
+}
+
+/**
+ * A previous real run of the same environment, from its report or its
+ * ownership journal (JSON Lines), as the bundles it claimed.
+ */
+export function parseManifest(text: string, target: MigrationTarget): Manifest {
+  const lines = text.split("\n");
+  const header = parseObject(lines[0]);
+  if (header?.kind === "journal") return parseJournal(header, lines.slice(1), target);
+  const report = parseObject(text);
+  if (!report || !Array.isArray(report.skills)) throw notOurs();
+  const run = parseRun(report, target);
+  const bundles = new Map<string, string>();
+  for (const skill of report.skills as Array<Partial<SkillReportEntry>>) {
+    // A report of the tool's first version has no `claimed`: its written and unchanged rows are what it claimed.
+    const claimed = skill.claimed === true || skill.status === "written" || skill.status === "unchanged";
+    if (claimed && typeof skill.tenantId === "string" && typeof skill.skillId === "string" && isSkillBundleSha256(skill.bundleSha256)) {
       bundles.set(rowKey(skill.tenantId, skill.skillId), skill.bundleSha256);
     }
   }
-  return { mode: report.mode, startedAt, bundles };
+  return { source: "report", runId: typeof report.runId === "string" ? report.runId : null, ...run, bundles };
 }
 
 export async function migrateSkillBundles(deps: MigrationDeps, options: MigrationRunOptions): Promise<MigrationReport> {
   const now = options.now ?? (() => new Date());
   const log = options.log ?? (() => {});
   const manifests = options.manifests ?? [];
+  const runId = options.runId ?? randomUUID();
   const startedAt = now();
+  const mode = options.since ? "delta" : "full";
   if (options.since) {
     const fulls = manifests.filter((manifest) => manifest.mode === "full");
-    if (!fulls.length) throw new Error("A delta (--since) needs the full run's report as --manifest");
-    const lastFull = new Date(Math.max(...fulls.map((manifest) => manifest.startedAt.getTime())));
-    if (options.since > lastFull) {
-      throw new Error(`--since ${options.since.toISOString()} is later than the full run started (${lastFull.toISOString()}): ` +
-        "Skills edited during the full run would be missed");
+    if (!fulls.length) throw new MigrationError("A delta (--since) needs the full run's report as --manifest");
+    const earliest = new Date(Math.min(...fulls.map((manifest) => manifest.startedAt.getTime())));
+    if (options.since > earliest) {
+      throw new MigrationError(`--since ${options.since.toISOString()} is later than the earliest full run's start (${earliest.toISOString()}): ` +
+        "Skills edited during that run would be missed");
     }
   }
+  const selectedUpdatedAfter = options.since && new Date(options.since.getTime() - DELTA_MARGIN_MS);
   if (!options.dryRun && !(await deps.rows.hasBundleColumns())) {
-    throw new Error(`skills.bundle_sha256 / bundle_size are missing in schema ${options.target.schema}: apply deploy/migrations/0022_skill_bundles.sql first`);
+    throw new MigrationError(`skills.bundle_sha256 / bundle_size are missing in schema ${options.target.schema}: apply deploy/migrations/0022_skill_bundles.sql first`);
   }
-  const owned = new Map<string, string>();
-  for (const manifest of manifests) for (const [key, sha256] of manifest.bundles) owned.set(key, sha256);
+  // A dry run writes nothing, so it claims nothing.
+  const journal = options.dryRun ? undefined : deps.journal;
+  if (!options.dryRun) {
+    if (!journal) throw new MigrationError("A real run needs an ownership journal");
+    const header: JournalHeader = {
+      tool: TOOL, version: 1, kind: "journal", runId, mode, dryRun: false, since: options.since?.toISOString() ?? null,
+      target: options.target, startedAt: startedAt.toISOString(),
+    };
+    journal.begin(header);
+  }
+  // Every bundle any run claimed for the row: a claim whose write never happened must not disown the row's
+  // current bundle, which an earlier run claimed.
+  const owned = new Map<string, Set<string>>();
+  for (const manifest of manifests) {
+    for (const [key, sha256] of manifest.bundles) owned.set(key, (owned.get(key) ?? new Set()).add(sha256));
+  }
 
   const uploads = new Map<string, Promise<number>>();
   const verified = new Map<string, Promise<void>>();
@@ -318,7 +421,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       const bytes = await load();
       if (!bytes) throw new SkillFailure(`bundle ${sha256} is missing from the bundle store`);
       const files = await unpackSkillBundle(bytes);
-      for (const problem of bundleProblems(files)) problems.push({ tenantId, sha256, problem });
+      for (const problem of bundleProblems(files, options.font)) problems.push({ tenantId, sha256, problem });
       for (const file of files.filter((entry) => isFontPath(entry.path))) {
         fonts.push({
           tenantId, bundleSha256: sha256, path: file.path, sha256: sha256Hex(file.body), size: file.body.byteLength,
@@ -333,25 +436,26 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       return packed.bytes.byteLength;
     });
 
-  const rows = await deps.rows.list(options.since);
+  const rows = await deps.rows.list(selectedUpdatedAfter);
+  const slots = new Semaphore(options.skillConcurrency ?? 4);
   let done = 0;
-  const skills = await mapPool(rows, options.skillConcurrency ?? 4, async (row) => {
+  const skills = await Promise.all(rows.map((row) => slots.run(async () => {
     const entry: SkillReportEntry = {
       tenantId: row.tenantId, skillId: row.skillId, name: row.name, ownerType: row.ownerType, sourceSkillId: row.sourceSkillId,
       updatedAt: row.updatedAt.toISOString(), status: "failed", previousBundleSha256: row.bundleSha256,
     };
     const mine = owned.get(rowKey(row.tenantId, row.skillId));
-    if (row.bundleSha256 !== null && row.bundleSha256 !== mine) {
+    if (row.bundleSha256 !== null && !mine?.has(row.bundleSha256)) {
       entry.status = "kept";
       entry.reason = mine === undefined
-        ? "has a bundle not written by this migration (pass the previous report as --manifest to refresh it)"
+        ? "has a bundle not written by this migration (pass the previous reports or journals as --manifest to refresh it)"
         : "bundle changed since the manifest: published by another writer (the new API)";
     } else {
       try {
         try {
-          skillBundleObjectKey(row.tenantId, PROBE_SHA256);
+          assertSkillBundleIdentity(row.tenantId, PROBE_SHA256);
         } catch {
-          throw new SkillFailure("tenant id is not a valid Skill Bundle key segment (^[A-Za-z0-9_-]{1,128}$)");
+          throw new SkillFailure("tenant id is not a valid Skill Bundle key segment");
         }
         const paths = await deps.source.list(row.tenantId, row.skillId);
         entry.objects = paths.length;
@@ -360,22 +464,25 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
         const files = await Promise.all(paths.map(async (path) => ({ path, body: await deps.source.read(row.tenantId, row.skillId, path) })));
         entry.bytes = files.reduce((total, file) => total + file.body.byteLength, 0);
         const repaired = repairFonts(files, options.font);
-        const packed = await packSkillBundle(repaired.files);
+        const packed = await packSkillBundle(repaired.files).catch(packFailure);
         Object.assign(entry, {
           bundleSha256: packed.sha256, bundleSize: packed.size, bundleFiles: packed.files, zipBytes: packed.bytes.byteLength,
           filtered: packed.filtered, replacedFonts: repaired.replaced, corruptFonts: repaired.corrupt,
         });
-        const stored = () => deps.bundles.get(row.tenantId, packed.sha256);
-        if (options.dryRun) {
+        if (repaired.corrupt.length) entry.warnings = repaired.corrupt.map((corrupt) => `corrupt font ${corrupt.path} kept as stored: ${corrupt.problem}`);
+        const unchanged = packed.sha256 === row.bundleSha256;
+        if (!journal) {
           await verify(row.tenantId, packed.sha256, async () => packed.bytes);
-          entry.status = packed.sha256 === row.bundleSha256 ? "unchanged" : "would-write";
-        } else if (packed.sha256 === row.bundleSha256) {
-          await verify(row.tenantId, packed.sha256, stored);
-          entry.status = "unchanged";
+          entry.status = unchanged ? "unchanged" : "would-write";
         } else {
-          await upload(row.tenantId, packed);
-          await verify(row.tenantId, packed.sha256, stored);
-          if (await deps.rows.setBundle(row, row.bundleSha256, packed)) {
+          if (!unchanged) await upload(row.tenantId, packed);
+          await verify(row.tenantId, packed.sha256, () => deps.bundles.get(row.tenantId, packed.sha256));
+          // Durable before the row's write: a run dying after it still owns the row.
+          journal.claim({ runId, tenantId: row.tenantId, skillId: row.skillId, sha256: packed.sha256, size: packed.size });
+          entry.claimed = true;
+          if (unchanged) {
+            entry.status = "unchanged";
+          } else if (await deps.rows.setBundle(row, row.bundleSha256, packed)) {
             entry.status = "written";
           } else {
             entry.status = "conflict";
@@ -391,7 +498,7 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
     log(`[${done}/${rows.length}] ${row.tenantId}/${row.skillId} ${entry.status}` +
       `${entry.bundleSha256 ? ` ${entry.bundleSha256.slice(0, 12)}` : ""}${entry.reason ? ` (${entry.reason})` : ""}`);
     return entry;
-  });
+  })));
 
   const byStatus: Partial<Record<SkillStatus, number>> = {};
   for (const skill of skills) byStatus[skill.status] = (byStatus[skill.status] ?? 0) + 1;
@@ -418,11 +525,16 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
   return {
     tool: TOOL,
     version: 1,
-    mode: options.since ? "delta" : "full",
+    runId,
+    mode,
     dryRun: options.dryRun,
     since: options.since?.toISOString() ?? null,
+    deltaMarginMs: options.since ? DELTA_MARGIN_MS : null,
+    selectedUpdatedAfter: selectedUpdatedAfter?.toISOString() ?? null,
     target: options.target,
-    manifests: manifests.map((manifest) => ({ mode: manifest.mode, startedAt: manifest.startedAt.toISOString(), bundles: manifest.bundles.size })),
+    manifests: manifests.map((manifest) => ({
+      source: manifest.source, runId: manifest.runId, mode: manifest.mode, startedAt: manifest.startedAt.toISOString(), bundles: manifest.bundles.size,
+    })),
     font: { fileName: options.font.fileName, sha256: options.font.sha256 },
     startedAt: startedAt.toISOString(),
     finishedAt: now().toISOString(),
@@ -435,12 +547,13 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
       filteredFiles: sum((skill) => skill.filtered?.length),
       replacedFonts: sum((skill) => skill.replacedFonts?.length),
       corruptFonts: sum((skill) => skill.corruptFonts?.length),
+      warnings: sum((skill) => skill.warnings?.length),
       distinctBundles: groups.size,
       bundlesUploaded: uploaded.filter((bytes) => bytes !== null).length,
       uploadedZipBytes: uploaded.reduce<number>((total, bytes) => total + (bytes ?? 0), 0),
     },
     sharedBundles: [...groups.values()].filter((group) => group.skillIds.length > 1)
-      .map((group) => ({ ...group, skillIds: group.skillIds.sort(byCodeUnit) }))
+      .map((group) => ({ ...group, skillIds: group.skillIds.sort() }))
       .sort((a, b) => byCodeUnit(a.tenantId, b.tenantId) || byCodeUnit(a.sha256, b.sha256)),
     forks,
     verification: {
@@ -454,6 +567,12 @@ export async function migrateSkillBundles(deps: MigrationDeps, options: Migratio
   };
 }
 
+/** 2 when a Skill failed or conflicted, or a bundle failed verification; 0 otherwise, warnings included. */
+export function migrationExitCode(report: MigrationReport): 0 | 2 {
+  const { failed, conflict } = report.totals.byStatus;
+  return failed || conflict || report.verification.problems.length ? 2 : 0;
+}
+
 /** The human summary printed after a run. */
 export function formatSummary(report: MigrationReport): string {
   const { totals } = report;
@@ -465,10 +584,15 @@ export function formatSummary(report: MigrationReport): string {
   const fontLines = [...fontCounts].map(([key, count]) => `${count} x ${key}`);
   const statuses = (["written", "would-write", "unchanged", "kept", "conflict", "failed"] as const)
     .map((status) => `${status} ${totals.byStatus[status] ?? 0}`).join(", ");
+  const delta = report.since
+    ? `; since ${report.since}: Skills with updated_at > ${report.selectedUpdatedAfter} ` +
+      `(built-in margin ${(report.deltaMarginMs ?? 0) / 60_000} min) or without a bundle`
+    : "";
   const lines = [
     `${TOOL} ${report.mode}${report.dryRun ? " (dry-run)" : ""}: schema ${report.target.schema}, Supabase bucket ${report.target.supabaseBucket}, ` +
-      `OSS bucket ${report.target.ossBucket}${report.since ? `, since ${report.since}` : ""}`,
-    `Started ${report.startedAt}, finished ${report.finishedAt}; manifests: ${report.manifests.length}`,
+      `OSS bucket ${report.target.ossBucket}${delta}`,
+    `Run ${report.runId}: started ${report.startedAt}, finished ${report.finishedAt}; manifests: ${report.manifests.length ? report.manifests
+      .map((manifest) => `${manifest.mode} ${manifest.source} of ${manifest.startedAt} (${manifest.bundles} bundles)`).join(", ") : "none"}`,
     `Skills: ${totals.skills} (${statuses})`,
     `Supabase objects: ${totals.supabaseObjects}, bytes read: ${totals.supabaseBytes}; requests ${report.supabase.requests}, ` +
       `retries ${report.supabase.retries} ${JSON.stringify(report.supabase.retriesByCause)}`,
@@ -477,7 +601,8 @@ export function formatSummary(report: MigrationReport): string {
     `Forks: ${report.forks.total} (same bundle as source ${report.forks.sameBundleAsSource.length}, ` +
       `different ${report.forks.differentFromSource.length}, source not packed ${report.forks.sourceNotPacked.length})`,
     `Filtered files (.pyc, __pycache__): ${totals.filteredFiles}`,
-    `Replaced fonts: ${totals.replacedFonts} (with ${report.font.fileName} ${report.font.sha256}); corrupt fonts not replaced: ${totals.corruptFonts}`,
+    `Replaced fonts: ${totals.replacedFonts} (with ${report.font.fileName} ${report.font.sha256}); ` +
+      `other corrupt fonts kept as stored: ${totals.corruptFonts}`,
     `Verification (${report.verification.source}): ${report.verification.bundles} bundles, ${report.verification.problems.length} problems`,
     `Fonts in verified bundles: ${fontLines.length ? fontLines.join(", ") : "none"}`,
   ];
@@ -486,13 +611,22 @@ export function formatSummary(report: MigrationReport): string {
     if (skill.status === "failed" || skill.status === "conflict" || skill.status === "kept") {
       lines.push(`  ${skill.status} ${skill.tenantId}/${skill.skillId} (${skill.name}): ${skill.reason}`);
     }
+    for (const warning of skill.warnings ?? []) lines.push(`  warning ${skill.tenantId}/${skill.skillId} (${skill.name}): ${warning}`);
+  }
+  const warnings = `${totals.warnings} warning${totals.warnings === 1 ? "" : "s"}`;
+  if (migrationExitCode(report)) {
+    const count = (n: number | undefined, noun: string) => `${n ?? 0} ${noun}${n === 1 ? "" : "s"}`;
+    lines.push(`Result: ${totals.byStatus.failed ?? 0} failed, ${count(totals.byStatus.conflict, "conflict")}, ` +
+      `${count(report.verification.problems.length, "verification problem")}; ${warnings} (exit 2)`);
+  } else {
+    lines.push(`Result: success${totals.warnings ? ` with ${warnings}` : ""} (exit 0)`);
   }
   return lines.join("\n");
 }
 
 export interface MigrationArgs {
   schema: string;
-  bucket: string;
+  supabaseBucket: string;
   fontPath: string;
   reportPath: string;
   dryRun: boolean;
@@ -501,55 +635,61 @@ export interface MigrationArgs {
   concurrency: number;
 }
 
-export const USAGE = "Usage: migrate-skill-bundles --schema <PG_SCHEMA> --bucket <S3_BUCKET> --font <LiberationSans-Regular.ttf> " +
-  "--report <report.json> [--dry-run] [--since <ISO T0> --manifest <full-run report.json> [--manifest <report.json>...]] [--concurrency <1-16>]";
+export const USAGE = "Usage: migrate-skill-bundles --schema <PG_SCHEMA> --supabase-bucket <S3_BUCKET> --font <LiberationSans-Regular.ttf> " +
+  "--report <report.json> [--dry-run] [--since <ISO T0>] [--manifest <report.json | journal.jsonl>...] [--concurrency <1-16>]";
 
 const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/;
 
 /**
- * Parse the command line. `--schema` and `--bucket` must name what the
- * environment points at (PG_SCHEMA, S3_BUCKET; defaults `oma`, `workspace`),
- * so a run in the wrong Pod fails before it reads anything.
+ * Parse the command line. `--schema` and `--supabase-bucket` must name what
+ * the environment points at (PG_SCHEMA, S3_BUCKET; defaults `oma`,
+ * `workspace`), so a run in the wrong Pod fails before it reads anything.
  */
 export function parseMigrationArgs(argv: readonly string[], env: Readonly<Record<string, string | undefined>>): MigrationArgs {
-  const values = new Map<string, string>();
-  const manifestPaths: string[] = [];
-  let dryRun = false;
-  for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index];
-    if (flag === "--dry-run") { dryRun = true; continue; }
-    if (!["--schema", "--bucket", "--font", "--report", "--since", "--manifest", "--concurrency"].includes(flag)) {
-      throw new Error(`Unknown argument ${flag}\n${USAGE}`);
-    }
-    const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} needs a value\n${USAGE}`);
-    index += 1;
-    if (flag === "--manifest") manifestPaths.push(value);
-    else values.set(flag, value);
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args: [...argv],
+      strict: true,
+      allowPositionals: false,
+      options: {
+        schema: { type: "string" },
+        "supabase-bucket": { type: "string" },
+        font: { type: "string" },
+        report: { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        since: { type: "string" },
+        manifest: { type: "string", multiple: true, default: [] },
+        concurrency: { type: "string", default: "4" },
+      },
+    }));
+  } catch (error) {
+    // node:util's messages quote only the command line.
+    throw new MigrationError(`${(error as Error).message}\n${USAGE}`);
   }
-  const required = (flag: string) => {
-    const value = values.get(flag);
-    if (!value) throw new Error(`Missing ${flag}\n${USAGE}`);
+  const required = (flag: "schema" | "supabase-bucket" | "font" | "report") => {
+    const value = values[flag];
+    if (!value) throw new MigrationError(`Missing --${flag}\n${USAGE}`);
     return value;
   };
-  const schema = required("--schema");
-  const bucket = required("--bucket");
-  const fontPath = required("--font");
-  const reportPath = required("--report");
+  const schema = required("schema");
+  const supabaseBucket = required("supabase-bucket");
+  const fontPath = required("font");
+  const reportPath = required("report");
+  const manifestPaths = values.manifest;
   const envSchema = env.PG_SCHEMA || "oma";
   const envBucket = env.S3_BUCKET || "workspace";
-  if (schema !== envSchema) throw new Error(`--schema ${schema} does not match the environment: PG_SCHEMA is "${envSchema}"`);
-  if (bucket !== envBucket) throw new Error(`--bucket ${bucket} does not match the environment: S3_BUCKET is "${envBucket}"`);
+  if (schema !== envSchema) throw new MigrationError(`--schema ${schema} does not match the environment: PG_SCHEMA is "${envSchema}"`);
+  if (supabaseBucket !== envBucket) throw new MigrationError(`--supabase-bucket ${supabaseBucket} does not match the environment: S3_BUCKET is "${envBucket}"`);
   let since: Date | undefined;
-  const sinceRaw = values.get("--since");
-  if (sinceRaw !== undefined) {
-    since = new Date(sinceRaw);
-    if (!ISO_WITH_ZONE.test(sinceRaw) || Number.isNaN(since.getTime())) {
-      throw new Error("--since must be an ISO 8601 timestamp with a time zone, e.g. 2026-10-23T08:00:00.000Z");
+  if (values.since !== undefined) {
+    since = new Date(values.since);
+    if (!ISO_WITH_ZONE.test(values.since) || Number.isNaN(since.getTime())) {
+      throw new MigrationError("--since must be an ISO 8601 timestamp with a time zone, e.g. 2026-10-23T08:00:00.000Z");
     }
-    if (!manifestPaths.length) throw new Error("--since needs the full run's report as --manifest");
+    if (!manifestPaths.length) throw new MigrationError("--since needs the full run's report as --manifest");
   }
-  const concurrency = Number(values.get("--concurrency") ?? 4);
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error("--concurrency must be an integer from 1 to 16");
-  return { schema, bucket, fontPath, reportPath, dryRun, since, manifestPaths, concurrency };
+  const concurrency = Number(values.concurrency);
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new MigrationError("--concurrency must be an integer from 1 to 16");
+  return { schema, supabaseBucket, fontPath, reportPath, dryRun: values["dry-run"], since, manifestPaths, concurrency };
 }
