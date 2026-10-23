@@ -22,6 +22,10 @@ For Host-managed MCP work, ADR-0006 is authoritative. For recurring Loop
 dispatch and its Session ownership semantics, ADR-0007 is authoritative.
 For Sandbox lifecycle, ADR-0019 is authoritative and supersedes ADR-0017: finite
 native pause/retention, per-Turn preparation, event-driven idle and direct release.
+For Skill storage and installation, ADR-0022 is authoritative: versioned Skill
+Bundles in OSS installed by Skill Set version. It supersedes ADR-0005 §3–4 and
+ADR-0008's Skills paragraph, and revises ADR-0004's fork copy and ADR-0019's
+per-Turn Skills refresh.
 For mounted Workspace storage and Sandbox paths, ADR-0008 supersedes the
 former storage portions of ADR-0002 and ADR-0005. ADR-0009 defines the direct
 Workspace file API and supersedes ADR-0008’s per-Session write gate.

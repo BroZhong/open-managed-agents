@@ -2,7 +2,7 @@ import { modelProviderRoutes } from "./routes/model-providers.js";
 import { modelThinkingOptionsRoutes } from "./routes/model-thinking-options.js";
 import type { ModelProviderService } from "./lib/model-providers.js";
 import { cors } from "hono/cors";
-import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillArtifactStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillBundleStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -44,7 +44,8 @@ export interface AppDeps {
   agentStore?: AgentStore;
   agentFileStore?: AgentFileStore;
   skillStore?: SkillStore;
-  skillArtifactStore?: SkillArtifactStore;
+  /** Each Skill version's files (ADR-0022); Skill routes mount only with it. */
+  skillBundleStore?: SkillBundleStore;
   sessionStore?: SessionStore;
   eventLogStore?: EventLogIngressStore;
   pendingEventStore?: PendingEventIngressStore;
@@ -139,18 +140,16 @@ export function createApp(deps: AppDeps) {
     app.route("/", agentFileRoutes(deps.agentFileStore, deps.agentStore));
   }
 
-  // Mount Skill Library routes (tenant-scoped reusable Skills)
-  if (deps.skillStore && deps.skillArtifactStore) {
-    app.route("/", skillRoutes(deps.skillStore, deps.skillArtifactStore));
-  }
-
-  if (deps.agentStore && deps.agentFileStore && deps.skillStore && deps.skillArtifactStore) {
-    app.route("/", agentForkRoutes(deps.agentStore, deps.agentFileStore, deps.skillStore, deps.skillArtifactStore));
-  }
-
-  // Mount per-Agent Skill routes (equip = fork; unequip = delete fork; ADR-0004)
-  if (deps.agentStore && deps.skillStore && deps.skillArtifactStore) {
-    app.route("/", agentSkillRoutes(deps.agentStore, deps.skillStore, deps.skillArtifactStore));
+  // Skills exist only together with their bundles (ADR-0022). Equip and Agent
+  // Fork reference existing bundles, so they take no bundle store themselves.
+  if (deps.skillStore && deps.skillBundleStore) {
+    // Mount Skill Library routes (tenant-scoped reusable Skills)
+    app.route("/", skillRoutes(deps.skillStore, deps.skillBundleStore));
+    if (deps.agentStore && deps.agentFileStore) {
+      app.route("/", agentForkRoutes(deps.agentStore, deps.agentFileStore, deps.skillStore));
+    }
+    // Mount per-Agent Skill routes (equip = fork; unequip = delete fork; ADR-0004)
+    if (deps.agentStore) app.route("/", agentSkillRoutes(deps.agentStore, deps.skillStore));
   }
 
   // Mount API key CRUD routes

@@ -72,7 +72,7 @@ describe("Loop + managed Supabase MCP end to end", () => {
       agentStore: stores.agentStore,
       agentFileStore: stores.agentFileStore,
       skillStore: stores.skillStore,
-      skillArtifactStore: stores.skillArtifactStore,
+      skillBundleStore: stores.skillBundleStore,
       sessionStore: stores.sessionStore,
       eventLogStore: stores.eventLogStore,
       pendingEventStore: stores.pendingEventStore,

@@ -114,3 +114,20 @@ it("shows a Resumed Turn as one finished Turn: no takeover marker, the unknown r
   expect(result[0].responses.map((message) => message.role)).toEqual(["tool_use", "assistant"]);
   expect(result[0].responses[0]).toMatchObject({ toolUseId: "call_1", result: expect.objectContaining({ isError: true }) });
 });
+
+it("keeps a Skill Install's spans inside their Turn without showing them or ending it", () => {
+  // The install runs beside the model request; a failed one that no tool waited for ends nothing.
+  const result = turns([
+    event(1, 0, "user.message", { content: [] }),
+    event(2, 1, "session.status_running"),
+    event(3, 1, "span.skills_install_start", { turnId: "turn_1_a1", installId: "1.1", setHash: "a".repeat(64), skills: 2 }),
+    answer(4, 5, "turn_1_a1"),
+    event(5, 9, "span.skills_install_end", { turnId: "turn_1_a1", installId: "1.1", setHash: "a".repeat(64), skills: 2,
+      outcome: "failed", durationMs: 8000, stage: "download", reason: "HTTP 503, curl exit 0" }),
+    event(6, 9, "session.turn_completed", { turnId: "turn_1_a1" }),
+    event(7, 9, "session.status_idle"),
+  ]);
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({ turnId: "turn_1_a1", completed: true, running: false, timing: { startedAt: start + 1000, endedAt: start + 9000 } });
+  expect(result[0].responses.map((message) => message.role)).toEqual(["assistant"]);
+});

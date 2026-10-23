@@ -18,3 +18,18 @@ it("shows a Resumed Turn's takeover marker on the trace, with why and which call
   expect(document.body.textContent).toContain('"reason": "expired"');
   expect(document.body.textContent).toContain('"call_1"');
 });
+
+it("lists a Skill Install's spans on the trace as spans, with what the install did", () => {
+  const events: SessionEvent[] = [
+    { seq: 1, type: "span.skills_install_start", ts: "2026-10-23T00:00:00Z",
+      data: { turnId: "turn_1_a1", installId: "1.1", setHash: "a".repeat(64), skills: 1 } },
+    { seq: 2, type: "span.skills_install_end", ts: "2026-10-23T00:00:02Z",
+      data: { turnId: "turn_1_a1", installId: "1.1", setHash: "a".repeat(64), skills: 1, outcome: "failed", durationMs: 2000, stage: "download", reason: "HTTP 503, curl exit 0" } },
+  ];
+  render(<TimelineView sessionId="s1" events={events} />);
+  const end = screen.getByRole("button", { name: /span\.skills_install_end/ });
+  expect(end.querySelector(".bg-purple-100")?.textContent).toBe("span.skills_install_end");
+  fireEvent.click(end);
+  expect(document.body.textContent).toContain('"stage": "download"');
+  expect(document.body.textContent).toContain('"reason": "HTTP 503, curl exit 0"');
+});

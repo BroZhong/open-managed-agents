@@ -1,4 +1,5 @@
-import { SkillNameConflictError } from "../errors.js";
+import { SkillNameConflictError, SkillVersionConflictError } from "../errors.js";
+import { skillBundleColumns } from "../skill-bundle.js";
 import { nanoid } from "nanoid";
 import type { Pool } from "./connection.js";
 import type {
@@ -8,6 +9,7 @@ import type {
   SkillStoreCreateInput,
   SkillStoreListOpts,
   SkillStoreUpdateInput,
+  SkillStoreUpdateOptions,
 } from "../interfaces/skill-store.js";
 import type { PaginatedResult } from "../types.js";
 
@@ -21,6 +23,9 @@ interface SkillRow {
   source_skill_id: string | null;
   created_at: Date | null;
   updated_at: Date;
+  bundle_sha256: string | null;
+  /** BIGINT: node-postgres returns it as a string. */
+  bundle_size: string | number | null;
 }
 
 function rowToSkill(row: SkillRow): Skill {
@@ -34,6 +39,8 @@ function rowToSkill(row: SkillRow): Skill {
     sourceSkillId: row.source_skill_id ?? null,
     createdAt: row.created_at == null ? null : new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
+    bundleSha256: row.bundle_sha256,
+    bundleSize: row.bundle_size == null ? null : Number(row.bundle_size),
   };
 }
 
@@ -46,11 +53,13 @@ export class PgSkillStore implements SkillStore {
     const ownerType: SkillOwnerType = input.ownerType ?? "library";
     // A Library Skill is owned by its tenant; a fork carries an explicit ownerId.
     const ownerId = input.ownerId ?? (ownerType === "library" ? input.tenantId : "");
+    const bundle = skillBundleColumns(input);
     const { rows } = await this.pool.query<SkillRow>(
-      `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, source_skill_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+      `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, source_skill_id, created_at, updated_at, bundle_sha256, bundle_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10)
        RETURNING *`,
-      [id, input.tenantId, input.name, input.description, ownerType, ownerId, input.sourceSkillId ?? null, now],
+      [id, input.tenantId, input.name, input.description, ownerType, ownerId, input.sourceSkillId ?? null, now,
+        bundle?.bundleSha256 ?? null, bundle?.bundleSize ?? null],
     ).catch((error) => this.rethrowConflict(error, input.name));
     return rowToSkill(rows[0]);
   }
@@ -95,7 +104,8 @@ export class PgSkillStore implements SkillStore {
     return rows.map(rowToSkill);
   }
 
-  async update(id: string, input: SkillStoreUpdateInput): Promise<Skill | null> {
+  async update(id: string, input: SkillStoreUpdateInput, options: SkillStoreUpdateOptions = {}): Promise<Skill | null> {
+    const bundle = skillBundleColumns(input);
     const sets: string[] = [];
     const params: unknown[] = [];
     if (input.name !== undefined) {
@@ -110,14 +120,30 @@ export class PgSkillStore implements SkillStore {
       params.push(input.sourceSkillId);
       sets.push(`source_skill_id = $${params.length}`);
     }
+    if (bundle) {
+      params.push(bundle.bundleSha256, bundle.bundleSize);
+      sets.push(`bundle_sha256 = $${params.length - 1}`, `bundle_size = $${params.length}`);
+    }
     params.push(new Date());
     sets.push(`updated_at = $${params.length}`);
     params.push(id);
+    let where = `skill_id = $${params.length}`;
+    const expected = options.expectedBundleSha256;
+    if (expected === null) where += ` AND bundle_sha256 IS NULL`;
+    else if (expected !== undefined) {
+      params.push(expected);
+      where += ` AND bundle_sha256 = $${params.length}`;
+    }
     const { rows } = await this.pool.query<SkillRow>(
-      `UPDATE skills SET ${sets.join(", ")} WHERE skill_id = $${params.length} RETURNING *`,
+      `UPDATE skills SET ${sets.join(", ")} WHERE ${where} RETURNING *`,
       params,
     ).catch((error) => this.rethrowConflict(error, input.name ?? ""));
-    return rows[0] ? rowToSkill(rows[0]) : null;
+    if (rows[0]) return rowToSkill(rows[0]);
+    if (expected === undefined) return null;
+    // The compare-and-set matched nothing: the Skill is gone or another edit won.
+    const current = await this.getById(id);
+    if (!current) return null;
+    throw new SkillVersionConflictError(id, expected, current.bundleSha256);
   }
 
   private rethrowConflict(error: { code?: string; constraint?: string }, name: string): never {

@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { DelegationStore, DelegationExecution, DelegationAcceptInput, DelegationCaller, DelegationCommand, DelegationOutcome, DelegationWait, ResourceUseLease } from "./interfaces/delegation-store.js";
+import type { DelegationStore, DelegationExecution, DelegationAcceptInput, DelegationCaller, DelegationCommand, DelegationOutcome, DelegationWait, InstalledSkillSet, ResourceUseLease, SkillSetRecordOutcome } from "./interfaces/delegation-store.js";
 import type { SessionStore } from "./interfaces/session-store.js";
 import type { PendingEventStore, PendingEventFence } from "./interfaces/pending-event-store.js";
 import type { EventLogStoreAppendInput } from "./interfaces/event-log-store.js";
@@ -26,6 +26,8 @@ const callerFilter = (caller: DelegationCaller) => ({ tenantId: caller.tenantId,
 export abstract class TransactionalDelegationStore implements DelegationStore {
   protected abstract transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T>;
   abstract withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  abstract installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
+  abstract recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
   private async execution(tx: DelegationTransaction, id: string): Promise<DelegationExecution> {
     const row = (await tx.read<DelegationExecution>("executions", { id }))[0];
     if (!row) throw new Error("Delegation execution not found");

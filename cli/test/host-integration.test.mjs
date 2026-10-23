@@ -75,7 +75,7 @@ test("CLI waits through real Host ingress/completion overlap, retaining final Tu
 
 test("real Host resource workflows preserve private forks and Workspace deletion semantics", async () =>
   withHost(async (config, opts) => {
-    const { mkdtemp, realpath, mkdir, writeFile, rm } = await import(
+    const { mkdtemp, realpath, mkdir, writeFile, readFile, rm } = await import(
       "node:fs/promises"
     );
     const { tmpdir } = await import("node:os");
@@ -168,7 +168,40 @@ test("real Host resource workflows preserve private forks and Workspace deletion
         "# Title\nFallback description\n",
       );
       await writeFile(join(skillDir, "old.txt"), "original");
+      // A TrueType header and bytes that are not UTF-8 survive the round trip.
+      const font = Buffer.from([0, 1, 0, 0, 0xff, 0xfe, 0xc3, 0x28, 0x80, 0]);
+      await mkdir(join(skillDir, "assets"));
+      await writeFile(join(skillDir, "assets", "Regular.ttf"), font);
       const lib = (await call(["skill", "upload", "--directory", skillDir]))[0];
+      const exported = join(dir, "exported-skill");
+      await call([
+        "skill",
+        "download",
+        "--skill-id",
+        lib.id,
+        "--output",
+        exported,
+      ]);
+      assert.deepEqual(
+        await readFile(join(exported, "assets", "Regular.ttf")),
+        font,
+      );
+      assert.equal(
+        await readFile(join(exported, "SKILL.md"), "utf8"),
+        "# Title\nFallback description\n",
+      );
+      await call(
+        [
+          "skill",
+          "file",
+          "read",
+          "--skill-id",
+          lib.id,
+          "--path",
+          "assets/Regular.ttf",
+        ],
+        2,
+      );
       const fork = await call([
         "agent",
         "skill",

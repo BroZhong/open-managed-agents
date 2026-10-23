@@ -28,6 +28,7 @@ export interface E2BCommandResult {
 }
 
 export interface E2BCommandHandle {
+  readonly pid: number;
   wait(): Promise<E2BCommandResult>;
   kill(): Promise<boolean>;
   disconnect(): Promise<void>;
@@ -39,6 +40,8 @@ export interface E2BCommandOptions {
   envs?: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Keep stdin open for {@link E2BSandbox.commands.sendStdin}. */
+  stdin?: boolean;
   onStdout?: (data: string) => void | Promise<void>;
   onStderr?: (data: string) => void | Promise<void>;
   onStdoutBytes?: (data: Uint8Array) => void | Promise<void>;
@@ -55,6 +58,8 @@ export interface E2BSandbox {
   commands: {
     run(cmd: string, opts?: E2BCommandOptions & { background?: false }): Promise<E2BCommandResult>;
     run(cmd: string, opts: E2BCommandOptions & { background: true }): Promise<E2BCommandHandle>;
+    /** The Sandbox's envd cannot close stdin, so input is sent once and never ended. */
+    sendStdin(pid: number, data: string | Uint8Array): Promise<void>;
   };
   files: {
     read(path: string, opts?: { format?: "text" }): Promise<string>;
@@ -288,6 +293,8 @@ export class E2BSandboxClient implements SandboxClient {
         ? { timeoutMs: opts.timeoutSeconds * 1000 }
         : {}),
       ...(opts?.signal ? { signal: opts.signal } : {}),
+      ...(opts?.user ? { user: opts.user } : {}),
+      ...(opts?.stdin !== undefined ? { stdin: opts.stdin } : {}),
       onExit: (result) => {
         exited = true;
         opts?.onExit?.(result);
@@ -472,6 +479,9 @@ async function* streamRun(
     envs?: Record<string, string>;
     timeoutMs?: number;
     signal?: AbortSignal;
+    user?: string;
+    /** Sent once the process has started; its stdin then stays open. */
+    stdin?: string;
     onExit?: SandboxExecOptions["onExit"];
   },
 ): AsyncIterable<SandboxExecChunk> {
@@ -542,9 +552,10 @@ async function* streamRun(
     try {
       // Keep startup observable even if cancellation races with process
       // creation. Once its PID/handle arrives, cancel() can reliably kill it.
-      const { signal: _signal, onExit: _onExit, ...runOptions } = opts;
+      const { signal: _signal, onExit: _onExit, stdin, ...runOptions } = opts;
       handle = await sandbox.commands.run(cmd, {
         ...runOptions,
+        ...(stdin !== undefined ? { stdin: true } : {}),
         background: true,
         onStdout: push("stdout"),
         onStderr: push("stderr"),
@@ -557,10 +568,18 @@ async function* streamRun(
         (result) => ({ result }),
         (reason: unknown) => ({ reason }),
       );
+      let stdinFailure: Error | undefined;
+      if (stdin !== undefined && !cancelRequested) {
+        // A process left waiting for input it never receives is stopped,
+        // and the transport error reported instead of a cancellation.
+        try { await sandbox.commands.sendStdin(handle.pid, stdin); }
+        catch (reason) { stdinFailure = reason instanceof Error ? reason : new Error(String(reason)); cancel(); }
+      }
       if (cancelRequested) cancel();
       const outcome = await Promise.race([waiting, killFailure]);
       await killPromise;
       if (killError) throw killError;
+      if (stdinFailure) throw stdinFailure;
       if (cancelRequested && killed && ('result' in outcome || isCommandExitError(outcome.reason))) {
         exitResult = { exitCode: null, signal: "SIGKILL" };
         error = new DOMException("Command aborted", "AbortError");

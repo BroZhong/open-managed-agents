@@ -196,6 +196,19 @@ describe("Conversation Delta projection", () => {
     expect(messages[0].role).toBe("user");
   });
 
+  it("leaves a Skill Install's spans out of the conversation", () => {
+    const span = { turnId: "turn_10_a1", installId: "1.1", setHash: "a".repeat(64), skills: 1 };
+    const { messages } = processEventsToMessages([
+      userMessage,
+      { seq: 11, type: "span.skills_install_start", data: span, ts: "2026-07-11T00:00:01.000Z" },
+      { seq: 12, type: "span.skills_install_end", data: { ...span, outcome: "installed", durationMs: 900, downloaded: 1, bytes: 2048 },
+        ts: "2026-07-11T00:00:02.000Z" },
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+  });
+
   it("shows the typing indicator only before the current Turn has any response", () => {
     expect(
       shouldShowTypingIndicator(

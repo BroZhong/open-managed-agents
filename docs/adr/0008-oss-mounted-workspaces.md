@@ -58,6 +58,16 @@ offers file refresh retry. The existing per-Session 423 write gate remains.
 Historical `workspace.file_change` events remain readable as history; no new
 sync deltas are produced or required to refresh the console.
 
+> **Superseded by [ADR-0022](0022-skill-bundles.md):** Skills no longer keep
+> Supabase storage or Read-only Projections. Each Skill version is an immutable
+> Skill Bundle in OSS, installed into the Sandbox when the Agent's Skill Set
+> version changes; rename reconciliation becomes the version-directory switch.
+> Retained: the `/skills/<skill-name>` path, ID-based authorization and visible
+> failure of unsafe or duplicate names. The same applies to "projection refresh"
+> in the Sandbox Manager's duties above, and to the statement under
+> Consequences that Host OSS configuration is independent of Skills
+> configuration.
+
 Skills retain Supabase storage and Read-only Projections. Their mounted paths
 use `/skills/<skill-name>` as requested; internal authorization and source lookup
 continue using Skill IDs. Unsafe or duplicate equipped names fail visibly before

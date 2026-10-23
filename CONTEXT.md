@@ -21,9 +21,9 @@ Historical test reports describe their original runs, not the current deployment
 `sandbox/` contains the sole maintained template, its image recipe and required
 build tools. `deploy/` contains application deployment and shared infrastructure.
 Business Agent presets, prompts, workflows and Skill content belong outside
-this repository; the platform still provides Skill Library, Equip and projection
-mechanisms. The legacy `AUTO_STORY_*` environment injection remains required by
-existing production Agents and must be migrated before removal.
+this repository; the platform still provides Skill Library, Equip and Skill
+Install mechanisms. The legacy `AUTO_STORY_*` environment injection remains
+required by existing production Agents and must be migrated before removal.
 
 ## Language
 
@@ -32,7 +32,7 @@ A configured AI coding worker that can be used to create **Sessions**. An Agent 
 _Avoid_: bot, assistant, worker
 
 **Agent Fork**:
-A new **Agent** copied from an existing Agent's configuration, **Agent Files**, and current **Agent Skills**. Every copied Skill has a new ID and belongs to the new Agent, with its original Library provenance retained. Forking preserves private edits, even when a Library source was deleted. Sessions, Loops and Workspaces are not copied. Subsequent edits to either Agent's configuration or files are independent.
+A new **Agent** copied from an existing Agent's configuration, **Agent Files**, and current **Agent Skills**. Every copied Skill has a new ID and belongs to the new Agent, with its original Library provenance retained; it references the same **Skill Bundle**, so no Skill files are copied. Forking preserves private edits, even when a Library source was deleted. Sessions, Loops and Workspaces are not copied. Subsequent edits to either Agent's configuration or files are independent.
 _Avoid_: shared Agent, linked copy
 
 **Sandboxed Agent**:
@@ -118,7 +118,7 @@ A named markdown document that shapes an **Agent**'s identity or instructions (e
 _Avoid_: prompt file, persona file, SOUL (as a category name)
 
 **Skill**:
-A self-contained, reusable capability packaged as a directory containing a `SKILL.md`. Every Skill has an **owner**: a **Library Skill** is owned by the tenant and lives in the **Skill Library**; an **Agent Skill** is owned by one Agent and exists only as that Agent's private copy (a **Skill Fork**). When a Session runs, the Host materializes that Agent's equipped Agent Skills into a resource location the runtime loads natively; a Skill is not a Session artifact and does not live in a Workspace.
+A self-contained, reusable capability packaged as a directory containing a `SKILL.md`. Every Skill has an **owner**: a **Library Skill** is owned by the tenant and lives in the **Skill Library**; an **Agent Skill** is owned by one Agent and exists only as that Agent's private copy (a **Skill Fork**). Each version of a Skill is a **Skill Bundle**. When a Session runs, the Host installs that Agent's **Skill Set** into its Sandbox (**Skill Install**), where the runtime reads each Skill at `/skills/<name>/`; a Skill is not a Session artifact and does not live in a Workspace.
 _Avoid_: plugin, tool (a Skill may bundle tools, but is not itself a tool)
 
 Skill names are unique within an owner: `(tenant, owner type, owner id, name)`.
@@ -128,7 +128,8 @@ default; already-equipped Library Skills remain selectable for re-import, with
 same-name or already-equipped labels indicating which selections will overwrite.
 The console sends `overwrite: true` to opt into the API's replacement behavior.
 Replacement retains the Skill ID and
-replaces the complete file tree; Library replacement leaves Agent forks independent.
+replaces the complete file tree with a new Skill Bundle; Library replacement leaves
+Agent forks independent.
 Metadata and SKILL.md edits cannot rename a Skill to another Skill's name.
 
 **Skill Library**:
@@ -136,8 +137,8 @@ The tenant-scoped collection of all **Library Skills** a tenant has, independent
 _Avoid_: marketplace, catalog, registry
 
 **Equip** (a Skill onto an Agent):
-To fork a **Library Skill** onto an **Agent**: the Host snapshots the Library Skill's files into a new **Agent Skill** (a **Skill Fork**) that the Agent's Sessions load. Equipping copies the Skill at that moment; later Library edits do not propagate to the fork. Unequipping removes the Agent's fork, not the Library Skill.
-_Avoid_: install, add, attach, link (equip is a copy, not a reference)
+To fork a **Library Skill** onto an **Agent**: the Host creates a new **Agent Skill** (a **Skill Fork**) that the Agent's Sessions load, whose current version is the Library Skill's current **Skill Bundle**. Equipping snapshots the Skill at that moment without copying files, because a bundle never changes; later Library edits create new Library versions and do not propagate to the fork. Unequipping removes the Agent's fork, not the Library Skill.
+_Avoid_: install, add, attach, link (equip creates an independent Skill, not a link to the Library Skill; installing is **Skill Install**)
 
 **Managed MCP Connection**:
 An Agent-scoped reference to an entry in the Host-owned **MCP Catalog**. The Agent may configure presentation metadata such as the connection's name and description, but never its executable, URL, headers, or environment-variable placeholders. The Host resolves the reference into its version-pinned runtime connection for each Turn; credentials stay in the Host environment and are never persisted in the Agent.
@@ -148,8 +149,16 @@ The Host-owned allowlist of **Managed MCP Connections** available to Agents. Its
 _Avoid_: marketplace, MCP registry, user catalog
 
 **Skill Fork**:
-The Agent-owned copy produced when a **Library Skill** is equipped onto an **Agent**. The fork has its own id and records the `source_skill_id` it was forked from. From then on the two are independent: editing the Library Skill never changes the fork, and editing the fork on the Agent's page never changes the Library Skill. This is why an Agent can preview and edit its equipped Skills freely, and why deleting a Library Skill leaves already-equipped Agents unaffected.
+The Agent-owned copy produced when a **Library Skill** is equipped onto an **Agent**. The fork has its own id and records the `source_skill_id` it was forked from. It starts at the Library Skill's current **Skill Bundle** and gets bundles of its own as it is edited. From then on the two are independent: editing the Library Skill never changes the fork, and editing the fork on the Agent's page never changes the Library Skill. This is why an Agent can preview and edit its equipped Skills freely, and why deleting a Library Skill leaves already-equipped Agents unaffected.
 _Avoid_: link, alias, reference (a fork is a copy, not a pointer)
+
+**Skill Bundle**:
+One immutable version of a **Skill**: a zip of its complete file tree, content-addressed by its sha256 within a **Tenant** and stored in OSS under the system prefix `__oma/skills/<tenantId>/<sha256>.zip`. The Skill's row names its current bundle (`bundle_sha256`, with its uncompressed size). Every edit, from a file write to a rename through `SKILL.md`, produces a new bundle; a bundle is never modified, and identical content yields the same bundle. **Equip** and **Agent Fork** reference the source's bundle instead of copying files. Files are bytes, binaries included; `.pyc` and `__pycache__` are left out, and a Skill holds at most 50 MB uncompressed. An edit based on a version that is no longer current is rejected with 409.
+_Avoid_: package, archive, Skill files (the bundle is the only copy of a Skill's files)
+
+**Skill Set**:
+An **Agent**'s equipped Skills as (name, **Skill Bundle** sha256) pairs, and the order-independent hash over those pairs sorted by name. The Host computes it from PG at the start of each **Turn**. Editing, equipping, unequipping or renaming a Skill changes it; equip order does not. A **Child Session** runs its parent's Agent and therefore has the same Skill Set.
+_Avoid_: Skills manifest, Skills version (the hash identifies the whole set, not one Skill)
 
 **User**:
 A human who signs in to the web console with a username and password. Registration requires a valid invite code. Each User is paired one-to-one with a **Tenant** created at registration time; a User has exactly one Tenant and a Tenant has exactly one User. A User's login produces a session token that resolves to that same **Tenant**, so everything the User sees (Agents, Loops, Sessions, Skills, API keys) is scoped to their Tenant.
@@ -166,7 +175,7 @@ _Avoid_: Tenant, home directory, snapshot, Turn output transaction
 ## Sandbox provisioning
 
 **Sandbox Manager**:
-The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, describe — shared by both the Sandbox-as-Tool mode and the future Agent-in-the-Sandbox mode. It reads an **Environment Spec** to know what to build and verifies its mounted Workspace before execution, refreshes Read-only Projections, and releases execution resources. It knows no Agent runtime or business ownership policy; the Host supplies trusted storage coordinates.
+The single owner of a sandbox's lifecycle — create, reclaim, rebuild, list, describe — shared by both the Sandbox-as-Tool mode and the future Agent-in-the-Sandbox mode. It reads an **Environment Spec** to know what to build and verifies its mounted Workspace before execution, performs the **Skill Install** when the installed **Skill Set** differs, and releases execution resources. It knows no Agent runtime or business ownership policy; the Host supplies trusted storage coordinates and short-lived bundle URLs.
 _Avoid_: sandbox pool, orchestrator, lifecycle pool, executor
 
 Sandbox lifetime is owned by the platform: each prepared Turn receives 24 hours
@@ -183,20 +192,16 @@ local processes, memory and dependencies need not. No OMA idle scanner or
 never-timeout policy remains. See ADR-0019 and `docs/sandbox-lifecycle-deployment.md`.
 
 **Environment Spec**:
-The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and any **Read-only Projections**. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
+The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and the **Skill Set** to install. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
 _Avoid_: config, sandbox config, environment, EnvVars
 
 **Workspace Store**:
 The home of a **Workspace**'s persistent files. The Host accesses it through `ArtifactStore`; `OSSArtifactStore` implements the file API and exact-prefix mount-probe readback. The Sandbox mounts the same OSS prefix directly through CSI and restricted Agent Identity credentials. Storage does not hydrate, scan, hash or synchronize a local copy at Turn boundaries. `WorkspaceMetadataStore` separately stores the Workspace record and name.
 _Avoid_: sync engine, baseline, checkpoint publisher
 
-**Read-only Projection**:
-External content projected into a Sandbox path outside the Workspace, never written back. Equipped Skills use `/skills/<skill-name>`; ownership and Supabase source coordinates still use Skill ID internally. Names must be safe single directory components and unique among the Agent's equipped Skills. A Skill rename removes its old projection before loading the replacement. Projection targets cannot contain, equal, or sit inside the Workspace mount.
-_Avoid_: mount, read-only mount, static files, assets
-
-**Provision Source**:
-Where a **Read-only Projection**'s content comes from, sealed behind one interface so the projection mechanism is indifferent to it. Supabase is the current Skill source; `S3ProvisionSource` retains its existing name and uses `S3SkillArtifactStore`. Workspace OSS configuration and credentials are independent of Skills.
-_Avoid_: loader, fetcher, downloader
+**Skill Install**:
+Placing one **Skill Set** version into a Sandbox at `/skills/<name>/`. The environment binding records which Sandbox and which Skill Set hash were last installed; when both match the current ones the install is skipped with no OSS or Sandbox call, which is why **Child Sessions** sharing the binding never reinstall an unchanged set. Otherwise the Sandbox downloads the bundles itself through short-lived presigned URLs for the OSS internal endpoint (it holds no OSS credentials), extracts them into a version directory that is owned by root and read-only, and atomically switches the `/skills` symlink to it; the binding is updated only after complete success. A change takes effect at the start of the next **Turn**; Turns sharing the Sandbox may see the new version after the switch, but never a half-installed tree. The install runs beside inference, the first tool call waits for it, and a failure ends the Turn with `skills_install_failed` (a Turn that never used the Sandbox keeps its answer); each install that runs is visible as `span.skills_install_start`/`_end` in the Session's events. Names must be safe single directory components, unique among the Agent's equipped Skills; `/skills` lies outside the Workspace mount and is never written back. See ADR-0022.
+_Avoid_: projection, sync, refresh, mount (nothing is copied on every Turn and nothing is mounted)
 
 ## Example Dialogue
 

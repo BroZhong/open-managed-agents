@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StoredEvent } from "@oma-server/store";
+import { packSkillBundle, type StoredEvent } from "@oma-server/store";
 import { bash, eventsOfInput, execute, expectResumed, MODELS, PROVIDER, sweep, text, usePiSettings, type Outcome, type Run, type Scenario } from "./harness.js";
 
 await usePiSettings();
@@ -77,9 +77,10 @@ describe("crash injection: a Resumed Turn's model and thinking", () => {
       inputs: ["migrate the database"],
       model: async (request, run) => {
         if (request.results.has("call_migrate")) return { blocks: [text("checked the migration state")], stop: "end_turn" };
+        const bundle = await packSkillBundle([{ path: "SKILL.md", body: new TextEncoder().encode("# Runbook") }]);
+        await run.stores.skillBundleStore.put("tenant", bundle);
         const skill = await run.stores.skillStore.create({ tenantId: "tenant", name: "db-runbook", description: "How this team migrates databases",
-          ownerType: "agent", ownerId: run.agentId });
-        await run.stores.skillArtifactStore.put("tenant", skill.id, "SKILL.md", "# Runbook");
+          ownerType: "agent", ownerId: run.agentId, bundleSha256: bundle.sha256, bundleSize: bundle.size });
         await run.stores.agentStore.update(run.agentId, { system: "Follow the edited runbook.", skills: [skill.id] });
         await editConfiguration(run);
         return { blocks: [bash("call_migrate", "./migrate.sh")], stop: "tool_use" };

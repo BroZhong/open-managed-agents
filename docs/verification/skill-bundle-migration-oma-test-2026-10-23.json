@@ -1,0 +1,3376 @@
+{
+  "issue": 266,
+  "parent": 259,
+  "adr": "docs/adr/0022-skill-bundles.md",
+  "environment": "oma-test",
+  "schema": "oma_test",
+  "supabaseBucket": "workspace-test",
+  "ossBucket": "agentry",
+  "ossKey": "__oma/skills/<tenantId>/<sha256>.zip",
+  "tool": {
+    "branch": "wt/266-bundle-migration",
+    "commit": "37e69c3",
+    "wrapper": "deploy/scripts/run-skill-bundle-migration.sh",
+    "apiPodImage": "registry-vpc.cn-shanghai.aliyuncs.com/welltop/oma-server:395e30e564f0 (predates the tool; the wrapper bundles it with esbuild)"
+  },
+  "font": {
+    "fileName": "LiberationSans-Regular.ttf",
+    "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+    "size": 410712,
+    "archive": "liberation-fonts-ttf-2.1.5.tar.gz",
+    "archiveSha256": "7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0",
+    "archiveUrl": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz"
+  },
+  "source": {
+    "checkedVia": "Supabase SQL, read-only: oma_test.skills and storage.objects where bucket_id='workspace-test' and split_part(name,'/',2)='skills'",
+    "skills": 77,
+    "byOwnerType": {
+      "library": 20,
+      "agent": 57
+    },
+    "agentForksWithSource": 57,
+    "tenants": 2,
+    "objects": 1293,
+    "bytes": 20143894,
+    "skillPrefixes": 77,
+    "compiledPythonObjects": 32,
+    "fontObjects": 4,
+    "objectsByCreationHourCST": [
+      {
+        "hour": "10-14 17",
+        "objects": 1,
+        "skills": 1,
+        "compiled": 0,
+        "fonts": 0
+      },
+      {
+        "hour": "10-21 12",
+        "objects": 646,
+        "skills": 38,
+        "compiled": 16,
+        "fonts": 2
+      },
+      {
+        "hour": "10-22 02",
+        "objects": 323,
+        "skills": 19,
+        "compiled": 8,
+        "fonts": 1
+      },
+      {
+        "hour": "10-22 14",
+        "objects": 323,
+        "skills": 19,
+        "compiled": 8,
+        "fonts": 1
+      }
+    ],
+    "issueCount": "The issue's 970 objects = 1 + 646 + 323: the bucket before the third batch of 19 Agent forks (323 objects) was created on 2026-10-22 14:30 CST. That state had 58 Skills, not 77.",
+    "newestUpdatedAt": "2026-10-22T06:30:26.425Z",
+    "oldestUpdatedAt": "2026-10-14T09:28:53.847Z"
+  },
+  "runs": [
+    {
+      "label": "dry-run",
+      "command": "OMA_FONT=$PWD/LiberationSans-Regular.ttf deploy/scripts/run-skill-bundle-migration.sh test dry-run.json --dry-run 2> dry-run.log",
+      "inPodCommand": "node /tmp/oma-skill-bundle-migration-<ts>-<pid>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json --dry-run",
+      "mode": "full",
+      "dryRun": true,
+      "since": null,
+      "manifests": [],
+      "startedAt": "2026-10-22T20:43:23.399Z",
+      "finishedAt": "2026-10-22T20:43:36.525Z",
+      "totals": {
+        "skills": 77,
+        "byStatus": {
+          "would-write": 77
+        },
+        "supabaseObjects": 1293,
+        "supabaseBytes": 20143894,
+        "packedFiles": 1261,
+        "filteredFiles": 32,
+        "replacedFonts": 4,
+        "corruptFonts": 0,
+        "distinctBundles": 20,
+        "bundlesUploaded": 0,
+        "uploadedZipBytes": 0
+      },
+      "supabase": {
+        "requests": 1578,
+        "retries": 0,
+        "retriesByCause": {}
+      },
+      "verification": {
+        "source": "packed",
+        "bundles": 20,
+        "problems": [],
+        "fonts": [
+          {
+            "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+            "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "size": 410712,
+            "header": "00010000",
+            "problem": null
+          }
+        ]
+      },
+      "forks": {
+        "total": 57,
+        "sameBundleAsSource": 57,
+        "differentFromSource": 0,
+        "sourceNotPacked": 0
+      },
+      "sharedBundles": 19
+    },
+    {
+      "label": "full",
+      "command": "OMA_FONT=$PWD/LiberationSans-Regular.ttf deploy/scripts/run-skill-bundle-migration.sh test full.json 2> full.log",
+      "inPodCommand": "node /tmp/oma-skill-bundle-migration-<ts>-<pid>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json",
+      "mode": "full",
+      "dryRun": false,
+      "since": null,
+      "manifests": [],
+      "startedAt": "2026-10-22T20:43:54.532Z",
+      "finishedAt": "2026-10-22T20:44:06.056Z",
+      "totals": {
+        "skills": 77,
+        "byStatus": {
+          "written": 77
+        },
+        "supabaseObjects": 1293,
+        "supabaseBytes": 20143894,
+        "packedFiles": 1261,
+        "filteredFiles": 32,
+        "replacedFonts": 4,
+        "corruptFonts": 0,
+        "distinctBundles": 20,
+        "bundlesUploaded": 20,
+        "uploadedZipBytes": 1978576
+      },
+      "supabase": {
+        "requests": 1578,
+        "retries": 0,
+        "retriesByCause": {}
+      },
+      "verification": {
+        "source": "bundle-store",
+        "bundles": 20,
+        "problems": [],
+        "fonts": [
+          {
+            "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+            "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "size": 410712,
+            "header": "00010000",
+            "problem": null
+          }
+        ]
+      },
+      "forks": {
+        "total": 57,
+        "sameBundleAsSource": 57,
+        "differentFromSource": 0,
+        "sourceNotPacked": 0
+      },
+      "sharedBundles": 19
+    },
+    {
+      "label": "rerun with the full report as manifest",
+      "command": "OMA_FONT=$PWD/LiberationSans-Regular.ttf deploy/scripts/run-skill-bundle-migration.sh test rerun.json --manifest full.json 2> rerun.log",
+      "inPodCommand": "node /tmp/oma-skill-bundle-migration-<ts>-<pid>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json --manifest <dir>/manifest-1.json",
+      "mode": "full",
+      "dryRun": false,
+      "since": null,
+      "manifests": [
+        {
+          "mode": "full",
+          "startedAt": "2026-10-22T20:43:54.532Z",
+          "bundles": 77
+        }
+      ],
+      "startedAt": "2026-10-22T20:45:42.315Z",
+      "finishedAt": "2026-10-22T20:45:53.137Z",
+      "totals": {
+        "skills": 77,
+        "byStatus": {
+          "unchanged": 77
+        },
+        "supabaseObjects": 1293,
+        "supabaseBytes": 20143894,
+        "packedFiles": 1261,
+        "filteredFiles": 32,
+        "replacedFonts": 4,
+        "corruptFonts": 0,
+        "distinctBundles": 20,
+        "bundlesUploaded": 0,
+        "uploadedZipBytes": 0
+      },
+      "supabase": {
+        "requests": 1578,
+        "retries": 0,
+        "retriesByCause": {}
+      },
+      "verification": {
+        "source": "bundle-store",
+        "bundles": 20,
+        "problems": [],
+        "fonts": [
+          {
+            "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+            "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "size": 410712,
+            "header": "00010000",
+            "problem": null
+          }
+        ]
+      },
+      "forks": {
+        "total": 57,
+        "sameBundleAsSource": 57,
+        "differentFromSource": 0,
+        "sourceNotPacked": 0
+      },
+      "sharedBundles": 19
+    },
+    {
+      "label": "rerun without manifest",
+      "command": "OMA_FONT=$PWD/LiberationSans-Regular.ttf deploy/scripts/run-skill-bundle-migration.sh test rerun-no-manifest.json 2> rerun-no-manifest.log",
+      "inPodCommand": "node /tmp/oma-skill-bundle-migration-<ts>-<pid>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json",
+      "mode": "full",
+      "dryRun": false,
+      "since": null,
+      "manifests": [],
+      "startedAt": "2026-10-22T20:46:05.714Z",
+      "finishedAt": "2026-10-22T20:46:05.725Z",
+      "totals": {
+        "skills": 77,
+        "byStatus": {
+          "kept": 77
+        },
+        "supabaseObjects": 0,
+        "supabaseBytes": 0,
+        "packedFiles": 0,
+        "filteredFiles": 0,
+        "replacedFonts": 0,
+        "corruptFonts": 0,
+        "distinctBundles": 0,
+        "bundlesUploaded": 0,
+        "uploadedZipBytes": 0
+      },
+      "supabase": {
+        "requests": 0,
+        "retries": 0,
+        "retriesByCause": {}
+      },
+      "verification": {
+        "source": "bundle-store",
+        "bundles": 0,
+        "problems": [],
+        "fonts": []
+      },
+      "forks": {
+        "total": 57,
+        "sameBundleAsSource": 0,
+        "differentFromSource": 0,
+        "sourceNotPacked": 57
+      },
+      "sharedBundles": 0
+    },
+    {
+      "label": "delta, T0 inside the data range",
+      "command": "OMA_FONT=$PWD/LiberationSans-Regular.ttf deploy/scripts/run-skill-bundle-migration.sh test delta.json --since 2026-10-22T06:30:20.000Z --manifest full.json 2> delta.log",
+      "inPodCommand": "node /tmp/oma-skill-bundle-migration-<ts>-<pid>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json --since 2026-10-22T06:30:20.000Z --manifest <dir>/manifest-1.json",
+      "mode": "delta",
+      "dryRun": false,
+      "since": "2026-10-22T06:30:20.000Z",
+      "manifests": [
+        {
+          "mode": "full",
+          "startedAt": "2026-10-22T20:43:54.532Z",
+          "bundles": 77
+        }
+      ],
+      "startedAt": "2026-10-22T20:46:45.785Z",
+      "finishedAt": "2026-10-22T20:46:47.638Z",
+      "totals": {
+        "skills": 8,
+        "byStatus": {
+          "unchanged": 8
+        },
+        "supabaseObjects": 169,
+        "supabaseBytes": 1913609,
+        "packedFiles": 167,
+        "filteredFiles": 2,
+        "replacedFonts": 0,
+        "corruptFonts": 0,
+        "distinctBundles": 8,
+        "bundlesUploaded": 0,
+        "uploadedZipBytes": 0
+      },
+      "supabase": {
+        "requests": 202,
+        "retries": 0,
+        "retriesByCause": {}
+      },
+      "verification": {
+        "source": "bundle-store",
+        "bundles": 8,
+        "problems": [],
+        "fonts": []
+      },
+      "forks": {
+        "total": 8,
+        "sameBundleAsSource": 0,
+        "differentFromSource": 0,
+        "sourceNotPacked": 8
+      },
+      "sharedBundles": 0,
+      "skills": [
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_7Nw_uaijd8qPG45aQueYZ",
+          "name": "shots-to-prompt_canvas-free",
+          "updatedAt": "2026-10-22T06:30:21.301Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+          "bundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_HcL9HgqhY9aAIfIy_MUS5",
+          "name": "pipeline_canvas-free",
+          "updatedAt": "2026-10-22T06:30:24.992Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+          "bundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_O1mMayRFJTrcKu55MCBlN",
+          "name": "byted-mediakit-image",
+          "updatedAt": "2026-10-22T06:30:24.120Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+          "bundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_P6DU9FwDG7GvAsNDKzo57",
+          "name": "script-to-dp",
+          "updatedAt": "2026-10-22T06:30:22.748Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+          "bundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_U_PDsGu4t8BEU4B_7tLiQ",
+          "name": "byted-mediakit-audio",
+          "updatedAt": "2026-10-22T06:30:26.425Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+          "bundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill__9dYCq1tj-8ZxWwflZibg",
+          "name": "byted-mediakit-video",
+          "updatedAt": "2026-10-22T06:30:20.043Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+          "bundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_fCCF77ktC6q5jqK1j8ygd",
+          "name": "scene-cut-intro",
+          "updatedAt": "2026-10-22T06:30:22.678Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+          "bundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_vYewecVK-xrA3pOcJfDSr",
+          "name": "vfs-video-generation_canvas-free",
+          "updatedAt": "2026-10-22T06:30:23.869Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+          "bundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89"
+        }
+      ]
+    },
+    {
+      "label": "delta with a manifest whose recorded bundle for skill_U_PDsGu4t8BEU4B_7tLiQ was replaced by 'e'*64",
+      "command": "OMA_FONT=$PWD/LiberationSans-Regular.ttf deploy/scripts/run-skill-bundle-migration.sh test delta-doctored.json --since 2026-10-22T06:30:20.000Z --manifest manifest-doctored.json 2> delta-doctored.log",
+      "inPodCommand": "node /tmp/oma-skill-bundle-migration-<ts>-<pid>/migrate-skill-bundles.mjs --schema oma_test --bucket workspace-test --font <dir>/LiberationSans-Regular.ttf --report <dir>/report.json --since 2026-10-22T06:30:20.000Z --manifest <dir>/manifest-1.json",
+      "mode": "delta",
+      "dryRun": false,
+      "since": "2026-10-22T06:30:20.000Z",
+      "manifests": [
+        {
+          "mode": "full",
+          "startedAt": "2026-10-22T20:43:54.532Z",
+          "bundles": 77
+        }
+      ],
+      "startedAt": "2026-10-22T20:47:01.489Z",
+      "finishedAt": "2026-10-22T20:47:03.087Z",
+      "totals": {
+        "skills": 8,
+        "byStatus": {
+          "unchanged": 7,
+          "kept": 1
+        },
+        "supabaseObjects": 163,
+        "supabaseBytes": 1883829,
+        "packedFiles": 161,
+        "filteredFiles": 2,
+        "replacedFonts": 0,
+        "corruptFonts": 0,
+        "distinctBundles": 7,
+        "bundlesUploaded": 0,
+        "uploadedZipBytes": 0
+      },
+      "supabase": {
+        "requests": 194,
+        "retries": 0,
+        "retriesByCause": {}
+      },
+      "verification": {
+        "source": "bundle-store",
+        "bundles": 7,
+        "problems": [],
+        "fonts": []
+      },
+      "forks": {
+        "total": 8,
+        "sameBundleAsSource": 0,
+        "differentFromSource": 0,
+        "sourceNotPacked": 8
+      },
+      "sharedBundles": 0,
+      "skills": [
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_7Nw_uaijd8qPG45aQueYZ",
+          "name": "shots-to-prompt_canvas-free",
+          "updatedAt": "2026-10-22T06:30:21.301Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+          "bundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_HcL9HgqhY9aAIfIy_MUS5",
+          "name": "pipeline_canvas-free",
+          "updatedAt": "2026-10-22T06:30:24.992Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+          "bundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_O1mMayRFJTrcKu55MCBlN",
+          "name": "byted-mediakit-image",
+          "updatedAt": "2026-10-22T06:30:24.120Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+          "bundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_P6DU9FwDG7GvAsNDKzo57",
+          "name": "script-to-dp",
+          "updatedAt": "2026-10-22T06:30:22.748Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+          "bundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_U_PDsGu4t8BEU4B_7tLiQ",
+          "name": "byted-mediakit-audio",
+          "updatedAt": "2026-10-22T06:30:26.425Z",
+          "status": "kept",
+          "reason": "bundle changed since the manifest: published by another writer (the new API)",
+          "previousBundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+          "bundleSha256": null
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill__9dYCq1tj-8ZxWwflZibg",
+          "name": "byted-mediakit-video",
+          "updatedAt": "2026-10-22T06:30:20.043Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+          "bundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_fCCF77ktC6q5jqK1j8ygd",
+          "name": "scene-cut-intro",
+          "updatedAt": "2026-10-22T06:30:22.678Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+          "bundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a"
+        },
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "skillId": "skill_vYewecVK-xrA3pOcJfDSr",
+          "name": "vfs-video-generation_canvas-free",
+          "updatedAt": "2026-10-22T06:30:23.869Z",
+          "status": "unchanged",
+          "reason": null,
+          "previousBundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+          "bundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89"
+        }
+      ]
+    }
+  ],
+  "pg": {
+    "fingerprints": "md5 over (tenant_id/skill_id@updated_at) and (tenant_id/skill_id=bundle_sha256:bundle_size), ordered by tenant_id, skill_id COLLATE \"C\"",
+    "before": {
+      "checkedAt": "2026-10-22T20:43:10Z",
+      "skills": 77,
+      "nullBundleSha256": 77,
+      "updatedAtFingerprintUs": "f34fab38297de6a88b3a96bd49d23e9c"
+    },
+    "afterFull": {
+      "checkedAt": "2026-10-22T20:44:15Z",
+      "skills": 77,
+      "nullBundleSha256": 0,
+      "nullBundleSize": 0,
+      "distinctBundles": 20,
+      "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+      "updatedAtFingerprint": "f765729ed84456fa22f0189c6d5fae74",
+      "updatedAtFingerprintUs": "f34fab38297de6a88b3a96bd49d23e9c"
+    },
+    "fullReportFingerprints": {
+      "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+      "updatedAtFingerprint": "f765729ed84456fa22f0189c6d5fae74"
+    },
+    "afterAllRuns": {
+      "checkedAt": "2026-10-22T20:47:12Z",
+      "skills": 77,
+      "nullBundleSha256": 0,
+      "nullBundleSize": 0,
+      "updatedAfterT0": 8,
+      "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+      "updatedAtFingerprint": "f765729ed84456fa22f0189c6d5fae74",
+      "updatedAtFingerprintUs": "f34fab38297de6a88b3a96bd49d23e9c"
+    },
+    "forksJoinedToSource": {
+      "forks": 57,
+      "sameBundleAsSource": 57,
+      "sourceMissing": 0,
+      "distinctForkBundles": 19
+    },
+    "preciseSubtitles": {
+      "rows": 4,
+      "distinctBundles": 1,
+      "bundle": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa"
+    }
+  },
+  "oss": {
+    "checkedVia": "ad-hoc read-only script in the oma-test API Pod: ali-oss listV2 on __oma/skills/<tenantId>/ and OSSSkillBundleStore.readAll (cacheBytes 0; the download checks the object's sha256)",
+    "before": {
+      "checkedAt": "2026-10-22T20:42:59.134Z",
+      "objects": {
+        "cee644c5-bc20-404f-93ab-f67a0fc693fe": 0,
+        "f00c7d5a-dd14-43e6-b791-e561c192d312": 0
+      }
+    },
+    "afterFull": {
+      "checkedAt": "2026-10-22T20:44:38.378Z",
+      "listing": {
+        "cee644c5-bc20-404f-93ab-f67a0fc693fe": {
+          "objects": 1,
+          "bytes": 178,
+          "keys": [
+            {
+              "sha256": "d5347702e1c8fa0933f44c57ce2954f9fa410ba71a6046cbeecd9217f22c66aa",
+              "size": 178,
+              "lastModified": "2026-10-22T20:43:54.000Z"
+            }
+          ]
+        },
+        "f00c7d5a-dd14-43e6-b791-e561c192d312": {
+          "objects": 19,
+          "bytes": 1978398,
+          "keys": [
+            {
+              "sha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+              "size": 72747,
+              "lastModified": "2026-10-22T20:43:57.000Z"
+            },
+            {
+              "sha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+              "size": 57609,
+              "lastModified": "2026-10-22T20:44:00.000Z"
+            },
+            {
+              "sha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+              "size": 7240,
+              "lastModified": "2026-10-22T20:43:59.000Z"
+            },
+            {
+              "sha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+              "size": 716159,
+              "lastModified": "2026-10-22T20:43:55.000Z"
+            },
+            {
+              "sha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+              "size": 13742,
+              "lastModified": "2026-10-22T20:44:00.000Z"
+            },
+            {
+              "sha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+              "size": 18280,
+              "lastModified": "2026-10-22T20:43:58.000Z"
+            },
+            {
+              "sha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+              "size": 6045,
+              "lastModified": "2026-10-22T20:43:59.000Z"
+            },
+            {
+              "sha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+              "size": 5932,
+              "lastModified": "2026-10-22T20:43:58.000Z"
+            },
+            {
+              "sha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+              "size": 4198,
+              "lastModified": "2026-10-22T20:43:58.000Z"
+            },
+            {
+              "sha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+              "size": 52387,
+              "lastModified": "2026-10-22T20:43:59.000Z"
+            },
+            {
+              "sha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+              "size": 226831,
+              "lastModified": "2026-10-22T20:43:57.000Z"
+            },
+            {
+              "sha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+              "size": 118674,
+              "lastModified": "2026-10-22T20:44:00.000Z"
+            },
+            {
+              "sha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+              "size": 122024,
+              "lastModified": "2026-10-22T20:43:56.000Z"
+            },
+            {
+              "sha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+              "size": 190106,
+              "lastModified": "2026-10-22T20:43:59.000Z"
+            },
+            {
+              "sha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+              "size": 104840,
+              "lastModified": "2026-10-22T20:44:00.000Z"
+            },
+            {
+              "sha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+              "size": 13353,
+              "lastModified": "2026-10-22T20:43:56.000Z"
+            },
+            {
+              "sha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+              "size": 238189,
+              "lastModified": "2026-10-22T20:43:54.000Z"
+            },
+            {
+              "sha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+              "size": 4274,
+              "lastModified": "2026-10-22T20:44:02.000Z"
+            },
+            {
+              "sha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+              "size": 5768,
+              "lastModified": "2026-10-22T20:43:55.000Z"
+            }
+          ]
+        }
+      }
+    },
+    "afterReruns": {
+      "checkedAt": "2026-10-22T20:46:09.936Z",
+      "listingIdenticalToAfterFull": true
+    },
+    "listedEqualsReportBundles": true,
+    "objectSizesEqualReportZipBytes": true,
+    "fileCountsEqualReportBundleFiles": true,
+    "readBack": {
+      "bundles": 20,
+      "missing": 0,
+      "withoutSkillMd": 0,
+      "compiledPythonEntries": 0,
+      "files": 316,
+      "fonts": [
+        {
+          "path": "assets/fonts/LiberationSans-Regular.ttf",
+          "size": 410712,
+          "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+          "header": "00010000",
+          "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa"
+        }
+      ]
+    }
+  },
+  "bundles": [
+    {
+      "tenantId": "cee644c5-bc20-404f-93ab-f67a0fc693fe",
+      "sha256": "d5347702e1c8fa0933f44c57ce2954f9fa410ba71a6046cbeecd9217f22c66aa",
+      "bundleSize": 66,
+      "zipBytes": 178,
+      "files": 1,
+      "names": [
+        "e2e-probe"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_jU1JmvaVEACfZ6t1DnHGO",
+          "ownerType": "library",
+          "sourceSkillId": null
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+      "bundleSize": 172126,
+      "zipBytes": 72747,
+      "files": 25,
+      "names": [
+        "byted-mediakit-editing"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_7n428Lj41tSF2Zvs4zn3G",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_NoQ_UONZmdqCosni8G9xs"
+        },
+        {
+          "skillId": "skill_ATcKJPCa-9gx1wjIMRy_a",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_NoQ_UONZmdqCosni8G9xs"
+        },
+        {
+          "skillId": "skill_NoQ_UONZmdqCosni8G9xs",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_px48SC6fvjVqm3Umrty9n",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_NoQ_UONZmdqCosni8G9xs"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+      "bundleSize": 139415,
+      "zipBytes": 57609,
+      "files": 7,
+      "names": [
+        "vfs-video-generation_canvas-free"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_UhTxHDIHDbZuoirPhA8iH",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_eTu5gBcnWFp2-Ifs_dG0P"
+        },
+        {
+          "skillId": "skill_eTu5gBcnWFp2-Ifs_dG0P",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_tYyCJAsCbXqVhbdPHt0Jd",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_eTu5gBcnWFp2-Ifs_dG0P"
+        },
+        {
+          "skillId": "skill_vYewecVK-xrA3pOcJfDSr",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_eTu5gBcnWFp2-Ifs_dG0P"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+      "bundleSize": 16714,
+      "zipBytes": 7240,
+      "files": 4,
+      "names": [
+        "vfs"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_Ik6JVXZT5LnU6qLH7CfRH",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_ZhB1EMRrGfrEsw1ig2_8o",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_Ik6JVXZT5LnU6qLH7CfRH"
+        },
+        {
+          "skillId": "skill__OC1I2hccGhEixe41lp_d",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_Ik6JVXZT5LnU6qLH7CfRH"
+        },
+        {
+          "skillId": "skill_dmkgP6C6dECgyf0W0yFOH",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_Ik6JVXZT5LnU6qLH7CfRH"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+      "bundleSize": 1878123,
+      "zipBytes": 716159,
+      "files": 67,
+      "names": [
+        "script-asset-builder_canvas-free"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_04CrGaGXAUXKpBBJeQwJN",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_2cvTczo3eZ8_9IgCDrak0"
+        },
+        {
+          "skillId": "skill_0zPxE4LBy_S-PzdmRdPdT",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_2cvTczo3eZ8_9IgCDrak0"
+        },
+        {
+          "skillId": "skill_2cvTczo3eZ8_9IgCDrak0",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_9WdCvqppVfeul8fCc6k96",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_2cvTczo3eZ8_9IgCDrak0"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+      "bundleSize": 29780,
+      "zipBytes": 13742,
+      "files": 6,
+      "names": [
+        "byted-mediakit-audio"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_T0-cgi8RGbv6qwuA2NqKj",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_dqBV2O2vLd-UMxqcKryPY"
+        },
+        {
+          "skillId": "skill_U_PDsGu4t8BEU4B_7tLiQ",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_dqBV2O2vLd-UMxqcKryPY"
+        },
+        {
+          "skillId": "skill_dqBV2O2vLd-UMxqcKryPY",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_zwihh8EGPiCgI_VrbdeS9",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_dqBV2O2vLd-UMxqcKryPY"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+      "bundleSize": 43697,
+      "zipBytes": 18280,
+      "files": 2,
+      "names": [
+        "videoworks-orchestrator_canvas-free"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_IDJF-AsIgQvkog3vDQ5b7",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_dBdRYY8Wc3AZ2_Emr7V22"
+        },
+        {
+          "skillId": "skill_V-0w96nEkfeSAPwdFIudY",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_dBdRYY8Wc3AZ2_Emr7V22"
+        },
+        {
+          "skillId": "skill_cuJtUzdn5tAGp1hxHp3tR",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_dBdRYY8Wc3AZ2_Emr7V22"
+        },
+        {
+          "skillId": "skill_dBdRYY8Wc3AZ2_Emr7V22",
+          "ownerType": "library",
+          "sourceSkillId": null
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+      "bundleSize": 11993,
+      "zipBytes": 6045,
+      "files": 3,
+      "names": [
+        "byted-mediakit-shared"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_PN5r1rzvqo9jazHwFiO8s",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_W_CICoicK5hp7WAhbhTL8"
+        },
+        {
+          "skillId": "skill_W_CICoicK5hp7WAhbhTL8",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_lQ83pTs4vTe0m9eNBLrnt",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_W_CICoicK5hp7WAhbhTL8"
+        },
+        {
+          "skillId": "skill_zKf_yE-pF6NGpXPHqOpXi",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_W_CICoicK5hp7WAhbhTL8"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+      "bundleSize": 11311,
+      "zipBytes": 5932,
+      "files": 3,
+      "names": [
+        "seedance25-oversea-plus-helper"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_EoyI1OGTGMUyN2gE7Cr1j",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_HIGD3a-62pwM8-nf2D37u",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_EoyI1OGTGMUyN2gE7Cr1j"
+        },
+        {
+          "skillId": "skill_KUMVXY-Ku7PgtKUfqysfW",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_EoyI1OGTGMUyN2gE7Cr1j"
+        },
+        {
+          "skillId": "skill_OkC6GtpM5vrnHxr5Y7Reh",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_EoyI1OGTGMUyN2gE7Cr1j"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+      "bundleSize": 8230,
+      "zipBytes": 4198,
+      "files": 2,
+      "names": [
+        "drama-episode-extract"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_FdM5Jygfl9zvaFJLETB_i",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_aZOEAueb38BlQW2XYK1Lz"
+        },
+        {
+          "skillId": "skill_OslfyzNig3Dw0c-omR1pt",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_aZOEAueb38BlQW2XYK1Lz"
+        },
+        {
+          "skillId": "skill_aZOEAueb38BlQW2XYK1Lz",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_qhBTLkYderFWjbQNwhX11",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_aZOEAueb38BlQW2XYK1Lz"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+      "bundleSize": 105143,
+      "zipBytes": 52387,
+      "files": 24,
+      "names": [
+        "byted-mediakit-image"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_O1mMayRFJTrcKu55MCBlN",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_Oq1Ndl8LhHpSy5jzZHasx"
+        },
+        {
+          "skillId": "skill_Oq1Ndl8LhHpSy5jzZHasx",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_vkxONpcSPm6UF988Kt2hf",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_Oq1Ndl8LhHpSy5jzZHasx"
+        },
+        {
+          "skillId": "skill_xqXv9l6SYTOSE5e8zkhTB",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_Oq1Ndl8LhHpSy5jzZHasx"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+      "bundleSize": 597102,
+      "zipBytes": 226831,
+      "files": 37,
+      "names": [
+        "shots-to-prompt_canvas-free"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_7Nw_uaijd8qPG45aQueYZ",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_hzpJQn4yPx1be9L3MTD7f"
+        },
+        {
+          "skillId": "skill_hzpJQn4yPx1be9L3MTD7f",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_lFaeTsLlOKErBsK3Gi0_6",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_hzpJQn4yPx1be9L3MTD7f"
+        },
+        {
+          "skillId": "skill_nTyHNqo-SLvtQP49-JmTS",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_hzpJQn4yPx1be9L3MTD7f"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+      "bundleSize": 272606,
+      "zipBytes": 118674,
+      "files": 21,
+      "names": [
+        "script-to-dp"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_P6DU9FwDG7GvAsNDKzo57",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_bUFSO6W49wQTreklBIn5T"
+        },
+        {
+          "skillId": "skill_bUFSO6W49wQTreklBIn5T",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_h2q-F16aHyn8A3b9h0pBi",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_bUFSO6W49wQTreklBIn5T"
+        },
+        {
+          "skillId": "skill_rOUJVdRLD-39SbfQnz3nQ",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_bUFSO6W49wQTreklBIn5T"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+      "bundleSize": 305059,
+      "zipBytes": 122024,
+      "files": 23,
+      "names": [
+        "dp-to-shots_canvas-free"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_2bxo_sXhjj8ZTMEzdA3pS",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_aicDr8SKkQpi0npQBcEIu"
+        },
+        {
+          "skillId": "skill_7qakdXvO80zZQWwVAnrah",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_aicDr8SKkQpi0npQBcEIu"
+        },
+        {
+          "skillId": "skill_aicDr8SKkQpi0npQBcEIu",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_fmDmKbo3fm1BPECPDzOlO",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_aicDr8SKkQpi0npQBcEIu"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+      "bundleSize": 470403,
+      "zipBytes": 190106,
+      "files": 38,
+      "names": [
+        "pipeline_canvas-free"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_HcL9HgqhY9aAIfIy_MUS5",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL"
+        },
+        {
+          "skillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_uZEiZfZ2i1cmx2LoiTm3_",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL"
+        },
+        {
+          "skillId": "skill_zVRQ8_M9GGE0ybWO5N9kJ",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+      "bundleSize": 237642,
+      "zipBytes": 104840,
+      "files": 32,
+      "names": [
+        "byted-mediakit-video"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_Q7KyYfnhjN8ppgfnktjR_",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_s3dEyT_3OAkx-KNNwfhY5"
+        },
+        {
+          "skillId": "skill__9dYCq1tj-8ZxWwflZibg",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_s3dEyT_3OAkx-KNNwfhY5"
+        },
+        {
+          "skillId": "skill_k1NaczSfm4FvvQHfFFMVk",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_s3dEyT_3OAkx-KNNwfhY5"
+        },
+        {
+          "skillId": "skill_s3dEyT_3OAkx-KNNwfhY5",
+          "ownerType": "library",
+          "sourceSkillId": null
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+      "bundleSize": 36172,
+      "zipBytes": 13353,
+      "files": 5,
+      "names": [
+        "shot-grouper"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_30froYmu86Xo5Hnu8_mgo",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_NmWk2104aTUYAhNmmCZU6"
+        },
+        {
+          "skillId": "skill_NmWk2104aTUYAhNmmCZU6",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_O7EDz1i-6KFpFwq4CxW8A",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_NmWk2104aTUYAhNmmCZU6"
+        },
+        {
+          "skillId": "skill_We1H4vaENfT0xWm_kJ48u",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_NmWk2104aTUYAhNmmCZU6"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+      "bundleSize": 466291,
+      "zipBytes": 238189,
+      "files": 11,
+      "names": [
+        "precise-subtitles"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_-QRdxY6eN3Nr_mrnbeSkw",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_3R9_uZlRB3xawR1vPpX4l",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_-QRdxY6eN3Nr_mrnbeSkw"
+        },
+        {
+          "skillId": "skill_5NLflCWsEHrZIDK7LRtfO",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_-QRdxY6eN3Nr_mrnbeSkw"
+        },
+        {
+          "skillId": "skill_m3vQuHozYj4Y3aWYPHL_5",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_-QRdxY6eN3Nr_mrnbeSkw"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+      "bundleSize": 7991,
+      "zipBytes": 4274,
+      "files": 2,
+      "names": [
+        "scene-cut-intro"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_daDd5oFV_utAKlBmKQFwm",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_fCCF77ktC6q5jqK1j8ygd",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_daDd5oFV_utAKlBmKQFwm"
+        },
+        {
+          "skillId": "skill_oGfPNrWnUxUBSD6iPs49x",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_daDd5oFV_utAKlBmKQFwm"
+        },
+        {
+          "skillId": "skill_pnQt9w6Jiy19Dn5ZNQNNt",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_daDd5oFV_utAKlBmKQFwm"
+        }
+      ]
+    },
+    {
+      "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+      "sha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+      "bundleSize": 10929,
+      "zipBytes": 5768,
+      "files": 3,
+      "names": [
+        "seedance25-plus-helper"
+      ],
+      "skills": [
+        {
+          "skillId": "skill_1PD0Z6yF0LyfBDXlieYTh",
+          "ownerType": "library",
+          "sourceSkillId": null
+        },
+        {
+          "skillId": "skill_57hmwWtgNaFpjmXk9G3mB",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_1PD0Z6yF0LyfBDXlieYTh"
+        },
+        {
+          "skillId": "skill_EQuQNscy1vQT7niRvxPQC",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_1PD0Z6yF0LyfBDXlieYTh"
+        },
+        {
+          "skillId": "skill_OrweXO-ioGdU48XrmOxBa",
+          "ownerType": "agent",
+          "sourceSkillId": "skill_1PD0Z6yF0LyfBDXlieYTh"
+        }
+      ]
+    }
+  ],
+  "fullReport": {
+    "tool": "migrate-skill-bundles",
+    "version": 1,
+    "mode": "full",
+    "dryRun": false,
+    "since": null,
+    "target": {
+      "schema": "oma_test",
+      "supabaseBucket": "workspace-test",
+      "ossBucket": "agentry"
+    },
+    "manifests": [],
+    "font": {
+      "fileName": "LiberationSans-Regular.ttf",
+      "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8"
+    },
+    "startedAt": "2026-10-22T20:43:54.532Z",
+    "finishedAt": "2026-10-22T20:44:06.056Z",
+    "totals": {
+      "skills": 77,
+      "byStatus": {
+        "written": 77
+      },
+      "supabaseObjects": 1293,
+      "supabaseBytes": 20143894,
+      "packedFiles": 1261,
+      "filteredFiles": 32,
+      "replacedFonts": 4,
+      "corruptFonts": 0,
+      "distinctBundles": 20,
+      "bundlesUploaded": 20,
+      "uploadedZipBytes": 1978576
+    },
+    "sharedBundles": [
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+        "skillIds": [
+          "skill_7n428Lj41tSF2Zvs4zn3G",
+          "skill_ATcKJPCa-9gx1wjIMRy_a",
+          "skill_NoQ_UONZmdqCosni8G9xs",
+          "skill_px48SC6fvjVqm3Umrty9n"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+        "skillIds": [
+          "skill_UhTxHDIHDbZuoirPhA8iH",
+          "skill_eTu5gBcnWFp2-Ifs_dG0P",
+          "skill_tYyCJAsCbXqVhbdPHt0Jd",
+          "skill_vYewecVK-xrA3pOcJfDSr"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+        "skillIds": [
+          "skill_Ik6JVXZT5LnU6qLH7CfRH",
+          "skill_ZhB1EMRrGfrEsw1ig2_8o",
+          "skill__OC1I2hccGhEixe41lp_d",
+          "skill_dmkgP6C6dECgyf0W0yFOH"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+        "skillIds": [
+          "skill_04CrGaGXAUXKpBBJeQwJN",
+          "skill_0zPxE4LBy_S-PzdmRdPdT",
+          "skill_2cvTczo3eZ8_9IgCDrak0",
+          "skill_9WdCvqppVfeul8fCc6k96"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+        "skillIds": [
+          "skill_T0-cgi8RGbv6qwuA2NqKj",
+          "skill_U_PDsGu4t8BEU4B_7tLiQ",
+          "skill_dqBV2O2vLd-UMxqcKryPY",
+          "skill_zwihh8EGPiCgI_VrbdeS9"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+        "skillIds": [
+          "skill_IDJF-AsIgQvkog3vDQ5b7",
+          "skill_V-0w96nEkfeSAPwdFIudY",
+          "skill_cuJtUzdn5tAGp1hxHp3tR",
+          "skill_dBdRYY8Wc3AZ2_Emr7V22"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+        "skillIds": [
+          "skill_PN5r1rzvqo9jazHwFiO8s",
+          "skill_W_CICoicK5hp7WAhbhTL8",
+          "skill_lQ83pTs4vTe0m9eNBLrnt",
+          "skill_zKf_yE-pF6NGpXPHqOpXi"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+        "skillIds": [
+          "skill_EoyI1OGTGMUyN2gE7Cr1j",
+          "skill_HIGD3a-62pwM8-nf2D37u",
+          "skill_KUMVXY-Ku7PgtKUfqysfW",
+          "skill_OkC6GtpM5vrnHxr5Y7Reh"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+        "skillIds": [
+          "skill_FdM5Jygfl9zvaFJLETB_i",
+          "skill_OslfyzNig3Dw0c-omR1pt",
+          "skill_aZOEAueb38BlQW2XYK1Lz",
+          "skill_qhBTLkYderFWjbQNwhX11"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+        "skillIds": [
+          "skill_O1mMayRFJTrcKu55MCBlN",
+          "skill_Oq1Ndl8LhHpSy5jzZHasx",
+          "skill_vkxONpcSPm6UF988Kt2hf",
+          "skill_xqXv9l6SYTOSE5e8zkhTB"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+        "skillIds": [
+          "skill_7Nw_uaijd8qPG45aQueYZ",
+          "skill_hzpJQn4yPx1be9L3MTD7f",
+          "skill_lFaeTsLlOKErBsK3Gi0_6",
+          "skill_nTyHNqo-SLvtQP49-JmTS"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+        "skillIds": [
+          "skill_P6DU9FwDG7GvAsNDKzo57",
+          "skill_bUFSO6W49wQTreklBIn5T",
+          "skill_h2q-F16aHyn8A3b9h0pBi",
+          "skill_rOUJVdRLD-39SbfQnz3nQ"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+        "skillIds": [
+          "skill_2bxo_sXhjj8ZTMEzdA3pS",
+          "skill_7qakdXvO80zZQWwVAnrah",
+          "skill_aicDr8SKkQpi0npQBcEIu",
+          "skill_fmDmKbo3fm1BPECPDzOlO"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+        "skillIds": [
+          "skill_HcL9HgqhY9aAIfIy_MUS5",
+          "skill_ZmjvFBhCD9ZtPYIV4VOoL",
+          "skill_uZEiZfZ2i1cmx2LoiTm3_",
+          "skill_zVRQ8_M9GGE0ybWO5N9kJ"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+        "skillIds": [
+          "skill_Q7KyYfnhjN8ppgfnktjR_",
+          "skill__9dYCq1tj-8ZxWwflZibg",
+          "skill_k1NaczSfm4FvvQHfFFMVk",
+          "skill_s3dEyT_3OAkx-KNNwfhY5"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+        "skillIds": [
+          "skill_30froYmu86Xo5Hnu8_mgo",
+          "skill_NmWk2104aTUYAhNmmCZU6",
+          "skill_O7EDz1i-6KFpFwq4CxW8A",
+          "skill_We1H4vaENfT0xWm_kJ48u"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+        "skillIds": [
+          "skill_-QRdxY6eN3Nr_mrnbeSkw",
+          "skill_3R9_uZlRB3xawR1vPpX4l",
+          "skill_5NLflCWsEHrZIDK7LRtfO",
+          "skill_m3vQuHozYj4Y3aWYPHL_5"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+        "skillIds": [
+          "skill_daDd5oFV_utAKlBmKQFwm",
+          "skill_fCCF77ktC6q5jqK1j8ygd",
+          "skill_oGfPNrWnUxUBSD6iPs49x",
+          "skill_pnQt9w6Jiy19Dn5ZNQNNt"
+        ]
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "sha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+        "skillIds": [
+          "skill_1PD0Z6yF0LyfBDXlieYTh",
+          "skill_57hmwWtgNaFpjmXk9G3mB",
+          "skill_EQuQNscy1vQT7niRvxPQC",
+          "skill_OrweXO-ioGdU48XrmOxBa"
+        ]
+      }
+    ],
+    "forks": {
+      "total": 57,
+      "sameBundleAsSource": [
+        "skill_04CrGaGXAUXKpBBJeQwJN",
+        "skill_0zPxE4LBy_S-PzdmRdPdT",
+        "skill_2bxo_sXhjj8ZTMEzdA3pS",
+        "skill_30froYmu86Xo5Hnu8_mgo",
+        "skill_3R9_uZlRB3xawR1vPpX4l",
+        "skill_57hmwWtgNaFpjmXk9G3mB",
+        "skill_5NLflCWsEHrZIDK7LRtfO",
+        "skill_7Nw_uaijd8qPG45aQueYZ",
+        "skill_7n428Lj41tSF2Zvs4zn3G",
+        "skill_7qakdXvO80zZQWwVAnrah",
+        "skill_9WdCvqppVfeul8fCc6k96",
+        "skill_ATcKJPCa-9gx1wjIMRy_a",
+        "skill_EQuQNscy1vQT7niRvxPQC",
+        "skill_FdM5Jygfl9zvaFJLETB_i",
+        "skill_HIGD3a-62pwM8-nf2D37u",
+        "skill_HcL9HgqhY9aAIfIy_MUS5",
+        "skill_IDJF-AsIgQvkog3vDQ5b7",
+        "skill_KUMVXY-Ku7PgtKUfqysfW",
+        "skill_O1mMayRFJTrcKu55MCBlN",
+        "skill_O7EDz1i-6KFpFwq4CxW8A",
+        "skill_OkC6GtpM5vrnHxr5Y7Reh",
+        "skill_OrweXO-ioGdU48XrmOxBa",
+        "skill_OslfyzNig3Dw0c-omR1pt",
+        "skill_P6DU9FwDG7GvAsNDKzo57",
+        "skill_PN5r1rzvqo9jazHwFiO8s",
+        "skill_Q7KyYfnhjN8ppgfnktjR_",
+        "skill_T0-cgi8RGbv6qwuA2NqKj",
+        "skill_U_PDsGu4t8BEU4B_7tLiQ",
+        "skill_UhTxHDIHDbZuoirPhA8iH",
+        "skill_V-0w96nEkfeSAPwdFIudY",
+        "skill_We1H4vaENfT0xWm_kJ48u",
+        "skill_ZhB1EMRrGfrEsw1ig2_8o",
+        "skill__9dYCq1tj-8ZxWwflZibg",
+        "skill__OC1I2hccGhEixe41lp_d",
+        "skill_cuJtUzdn5tAGp1hxHp3tR",
+        "skill_dmkgP6C6dECgyf0W0yFOH",
+        "skill_fCCF77ktC6q5jqK1j8ygd",
+        "skill_fmDmKbo3fm1BPECPDzOlO",
+        "skill_h2q-F16aHyn8A3b9h0pBi",
+        "skill_k1NaczSfm4FvvQHfFFMVk",
+        "skill_lFaeTsLlOKErBsK3Gi0_6",
+        "skill_lQ83pTs4vTe0m9eNBLrnt",
+        "skill_m3vQuHozYj4Y3aWYPHL_5",
+        "skill_nTyHNqo-SLvtQP49-JmTS",
+        "skill_oGfPNrWnUxUBSD6iPs49x",
+        "skill_pnQt9w6Jiy19Dn5ZNQNNt",
+        "skill_px48SC6fvjVqm3Umrty9n",
+        "skill_qhBTLkYderFWjbQNwhX11",
+        "skill_rOUJVdRLD-39SbfQnz3nQ",
+        "skill_tYyCJAsCbXqVhbdPHt0Jd",
+        "skill_uZEiZfZ2i1cmx2LoiTm3_",
+        "skill_vYewecVK-xrA3pOcJfDSr",
+        "skill_vkxONpcSPm6UF988Kt2hf",
+        "skill_xqXv9l6SYTOSE5e8zkhTB",
+        "skill_zKf_yE-pF6NGpXPHqOpXi",
+        "skill_zVRQ8_M9GGE0ybWO5N9kJ",
+        "skill_zwihh8EGPiCgI_VrbdeS9"
+      ],
+      "differentFromSource": [],
+      "sourceNotPacked": []
+    },
+    "verification": {
+      "source": "bundle-store",
+      "bundles": 20,
+      "problems": [],
+      "fonts": [
+        {
+          "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+          "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+          "path": "assets/fonts/LiberationSans-Regular.ttf",
+          "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+          "size": 410712,
+          "header": "00010000",
+          "problem": null
+        }
+      ]
+    },
+    "supabase": {
+      "requests": 1578,
+      "retries": 0,
+      "retriesByCause": {}
+    },
+    "skills": [
+      {
+        "tenantId": "cee644c5-bc20-404f-93ab-f67a0fc693fe",
+        "skillId": "skill_jU1JmvaVEACfZ6t1DnHGO",
+        "name": "e2e-probe",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-14T09:28:53.847Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 1,
+        "bytes": 66,
+        "bundleSha256": "d5347702e1c8fa0933f44c57ce2954f9fa410ba71a6046cbeecd9217f22c66aa",
+        "bundleSize": 66,
+        "bundleFiles": 1,
+        "zipBytes": 178,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_-QRdxY6eN3Nr_mrnbeSkw",
+        "name": "precise-subtitles",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:38.250Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 11,
+        "bytes": 600064,
+        "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+        "bundleSize": 466291,
+        "bundleFiles": 11,
+        "zipBytes": 238189,
+        "filtered": [],
+        "replacedFonts": [
+          {
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "fromSha256": "fd0a22f26e5e7ee28a5b41eb58572f2eb41f83d4e8bc37a8a5aa50fa347b3a5a",
+            "fromSize": 544485,
+            "toSha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "toSize": 410712,
+            "problem": "table \"FFTM\" out of bounds"
+          }
+        ],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_04CrGaGXAUXKpBBJeQwJN",
+        "name": "script-asset-builder_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_2cvTczo3eZ8_9IgCDrak0",
+        "updatedAt": "2026-10-21T18:02:42.997Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 67,
+        "bytes": 1878123,
+        "bundleSha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+        "bundleSize": 1878123,
+        "bundleFiles": 67,
+        "zipBytes": 716159,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_0zPxE4LBy_S-PzdmRdPdT",
+        "name": "script-asset-builder_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_2cvTczo3eZ8_9IgCDrak0",
+        "updatedAt": "2026-10-21T04:31:57.059Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 67,
+        "bytes": 1878123,
+        "bundleSha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+        "bundleSize": 1878123,
+        "bundleFiles": 67,
+        "zipBytes": 716159,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_1PD0Z6yF0LyfBDXlieYTh",
+        "name": "seedance25-plus-helper",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:32.459Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 10929,
+        "bundleSha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+        "bundleSize": 10929,
+        "bundleFiles": 3,
+        "zipBytes": 5768,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_2bxo_sXhjj8ZTMEzdA3pS",
+        "name": "dp-to-shots_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_aicDr8SKkQpi0npQBcEIu",
+        "updatedAt": "2026-10-22T06:30:18.370Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 305059,
+        "bundleSha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+        "bundleSize": 305059,
+        "bundleFiles": 23,
+        "zipBytes": 122024,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_2cvTczo3eZ8_9IgCDrak0",
+        "name": "script-asset-builder_canvas-free",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:32.315Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 67,
+        "bytes": 1878123,
+        "bundleSha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+        "bundleSize": 1878123,
+        "bundleFiles": 67,
+        "zipBytes": 716159,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_30froYmu86Xo5Hnu8_mgo",
+        "name": "shot-grouper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_NmWk2104aTUYAhNmmCZU6",
+        "updatedAt": "2026-10-21T18:02:47.292Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 5,
+        "bytes": 36172,
+        "bundleSha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+        "bundleSize": 36172,
+        "bundleFiles": 5,
+        "zipBytes": 13353,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_3R9_uZlRB3xawR1vPpX4l",
+        "name": "precise-subtitles",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_-QRdxY6eN3Nr_mrnbeSkw",
+        "updatedAt": "2026-10-21T04:32:06.402Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 11,
+        "bytes": 600064,
+        "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+        "bundleSize": 466291,
+        "bundleFiles": 11,
+        "zipBytes": 238189,
+        "filtered": [],
+        "replacedFonts": [
+          {
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "fromSha256": "fd0a22f26e5e7ee28a5b41eb58572f2eb41f83d4e8bc37a8a5aa50fa347b3a5a",
+            "fromSize": 544485,
+            "toSha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "toSize": 410712,
+            "problem": "table \"FFTM\" out of bounds"
+          }
+        ],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_57hmwWtgNaFpjmXk9G3mB",
+        "name": "seedance25-plus-helper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_1PD0Z6yF0LyfBDXlieYTh",
+        "updatedAt": "2026-10-22T06:30:19.254Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 10929,
+        "bundleSha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+        "bundleSize": 10929,
+        "bundleFiles": 3,
+        "zipBytes": 5768,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_5NLflCWsEHrZIDK7LRtfO",
+        "name": "precise-subtitles",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_-QRdxY6eN3Nr_mrnbeSkw",
+        "updatedAt": "2026-10-21T18:02:45.748Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 11,
+        "bytes": 600064,
+        "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+        "bundleSize": 466291,
+        "bundleFiles": 11,
+        "zipBytes": 238189,
+        "filtered": [],
+        "replacedFonts": [
+          {
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "fromSha256": "fd0a22f26e5e7ee28a5b41eb58572f2eb41f83d4e8bc37a8a5aa50fa347b3a5a",
+            "fromSize": 544485,
+            "toSha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "toSize": 410712,
+            "problem": "table \"FFTM\" out of bounds"
+          }
+        ],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_7Nw_uaijd8qPG45aQueYZ",
+        "name": "shots-to-prompt_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_hzpJQn4yPx1be9L3MTD7f",
+        "updatedAt": "2026-10-22T06:30:21.301Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 37,
+        "bytes": 597102,
+        "bundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+        "bundleSize": 597102,
+        "bundleFiles": 37,
+        "zipBytes": 226831,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_7n428Lj41tSF2Zvs4zn3G",
+        "name": "byted-mediakit-editing",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_NoQ_UONZmdqCosni8G9xs",
+        "updatedAt": "2026-10-21T18:02:46.112Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 25,
+        "bytes": 172126,
+        "bundleSha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+        "bundleSize": 172126,
+        "bundleFiles": 25,
+        "zipBytes": 72747,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_7qakdXvO80zZQWwVAnrah",
+        "name": "dp-to-shots_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_aicDr8SKkQpi0npQBcEIu",
+        "updatedAt": "2026-10-21T18:02:50.124Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 305059,
+        "bundleSha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+        "bundleSize": 305059,
+        "bundleFiles": 23,
+        "zipBytes": 122024,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_9WdCvqppVfeul8fCc6k96",
+        "name": "script-asset-builder_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_2cvTczo3eZ8_9IgCDrak0",
+        "updatedAt": "2026-10-22T06:30:14.898Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 67,
+        "bytes": 1878123,
+        "bundleSha256": "28fbf9a95fdcc9b0054cad1a849c11e9f626bb3c50b7d16932bb4f5ee426cc10",
+        "bundleSize": 1878123,
+        "bundleFiles": 67,
+        "zipBytes": 716159,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_ATcKJPCa-9gx1wjIMRy_a",
+        "name": "byted-mediakit-editing",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_NoQ_UONZmdqCosni8G9xs",
+        "updatedAt": "2026-10-21T04:32:04.527Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 25,
+        "bytes": 172126,
+        "bundleSha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+        "bundleSize": 172126,
+        "bundleFiles": 25,
+        "zipBytes": 72747,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_EQuQNscy1vQT7niRvxPQC",
+        "name": "seedance25-plus-helper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_1PD0Z6yF0LyfBDXlieYTh",
+        "updatedAt": "2026-10-21T18:02:47.533Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 10929,
+        "bundleSha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+        "bundleSize": 10929,
+        "bundleFiles": 3,
+        "zipBytes": 5768,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_EoyI1OGTGMUyN2gE7Cr1j",
+        "name": "seedance25-oversea-plus-helper",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:26.655Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11311,
+        "bundleSha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+        "bundleSize": 11311,
+        "bundleFiles": 3,
+        "zipBytes": 5932,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_FdM5Jygfl9zvaFJLETB_i",
+        "name": "drama-episode-extract",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_aZOEAueb38BlQW2XYK1Lz",
+        "updatedAt": "2026-10-21T04:31:56.660Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 8230,
+        "bundleSha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+        "bundleSize": 8230,
+        "bundleFiles": 2,
+        "zipBytes": 4198,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_HIGD3a-62pwM8-nf2D37u",
+        "name": "seedance25-oversea-plus-helper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_EoyI1OGTGMUyN2gE7Cr1j",
+        "updatedAt": "2026-10-21T04:31:55.591Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11311,
+        "bundleSha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+        "bundleSize": 11311,
+        "bundleFiles": 3,
+        "zipBytes": 5932,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_HcL9HgqhY9aAIfIy_MUS5",
+        "name": "pipeline_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL",
+        "updatedAt": "2026-10-22T06:30:24.992Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 38,
+        "bytes": 470403,
+        "bundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+        "bundleSize": 470403,
+        "bundleFiles": 38,
+        "zipBytes": 190106,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_IDJF-AsIgQvkog3vDQ5b7",
+        "name": "videoworks-orchestrator_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_dBdRYY8Wc3AZ2_Emr7V22",
+        "updatedAt": "2026-10-21T04:32:02.101Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 43697,
+        "bundleSha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+        "bundleSize": 43697,
+        "bundleFiles": 2,
+        "zipBytes": 18280,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_Ik6JVXZT5LnU6qLH7CfRH",
+        "name": "vfs",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:27.280Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 10,
+        "bytes": 44644,
+        "bundleSha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+        "bundleSize": 16714,
+        "bundleFiles": 4,
+        "zipBytes": 7240,
+        "filtered": [
+          "scripts/__pycache__/http_json.cpython-310.pyc",
+          "scripts/__pycache__/http_json.cpython-312.pyc",
+          "scripts/__pycache__/report_event.cpython-310.pyc",
+          "scripts/__pycache__/report_event.cpython-312.pyc",
+          "scripts/__pycache__/report_shots.cpython-310.pyc",
+          "scripts/__pycache__/report_shots.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_KUMVXY-Ku7PgtKUfqysfW",
+        "name": "seedance25-oversea-plus-helper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_EoyI1OGTGMUyN2gE7Cr1j",
+        "updatedAt": "2026-10-22T06:30:19.363Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11311,
+        "bundleSha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+        "bundleSize": 11311,
+        "bundleFiles": 3,
+        "zipBytes": 5932,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_NmWk2104aTUYAhNmmCZU6",
+        "name": "shot-grouper",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:36.751Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 5,
+        "bytes": 36172,
+        "bundleSha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+        "bundleSize": 36172,
+        "bundleFiles": 5,
+        "zipBytes": 13353,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_NoQ_UONZmdqCosni8G9xs",
+        "name": "byted-mediakit-editing",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:26.358Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 25,
+        "bytes": 172126,
+        "bundleSha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+        "bundleSize": 172126,
+        "bundleFiles": 25,
+        "zipBytes": 72747,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_O1mMayRFJTrcKu55MCBlN",
+        "name": "byted-mediakit-image",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_Oq1Ndl8LhHpSy5jzZHasx",
+        "updatedAt": "2026-10-22T06:30:24.120Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 24,
+        "bytes": 105143,
+        "bundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+        "bundleSize": 105143,
+        "bundleFiles": 24,
+        "zipBytes": 52387,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_O7EDz1i-6KFpFwq4CxW8A",
+        "name": "shot-grouper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_NmWk2104aTUYAhNmmCZU6",
+        "updatedAt": "2026-10-21T04:31:52.368Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 5,
+        "bytes": 36172,
+        "bundleSha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+        "bundleSize": 36172,
+        "bundleFiles": 5,
+        "zipBytes": 13353,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_OkC6GtpM5vrnHxr5Y7Reh",
+        "name": "seedance25-oversea-plus-helper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_EoyI1OGTGMUyN2gE7Cr1j",
+        "updatedAt": "2026-10-21T18:02:47.049Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11311,
+        "bundleSha256": "6e030e6f6d612a8c86adc14d76a80497c348bfe37f46ada1f804acab24ef8487",
+        "bundleSize": 11311,
+        "bundleFiles": 3,
+        "zipBytes": 5932,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_Oq1Ndl8LhHpSy5jzZHasx",
+        "name": "byted-mediakit-image",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:36.540Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 24,
+        "bytes": 105143,
+        "bundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+        "bundleSize": 105143,
+        "bundleFiles": 24,
+        "zipBytes": 52387,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_OrweXO-ioGdU48XrmOxBa",
+        "name": "seedance25-plus-helper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_1PD0Z6yF0LyfBDXlieYTh",
+        "updatedAt": "2026-10-21T04:31:53.261Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 10929,
+        "bundleSha256": "dfb5a7116e77de0b343fdfb515ed9c248e5362ab168b04d4177b24f45567b711",
+        "bundleSize": 10929,
+        "bundleFiles": 3,
+        "zipBytes": 5768,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_OslfyzNig3Dw0c-omR1pt",
+        "name": "drama-episode-extract",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_aZOEAueb38BlQW2XYK1Lz",
+        "updatedAt": "2026-10-21T18:02:46.994Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 8230,
+        "bundleSha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+        "bundleSize": 8230,
+        "bundleFiles": 2,
+        "zipBytes": 4198,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_P6DU9FwDG7GvAsNDKzo57",
+        "name": "script-to-dp",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_bUFSO6W49wQTreklBIn5T",
+        "updatedAt": "2026-10-22T06:30:22.748Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 326133,
+        "bundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+        "bundleSize": 272606,
+        "bundleFiles": 21,
+        "zipBytes": 118674,
+        "filtered": [
+          "scripts/__pycache__/csv_utils.cpython-312.pyc",
+          "scripts/__pycache__/import_storyboard_dp.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_PN5r1rzvqo9jazHwFiO8s",
+        "name": "byted-mediakit-shared",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_W_CICoicK5hp7WAhbhTL8",
+        "updatedAt": "2026-10-21T18:02:52.160Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11993,
+        "bundleSha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+        "bundleSize": 11993,
+        "bundleFiles": 3,
+        "zipBytes": 6045,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_Q7KyYfnhjN8ppgfnktjR_",
+        "name": "byted-mediakit-video",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_s3dEyT_3OAkx-KNNwfhY5",
+        "updatedAt": "2026-10-21T04:31:53.595Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 32,
+        "bytes": 237642,
+        "bundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+        "bundleSize": 237642,
+        "bundleFiles": 32,
+        "zipBytes": 104840,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_T0-cgi8RGbv6qwuA2NqKj",
+        "name": "byted-mediakit-audio",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_dqBV2O2vLd-UMxqcKryPY",
+        "updatedAt": "2026-10-21T04:32:05.377Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 6,
+        "bytes": 29780,
+        "bundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+        "bundleSize": 29780,
+        "bundleFiles": 6,
+        "zipBytes": 13742,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_U_PDsGu4t8BEU4B_7tLiQ",
+        "name": "byted-mediakit-audio",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_dqBV2O2vLd-UMxqcKryPY",
+        "updatedAt": "2026-10-22T06:30:26.425Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 6,
+        "bytes": 29780,
+        "bundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+        "bundleSize": 29780,
+        "bundleFiles": 6,
+        "zipBytes": 13742,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_UhTxHDIHDbZuoirPhA8iH",
+        "name": "vfs-video-generation_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_eTu5gBcnWFp2-Ifs_dG0P",
+        "updatedAt": "2026-10-21T04:32:00.645Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 7,
+        "bytes": 139415,
+        "bundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+        "bundleSize": 139415,
+        "bundleFiles": 7,
+        "zipBytes": 57609,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_V-0w96nEkfeSAPwdFIudY",
+        "name": "videoworks-orchestrator_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_dBdRYY8Wc3AZ2_Emr7V22",
+        "updatedAt": "2026-10-22T06:30:19.974Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 43697,
+        "bundleSha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+        "bundleSize": 43697,
+        "bundleFiles": 2,
+        "zipBytes": 18280,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_W_CICoicK5hp7WAhbhTL8",
+        "name": "byted-mediakit-shared",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:37.815Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11993,
+        "bundleSha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+        "bundleSize": 11993,
+        "bundleFiles": 3,
+        "zipBytes": 6045,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_We1H4vaENfT0xWm_kJ48u",
+        "name": "shot-grouper",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_NmWk2104aTUYAhNmmCZU6",
+        "updatedAt": "2026-10-22T06:30:17.048Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 5,
+        "bytes": 36172,
+        "bundleSha256": "d21827774e50409e21e37f1c5ff6b9b6222029b3b97aa4fa4bec74efb44b3942",
+        "bundleSize": 36172,
+        "bundleFiles": 5,
+        "zipBytes": 13353,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_ZhB1EMRrGfrEsw1ig2_8o",
+        "name": "vfs",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_Ik6JVXZT5LnU6qLH7CfRH",
+        "updatedAt": "2026-10-21T18:02:49.693Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 10,
+        "bytes": 44644,
+        "bundleSha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+        "bundleSize": 16714,
+        "bundleFiles": 4,
+        "zipBytes": 7240,
+        "filtered": [
+          "scripts/__pycache__/http_json.cpython-310.pyc",
+          "scripts/__pycache__/http_json.cpython-312.pyc",
+          "scripts/__pycache__/report_event.cpython-310.pyc",
+          "scripts/__pycache__/report_event.cpython-312.pyc",
+          "scripts/__pycache__/report_shots.cpython-310.pyc",
+          "scripts/__pycache__/report_shots.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL",
+        "name": "pipeline_canvas-free",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:35.590Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 38,
+        "bytes": 470403,
+        "bundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+        "bundleSize": 470403,
+        "bundleFiles": 38,
+        "zipBytes": 190106,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill__9dYCq1tj-8ZxWwflZibg",
+        "name": "byted-mediakit-video",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_s3dEyT_3OAkx-KNNwfhY5",
+        "updatedAt": "2026-10-22T06:30:20.043Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 32,
+        "bytes": 237642,
+        "bundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+        "bundleSize": 237642,
+        "bundleFiles": 32,
+        "zipBytes": 104840,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill__OC1I2hccGhEixe41lp_d",
+        "name": "vfs",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_Ik6JVXZT5LnU6qLH7CfRH",
+        "updatedAt": "2026-10-22T06:30:19.634Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 10,
+        "bytes": 44644,
+        "bundleSha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+        "bundleSize": 16714,
+        "bundleFiles": 4,
+        "zipBytes": 7240,
+        "filtered": [
+          "scripts/__pycache__/http_json.cpython-310.pyc",
+          "scripts/__pycache__/http_json.cpython-312.pyc",
+          "scripts/__pycache__/report_event.cpython-310.pyc",
+          "scripts/__pycache__/report_event.cpython-312.pyc",
+          "scripts/__pycache__/report_shots.cpython-310.pyc",
+          "scripts/__pycache__/report_shots.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_aZOEAueb38BlQW2XYK1Lz",
+        "name": "drama-episode-extract",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:25.395Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 8230,
+        "bundleSha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+        "bundleSize": 8230,
+        "bundleFiles": 2,
+        "zipBytes": 4198,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_aicDr8SKkQpi0npQBcEIu",
+        "name": "dp-to-shots_canvas-free",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:37.674Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 305059,
+        "bundleSha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+        "bundleSize": 305059,
+        "bundleFiles": 23,
+        "zipBytes": 122024,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_bUFSO6W49wQTreklBIn5T",
+        "name": "script-to-dp",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:28.046Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 326133,
+        "bundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+        "bundleSize": 272606,
+        "bundleFiles": 21,
+        "zipBytes": 118674,
+        "filtered": [
+          "scripts/__pycache__/csv_utils.cpython-312.pyc",
+          "scripts/__pycache__/import_storyboard_dp.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_cuJtUzdn5tAGp1hxHp3tR",
+        "name": "videoworks-orchestrator_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_dBdRYY8Wc3AZ2_Emr7V22",
+        "updatedAt": "2026-10-21T18:02:47.192Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 43697,
+        "bundleSha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+        "bundleSize": 43697,
+        "bundleFiles": 2,
+        "zipBytes": 18280,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_dBdRYY8Wc3AZ2_Emr7V22",
+        "name": "videoworks-orchestrator_canvas-free",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:26.523Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 43697,
+        "bundleSha256": "5e57cfacd2e1d0b14ba90d3db76e9c054b5ad7cae9d439852ce68bcb8ffbd0df",
+        "bundleSize": 43697,
+        "bundleFiles": 2,
+        "zipBytes": 18280,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_daDd5oFV_utAKlBmKQFwm",
+        "name": "scene-cut-intro",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:28.136Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 7991,
+        "bundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+        "bundleSize": 7991,
+        "bundleFiles": 2,
+        "zipBytes": 4274,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_dmkgP6C6dECgyf0W0yFOH",
+        "name": "vfs",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_Ik6JVXZT5LnU6qLH7CfRH",
+        "updatedAt": "2026-10-21T04:31:55.940Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 10,
+        "bytes": 44644,
+        "bundleSha256": "23e4e77cddce7ebed6694a5064a607890a77dc726a394d2788df45def8645a3e",
+        "bundleSize": 16714,
+        "bundleFiles": 4,
+        "zipBytes": 7240,
+        "filtered": [
+          "scripts/__pycache__/http_json.cpython-310.pyc",
+          "scripts/__pycache__/http_json.cpython-312.pyc",
+          "scripts/__pycache__/report_event.cpython-310.pyc",
+          "scripts/__pycache__/report_event.cpython-312.pyc",
+          "scripts/__pycache__/report_shots.cpython-310.pyc",
+          "scripts/__pycache__/report_shots.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_dqBV2O2vLd-UMxqcKryPY",
+        "name": "byted-mediakit-audio",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:34.036Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 6,
+        "bytes": 29780,
+        "bundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+        "bundleSize": 29780,
+        "bundleFiles": 6,
+        "zipBytes": 13742,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_eTu5gBcnWFp2-Ifs_dG0P",
+        "name": "vfs-video-generation_canvas-free",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:26.914Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 7,
+        "bytes": 139415,
+        "bundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+        "bundleSize": 139415,
+        "bundleFiles": 7,
+        "zipBytes": 57609,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_fCCF77ktC6q5jqK1j8ygd",
+        "name": "scene-cut-intro",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_daDd5oFV_utAKlBmKQFwm",
+        "updatedAt": "2026-10-22T06:30:22.678Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 7991,
+        "bundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+        "bundleSize": 7991,
+        "bundleFiles": 2,
+        "zipBytes": 4274,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_fmDmKbo3fm1BPECPDzOlO",
+        "name": "dp-to-shots_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_aicDr8SKkQpi0npQBcEIu",
+        "updatedAt": "2026-10-21T04:32:01.098Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 305059,
+        "bundleSha256": "9e77d4aac9804632f2bf3f109a70eca39135dc9a6fd0df97c91606148e6526f5",
+        "bundleSize": 305059,
+        "bundleFiles": 23,
+        "zipBytes": 122024,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_h2q-F16aHyn8A3b9h0pBi",
+        "name": "script-to-dp",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_bUFSO6W49wQTreklBIn5T",
+        "updatedAt": "2026-10-21T04:31:58.760Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 326133,
+        "bundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+        "bundleSize": 272606,
+        "bundleFiles": 21,
+        "zipBytes": 118674,
+        "filtered": [
+          "scripts/__pycache__/csv_utils.cpython-312.pyc",
+          "scripts/__pycache__/import_storyboard_dp.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_hzpJQn4yPx1be9L3MTD7f",
+        "name": "shots-to-prompt_canvas-free",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:29.318Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 37,
+        "bytes": 597102,
+        "bundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+        "bundleSize": 597102,
+        "bundleFiles": 37,
+        "zipBytes": 226831,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_k1NaczSfm4FvvQHfFFMVk",
+        "name": "byted-mediakit-video",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_s3dEyT_3OAkx-KNNwfhY5",
+        "updatedAt": "2026-10-21T18:02:47.655Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 32,
+        "bytes": 237642,
+        "bundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+        "bundleSize": 237642,
+        "bundleFiles": 32,
+        "zipBytes": 104840,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_lFaeTsLlOKErBsK3Gi0_6",
+        "name": "shots-to-prompt_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_hzpJQn4yPx1be9L3MTD7f",
+        "updatedAt": "2026-10-21T18:02:52.290Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 37,
+        "bytes": 597102,
+        "bundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+        "bundleSize": 597102,
+        "bundleFiles": 37,
+        "zipBytes": 226831,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_lQ83pTs4vTe0m9eNBLrnt",
+        "name": "byted-mediakit-shared",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_W_CICoicK5hp7WAhbhTL8",
+        "updatedAt": "2026-10-21T04:32:04.136Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11993,
+        "bundleSha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+        "bundleSize": 11993,
+        "bundleFiles": 3,
+        "zipBytes": 6045,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_m3vQuHozYj4Y3aWYPHL_5",
+        "name": "precise-subtitles",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_-QRdxY6eN3Nr_mrnbeSkw",
+        "updatedAt": "2026-10-22T06:30:17.199Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 11,
+        "bytes": 600064,
+        "bundleSha256": "d723ffb7c75a2b4fac5edea61648c8bce80bab237b74968c88058354e6b37faa",
+        "bundleSize": 466291,
+        "bundleFiles": 11,
+        "zipBytes": 238189,
+        "filtered": [],
+        "replacedFonts": [
+          {
+            "path": "assets/fonts/LiberationSans-Regular.ttf",
+            "fromSha256": "fd0a22f26e5e7ee28a5b41eb58572f2eb41f83d4e8bc37a8a5aa50fa347b3a5a",
+            "fromSize": 544485,
+            "toSha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+            "toSize": 410712,
+            "problem": "table \"FFTM\" out of bounds"
+          }
+        ],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_nTyHNqo-SLvtQP49-JmTS",
+        "name": "shots-to-prompt_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_hzpJQn4yPx1be9L3MTD7f",
+        "updatedAt": "2026-10-21T04:31:59.567Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 37,
+        "bytes": 597102,
+        "bundleSha256": "961b0a45d328ca8c51878fd5d95cc35abdc6befdc3fd3416306784538851bd81",
+        "bundleSize": 597102,
+        "bundleFiles": 37,
+        "zipBytes": 226831,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_oGfPNrWnUxUBSD6iPs49x",
+        "name": "scene-cut-intro",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_daDd5oFV_utAKlBmKQFwm",
+        "updatedAt": "2026-10-21T04:31:56.360Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 7991,
+        "bundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+        "bundleSize": 7991,
+        "bundleFiles": 2,
+        "zipBytes": 4274,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_pnQt9w6Jiy19Dn5ZNQNNt",
+        "name": "scene-cut-intro",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_daDd5oFV_utAKlBmKQFwm",
+        "updatedAt": "2026-10-21T18:02:54.221Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 7991,
+        "bundleSha256": "dd34747811ea6e76ba57664e1d90c26e3ceb22bfab648609267438f7df85cc8a",
+        "bundleSize": 7991,
+        "bundleFiles": 2,
+        "zipBytes": 4274,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_px48SC6fvjVqm3Umrty9n",
+        "name": "byted-mediakit-editing",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_NoQ_UONZmdqCosni8G9xs",
+        "updatedAt": "2026-10-22T06:30:17.553Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 25,
+        "bytes": 172126,
+        "bundleSha256": "008682a68c22083f82f42fa12109f19a2c85adad685052a72b3ed002712f2380",
+        "bundleSize": 172126,
+        "bundleFiles": 25,
+        "zipBytes": 72747,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_qhBTLkYderFWjbQNwhX11",
+        "name": "drama-episode-extract",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_aZOEAueb38BlQW2XYK1Lz",
+        "updatedAt": "2026-10-22T06:30:19.466Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 2,
+        "bytes": 8230,
+        "bundleSha256": "73a196a6f6589379bf535090ca74ec20d2ae8843bd8d288f67127f214fa04136",
+        "bundleSize": 8230,
+        "bundleFiles": 2,
+        "zipBytes": 4198,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_rOUJVdRLD-39SbfQnz3nQ",
+        "name": "script-to-dp",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_bUFSO6W49wQTreklBIn5T",
+        "updatedAt": "2026-10-21T18:02:51.144Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 23,
+        "bytes": 326133,
+        "bundleSha256": "9e4d4b2421ee2bda632d175ca1efb39cc97040afeb36560c6efa07aeee763ef2",
+        "bundleSize": 272606,
+        "bundleFiles": 21,
+        "zipBytes": 118674,
+        "filtered": [
+          "scripts/__pycache__/csv_utils.cpython-312.pyc",
+          "scripts/__pycache__/import_storyboard_dp.cpython-312.pyc"
+        ],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_s3dEyT_3OAkx-KNNwfhY5",
+        "name": "byted-mediakit-video",
+        "ownerType": "library",
+        "sourceSkillId": null,
+        "updatedAt": "2026-10-21T04:31:33.780Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 32,
+        "bytes": 237642,
+        "bundleSha256": "bd69dfb647a05c0f1dc8d4ed6696dd26f86f99013b6bd142fd532cd0c763f3bd",
+        "bundleSize": 237642,
+        "bundleFiles": 32,
+        "zipBytes": 104840,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_tYyCJAsCbXqVhbdPHt0Jd",
+        "name": "vfs-video-generation_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_eTu5gBcnWFp2-Ifs_dG0P",
+        "updatedAt": "2026-10-21T18:02:49.405Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 7,
+        "bytes": 139415,
+        "bundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+        "bundleSize": 139415,
+        "bundleFiles": 7,
+        "zipBytes": 57609,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_uZEiZfZ2i1cmx2LoiTm3_",
+        "name": "pipeline_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL",
+        "updatedAt": "2026-10-21T04:32:02.618Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 38,
+        "bytes": 470403,
+        "bundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+        "bundleSize": 470403,
+        "bundleFiles": 38,
+        "zipBytes": 190106,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_vYewecVK-xrA3pOcJfDSr",
+        "name": "vfs-video-generation_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_eTu5gBcnWFp2-Ifs_dG0P",
+        "updatedAt": "2026-10-22T06:30:23.869Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 7,
+        "bytes": 139415,
+        "bundleSha256": "0f525bc3049f98940c5aa30a4ed77bb1429f110c31c7aac6b445a6f5f766bd89",
+        "bundleSize": 139415,
+        "bundleFiles": 7,
+        "zipBytes": 57609,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_vkxONpcSPm6UF988Kt2hf",
+        "name": "byted-mediakit-image",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_Oq1Ndl8LhHpSy5jzZHasx",
+        "updatedAt": "2026-10-21T04:32:05.831Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 24,
+        "bytes": 105143,
+        "bundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+        "bundleSize": 105143,
+        "bundleFiles": 24,
+        "zipBytes": 52387,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_xqXv9l6SYTOSE5e8zkhTB",
+        "name": "byted-mediakit-image",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_Oq1Ndl8LhHpSy5jzZHasx",
+        "updatedAt": "2026-10-21T18:02:55.870Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 24,
+        "bytes": 105143,
+        "bundleSha256": "8a52ce0cfe943ecbe7e0d12bcf77237918f52f445e061b52624a0b8ce75d2dca",
+        "bundleSize": 105143,
+        "bundleFiles": 24,
+        "zipBytes": 52387,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_zKf_yE-pF6NGpXPHqOpXi",
+        "name": "byted-mediakit-shared",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_W_CICoicK5hp7WAhbhTL8",
+        "updatedAt": "2026-10-22T06:30:19.531Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 3,
+        "bytes": 11993,
+        "bundleSha256": "5f10a515ed04a4d2a3a3f6c495d453642d39eb52722e3c4408fdc27a524d16b5",
+        "bundleSize": 11993,
+        "bundleFiles": 3,
+        "zipBytes": 6045,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_zVRQ8_M9GGE0ybWO5N9kJ",
+        "name": "pipeline_canvas-free",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_ZmjvFBhCD9ZtPYIV4VOoL",
+        "updatedAt": "2026-10-21T18:02:54.294Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 38,
+        "bytes": 470403,
+        "bundleSha256": "a41790bebbbb61d796a5dd40ca56343f9cc19118463f9c9d4f3977cac1f5461a",
+        "bundleSize": 470403,
+        "bundleFiles": 38,
+        "zipBytes": 190106,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      },
+      {
+        "tenantId": "f00c7d5a-dd14-43e6-b791-e561c192d312",
+        "skillId": "skill_zwihh8EGPiCgI_VrbdeS9",
+        "name": "byted-mediakit-audio",
+        "ownerType": "agent",
+        "sourceSkillId": "skill_dqBV2O2vLd-UMxqcKryPY",
+        "updatedAt": "2026-10-21T18:02:49.147Z",
+        "status": "written",
+        "previousBundleSha256": null,
+        "objects": 6,
+        "bytes": 29780,
+        "bundleSha256": "2cfa699402a5806a25a2dfe13f3c4ad8f6baf7ee01800326a7daea8240dd3ec8",
+        "bundleSize": 29780,
+        "bundleFiles": 6,
+        "zipBytes": 13742,
+        "filtered": [],
+        "replacedFonts": [],
+        "corruptFonts": []
+      }
+    ]
+  },
+  "afterReviewFixes": {
+    "commits": {
+      "from": "69cd7a9",
+      "to": "6ae989e",
+      "wrapperBuiltFrom": [
+        "37d419e",
+        "6ae989e"
+      ]
+    },
+    "pod": "oma-test/oma-api-976cfcb59-whwkg",
+    "image": "oma-server:395e30e564f0",
+    "runs": [
+      {
+        "name": "dry-run",
+        "runId": "aac64fb6-78b3-4002-af51-b56977b9490c",
+        "mode": "full",
+        "dryRun": true,
+        "since": null,
+        "selectedUpdatedAfter": null,
+        "startedAt": "2026-10-23T01:26:54.902Z",
+        "finishedAt": "2026-10-23T01:27:07.925Z",
+        "manifests": [
+          {
+            "source": "report",
+            "runId": null,
+            "mode": "full",
+            "startedAt": "2026-10-22T20:43:54.532Z",
+            "bundles": 77
+          }
+        ],
+        "totals": {
+          "skills": 77,
+          "byStatus": {
+            "unchanged": 77
+          },
+          "supabaseObjects": 1293,
+          "supabaseBytes": 20143894,
+          "packedFiles": 1261,
+          "filteredFiles": 32,
+          "replacedFonts": 4,
+          "corruptFonts": 0,
+          "warnings": 0,
+          "distinctBundles": 20,
+          "bundlesUploaded": 0,
+          "uploadedZipBytes": 0
+        },
+        "exitCode": 0,
+        "journalLines": null
+      },
+      {
+        "name": "delta-t0",
+        "runId": "627229bf-66c0-47ec-b6b9-4858b4202eaa",
+        "mode": "delta",
+        "dryRun": false,
+        "since": "2026-10-22T20:43:54.532Z",
+        "selectedUpdatedAfter": "2026-10-22T20:33:54.532Z",
+        "startedAt": "2026-10-23T01:27:57.107Z",
+        "finishedAt": "2026-10-23T01:27:57.116Z",
+        "manifests": [
+          {
+            "source": "report",
+            "runId": null,
+            "mode": "full",
+            "startedAt": "2026-10-22T20:43:54.532Z",
+            "bundles": 77
+          }
+        ],
+        "totals": {
+          "skills": 0,
+          "byStatus": {},
+          "supabaseObjects": 0,
+          "supabaseBytes": 0,
+          "packedFiles": 0,
+          "filteredFiles": 0,
+          "replacedFonts": 0,
+          "corruptFonts": 0,
+          "warnings": 0,
+          "distinctBundles": 0,
+          "bundlesUploaded": 0,
+          "uploadedZipBytes": 0
+        },
+        "exitCode": 0,
+        "journalLines": 1
+      },
+      {
+        "name": "delta-margin",
+        "runId": "d09760d4-870f-46ff-b472-253a1778f195",
+        "mode": "delta",
+        "dryRun": false,
+        "since": "2026-10-22T06:40:20.000Z",
+        "selectedUpdatedAfter": "2026-10-22T06:30:20.000Z",
+        "startedAt": "2026-10-23T01:28:16.520Z",
+        "finishedAt": "2026-10-23T01:28:18.180Z",
+        "manifests": [
+          {
+            "source": "report",
+            "runId": null,
+            "mode": "full",
+            "startedAt": "2026-10-22T20:43:54.532Z",
+            "bundles": 77
+          }
+        ],
+        "totals": {
+          "skills": 8,
+          "byStatus": {
+            "unchanged": 8
+          },
+          "supabaseObjects": 169,
+          "supabaseBytes": 1913609,
+          "packedFiles": 167,
+          "filteredFiles": 2,
+          "replacedFonts": 0,
+          "corruptFonts": 0,
+          "warnings": 0,
+          "distinctBundles": 8,
+          "bundlesUploaded": 0,
+          "uploadedZipBytes": 0
+        },
+        "exitCode": 0,
+        "journalLines": 9
+      },
+      {
+        "name": "delta-late",
+        "since": "2026-10-22T20:43:54.533Z",
+        "exitCode": 1,
+        "error": "--since 2026-10-22T20:43:54.533Z is later than the earliest full run's start (2026-10-22T20:43:54.532Z): Skills edited during that run would be missed"
+      }
+    ],
+    "dryRunMatchesFullReport": true,
+    "pg": {
+      "before": {
+        "skills": 77,
+        "nullBundleSha256": 0,
+        "nullBundleSize": 0,
+        "distinctBundles": 20,
+        "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+        "updatedAtFingerprint": "b96bb2277ed46084108fe4faa4826864"
+      },
+      "after": {
+        "skills": 77,
+        "nullBundleSha256": 0,
+        "nullBundleSize": 0,
+        "distinctBundles": 20,
+        "bundleFingerprint": "643281664006e2c8026302cf9cffc6c6",
+        "updatedAtFingerprint": "b96bb2277ed46084108fe4faa4826864"
+      }
+    },
+    "podLeftovers": {
+      "dirs": 0,
+      "processes": 0
+    }
+  }
+}

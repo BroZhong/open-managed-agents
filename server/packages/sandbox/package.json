@@ -16,6 +16,7 @@
     "e2b": "2.24.0"
   },
   "devDependencies": {
+    "@oma-server/store-memory": "workspace:*",
     "@types/node": "^22.10.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.3"

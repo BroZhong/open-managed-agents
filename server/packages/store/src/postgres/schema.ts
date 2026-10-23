@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS ${s}.skills (
   source_skill_id TEXT,
   created_at      TIMESTAMPTZ,
   updated_at      TIMESTAMPTZ NOT NULL,
+  bundle_sha256   TEXT,
+  bundle_size     BIGINT,
   PRIMARY KEY (tenant_id, skill_id)
 );
 CREATE INDEX IF NOT EXISTS skills_tenant_id_idx ON ${s}.skills (tenant_id, skill_id);
@@ -112,6 +114,11 @@ UPDATE ${s}.skills SET owner_id = tenant_id WHERE owner_type = 'library' AND own
 
 -- Preserve unknown upload times for legacy Skills; updated_at is not creation time.
 ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+-- The current Skill Bundle (ADR-0022): sha256 of the immutable zip and its
+-- total uncompressed size, set together. NULL until the Skill is packed.
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS bundle_sha256 TEXT;
+ALTER TABLE ${s}.skills ADD COLUMN IF NOT EXISTS bundle_size   BIGINT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS skills_owner_name_unique
   ON ${s}.skills (tenant_id, owner_type, owner_id, name);
@@ -169,6 +176,12 @@ CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, r
 CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creation_pending BOOLEAN NOT NULL DEFAULT FALSE;
+-- The last complete Skill Install (ADR-0022): the Sandbox it went into, the
+-- Skill Set hash it installed and its /skills switch generation in that
+-- Sandbox. All NULL until one is recorded.
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_sandbox_id TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_set_hash TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS skills_generation BIGINT;
 CREATE INDEX IF NOT EXISTS sessions_tenant_id_idx ON ${s}.sessions (tenant_id, id);
 CREATE INDEX IF NOT EXISTS sessions_agent_id_idx ON ${s}.sessions (agent_id);
 CREATE INDEX IF NOT EXISTS sessions_workspace_id_idx ON ${s}.sessions (tenant_id, workspace_id);

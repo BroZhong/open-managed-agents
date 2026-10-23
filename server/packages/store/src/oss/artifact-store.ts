@@ -2,9 +2,9 @@ import OSS from "ali-oss";
 import { isIP } from "node:net";
 import type { Artifact, ArtifactContent, ArtifactMetadata, ArtifactPutInput, ArtifactReadUrlOptions, ArtifactStore } from "../interfaces/artifact-store.js";
 import { validateArtifactPath, workspaceObjectPrefix } from "../workspace-path.js";
-import { resolveArtifactContentType } from "../artifact-content-type.js";
+import { attachmentDisposition, resolveArtifactContentType } from "../artifact-content-type.js";
 
-function isMissingObject(error: unknown): boolean {
+export function isMissingObject(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "NoSuchKey";
 }
 
@@ -12,16 +12,6 @@ function headerValue(headers: object, header: string): string | undefined {
   const value: unknown = Object.entries(headers).find(([name]) => name.toLowerCase() === header)?.[1];
   if (typeof value === "number") return String(value);
   return typeof value === "string" ? value : undefined;
-}
-
-function attachmentDisposition(path: string): string {
-  const filename = path.slice(path.lastIndexOf("/") + 1);
-  const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, "_");
-  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (char) =>
-    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-  return `attachment; filename="${fallback}"` +
-    (fallback !== filename ? `; filename*=UTF-8''${encoded}` : "");
 }
 
 /** The official SDK boundary; injected clients allow repeatable storage tests. */

@@ -102,6 +102,29 @@ export interface ResourceUseLease {
   ownerId: string;
   generation: number;
 }
+/**
+ * What a Skill Install placed into an environment binding's Sandbox
+ * (ADR-0022): the Sandbox it went into, the Skill Set hash it installed and
+ * the switch generation the Sandbox gave its `/skills` switch. It describes
+ * that Sandbox only; a binding that now holds another Sandbox has nothing
+ * installed until an install into that one is recorded.
+ */
+export interface InstalledSkillSet {
+  sandboxId: string;
+  setHash: string;
+  /**
+   * Counts the `/skills` switches of one Sandbox, increasing under its
+   * install lock with every switch. The highest one names what `/skills`
+   * points at, whatever order installs record in.
+   */
+  generation: number;
+}
+/**
+ * How recording an install went: it is now the record; a later switch into
+ * the same Sandbox is recorded already, so `/skills` no longer holds it; or the
+ * binding no longer holds the Sandbox it went into.
+ */
+export type SkillSetRecordOutcome = "recorded" | "superseded" | "detached";
 /** Coordination shares the pending-input lease: no second execution scheduler. */
 export interface DelegationStore {
   /** Reconcile durable Session termination even when its input/lease was already removed. */
@@ -111,6 +134,17 @@ export interface DelegationStore {
   getExecution(tenantId: string, executionId: string): Promise<DelegationExecution | null>;
   listExecutions(tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }): Promise<DelegationExecution[]>;
   withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  /** The binding's last recorded Skill Install; null when none was recorded. */
+  installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
+  /**
+   * Record a complete Skill Install by compare-and-set: it applies only while
+   * the binding still holds `installed.sandboxId`, so a rebuilt or reclaimed
+   * binding never inherits it, and only over the record of an earlier switch
+   * (another Sandbox's, or a lower generation), so the record follows the
+   * last switch of `/skills`. No lock outlives it, and it never conflicts with
+   * an environment operation, which compares only the Sandbox identity.
+   */
+  recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome>;
   get(tenantId: string, callerSessionId: string, childId: string, executionId?: string): Promise<DelegationExecution | null>;
   getByPendingEventId(pendingEventId: string): Promise<DelegationExecution | null>;
   list(tenantId: string, callerSessionId: string): Promise<DelegationExecution[]>;

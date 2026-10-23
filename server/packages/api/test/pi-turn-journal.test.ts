@@ -67,7 +67,7 @@ it("writes each Pi event once through the Turn journal and keeps Deltas aligned 
   const errors: unknown[] = [];
   const sandbox = new FakeSandboxClient();
   const makeRouter = () => new SessionRouter({ ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
-    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox, provisionSources: {} }),
+    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox }),
     workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20, onDrainError: ({ error }) => errors.push(error) });
 

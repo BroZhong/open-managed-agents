@@ -1,4 +1,4 @@
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type WorkspaceMetadataStore } from "@oma-server/store";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { InMemorySessionStore } from "./session-store.js";
 import type { InMemoryPendingEventStore } from "./pending-event-store.js";
 import type { InMemoryEventLogStore } from "./event-log-store.js";
@@ -8,6 +8,7 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private queue: Promise<void> = Promise.resolve();
   private environments = new Map<string, string | null>();
   private creationPending = new Map<string, boolean>();
+  private installedSkills = new Map<string, InstalledSkillSet>();
   private environmentQueue: Promise<void> = Promise.resolve();
   constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">) { super(); }
   protected transaction<T>(work: (tx: DelegationTransaction) => Promise<T>): Promise<T> {
@@ -68,6 +69,17 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
     const result = this.environmentQueue.then(perform, perform);
     this.environmentQueue = result.then(() => {}, () => {});
     return result;
+  }
+  async installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null> {
+    const installed = this.installedSkills.get(bindingId);
+    return installed ? { ...installed } : null;
+  }
+  async recordSkillSetInstall(bindingId: string, installed: InstalledSkillSet): Promise<SkillSetRecordOutcome> {
+    if ((this.environments.get(bindingId) ?? null) !== installed.sandboxId) return "detached";
+    const recorded = this.installedSkills.get(bindingId);
+    if (recorded?.sandboxId === installed.sandboxId && recorded.generation >= installed.generation) return "superseded";
+    this.installedSkills.set(bindingId, { sandboxId: installed.sandboxId, setHash: installed.setHash, generation: installed.generation });
+    return "recorded";
   }
 }
 export { InMemoryDelegationStore as MemoryDelegationStore };

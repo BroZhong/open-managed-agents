@@ -1,0 +1,581 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { OSSSkillBundleStore, packSkillBundle, type OSSObjectClient, type Pool } from "@oma-server/store";
+import { createPgTestHarness, type PgTestHarness } from "../../store/test/pg-harness.js";
+import { fakeOSS, ossTestOptions } from "../../store/test/oss-harness.js";
+import { MigrationError, safeErrorMessage } from "../src/skill-bundle-migration/errors.js";
+import { fontProblem, loadReplacementFont } from "../src/skill-bundle-migration/fonts.js";
+import { FileOwnershipJournal } from "../src/skill-bundle-migration/journal.js";
+import { SupabaseSkillReader } from "../src/skill-bundle-migration/supabase-reader.js";
+import {
+  PgSkillRows,
+  formatSummary,
+  migrateSkillBundles,
+  migrationExitCode,
+  parseManifest,
+  parseMigrationArgs,
+  type MigrationReport,
+  type MigrationRunOptions,
+} from "../src/skill-bundle-migration/migration.js";
+import { fakeSupabaseStorage, pinnedFor, sha256, syntheticFont, text, utf8Mangled } from "./fixtures/skill-bundle-migration.js";
+
+const SERVICE_KEY = "supabase-service-role-jwt-secret";
+const TENANT = "f00c7d5a-dd14-43e6-b791-e561c192d312";
+const FONT_PATH = "assets/fonts/LiberationSans-Regular.ttf";
+const TARGET = { schema: "oma_test", supabaseBucket: "workspace-test", ossBucket: "agentry" };
+const official = syntheticFont(0x00010000, 7);
+const font = loadReplacementFont(official, pinnedFor(official));
+const corruptedFont = utf8Mangled(syntheticFont(0x00010000, 9));
+
+interface SeedSkill {
+  tenantId?: string;
+  skillId: string;
+  name: string;
+  ownerType?: "library" | "agent";
+  sourceSkillId?: string;
+  updatedAt: string;
+  files: Record<string, Uint8Array>;
+}
+
+const preciseSubtitles = (skillMd = "# precise-subtitles\n") => ({
+  "SKILL.md": text(skillMd),
+  "scripts/burn.py": text("print('subtitles')\n"),
+  "scripts/__pycache__/burn.cpython-312.pyc": utf8Mangled(new Uint8Array([0xcb, 0x0d, 0x0d, 0x0a, 0xff, 0x00])),
+  [FONT_PATH]: corruptedFont,
+  "assets/fonts/LICENSE.txt": text("SIL Open Font License\n"),
+});
+
+const SEED: SeedSkill[] = [
+  { skillId: "skill_lib", name: "precise-subtitles", updatedAt: "2026-10-01T00:00:00.000Z", files: preciseSubtitles() },
+  { skillId: "skill_fork1", name: "precise-subtitles", ownerType: "agent", sourceSkillId: "skill_lib", updatedAt: "2026-10-02T00:00:00.000Z", files: preciseSubtitles() },
+  { skillId: "skill_fork2", name: "precise-subtitles", ownerType: "agent", sourceSkillId: "skill_lib", updatedAt: "2026-10-03T00:00:00.000Z", files: preciseSubtitles("# edited fork\n") },
+  { skillId: "skill_other", name: "vfs", updatedAt: "2026-10-04T00:00:00.000Z", files: { "SKILL.md": text("# vfs\n"), "a.pyc": new Uint8Array([1, 2, 3]), "ref/notes.md": text("notes") } },
+  { skillId: "skill_nomd", name: "broken", updatedAt: "2026-10-05T00:00:00.000Z", files: { "README.md": text("no skill file") } },
+  { tenantId: "bad.tenant", skillId: "skill_bad", name: "bad", updatedAt: "2026-10-06T00:00:00.000Z", files: { "SKILL.md": text("# bad\n") } },
+];
+
+function countingOSS() {
+  const fake = fakeOSS();
+  const calls = { put: 0, get: 0 };
+  const client: OSSObjectClient = {
+    ...fake.client,
+    async put(name, body, options) { calls.put += 1; return fake.client.put(name, body, options); },
+    async get(name) { calls.get += 1; return fake.client.get(name); },
+  };
+  return { client, objects: fake.objects, calls };
+}
+
+async function insertSkill(pool: Pool, skill: Omit<SeedSkill, "files">) {
+  const tenantId = skill.tenantId ?? TENANT;
+  const ownerType = skill.ownerType ?? "library";
+  await pool.query(
+    `INSERT INTO skills (skill_id, tenant_id, name, description, owner_type, owner_id, source_skill_id, created_at, updated_at)
+     VALUES ($1, $2, $3, 'd', $4, $5, $6, $7, $7)`,
+    [skill.skillId, tenantId, skill.name, ownerType, ownerType === "library" ? tenantId : `agent_of_${skill.skillId}`, skill.sourceSkillId ?? null, new Date(skill.updatedAt)],
+  );
+}
+
+describe("migrateSkillBundles", () => {
+  let harness: PgTestHarness;
+  let storage: ReturnType<typeof fakeSupabaseStorage>;
+  let oss: ReturnType<typeof countingOSS>;
+  let store: OSSSkillBundleStore;
+  let logs: string[];
+  let dir: string;
+  let journals: FileOwnershipJournal[];
+
+  const journalAt = (name = `run-${journals.length + 1}.journal.jsonl`) => {
+    const journal = new FileOwnershipJournal(join(dir, name));
+    journals.push(journal);
+    return journal;
+  };
+  const key = (skillId: string) => `${TENANT}/${skillId}`;
+  const seedFiles = (skill: SeedSkill) => {
+    for (const [path, body] of Object.entries(skill.files)) storage.put(`${skill.tenantId ?? TENANT}/skills/${skill.skillId}/${path}`, body);
+  };
+  const reader = () => new SupabaseSkillReader({
+    endpoint: "http://storage.internal/storage/v1", serviceKey: SERVICE_KEY, bucket: "workspace-test", fetch: storage.fetch, sleep: async () => {},
+  });
+  const deps = () => ({ rows: new PgSkillRows(harness.pool), source: reader(), bundles: store, journal: journalAt() });
+  const run = (options: Partial<MigrationRunOptions> = {}) => migrateSkillBundles(deps(), {
+    dryRun: false, font, target: TARGET, now: () => new Date("2026-10-10T00:00:00.000Z"), log: (line) => logs.push(line), ...options,
+  });
+  const entry = (report: MigrationReport, skillId: string) => report.skills.find((skill) => skill.skillId === skillId)!;
+  /** The repaired font as unpacked from the bundles of the edited fork and of the Library Skill (which its unedited fork shares). */
+  const verifiedFonts = (report: MigrationReport) => [entry(report, "skill_fork2"), entry(report, "skill_lib")]
+    .map((skill) => ({
+      tenantId: TENANT, bundleSha256: skill.bundleSha256, path: FONT_PATH, sha256: sha256(official), size: official.byteLength,
+      header: "00010000", problem: null,
+    }))
+    .sort((a, b) => (a.bundleSha256! < b.bundleSha256! ? -1 : 1));
+  const rows = async () => (await harness.pool.query<{ skill_id: string; bundle_sha256: string | null; bundle_size: string | null; updated_at: Date }>(
+    "SELECT skill_id, bundle_sha256, bundle_size, updated_at FROM skills ORDER BY skill_id")).rows
+    .map((row) => ({ ...row, bundle_size: row.bundle_size == null ? null : Number(row.bundle_size), updated_at: new Date(row.updated_at).toISOString() }));
+
+  beforeEach(async () => {
+    harness = await createPgTestHarness();
+    storage = fakeSupabaseStorage();
+    oss = countingOSS();
+    store = new OSSSkillBundleStore({ ...ossTestOptions, client: oss.client, cacheBytes: 0 });
+    logs = [];
+    dir = mkdtempSync(join(tmpdir(), "oma-skill-bundle-migration-"));
+    journals = [];
+    for (const skill of SEED) {
+      await insertSkill(harness.pool, skill);
+      seedFiles(skill);
+    }
+  });
+  afterEach(async () => {
+    for (const journal of journals) journal.close();
+    rmSync(dir, { recursive: true, force: true });
+    await harness.close();
+  });
+
+  it("dry-runs every Skill: reads, packs, repairs and reports without writing anything", async () => {
+    const before = await rows();
+    const report = await run({ dryRun: true });
+    expect(report).toMatchObject({ mode: "full", dryRun: true, since: null, target: TARGET, startedAt: "2026-10-10T00:00:00.000Z" });
+    expect(report.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork1", "would-write"], ["skill_fork2", "would-write"],
+      ["skill_lib", "would-write"], ["skill_nomd", "failed"], ["skill_other", "would-write"],
+    ]);
+    expect(entry(report, "skill_bad").reason).toMatch(/tenant id/);
+    expect(entry(report, "skill_nomd").reason).toBe("no SKILL.md");
+    expect(entry(report, "skill_lib")).toMatchObject({
+      objects: 5, bundleFiles: 4, filtered: ["scripts/__pycache__/burn.cpython-312.pyc"],
+      replacedFonts: [{ path: FONT_PATH, fromSha256: sha256(corruptedFont), toSha256: sha256(official) }],
+      previousBundleSha256: null,
+    });
+    expect(entry(report, "skill_other").filtered).toEqual(["a.pyc"]);
+    // Content-identical Library Skill and fork share one bundle; the edited fork does not.
+    expect(entry(report, "skill_fork1").bundleSha256).toBe(entry(report, "skill_lib").bundleSha256);
+    expect(entry(report, "skill_fork2").bundleSha256).not.toBe(entry(report, "skill_lib").bundleSha256);
+    expect(report.sharedBundles).toEqual([{ tenantId: TENANT, sha256: entry(report, "skill_lib").bundleSha256, skillIds: ["skill_fork1", "skill_lib"] }]);
+    expect(report.forks).toEqual({ total: 2, sameBundleAsSource: ["skill_fork1"], differentFromSource: ["skill_fork2"], sourceNotPacked: [] });
+    const objects = SEED.reduce((total, skill) => total + Object.keys(skill.files).length, 0);
+    const readBytes = SEED.filter((skill) => skill.skillId !== "skill_nomd" && skill.skillId !== "skill_bad")
+      .reduce((total, skill) => total + Object.values(skill.files).reduce((sum, body) => sum + body.byteLength, 0), 0);
+    expect(report.totals).toMatchObject({
+      skills: 6, supabaseObjects: objects - 1 /* bad tenant is never listed */, supabaseBytes: readBytes,
+      byStatus: { "would-write": 4, failed: 2 }, distinctBundles: 3, filteredFiles: 4, replacedFonts: 3, corruptFonts: 0,
+      bundlesUploaded: 0,
+    });
+    expect(report.verification).toEqual({ source: "packed", bundles: 3, problems: [], fonts: verifiedFonts(report) });
+    expect(oss.objects.size).toBe(0);
+    expect(await rows()).toEqual(before);
+  });
+
+  it("uploads each distinct bundle once and records it with direct SQL that leaves updated_at alone", async () => {
+    const before = await rows();
+    const report = await run();
+    expect(report.totals.byStatus).toEqual({ written: 4, failed: 2 });
+    expect(report.totals.bundlesUploaded).toBe(3);
+    expect(oss.calls.put).toBe(3);
+    const lib = entry(report, "skill_lib");
+    expect([...oss.objects.keys()].sort()).toEqual([lib, entry(report, "skill_fork2"), entry(report, "skill_other")]
+      .map((skill) => `__oma/skills/${TENANT}/${skill.bundleSha256}.zip`).sort());
+    const after = await rows();
+    expect(after.map((row) => row.updated_at)).toEqual(before.map((row) => row.updated_at));
+    expect(after.map((row) => [row.skill_id, row.bundle_sha256, row.bundle_size])).toEqual(report.skills.map((skill) =>
+      [skill.skillId, skill.status === "written" ? skill.bundleSha256 : null, skill.status === "written" ? skill.bundleSize : null]));
+    // Read back through the bundle store: a valid font, no compiled Python.
+    const files = (await store.readAll(TENANT, lib.bundleSha256!))!;
+    expect(files.map((file) => file.path)).toEqual(["SKILL.md", "assets/fonts/LICENSE.txt", FONT_PATH, "scripts/burn.py"]);
+    const fontEntry = files.find((file) => file.path === FONT_PATH)!;
+    expect(fontProblem(fontEntry.body)).toBeNull();
+    expect(Buffer.from(fontEntry.body).equals(Buffer.from(official))).toBe(true);
+    expect(report.verification).toEqual({ source: "bundle-store", bundles: 3, problems: [], fonts: verifiedFonts(report) });
+    expect(formatSummary(report)).toContain(`Fonts in verified bundles: 2 x ${sha256(official)} header 00010000 valid`);
+  });
+
+  it("reruns with the previous report as manifest: same bundles, no new objects, no writes", async () => {
+    const first = await run();
+    const putsAfterFirst = oss.calls.put;
+    const stateAfterFirst = await rows();
+    const second = await run({ manifests: [parseManifest(JSON.stringify(first), TARGET)] });
+    expect(second.totals.byStatus).toEqual({ unchanged: 4, failed: 2 });
+    expect(second.skills.map((skill) => [skill.skillId, skill.bundleSha256, skill.reason])).toEqual(
+      first.skills.map((skill) => [skill.skillId, skill.bundleSha256, skill.reason]));
+    expect(oss.calls.put).toBe(putsAfterFirst);
+    expect(oss.objects.size).toBe(3);
+    expect(second.totals.bundlesUploaded).toBe(0);
+    expect(second.verification).toEqual(first.verification);
+    expect(await rows()).toEqual(stateAfterFirst);
+  });
+
+  it("without a manifest never touches a Skill that already has a bundle, and does not even read it", async () => {
+    await run();
+    const getsBefore = storage.requests.filter((request) => request.kind === "get").length;
+    const rerun = await run();
+    expect(rerun.totals.byStatus).toEqual({ kept: 4, failed: 2 });
+    expect(entry(rerun, "skill_lib").reason).toMatch(/not written by this migration/);
+    // Only skill_nomd is listed again; no file of a bundled Skill is read.
+    expect(storage.requests.filter((request) => request.kind === "get").length).toBe(getsBefore);
+    expect(oss.objects.size).toBe(3);
+  });
+
+  it("delta processes only Skills updated after T0 and never overwrites a bundle the new API wrote", async () => {
+    const full = await run();
+    const manifest = parseManifest(JSON.stringify(full), TARGET);
+    // After T0, the old API edits a fork in Supabase (bumping updated_at) and creates a Skill...
+    storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# edited after T0\n"));
+    await harness.pool.query("UPDATE skills SET updated_at = $1 WHERE skill_id = 'skill_fork2'", [new Date("2026-10-11T00:00:00.000Z")]);
+    const created = { skillId: "skill_new", name: "new", updatedAt: "2026-10-12T00:00:00.000Z", files: { "SKILL.md": text("# new\n") } };
+    await insertSkill(harness.pool, created);
+    seedFiles(created);
+    // ...and once live, the new API publishes its own version of another Skill by compare-and-set.
+    const apiBundle = await packSkillBundle([{ path: "SKILL.md", body: text("# vfs edited by the new API\n") }]);
+    await store.put(TENANT, apiBundle);
+    await harness.pool.query("UPDATE skills SET bundle_sha256 = $1, bundle_size = $2, updated_at = $3 WHERE skill_id = 'skill_other'",
+      [apiBundle.sha256, apiBundle.size, new Date("2026-10-13T00:00:00.000Z")]);
+    // A Library Skill whose Supabase copy changed without an updated_at bump after T0 is out of the delta.
+    storage.put(`${TENANT}/skills/skill_lib/SKILL.md`, text("# not selected\n"));
+
+    const delta = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest] });
+    expect(delta).toMatchObject({ mode: "delta", since: "2026-10-10T00:00:00.000Z", deltaMarginMs: 600_000, selectedUpdatedAfter: "2026-10-09T23:50:00.000Z" });
+    // skill_bad and skill_nomd failed in the full run: still without a bundle, every delta retries them.
+    expect(delta.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork2", "written"], ["skill_new", "written"], ["skill_nomd", "failed"], ["skill_other", "kept"],
+    ]);
+    expect(entry(delta, "skill_fork2").previousBundleSha256).toBe(entry(full, "skill_fork2").bundleSha256);
+    expect(entry(delta, "skill_fork2").bundleSha256).not.toBe(entry(full, "skill_fork2").bundleSha256);
+    expect(entry(delta, "skill_other")).toMatchObject({ previousBundleSha256: apiBundle.sha256, reason: expect.stringMatching(/changed since the manifest/) });
+    const state = Object.fromEntries((await rows()).map((row) => [row.skill_id, row.bundle_sha256]));
+    expect(state).toMatchObject({
+      skill_other: apiBundle.sha256, skill_fork2: entry(delta, "skill_fork2").bundleSha256,
+      skill_new: entry(delta, "skill_new").bundleSha256, skill_lib: entry(full, "skill_lib").bundleSha256,
+    });
+
+    // A second delta, given both reports, finds nothing left to do.
+    const again = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest, parseManifest(JSON.stringify(delta), TARGET)] });
+    expect(again.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork2", "unchanged"], ["skill_new", "unchanged"], ["skill_nomd", "failed"], ["skill_other", "kept"],
+    ]);
+  });
+
+  it("delta selects Skills updated within a built-in 10-minute margin before T0, and every Skill without a bundle", async () => {
+    const full = await run();
+    const manifest = parseManifest(JSON.stringify(full), TARGET);
+    // The old API bumps updated_at before it writes Supabase, and Pod clocks skew: an edit straddling T0
+    // can carry an updated_at a little before T0 while the full run still read the old files.
+    storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# edited across T0\n"));
+    await harness.pool.query("UPDATE skills SET updated_at = $1 WHERE skill_id = 'skill_fork2'", [new Date("2026-10-09T23:55:00.000Z")]);
+    // Outside the margin: an edit this old was read by the full run, so it is not selected.
+    storage.put(`${TENANT}/skills/skill_fork1/SKILL.md`, text("# not selected\n"));
+    await harness.pool.query("UPDATE skills SET updated_at = $1 WHERE skill_id = 'skill_fork1'", [new Date("2026-10-09T23:49:59.999Z")]);
+    // A Skill without a bundle is selected whatever its updated_at.
+    const old = { skillId: "skill_old", name: "old", updatedAt: "2026-09-01T00:00:00.000Z", files: { "SKILL.md": text("# old\n") } };
+    await insertSkill(harness.pool, old);
+    seedFiles(old);
+
+    const delta = await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [manifest] });
+    expect(delta.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork2", "written"], ["skill_nomd", "failed"], ["skill_old", "written"],
+    ]);
+    expect(entry(delta, "skill_fork2").bundleSha256).not.toBe(entry(full, "skill_fork2").bundleSha256);
+    expect(formatSummary(delta)).toContain(
+      "since 2026-10-10T00:00:00.000Z: Skills with updated_at > 2026-10-09T23:50:00.000Z (built-in margin 10 min) or without a bundle");
+    const state = Object.fromEntries((await rows()).map((row) => [row.skill_id, row.bundle_sha256]));
+    expect(state).toMatchObject({ skill_fork1: entry(full, "skill_fork1").bundleSha256, skill_old: entry(delta, "skill_old").bundleSha256 });
+  });
+
+  it("publishes a Skill whose corrupt font is not LiberationSans as stored, with a warning that does not fail the run", async () => {
+    await harness.pool.query("DELETE FROM skills WHERE skill_id IN ('skill_bad', 'skill_nomd')");
+    const noto = utf8Mangled(syntheticFont(0x00010000, 11));
+    const skill = { skillId: "skill_noto", name: "noto", updatedAt: "2026-10-07T00:00:00.000Z", files: { "SKILL.md": text("# noto\n"), "fonts/NotoSans.ttf": noto } };
+    await insertSkill(harness.pool, skill);
+    seedFiles(skill);
+    const report = await run();
+    expect(entry(report, "skill_noto")).toMatchObject({
+      status: "written",
+      corruptFonts: [{ path: "fonts/NotoSans.ttf", sha256: sha256(noto), size: noto.byteLength, problem: expect.any(String) }],
+      warnings: [expect.stringMatching(/^corrupt font fonts\/NotoSans\.ttf kept as stored: /)],
+    });
+    const stored = (await store.readAll(TENANT, entry(report, "skill_noto").bundleSha256!))!;
+    expect(Buffer.from(stored.find((file) => file.path === "fonts/NotoSans.ttf")!.body).equals(Buffer.from(noto))).toBe(true);
+    expect(report.totals).toMatchObject({ corruptFonts: 1, warnings: 1, byStatus: { written: 5 } });
+    expect(report.verification.problems).toEqual([]);
+    expect(report.verification.fonts.find((verified) => verified.path === "fonts/NotoSans.ttf")?.problem).toEqual(expect.any(String));
+    expect(migrationExitCode(report)).toBe(0);
+    const summary = formatSummary(report);
+    expect(summary).toMatch(/  warning f00c7d5a-dd14-43e6-b791-e561c192d312\/skill_noto \(noto\): corrupt font fonts\/NotoSans\.ttf kept as stored: /);
+    expect(summary.split("\n").at(-1)).toBe("Result: success with 1 warning (exit 0)");
+  });
+
+  it("exits 2 only for a failed or conflicting Skill or a verification problem", async () => {
+    const report = await run();
+    expect(migrationExitCode(report)).toBe(2);
+    expect(formatSummary(report).split("\n").at(-1)).toBe("Result: 2 failed, 0 conflicts, 0 verification problems; 0 warnings (exit 2)");
+    const clean = { ...report, totals: { ...report.totals, byStatus: { written: 4 } } };
+    expect(migrationExitCode(clean)).toBe(0);
+    expect(formatSummary(clean).split("\n").at(-1)).toBe("Result: success (exit 0)");
+    expect(migrationExitCode({ ...clean, totals: { ...clean.totals, byStatus: { written: 3, conflict: 1 } } })).toBe(2);
+    expect(migrationExitCode({ ...clean, verification: { ...clean.verification, problems: [{ tenantId: TENANT, sha256: "a".repeat(64), problem: "no SKILL.md" }] } })).toBe(2);
+  });
+
+  it("journals each claim before its write, so a run that dies midway still owns its rows and the next run takes the journal as manifest", async () => {
+    const full = await run();
+    const fullManifest = parseManifest(JSON.stringify(full), TARGET);
+    storage.put(`${TENANT}/skills/skill_fork2/SKILL.md`, text("# fork2 v2\n"));
+    storage.put(`${TENANT}/skills/skill_other/ref/notes.md`, text("notes v2"));
+    // A rerun dies after writing skill_fork2's row and right before writing skill_other's, the last one.
+    const pg = new PgSkillRows(harness.pool);
+    let died!: () => void;
+    const death = new Promise<void>((resolve) => { died = resolve; });
+    const dying = {
+      hasBundleColumns: () => pg.hasBundleColumns(),
+      list: (...args: Parameters<PgSkillRows["list"]>) => pg.list(...args),
+      setBundle(...args: Parameters<PgSkillRows["setBundle"]>) {
+        if (args[0].skillId !== "skill_other") return pg.setBundle(...args);
+        died();
+        return new Promise<boolean>(() => {});
+      },
+    };
+    const journal = journalAt("crashed.journal.jsonl");
+    void migrateSkillBundles({ rows: dying, source: reader(), bundles: store, journal }, {
+      dryRun: false, font, target: TARGET, manifests: [fullManifest], skillConcurrency: 1, now: () => new Date("2026-10-11T00:00:00.000Z"),
+    });
+    await death;
+
+    const lines = readFileSync(journal.path, "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
+    expect(lines[0]).toMatchObject({ tool: "migrate-skill-bundles", kind: "journal", mode: "full", dryRun: false, target: TARGET, startedAt: "2026-10-11T00:00:00.000Z" });
+    // Unchanged rows are claimed too; Skills that failed are not.
+    expect(lines.slice(1).map((line) => [line.runId, line.skillId])).toEqual(
+      ["skill_fork1", "skill_fork2", "skill_lib", "skill_other"].map((skillId) => [lines[0].runId, skillId]));
+    const crashed = parseManifest(readFileSync(journal.path, "utf8"), TARGET);
+    expect(crashed).toMatchObject({ source: "journal", runId: lines[0].runId, mode: "full", startedAt: new Date("2026-10-11T00:00:00.000Z") });
+    const state = Object.fromEntries((await rows()).map((row) => [row.skill_id, row.bundle_sha256]));
+    expect(state.skill_fork2).toBe(crashed.bundles.get(key("skill_fork2")));
+    expect(state.skill_fork2).not.toBe(entry(full, "skill_fork2").bundleSha256);
+    expect(state.skill_other).toBe(entry(full, "skill_other").bundleSha256);
+
+    // The full report alone does not own the row the crashed run wrote: it would be kept forever.
+    const fullOnly = await run({ dryRun: true, manifests: [fullManifest] });
+    expect(entry(fullOnly, "skill_fork2")).toMatchObject({ status: "kept", reason: expect.stringMatching(/changed since the manifest/) });
+    // With the journal, it is the tool's own; and a claim whose write never happened does not take
+    // skill_other away from the full run that wrote its current bundle.
+    const next = await run({ manifests: [fullManifest, crashed] });
+    expect(next.skills.map((skill) => [skill.skillId, skill.status])).toEqual([
+      ["skill_bad", "failed"], ["skill_fork1", "unchanged"], ["skill_fork2", "unchanged"],
+      ["skill_lib", "unchanged"], ["skill_nomd", "failed"], ["skill_other", "written"],
+    ]);
+    expect(entry(next, "skill_other").bundleSha256).toBe(crashed.bundles.get(key("skill_other")));
+    expect(next.manifests).toEqual([
+      { source: "report", runId: full.runId, mode: "full", startedAt: "2026-10-10T00:00:00.000Z", bundles: 4 },
+      { source: "journal", runId: lines[0].runId, mode: "full", startedAt: "2026-10-11T00:00:00.000Z", bundles: 4 },
+    ]);
+  });
+
+  it("refuses a real run without an ownership journal", async () => {
+    const { journal: _journal, ...withoutJournal } = deps();
+    await expect(migrateSkillBundles(withoutJournal, { dryRun: false, font, target: TARGET })).rejects.toThrow(/ownership journal/);
+    expect(oss.objects.size).toBe(0);
+  });
+
+  it("reports a compare-and-set lost to a concurrent edit as a conflict and keeps the other writer's bundle", async () => {
+    const pg = new PgSkillRows(harness.pool);
+    const racing = {
+      hasBundleColumns: () => pg.hasBundleColumns(),
+      list: (since?: Date) => pg.list(since),
+      async setBundle(...args: Parameters<PgSkillRows["setBundle"]>) {
+        if (args[0].skillId === "skill_lib") await harness.pool.query(`UPDATE skills SET bundle_sha256 = '${"f".repeat(64)}', bundle_size = 1 WHERE skill_id = 'skill_lib'`);
+        return pg.setBundle(...args);
+      },
+    };
+    const report = await migrateSkillBundles({ rows: racing, source: reader(), bundles: store, journal: journalAt() }, { dryRun: false, font, target: TARGET });
+    expect(entry(report, "skill_lib")).toMatchObject({ status: "conflict", reason: expect.stringMatching(/changed concurrently/) });
+    expect((await rows()).find((row) => row.skill_id === "skill_lib")?.bundle_sha256).toBe("f".repeat(64));
+  });
+
+  it("fails a Skill above 50 MB uncompressed and one with an unpackable path", async () => {
+    await harness.pool.query("DELETE FROM skills");
+    const big = { skillId: "skill_big", name: "big", updatedAt: "2026-10-01T00:00:00.000Z", files: { "SKILL.md": text("# big\n"), "data.bin": new Uint8Array(50 * 1024 * 1024) } };
+    const odd = { skillId: "skill_odd", name: "odd", updatedAt: "2026-10-01T00:00:00.000Z", files: { "SKILL.md": text("# odd\n"), "bad\\name.md": text("x") } };
+    for (const skill of [big, odd]) { await insertSkill(harness.pool, skill); seedFiles(skill); }
+    const report = await run({ dryRun: true });
+    expect(entry(report, "skill_big")).toMatchObject({ status: "failed", reason: expect.stringMatching(/too large/) });
+    expect(entry(report, "skill_odd")).toMatchObject({ status: "failed", reason: expect.stringMatching(/backslash/) });
+  });
+
+  it("fails a Skill whose listed object vanished instead of packing a partial version", async () => {
+    const source = reader();
+    const vanishing = {
+      list: (tenantId: string, skillId: string) => source.list(tenantId, skillId),
+      async read(tenantId: string, skillId: string, path: string) {
+        if (skillId === "skill_other" && path === "ref/notes.md") storage.objects.delete(`${TENANT}/skills/skill_other/ref/notes.md`);
+        return source.read(tenantId, skillId, path);
+      },
+      stats: source.stats,
+    };
+    const report = await migrateSkillBundles({ rows: new PgSkillRows(harness.pool), source: vanishing, bundles: store }, { dryRun: true, font, target: TARGET });
+    expect(entry(report, "skill_other")).toMatchObject({ status: "failed", reason: expect.stringMatching(/missing: ref\/notes.md/) });
+  });
+
+  it("refuses a real run before migration 0022 but dry-runs without the bundle columns", async () => {
+    // The schema before migration 0022.
+    await harness.pool.query("DELETE FROM skills WHERE skill_id <> 'skill_other'");
+    await harness.pool.query("ALTER TABLE skills DROP COLUMN bundle_sha256");
+    await harness.pool.query("ALTER TABLE skills DROP COLUMN bundle_size");
+    const pool = harness.pool;
+    const legacy = { rows: new PgSkillRows(pool), source: reader(), bundles: store };
+    const report = await migrateSkillBundles(legacy, { dryRun: true, font, target: TARGET });
+    expect(report.skills.map((skill) => skill.status)).toEqual(["would-write"]);
+    await expect(migrateSkillBundles({ ...legacy, journal: journalAt() }, { dryRun: false, font, target: TARGET })).rejects.toThrow(/0022/);
+  });
+
+  it("guards the delta: it needs a full run's report and a T0 no later than the earliest full run's start", async () => {
+    const first = parseManifest(JSON.stringify(await run()), TARGET);
+    const second = parseManifest(JSON.stringify(await run({ manifests: [first], now: () => new Date("2026-10-11T00:00:00.000Z") })), TARGET);
+    expect([first.mode, first.startedAt.toISOString(), second.mode, second.startedAt.toISOString()])
+      .toEqual(["full", "2026-10-10T00:00:00.000Z", "full", "2026-10-11T00:00:00.000Z"]);
+    await expect(run({ since: new Date("2026-10-10T00:00:00.000Z") })).rejects.toThrow(/full run's report/);
+    // Later than the first full run, though not than the second: in whichever order the reports are given.
+    for (const manifests of [[first, second], [second, first]]) {
+      await expect(run({ since: new Date("2026-10-10T00:00:00.001Z"), manifests })).rejects
+        .toThrow("--since 2026-10-10T00:00:00.001Z is later than the earliest full run's start (2026-10-10T00:00:00.000Z)");
+      await expect(run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests })).resolves.toMatchObject({ mode: "delta" });
+    }
+    // A delta's report alone is no full run.
+    const delta = parseManifest(JSON.stringify(await run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [first, second] })), TARGET);
+    await expect(run({ since: new Date("2026-10-10T00:00:00.000Z"), manifests: [delta] })).rejects.toThrow(/full run's report/);
+  });
+
+  it("keeps raw OSS and PostgreSQL error text out of the report, the summary and the log: name, code and HTTP status only", async () => {
+    const host = "agentry.oss-cn-shanghai-internal.aliyuncs.com";
+    // What ali-oss/urllib and pg throw: the request line with the bucket host and object key, the raw XML body, the SQL.
+    const ossError = Object.assign(
+      new Error(`AccessDenied: PUT https://${host}/__oma/skills/${TENANT}/${"a".repeat(64)}.zip raw xml: <Error><HostId>${host}</HostId></Error>`),
+      { name: "AccessDeniedError", code: "AccessDenied", status: 403, hostId: host, requestId: "68F9A1" },
+    );
+    const pgError = Object.assign(new Error("canceling statement due to statement timeout: UPDATE skills SET bundle_sha256 = $1"), { name: "error", code: "57014" });
+    let puts = 0;
+    const failingStore = {
+      async put(...args: Parameters<OSSSkillBundleStore["put"]>) { if (++puts === 1) throw ossError; return store.put(...args); },
+      get: (...args: Parameters<OSSSkillBundleStore["get"]>) => store.get(...args),
+    };
+    const pg = new PgSkillRows(harness.pool);
+    const failingRows = {
+      hasBundleColumns: () => pg.hasBundleColumns(),
+      list: (...args: Parameters<PgSkillRows["list"]>) => pg.list(...args),
+      async setBundle(...args: Parameters<PgSkillRows["setBundle"]>) { if (args[0].skillId === "skill_fork2") throw pgError; return pg.setBundle(...args); },
+    };
+    // One Skill at a time: skill_fork1 uploads the bundle it shares with skill_lib first.
+    const report = await migrateSkillBundles({ rows: failingRows, source: reader(), bundles: failingStore, journal: journalAt() }, {
+      dryRun: false, font, target: TARGET, skillConcurrency: 1, log: (line) => logs.push(line),
+    });
+    expect(report.skills.map((skill) => [skill.skillId, skill.status, skill.reason])).toEqual([
+      ["skill_bad", "failed", "tenant id is not a valid Skill Bundle key segment"],
+      ["skill_fork1", "failed", "AccessDeniedError code AccessDenied HTTP 403"],
+      ["skill_fork2", "failed", "error code 57014"],
+      ["skill_lib", "failed", "AccessDeniedError code AccessDenied HTTP 403"],
+      ["skill_nomd", "failed", "no SKILL.md"],
+      ["skill_other", "written", undefined],
+    ]);
+    const output = [JSON.stringify(report), formatSummary(report), ...logs].join("\n");
+    for (const leak of ["https://", host, "raw xml", "HostId", "68F9A1", "statement timeout", "UPDATE skills"]) expect(output).not.toContain(leak);
+  });
+
+  it("never puts a credential or Skill file content into the report, the summary or the log", async () => {
+    const secretBody = "TOP-SECRET-SKILL-BODY";
+    storage.put(`${TENANT}/skills/skill_other/ref/notes.md`, text(secretBody));
+    const report = await run();
+    const output = [JSON.stringify(report), formatSummary(report), ...logs].join("\n");
+    for (const secret of [SERVICE_KEY, ossTestOptions.accessKeySecret, ossTestOptions.accessKeyId, secretBody, "Signature", "x-oss-"]) {
+      expect(output).not.toContain(secret);
+    }
+    expect(formatSummary(report)).toMatch(/Skills: 6/);
+    expect(formatSummary(report)).toMatch(/distinct bundles: 3/);
+  });
+});
+
+describe("safeErrorMessage", () => {
+  it("prints the tool's own messages and reduces anything else to name, code and HTTP status", () => {
+    expect(safeErrorMessage(new MigrationError("--since is later than the earliest full run"))).toBe("--since is later than the earliest full run");
+    expect(safeErrorMessage(Object.assign(new Error("GET https://bucket.host/key"), { name: "NoSuchKeyError", code: "NoSuchKey", status: 404 })))
+      .toBe("NoSuchKeyError code NoSuchKey HTTP 404");
+    expect(safeErrorMessage(Object.assign(new Error("connect ECONNREFUSED 10.0.0.7:5432"), { code: "ECONNREFUSED" }))).toBe("Error code ECONNREFUSED");
+    expect(safeErrorMessage(Object.assign(new Error("x"), { name: "Bad name: https://host", code: "has spaces https://h" }))).toBe("Error");
+    expect(safeErrorMessage("postgres://oma:secret@pg/oma")).toBe("Error");
+  });
+});
+
+describe("parseManifest", () => {
+  const report = (overrides: Record<string, unknown> = {}) => ({
+    tool: "migrate-skill-bundles", version: 1, mode: "full", dryRun: false, target: TARGET, startedAt: "2026-10-10T00:00:00.000Z",
+    skills: [
+      { tenantId: "t", skillId: "s1", status: "written", bundleSha256: "a".repeat(64) },
+      { tenantId: "t", skillId: "s2", status: "unchanged", bundleSha256: "b".repeat(64) },
+      { tenantId: "t", skillId: "s3", status: "kept", bundleSha256: "c".repeat(64) },
+      { tenantId: "t", skillId: "s4", status: "failed" },
+      { tenantId: "t", skillId: "s5", status: "failed", claimed: true, bundleSha256: "d".repeat(64) },
+      { tenantId: "t", skillId: "s6", status: "conflict", claimed: true, bundleSha256: "e".repeat(64) },
+    ],
+    ...overrides,
+  });
+  const header = { tool: "migrate-skill-bundles", version: 1, kind: "journal", runId: "run-1", mode: "full", dryRun: false, since: null, target: TARGET, startedAt: "2026-10-10T00:00:00.000Z" };
+  const claim = (skillId: string, sha: string, runId = "run-1") => ({ runId, tenantId: "t", skillId, sha256: sha.repeat(64), size: 10 });
+  const jsonl = (...lines: unknown[]) => lines.map((line) => `${JSON.stringify(line)}\n`).join("");
+
+  it("maps every Skill whose bundle this migration claimed: written, unchanged, or claimed before its write failed", () => {
+    const manifest = parseManifest(JSON.stringify(report({ runId: "run-0" })), TARGET);
+    expect(manifest).toMatchObject({ source: "report", runId: "run-0", mode: "full" });
+    expect(manifest.startedAt.toISOString()).toBe("2026-10-10T00:00:00.000Z");
+    expect([...manifest.bundles]).toEqual([["t/s1", "a".repeat(64)], ["t/s2", "b".repeat(64)], ["t/s5", "d".repeat(64)], ["t/s6", "e".repeat(64)]]);
+    // A report of the first version of the tool has no run id.
+    expect(parseManifest(JSON.stringify(report()), TARGET).runId).toBeNull();
+  });
+
+  it("reads an ownership journal, ignoring only a last line torn by a crash", () => {
+    const manifest = parseManifest(`${jsonl(header, claim("s1", "a"), claim("s2", "b"))}{"runId":"run-1","tenan`, TARGET);
+    expect(manifest).toMatchObject({ source: "journal", runId: "run-1", mode: "full", startedAt: new Date("2026-10-10T00:00:00.000Z") });
+    expect([...manifest.bundles]).toEqual([["t/s1", "a".repeat(64)], ["t/s2", "b".repeat(64)]]);
+    expect([...parseManifest(jsonl(header), TARGET).bundles]).toEqual([]);
+    expect(() => parseManifest(`${jsonl(header)}{"torn"\n${jsonl(claim("s2", "b"))}`, TARGET)).toThrow(/line 2/);
+    expect(() => parseManifest(jsonl(header, claim("s1", "a", "run-2")), TARGET)).toThrow(/not a claim of run run-1/);
+    expect(() => parseManifest(jsonl({ ...header, target: { ...TARGET, ossBucket: "other" } }), TARGET)).toThrow(/ossBucket "other"/);
+    expect(() => parseManifest(jsonl({ ...header, runId: "" }), TARGET)).toThrow(/run id/);
+  });
+
+  it("rejects a dry-run, another environment and anything that is not this tool's report", () => {
+    expect(() => parseManifest(JSON.stringify(report({ dryRun: true })), TARGET)).toThrow(/dry-run/);
+    expect(() => parseManifest(JSON.stringify(report({ target: { ...TARGET, schema: "oma" } })), TARGET)).toThrow(/oma_test/);
+    expect(() => parseManifest(JSON.stringify(report({ target: { ...TARGET, supabaseBucket: "workspace" } })), TARGET)).toThrow(/workspace-test/);
+    expect(() => parseManifest(JSON.stringify({ hello: "world" }), TARGET)).toThrow(/not a migrate-skill-bundles report/);
+    expect(() => parseManifest("not json", TARGET)).toThrow(/not a migrate-skill-bundles report/);
+  });
+});
+
+describe("parseMigrationArgs", () => {
+  const env = { PG_SCHEMA: "oma_test", S3_BUCKET: "workspace-test" };
+  const base = ["--schema", "oma_test", "--supabase-bucket", "workspace-test", "--font", "/tmp/LiberationSans-Regular.ttf", "--report", "/tmp/r.json"];
+
+  it("parses a full, dry-run and delta invocation", () => {
+    expect(parseMigrationArgs(base, env)).toEqual({
+      schema: "oma_test", supabaseBucket: "workspace-test", fontPath: "/tmp/LiberationSans-Regular.ttf", reportPath: "/tmp/r.json",
+      dryRun: false, since: undefined, manifestPaths: [], concurrency: 4,
+    });
+    expect(parseMigrationArgs([...base, "--dry-run", "--concurrency", "2"], env)).toMatchObject({ dryRun: true, concurrency: 2 });
+    expect(parseMigrationArgs([...base, "--since", "2026-10-23T08:00:00.000Z", "--manifest", "/tmp/a.json", "--manifest", "/tmp/b.jsonl"], env))
+      .toMatchObject({ since: new Date("2026-10-23T08:00:00.000Z"), manifestPaths: ["/tmp/a.json", "/tmp/b.jsonl"] });
+    expect(parseMigrationArgs([...base.slice(0, 2), "--supabase-bucket=workspace-test", ...base.slice(4)], env)).toMatchObject({ supabaseBucket: "workspace-test" });
+  });
+
+  it("requires the operator to name the schema and Supabase bucket the environment actually points at", () => {
+    expect(() => parseMigrationArgs(base, { PG_SCHEMA: "oma", S3_BUCKET: "workspace-test" })).toThrow(/PG_SCHEMA is "oma"/);
+    expect(() => parseMigrationArgs(base, { PG_SCHEMA: "oma_test", S3_BUCKET: "workspace" })).toThrow(/S3_BUCKET is "workspace"/);
+    expect(() => parseMigrationArgs(base, {})).toThrow(/PG_SCHEMA is "oma"/);
+  });
+
+  it("rejects missing flags, unknown flags, the old --bucket, a value-less flag, a zoneless T0 and a delta without a manifest", () => {
+    expect(() => parseMigrationArgs(base.slice(2), env)).toThrow(/Missing --schema/);
+    expect(() => parseMigrationArgs([...base, "--apply"], env)).toThrow(/Unknown option '--apply'[\s\S]*Usage:/);
+    expect(() => parseMigrationArgs(["--bucket", "workspace-test", ...base], env)).toThrow(/Unknown option '--bucket'/);
+    expect(() => parseMigrationArgs(["--schema", "--dry-run", ...base.slice(2)], env)).toThrow(/--schema/);
+    expect(() => parseMigrationArgs([...base, "stray"], env)).toThrow(/positional/);
+    expect(() => parseMigrationArgs([...base, "--since", "2026-10-23 08:00", "--manifest", "/tmp/a.json"], env)).toThrow(/ISO/);
+    expect(() => parseMigrationArgs([...base, "--since", "2026-10-23T08:00:00Z"], env)).toThrow(/--manifest/);
+    expect(() => parseMigrationArgs([...base, "--concurrency", "0"], env)).toThrow(/--concurrency/);
+  });
+});
