@@ -26,7 +26,7 @@ const session: Session = {
 };
 
 /** The Queued Input the fake Host currently reports for each Session. */
-let queued: Record<string, Array<{ id: string; text: string }>> = {};
+let queued: Record<string, Array<{ id: string; text: string; type?: string; data?: unknown }>> = {};
 let otherSession: Session;
 let holdSends = false;
 let workspaceUnavailable = false;
@@ -67,8 +67,8 @@ beforeEach(() => {
           has_more: false,
           data: entries.map((entry) => ({
             id: entry.id,
-            type: "user.message",
-            data: { content: [{ type: "text", text: entry.text }] },
+            type: entry.type ?? "user.message",
+            data: entry.data ?? { content: [{ type: "text", text: entry.text }] },
             arrived_at: "2026-07-29T00:00:00.000Z",
           })),
         });
@@ -428,4 +428,23 @@ it("preserves the Workspace through an uncached Session metadata read", async ()
   await act(async () => { finish(new Response(JSON.stringify(otherSession))); });
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Search files" })).toBe(search));
   expect(search).toHaveProperty("value", "keep this");
+});
+
+it("labels queued sources and expands the actual asynchronous subagent result", async () => {
+  const output = "QA findings: " + "Detailed finding. ".repeat(30) + "Final recommendation.";
+  queued[SESSION_ID] = [
+    { id: "user_input", text: "Please check the assets" },
+    { id: "child_result", text: "", type: "subagent.result",
+      data: { source: "subagent_result", result: { status: "completed", output } } },
+  ];
+  renderPage();
+  await waitFor(() => expect(screen.getByText("subagent")).toBeTruthy());
+  const queue = within(screen.getByLabelText("Queued input"));
+  expect(queue.getByText("user")).toBeTruthy();
+  expect(queue.getByText("Please check the assets")).toBeTruthy();
+  expect(queue.queryByText(output)).toBeNull();
+  fireEvent.click(queue.getByRole("button", { expanded: false }));
+  expect(queue.getByText(output)).toBeTruthy();
+  fireEvent.click(queue.getByRole("button", { expanded: true }));
+  expect(queue.queryByText(output)).toBeNull();
 });
