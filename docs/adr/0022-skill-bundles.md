@@ -157,9 +157,10 @@ As implemented (#268):
   ends with `session.error` `skills_install_failed` naming the stage and
   reason ("The answer is retained; ..."), like the Workspace check at Turn
   end. The binding records nothing, and the next Turn installs again.
-- An Interrupt cancels the install: its exec is killed, it is neither retried
-  nor recorded, the binding's single flight is free at once, and the end span
-  says `aborted`. A cancelled install, by an Interrupt or a stopped attempt,
+- An Interrupt cancels the install: its exec is killed, it is not retried,
+  the binding's single flight is free at once, and the end span says
+  `aborted`. It is recorded only if the script had already reported its
+  switch, since the record mirrors what `/skills` points at. A cancelled install, by an Interrupt or a stopped attempt,
   records no error.
 - `span.skills_install_start` carries `turnId`, `installId`, `setHash` and
   `skills` (Skills in the Set); `span.skills_install_end` adds `outcome`
@@ -198,8 +199,9 @@ This is informational; the release tickets own the procedure.
   written after the switch, outside any transaction. A lag costs one
   reinstall when the next Turn's Skill Set differs from the record. It can
   cause a wrong skip only if a switch completed and its record was lost (a
-  Runner crash, a lost PG write, or a cancellation between the switch and the
-  record, a window of milliseconds) and the Agent's Skill Set later returns
+  Runner crash or a lost PG write between the switch and the record, or an
+  exec killed after its switch but before reporting it, a window of
+  milliseconds) and the Agent's Skill Set later returns
   to the recorded one before any other install on that binding. That stale
   view lasts until the next install on the binding or a Sandbox rebuild.
   Accepted as a rare, brief inconsistency; a Host-assigned install intent

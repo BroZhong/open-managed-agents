@@ -323,6 +323,23 @@ describe("Skill Installer beside a Turn (#268)", () => {
     expect(book.record).toHaveBeenCalledOnce();
   });
 
+  it("records a switch the installer completed even when its caller cancelled right after", async () => {
+    const { client, skills, book, installer, target } = await installerFor();
+    const turn = new AbortController();
+    const exec = FakeSandboxClient.prototype.exec;
+    // The cancellation lands after the script reported its switch, before the record.
+    vi.mocked(client.exec).mockImplementation(async function* (id, command, opts) {
+      yield* exec.call(client, id, command, opts);
+      if (isSkillInstallCommand(command)) turn.abort(new DOMException("Session interrupted", "AbortError"));
+    });
+    const pending = await installer.begin("binding", book, target, skills, { signal: turn.signal });
+    await expect(pending!.settled).rejects.toMatchObject({ name: "AbortError" });
+    // A record never lags a completed switch, so a later Turn with this Set skips.
+    await vi.waitFor(() => expect(book.record).toHaveBeenCalledOnce());
+    expect(await book.installed()).toMatchObject({ sandboxId: target.sandboxId, setHash: skills.setHash });
+    expect(await installer.begin("binding", book, target, skills)).toBeUndefined();
+  });
+
   it("stops a waiter that aborts without cancelling the install it waits for", async () => {
     const { client, skills, book, installer, target, installs } = await installerFor();
     const download = deferred();

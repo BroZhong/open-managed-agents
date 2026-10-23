@@ -328,12 +328,14 @@ export class SkillInstaller {
         if (attempt >= 2 || signal?.aborted) throw error;
       }
     }
-    // An install its caller cancelled is not recorded, even once complete.
-    signal?.throwIfAborted();
+    // The script reported its switch: record it even if the caller cancelled
+    // meanwhile, so the record never lags a completed switch (ADR-0022,
+    // Consequences). Only an exec killed before its result stays unrecorded.
     let outcome: SkillSetRecordOutcome;
     try { outcome = await ledger.record({ sandboxId: target.sandboxId, setHash: skills.setHash, generation: report.generation }); }
     catch (error) { throw new SkillInstallError("record", `cannot record the install: ${messageOf(error)}`); }
     if (outcome === "detached") throw new SkillInstallError("record", "the environment binding no longer holds the Sandbox that was installed");
+    signal?.throwIfAborted();
     // Superseded: another install switched /skills after this one and is
     // recorded. The Turn goes on and may see that version (ADR-0022).
     return report;
