@@ -11,11 +11,11 @@ function response(overrides = {}) {
     data: {
       counters: {
         endpointCreated: 0,
-        endpointUpdated: 73,
+        endpointUpdated: 75,
         endpointFailed: 0,
         endpointIgnored: 0,
         schemaCreated: 0,
-        schemaUpdated: 53,
+        schemaUpdated: 54,
         schemaFailed: 0,
         schemaIgnored: 0,
         endpointFolderFailed: 0,
@@ -46,13 +46,13 @@ test("accepts complete overwrite counters for the generated contract", () => {
 
   assert.deepEqual(validateImportResponse(document, response()), {
     endpointCreated: 0,
-    endpointUpdated: 73,
+    endpointUpdated: 75,
     endpointIgnored: 0,
     schemaCreated: 0,
-    schemaUpdated: 53,
+    schemaUpdated: 54,
     schemaIgnored: 0,
-    expectedEndpoints: 73,
-    expectedSchemas: 53,
+    expectedEndpoints: 75,
+    expectedSchemas: 54,
   });
 });
 
@@ -63,21 +63,21 @@ test("accepts a first import that creates every resource", () => {
     validateImportResponse(
       document,
       response({
-        endpointCreated: 73,
+        endpointCreated: 75,
         endpointUpdated: 0,
-        schemaCreated: 53,
+        schemaCreated: 54,
         schemaUpdated: 0,
       }),
     ),
     {
-      endpointCreated: 73,
+      endpointCreated: 75,
       endpointUpdated: 0,
       endpointIgnored: 0,
-      schemaCreated: 53,
+      schemaCreated: 54,
       schemaUpdated: 0,
       schemaIgnored: 0,
-      expectedEndpoints: 73,
-      expectedSchemas: 53,
+      expectedEndpoints: 75,
+      expectedSchemas: 54,
     },
   );
 });
@@ -85,21 +85,21 @@ test("accepts a first import that creates every resource", () => {
 test("accepts unchanged resources as processed pending semantic readback", () => {
   const document = JSON.parse(readFileSync("docs/openapi.json", "utf8"));
   const result = validateImportResponse(document, response({
-    endpointUpdated: 72, endpointIgnored: 1,
-    schemaUpdated: 1, schemaIgnored: 52,
+    endpointUpdated: 74, endpointIgnored: 1,
+    schemaUpdated: 1, schemaIgnored: 53,
   }));
   assert.equal(result.endpointIgnored, 1);
-  assert.equal(result.schemaIgnored, 52);
+  assert.equal(result.schemaIgnored, 53);
 });
 
 test("accepts observed endpoint counters that omit unchanged endpoints", () => {
   const document = JSON.parse(readFileSync("docs/openapi.json", "utf8"));
   const result = validateImportResponse(document, response({
     endpointUpdated: 17,
-    schemaUpdated: 1, schemaIgnored: 52,
+    schemaUpdated: 1, schemaIgnored: 53,
   }));
   assert.equal(result.endpointUpdated, 17);
-  assert.equal(result.expectedEndpoints, 73);
+  assert.equal(result.expectedEndpoints, 75);
 });
 
 test("rejects failed resources and impossible counter totals", () => {
@@ -109,7 +109,7 @@ test("rejects failed resources and impossible counter totals", () => {
     () =>
       validateImportResponse(
         document,
-        response({ endpointUpdated: 73, endpointFailed: 1 }),
+        response({ endpointUpdated: 75, endpointFailed: 1 }),
       ),
     /did not overwrite every endpoint/i,
   );
@@ -117,17 +117,17 @@ test("rejects failed resources and impossible counter totals", () => {
     () =>
       validateImportResponse(
         document,
-        response({ schemaUpdated: 51, schemaFailed: 1 }),
+        response({ schemaUpdated: 53, schemaFailed: 1 }),
       ),
     /did not overwrite every schema/i,
   );
   assert.throws(
-    () => validateImportResponse(document, response({ endpointUpdated: 74 })),
-    /processed 74 endpoints instead of 73/i,
+    () => validateImportResponse(document, response({ endpointUpdated: 76 })),
+    /processed 76 endpoints instead of 75/i,
   );
   assert.throws(
-    () => validateImportResponse(document, response({ schemaUpdated: 54 })),
-    /processed 54 schemas instead of 53/i,
+    () => validateImportResponse(document, response({ schemaUpdated: 55 })),
+    /processed 55 schemas instead of 54/i,
   );
   assert.throws(
     () => validateImportResponse(document, response({ securitySchemeFailed: 1 })),

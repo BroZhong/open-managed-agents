@@ -122,6 +122,25 @@ function normalizeMode(path: string, mode: number | undefined): SkillFileMode {
 }
 
 /**
+ * The fixed entry timestamp, 1980-01-01 00:00, the DOS epoch. yazl derives the
+ * DOS date and time from a Date's local getters, and V8 on Linux can construct
+ * and read a local Date with different offsets after a process changes its
+ * timezone. Local getters that return the UTC fields make the bytes independent
+ * of any timezone; the UTC extended-timestamp field is omitted
+ * (`forceDosTimestamp`).
+ */
+function dosEpoch(): Date {
+  return Object.assign(new Date(Date.UTC(1980, 0, 1)), {
+    getFullYear(this: Date) { return this.getUTCFullYear(); },
+    getMonth(this: Date) { return this.getUTCMonth(); },
+    getDate(this: Date) { return this.getUTCDate(); },
+    getHours(this: Date) { return this.getUTCHours(); },
+    getMinutes(this: Date) { return this.getUTCMinutes(); },
+    getSeconds(this: Date) { return this.getUTCSeconds(); },
+  });
+}
+
+/**
  * Pack a Skill's files into a deterministic Skill Bundle.
  * Throws {@link InvalidSkillFileError} for an invalid/duplicate path or mode and
  * {@link SkillBundleTooLargeError} above {@link SKILL_BUNDLE_MAX_BYTES} (after filtering).
@@ -149,10 +168,7 @@ export async function packSkillBundle(files: readonly SkillBundleInputFile[]): P
   if (size > SKILL_BUNDLE_MAX_BYTES) throw new SkillBundleTooLargeError(size, SKILL_BUNDLE_MAX_BYTES);
 
   const zip = new yazl.ZipFile();
-  // DOS timestamps are local time: build the epoch from local components on
-  // every call, and omit the UTC extended-timestamp field, so the bytes do not
-  // depend on the process timezone.
-  const mtime = new Date(1980, 0, 1);
+  const mtime = dosEpoch();
   for (const file of kept) {
     zip.addBuffer(asBuffer(file.body), file.path, {
       mtime, mode: REGULAR_FILE | file.mode, compressionLevel: DEFLATE_LEVEL, forceDosTimestamp: true,
