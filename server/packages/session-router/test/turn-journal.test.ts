@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { PendingEventClaimLostError } from "@oma-server/store";
-import type { AgentMessageChunkEvent, AgentMessageEvent } from "@open-managed-agents/adapter-core";
+import type { AgentMessageChunkEvent, AgentMessageEvent, AgentThinkingChunkEvent, AgentToolUseInputChunkEvent, AgentToolUseInputStreamEndEvent } from "@open-managed-agents/adapter-core";
 import { TurnJournal, type JournalDelta, type TurnJournalOptions } from "../src/turn-journal.js";
 
 interface Frame { event: string; seq?: number; data: Record<string, unknown> }
@@ -292,7 +292,7 @@ describe("TurnJournal", () => {
       const output = gate();
       const journal = f.journal({ outputDelta: async delta => { await output.opened; live.outputDelta(delta); } });
       journal.adapter.delta(chunk("d1", "a"), 0);
-      journal.adapter.delta(chunk("d2", "b"), 0);
+      journal.adapter.delta(chunk("d2", "b"), 1);
       await settle(); // d1 is being output, d2 waits behind it
       journal.revokeAdapter();
       output.open();
@@ -331,7 +331,7 @@ describe("TurnJournal", () => {
         live.outputDelta(delta);
       } });
       journal.adapter.delta(chunk("d1", "Hel"), 4);
-      journal.adapter.delta(chunk("d2", "lo"), 4);
+      journal.adapter.delta(chunk("d2", "lo"), 5);
       journal.adapter.record(message("a", "Hello"));
       await journal.adapter.flush();
       await settle();
@@ -341,7 +341,7 @@ describe("TurnJournal", () => {
       await settle();
       expect(f.frames.filter(frame => frame.seq === undefined)).toEqual([
         { event: "agent.message_chunk", data: expect.objectContaining({ id: "d1", text: "Hel", turnId: "turn_1", blockIndex: 4, attempt: 1 }) },
-        { event: "agent.message_chunk", data: expect.objectContaining({ id: "d2", text: "lo", turnId: "turn_1", blockIndex: 4, attempt: 1 }) },
+        { event: "agent.message_chunk", data: expect.objectContaining({ id: "d2", text: "lo", turnId: "turn_1", blockIndex: 5, attempt: 1 }) },
       ]);
       expect(await f.log()).toEqual([{ seq: 1, type: "agent.message", id: "a" }]);
     });
@@ -351,10 +351,12 @@ describe("TurnJournal", () => {
       const deltas: JournalDelta[] = [];
       const first = f.journal({ attempt: 1, outputDelta: delta => { deltas.push(delta); } });
       first.adapter.delta(chunk("d1", "Hel"), 3);
+      await first.adapter.flush();
       await settle();
       first.revokeAdapter();
       const second = f.journal({ attempt: 2, outputDelta: delta => { deltas.push(delta); } });
       second.adapter.delta(chunk("d2", "Hello"), 3);
+      await second.adapter.flush();
       await settle();
 
       expect(deltas.map(({ turnId, blockIndex, attempt, data }) => ({ turnId, blockIndex, attempt, id: data.id }))).toEqual([
@@ -387,6 +389,127 @@ describe("TurnJournal", () => {
     });
   });
 
+  describe("Delta coalescing", () => {
+    const thinking = (id: string, text: string): AgentThinkingChunkEvent =>
+      ({ id, timestamp: "2026-10-22T00:00:00.000Z", type: "agent.thinking_chunk", text });
+    const input = (id: string, toolUseId: string, delta: string): AgentToolUseInputChunkEvent =>
+      ({ id, timestamp: "2026-10-22T00:00:00.000Z", type: "agent.tool_use_input_chunk", toolUseId, delta });
+    const end = (id: string, toolUseId: string): AgentToolUseInputStreamEndEvent =>
+      ({ id, timestamp: "2026-10-22T00:00:00.000Z", type: "agent.tool_use_input_stream_end", toolUseId });
+    const outputs = (f: Awaited<ReturnType<typeof fixture>>) =>
+      f.frames.filter(frame => frame.seq === undefined).map(({ event, data }) => ({ event, id: data.id, blockIndex: data.blockIndex, text: data.text ?? data.delta }));
+
+    it("joins consecutive chunks of one block into one Delta, keeping the first chunk's identity", async () => {
+      const f = await fixture();
+      const journal = f.journal();
+      const pieces = ["{\"path\":\"a.md\",", "\"content\":\"第一", "行\\n\\\"引", "号\\\"\"}"];
+      pieces.forEach((piece, i) => journal.adapter.delta(input(`d${i}`, "call_1", piece), 2));
+      await settle();
+      expect(outputs(f)).toEqual([]); // waiting for more of the run
+
+      await sleep(70);
+      expect(outputs(f)).toEqual([{ event: "agent.tool_use_input_chunk", id: "d0", blockIndex: 2, text: pieces.join("") }]);
+      expect(f.frames[0].data).toEqual(expect.objectContaining({ toolUseId: "call_1", turnId: "turn_1", attempt: 1, timestamp: "2026-10-22T00:00:00.000Z" }));
+    });
+
+    it("lets a run leave at once when the block, the kind of chunk or the tool call changes, in call order", async () => {
+      const f = await fixture();
+      const journal = f.journal();
+      journal.adapter.delta(thinking("t1", "think"), 0);
+      journal.adapter.delta(thinking("t2", "ing"), 0);
+      journal.adapter.delta(chunk("m1", "Hel"), 0);
+      journal.adapter.delta(chunk("m2", "lo"), 0);
+      journal.adapter.delta(chunk("m3", "!"), 1);
+      journal.adapter.delta(input("i1", "call_1", "{}"), 2);
+      journal.adapter.delta(input("i2", "call_2", "{\"a\""), 2);
+      journal.adapter.delta(input("i3", "call_2", ":1}"), 2);
+      journal.adapter.delta(end("e2", "call_2"), 2);
+      await settle();
+
+      expect(outputs(f)).toEqual([
+        { event: "agent.thinking_chunk", id: "t1", blockIndex: 0, text: "thinking" },
+        { event: "agent.message_chunk", id: "m1", blockIndex: 0, text: "Hello" },
+        { event: "agent.message_chunk", id: "m3", blockIndex: 1, text: "!" },
+        { event: "agent.tool_use_input_chunk", id: "i1", blockIndex: 2, text: "{}" },
+        { event: "agent.tool_use_input_chunk", id: "i2", blockIndex: 2, text: "{\"a\":1}" },
+        { event: "agent.tool_use_input_stream_end", id: "e2", blockIndex: 2, text: undefined },
+      ]);
+    });
+
+    it("starts a new Delta rather than grow one past 8192 characters", async () => {
+      const f = await fixture();
+      const journal = f.journal();
+      for (let i = 0; i < 10; i++) journal.adapter.delta(chunk(`d${i}`, String(i).repeat(1000)), 0);
+      await journal.adapter.flush();
+      await settle();
+
+      expect(outputs(f).map(({ id, text }) => ({ id, chars: text.length }))).toEqual([{ id: "d0", chars: 8000 }, { id: "d8", chars: 2000 }]);
+      expect(outputs(f).map(o => o.text).join("")).toBe(Array.from({ length: 10 }, (_, i) => String(i).repeat(1000)).join(""));
+    });
+
+    it("keeps joining chunks to a run that waits behind earlier output, past its window", async () => {
+      const f = await fixture();
+      const live = f.options();
+      const slow = gate();
+      const journal = f.journal({ outputDelta: async delta => {
+        if (delta.data.id === "a") await slow.opened;
+        live.outputDelta(delta);
+      } });
+      journal.adapter.delta(chunk("a", "a"), 0);
+      journal.adapter.delta(chunk("b", "b"), 1); // "a" leaves and is held
+      await sleep(70);
+      journal.adapter.delta(chunk("c", "c"), 1);
+      slow.open();
+      await settle();
+
+      expect(outputs(f)).toEqual([
+        { event: "agent.message_chunk", id: "a", blockIndex: 0, text: "a" },
+        { event: "agent.message_chunk", id: "b", blockIndex: 1, text: "bc" },
+      ]);
+    });
+
+    it("lets the open run leave at a flush, without waiting for its window", async () => {
+      const f = await fixture();
+      const journal = f.journal();
+      journal.adapter.delta(chunk("d1", "Hel"), 0);
+      journal.adapter.delta(chunk("d2", "lo"), 0);
+      journal.adapter.record(message("a", "Hello"));
+      await journal.adapter.flush();
+      await settle();
+
+      expect(outputs(f)).toEqual([{ event: "agent.message_chunk", id: "d1", blockIndex: 0, text: "Hello" }]);
+    });
+
+    it("drops the open run when the Adapter is revoked", async () => {
+      const f = await fixture();
+      const journal = f.journal();
+      journal.adapter.delta(chunk("d1", "Hel"), 0);
+      journal.revokeAdapter();
+      await sleep(70);
+      expect(outputs(f)).toEqual([]);
+    });
+
+    it("ends Delta output at the Turn's end: drops queued Deltas and waits for the one leaving", async () => {
+      const f = await fixture();
+      const live = f.options();
+      const slow = gate();
+      const journal = f.journal({ outputDelta: async delta => { await slow.opened; live.outputDelta(delta); } });
+      journal.adapter.delta(chunk("a", "a"), 0);
+      journal.adapter.delta(chunk("b", "b"), 1); // "a" leaves and is held; "b" waits
+      await settle();
+      let ended = false;
+      const ending = journal.endDeltas().then(() => { ended = true; });
+      journal.adapter.delta(chunk("c", "c"), 2);
+      await settle();
+      expect(ended).toBe(false);
+
+      slow.open();
+      await ending;
+      await sleep(70);
+      expect(outputs(f).map(o => o.id)).toEqual(["a"]);
+    });
+  });
+
   describe("flush log", () => {
     it("logs one structured line per flush that writes, with its duration, event count and bytes", async () => {
       const f = await fixture();
@@ -399,8 +522,23 @@ describe("TurnJournal", () => {
 
       expect(f.lines).toHaveLength(1);
       const line = JSON.parse(f.lines[0]);
-      expect(line).toEqual({ msg: "turn_journal_flush", sessionId: f.session.id, turnId: "turn_1", events: 2, bytes: 17, durationMs: expect.any(Number) });
+      expect(line).toEqual({ msg: "turn_journal_flush", sessionId: f.session.id, turnId: "turn_1", events: 2, bytes: 17, deltasIn: 0, deltasOut: 0, durationMs: expect.any(Number) });
       expect(line.durationMs).toBeGreaterThanOrEqual(15);
+    });
+
+    it("counts the chunks received and the Deltas they left as since the previous line", async () => {
+      const f = await fixture();
+      const journal = f.journal();
+      ["a", "b", "c"].forEach((text, i) => journal.adapter.delta(chunk(`d${i}`, text), 0));
+      journal.adapter.delta(chunk("d3", "d"), 1);
+      journal.adapter.record(message("a", "abc"));
+      await journal.adapter.flush();
+      journal.adapter.record(message("b", "d"));
+      await journal.adapter.flush();
+
+      expect(f.lines.map(line => JSON.parse(line)).map(({ deltasIn, deltasOut }) => ({ deltasIn, deltasOut }))).toEqual([
+        { deltasIn: 4, deltasOut: 2 }, { deltasIn: 0, deltasOut: 0 },
+      ]);
     });
 
     it("logs a failed flush with the events it wrote before the failure", async () => {

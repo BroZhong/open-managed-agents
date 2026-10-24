@@ -73,7 +73,14 @@ immediately, so an Adapter that is slow to stop cannot write after
 `turn_aborted` or `turn_completed`. The Router's own writes are unaffected.
 
 Deltas leave in call order and are dropped once the port is revoked or the
-journal has failed. The Adapter assigns the final blockIndex to each Delta and
+journal has failed. Consecutive chunks of one output block (same blockIndex,
+kind and tool call) leave as one Delta carrying their joined text and the first
+chunk's identity: 50 ms after the run's first chunk, at once when the next Delta
+belongs elsewhere or a flush begins, and before the run would pass 8192
+characters. A run still waiting behind earlier output keeps taking chunks.
+Before the Router reclaims a Turn's Delta stream it ends the journal's Delta
+output, dropping what is queued and awaiting the Delta already leaving. The
+Adapter assigns the final blockIndex to each Delta and
 to each display block of its Complete Events; the Host supplies the numbering
 base (the highest blockIndex already committed in the Turn plus one, or 0 for a
 new Turn).
@@ -81,7 +88,8 @@ new Turn).
 Each flush that writes logs one JSON line, `turn_journal_flush`, with Session,
 Turn, event count, bytes (UTF-8 JSON of the written event data) and the duration
 the caller waited, plus the error message when it failed. Flush latency p50/p99
-come from these lines.
+come from these lines. `deltasIn` / `deltasOut` count the chunks received and
+the Deltas queued since the previous line, giving the coalescing ratio.
 
 ### The Adapter contract
 

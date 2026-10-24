@@ -1267,7 +1267,7 @@ describe("SessionRouter", () => {
           const write = journalWriter(input);
           await write({ id: "s0", timestamp: "t", type: "agent.message_stream_start" });
           await write({ id: "s1", timestamp: "t", type: "agent.message_chunk", text: "Hel" });
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 200));
           await write({ id: "s2", timestamp: "t", type: "agent.message_chunk", text: "lo" });
           await write({ id: "s3", timestamp: "t", type: "agent.message_stream_end" });
           await write({
@@ -1294,8 +1294,9 @@ describe("SessionRouter", () => {
 
       const run = deps.router.handleNewEvent(session.id, testAgent);
 
-      // Mid-turn: active turn is running and half-emitted deltas are buffered.
-      await new Promise((r) => setTimeout(r, 20));
+      // Mid-turn, past the first chunk's coalescing window: the active turn is
+      // running and half-emitted deltas are buffered.
+      await new Promise((r) => setTimeout(r, 120));
       const active = await deps.turnStreamStore.getActiveTurn(session.id);
       expect(active).toEqual({ turnId: "turn_1_a1", status: "running", inputSeq: 1, generation: 1 });
       const midDeltas = await deps.turnStreamStore.readDeltas(session.id, "turn_1_a1");
