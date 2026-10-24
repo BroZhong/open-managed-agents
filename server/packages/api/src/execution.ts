@@ -1,5 +1,5 @@
 import { SessionRouter } from "@oma-server/session-router";
-import { DefaultSandboxManager, DefaultTurnSandboxes, E2BSandboxClient, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, E2BSandboxClient, SandboxSweeper, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -32,8 +32,10 @@ export async function startExecution(deps: PgStores & {
   // The packaged mock emits model spans and text chunks; lifecycle events stay
   // owned by the SessionRouter. The local infrastructure profile runs only mock.
   const mockAdapter = new MockAdapter({ delayMs: Number(process.env.MOCK_DELAY_MS ?? 75) });
-  const sandboxManager = execution?.sandboxManager ?? (workspaceConfig ? new DefaultSandboxManager({
-    sandboxClient: new E2BSandboxClient({
+  // The gateway, the native lifecycle and the environment hints the Sandbox
+  // Manager and the sweeper share.
+  const native = !execution?.sandboxManager && workspaceConfig ? {
+    client: new E2BSandboxClient({
       ...workspaceConfig.sandbox,
       verifyWorkspaceProbe: async (target, name, content) => {
         if (target.bucket !== workspaceConfig.oss.bucket) throw new Error("Workspace bucket mismatch");
@@ -43,7 +45,10 @@ export async function startExecution(deps: PgStores & {
     environment: workspaceConfig.environment,
     lifecycle: await sandboxLifecycle(deps.pool),
     // A Turn waiting for a binding another Runner creates or reclaims continues on its hint.
-    environmentSignals: environmentSignals(deps.signals),
+    hints: environmentSignals(deps.signals),
+  } : undefined;
+  const sandboxManager = execution?.sandboxManager ?? (native ? new DefaultSandboxManager({
+    sandboxClient: native.client, environment: native.environment, lifecycle: native.lifecycle, environmentSignals: native.hints,
     // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
     skillBundleStore: deps.skillBundleStore,
   }) : undefined);
@@ -74,5 +79,13 @@ export async function startExecution(deps: PgStores & {
   await dispatch.start();
   const loops = new LoopScheduler({ loopStore: deps.loopStore, sessionRouter: router, pollIntervalMs: Number(process.env.LOOP_POLL_INTERVAL_MS ?? 15_000) });
   loops.start();
-  return { router, ready: () => dispatch.ready, stop: async () => { await Promise.all([dispatch.stop(), loops.stop()]); } };
+  // Only Runners sweep their environment's Sandboxes (ADR-0023): a round every
+  // 10 minutes ± 2, the first at a random point, each written as one
+  // `sandbox_sweep` log line. Shutdown stops it before its next action.
+  const sweeper = native ? new SandboxSweeper({
+    client: native.client, facts: native.lifecycle, bindings: deps.delegationStore,
+    environment: native.environment, environmentSignals: native.hints,
+  }) : undefined;
+  sweeper?.start();
+  return { router, ready: () => dispatch.ready, stop: async () => { await Promise.all([dispatch.stop(), loops.stop(), sweeper?.stop()]); } };
 }

@@ -16,6 +16,32 @@ export interface SandboxActivity {
  * Sandbox can still have one a lost create left.
  */
 export interface SandboxReclamation extends EnvironmentBinding { bindingId: string }
+/** One binding row and its Sessions, as the sweeper (ADR-0023, "The sweeper") reads them. */
+export interface SandboxBindingFacts {
+  sandboxId: string | null;
+  creatingSince: Date | null;
+  /** Termination claimed the reclamation and has not completed it. */
+  reclaiming: boolean;
+  /** Busy as `claimReclamation` counts it: a resource use or queued input of a non-terminated Session of the binding. */
+  inUse: boolean;
+  /** No Session of the binding is alive (also true when none is left). */
+  allSessionsTerminated: boolean;
+}
+export interface SandboxSweepFacts {
+  /** The database clock at the read: creation intents' deadlines are judged against it. */
+  now: Date;
+  /** Only the bindings that have a row in this schema. */
+  bindings: Map<string, SandboxBindingFacts>;
+}
+/** The sweeper's read of the bindings it found Sandboxes for. */
+export interface SandboxSweepStore {
+  /**
+   * One read of the rows and Session facts of `bindingIds`. It creates no
+   * row and takes no lock: the sweeper decides each action again just before
+   * it is taken.
+   */
+  sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts>;
+}
 export interface SandboxLifecycleStore {
   /** false means committed explicit deletion must finish before admission. */
   begin(activity: SandboxActivity): Promise<boolean>;

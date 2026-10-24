@@ -3,7 +3,7 @@
 ADR-0019 and #217–#222 define the only maintained policy: 24 hours running, pause
 on expiry, approximately 24 hours retained from pause initiation, then platform
 deletion. Confirmed shared idle shortens the running deadline to 30 minutes.
-Pi stays in the Runner. ADR-0023's resource sweeper is not enabled yet (#291).
+Pi stays in the Runner. Every Runner runs ADR-0023's sweeper; see Sweeper.
 
 ## Release prerequisites
 
@@ -18,9 +18,11 @@ The new trigger serializes queue acceptance with binding decisions; startup chec
 that it is installed. API/Runner split migrations remain required.
 
 This change does not migrate existing platform resources or remove their old
-never-timeout settings. No production Sandbox cleanup is authorized or performed.
-Plan any handling of old resources separately; no compatibility branch or adoption
-controller is included in the application.
+never-timeout settings. Since ADR-0023 the sweeper handles the environment's
+old resources as any other: a Sandbox without a deadline that no Turn uses is
+killed, and one no binding of this schema will use is an orphan. A Sandbox
+without the `oma.dev/environment` label whose binding has no row in this schema
+is left to its platform deadline. There is no compatibility branch.
 
 ## Runtime budgets and state
 
@@ -150,10 +152,64 @@ Shared non-terminated children and queued input prevent deleting their binding.
 Saved Workspace files and history are retained.
 
 There is no instruction to remove unknown activity records and no rollback that
-reinstalls infinite lifetime. The recurring sweeper of ADR-0023 is not enabled
-yet (#291); until then a Sandbox no binding records runs to its platform
-deadline unless its Session's termination reclaims it. Sessions whose cleanup
-completed before termination reclaimed by binding are not revisited.
+reinstalls infinite lifetime. A Sandbox no binding will use (a creator's own kill
+failed, a termination whose cleanup completed before termination reclaimed by
+binding) is killed by the sweeper within one period.
+
+## Sweeper
+
+Every Runner, and never the API, runs one round of ADR-0023's sweeper every 10
+minutes, give or take up to 2, the first at a random point of its first 10
+minutes; graceful shutdown stops it before its next action. A round lists every
+Sandbox of the Runner's gateway API key (running and paused, every page), reads
+their bindings and Sessions from the Runner's schema in one query and selects
+by ADR-0023's table. A Sandbox labelled with another `oma.dev/environment` is
+never touched; one without the label only when its binding has a row in this
+schema. Before each action the round reads the binding again and acts only if
+the action still applies, under the binding's lock: it kills an orphan or a Ready
+Sandbox without a deadline that no Turn uses, adopts the Sandbox of a binding
+Creating past its deadline as a tool call would (killing the others found), and
+shortens an unused running Sandbox's deadline to 30 minutes. Busy is what
+termination's reclamation calls busy: a resource use or queued input of a live
+Session of the binding. At most 50 kills a round; the rest wait for the next.
+Runners do not coordinate, and two may both kill one Sandbox, which is harmless.
+
+Each round writes one JSON line to the Runner's stdout:
+
+```json
+{"msg":"sandbox_sweep","env":"production","listed":707,"orphans":11,"unresolved":0,"unusedRunning":3,"noDeadline":1,"killed":12,"adopted":0,"shortened":3,"deferred":0,"skipped":0,"failed":0,"ms":412}
+```
+
+`orphans`, `unresolved` (bindings Creating past their deadline with a Sandbox),
+`unusedRunning` and `noDeadline` are what the round selected; `killed`, `adopted`
+and `shortened` are what it did. They differ by `skipped` (the binding, read
+again, no longer called for the action: used again, adopted by a Turn), `deferred`
+(over the 50-kill cap) and `failed` (with `failures`, the first ten failed actions
+by Sandbox, action and error name only). `error` says the list or the read failed
+and nothing was done; `aborted` that shutdown stopped the round. `ms` is its
+duration. Recent lines of one environment:
+
+```sh
+kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-test logs -l app=oma-runner -c runner --since=30m | grep sandbox_sweep
+```
+
+Alerting is configured on the log service, not in the application: match the
+Runner containers' lines carrying `"msg":"sandbox_sweep"` and alert, per `env`,
+when no line arrived for 30 minutes (each Runner sweeps at least every 12
+minutes, so the sweeper is not running), when `error` is set or `failed` is above
+0 in consecutive rounds of a Runner (the gateway or PostgreSQL fails it), and
+when `deferred` stays above 0 or `orphans` or `unresolved` stay high over several
+rounds (orphans or lost creation intents appear faster than they are swept; look
+for the creates behind them).
+
+`deploy/scripts/run-sandbox-sweep-report.sh <test|production>` prints the same
+selection read-only, with one row per Sandbox. Its "Planned `sandbox_sweep`
+counters" use the same names and the same busy definition: the next round's
+`orphans`, `unresolved`, `unusedRunning` and `noDeadline` equal them when no
+Session changed in between, its `killed` is at most `orphans` + `noDeadline`
+(and 50), its `adopted` at most `unresolved`. `deploy/scripts/run-sandbox-reconcile-acceptance.sh
+sweep-logs [since] [report]` collects every Runner Pod's lines, checks their
+spacing and makes this comparison.
 
 ## Verification
 

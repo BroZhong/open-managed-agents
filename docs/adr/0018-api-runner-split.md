@@ -120,8 +120,9 @@ Gateway cleanup cannot block the independent pending-input scan.
 Runners coordinate current business execution generations and shared queued input
 under ADR-0019. Only observed settlement may shorten a resource's native deadline;
 unknown execution does not request idle. There is no permanent resource activity
-table or Sandbox sweeper. Native finite deadlines bound resources after Runner
-loss. Explicit cleanup directly kills only when legitimate shared users are gone,
+table; every Runner runs ADR-0023's Sandbox sweeper, which kills the Sandboxes no
+binding will use. Native finite deadlines bound resources after Runner loss.
+Explicit cleanup directly kills only when legitimate shared users are gone,
 or clears a pointer after control-plane NotFound confirms native deletion. The
 existing committed deletion ticket and cleanup outbox remain retryable across
 Runners. Saved Workspace files and history are unaffected.

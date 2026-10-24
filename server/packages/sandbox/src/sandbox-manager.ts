@@ -8,9 +8,9 @@ import type {
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ToolEnvironmentError } from "@open-managed-agents/adapter-core";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected } from "./sandbox-client.js";
-import type { SandboxClient, SandboxHandle } from "./sandbox-client.js";
+import type { ListedSandbox, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
-import { killBindingSandboxes } from "./sandbox-kill.js";
+import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
 import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
 import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
 import { EMPTY_SKILL_SET, SkillInstallError, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
@@ -368,6 +368,30 @@ async function reclaimBinding({ lifecycle, sandboxClient: client, environmentSig
     if (error instanceof EnvironmentBindingChanged) return false;
     throw error;
   }
+}
+
+/**
+ * Converge an Unresolved binding, Creating since `creatingSince` and past its
+ * deadline, on what the gateway holds for it (ADR-0023, "reconcile"): ensure's
+ * and the sweeper's one transition. Past the deadline no create of the intent
+ * is in flight: none found → Cold; one → adopt it; several → keep a running
+ * one, else the earliest claimed. The list runs outside the binding's lock;
+ * the move is a compare-and-set on the intent. Resolves the Sandbox kept
+ * (undefined when it went Cold) and the others found, for the caller to kill;
+ * null when the row no longer held that intent: another Runner reconciled it
+ * first, or it moved on, and the caller follows the row.
+ */
+export async function reconcileBinding(client: Pick<SandboxClient, "listSandboxes">,
+  binding: Pick<SandboxEnvironmentBinding, "id" | "withLock">, creatingSince: Date): Promise<{ kept?: ListedSandbox; duplicates: ListedSandbox[] } | null> {
+  // By binding alone: its id is a Session id, unique across environments,
+  // and a Sandbox created before the environment label is adopted too.
+  const found = await client.listSandboxes({ metadata: { [SANDBOX_BINDING_LABEL]: binding.id }, states: ["running", "paused"] });
+  const [kept, ...duplicates] = [...found].sort(byKeepPreference);
+  const converged = await binding.withLock<boolean>(async (row) => {
+    if (row.sandboxId !== null || row.creatingSince?.getTime() !== creatingSince.getTime()) return { value: false };
+    return { next: kept ? { ready: kept.sandboxId } : "cold", value: true };
+  });
+  return converged ? { kept, duplicates } : null;
 }
 
 class SandboxSessionImpl implements SandboxSession {
@@ -886,28 +910,14 @@ class SandboxSessionImpl implements SandboxSession {
     return new SandboxUnavailable("rejected", error.status);
   }
   /**
-   * Converge an Unresolved binding on what the gateway holds for it
-   * (ADR-0023, "reconcile"). Past the deadline no create of the intent is in
-   * flight: none found → Cold; one → adopt it; several → keep a running one,
-   * else the earliest claimed, and kill the others. Ensure then connects,
-   * verifies the mount and installs Skills as for any Ready binding.
+   * Reconcile the Unresolved binding (see {@link reconcileBinding}), then
+   * kill the Sandboxes it does not keep. Ensure then connects, verifies the
+   * mount and installs Skills as for any Ready binding.
    */
   private async reconcile(creatingSince: Date): Promise<void> {
-    // By binding alone: its id is a Session id, unique across environments,
-    // and a Sandbox created before the environment label is adopted too.
-    const found = await this.deps.sandboxClient.listSandboxes({
-      metadata: { [SANDBOX_BINDING_LABEL]: this.binding.id }, states: ["running", "paused"],
-    });
-    const [kept, ...duplicates] = [...found].sort(byKeepPreference);
-    const converged = await this.binding.withLock<boolean>(async (binding) => {
-      // Another Runner may have reconciled this intent first; ensure follows the row.
-      if (binding.sandboxId !== null || binding.creatingSince?.getTime() !== creatingSince.getTime()) return { value: false };
-      return { next: kept ? { ready: kept.sandboxId } : "cold", value: true };
-    });
-    if (!converged) return;
-    for (const { sandboxId } of duplicates) {
-      await this.deps.sandboxClient.destroy(sandboxId).catch(() => { /* the sweeper kills a superseded Sandbox */ });
-    }
+    const outcome = await reconcileBinding(this.deps.sandboxClient, this.binding, creatingSince);
+    // A failed kill leaves a superseded Sandbox, which the sweeper kills.
+    if (outcome) await killSandboxes(this.deps.sandboxClient, outcome.duplicates.map(({ sandboxId }) => sandboxId));
   }
   private metadata(): Record<string, string> {
     return {

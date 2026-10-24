@@ -988,6 +988,16 @@ describe("listing Sandboxes from the gateway (ADR-0023)", () => {
     } finally { await server.close(); }
   });
 
+  it("lists every Sandbox of the API key, across pages, when no label filters", async () => {
+    const server = await gateway([{ body: [entry("sbx-a")], next: "page-2" }, { body: [entry("sbx-b", { metadata: { "oma.dev/environment": "production" } })] }]);
+    try {
+      const listed = await client().listSandboxes({ metadata: {}, states: ["running", "paused"] });
+      expect(listed.map(({ sandboxId }) => sandboxId)).toEqual(["sbx-a", "sbx-b"]);
+      expect(server.requests.map(({ url }) => url.searchParams.has("metadata"))).toEqual([false, false]);
+      expect(server.requests.map(({ url }) => url.searchParams.get("nextToken"))).toEqual([null, "page-2"]);
+    } finally { await server.close(); }
+  });
+
   it("fails on a gateway error without repeating its body", async () => {
     const server = await gateway([]);
     try {

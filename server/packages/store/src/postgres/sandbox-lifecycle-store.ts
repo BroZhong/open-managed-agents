@@ -1,8 +1,11 @@
 import type { Pool, PoolClient } from './connection.js';
-import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation } from '../interfaces/sandbox-lifecycle-store.js';
+import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore } from '../interfaces/sandbox-lifecycle-store.js';
 
-/** Coordinates business execution and explicit termination. No idle scanner or resource clock. */
-export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
+/**
+ * Coordinates business execution and explicit termination, and gives the
+ * sweeper (ADR-0023) its read. No idle clock: deadlines stay on the platform.
+ */
+export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSweepStore {
   constructor(private readonly pool: Pool) {}
   async assertReady(): Promise<void> {
     const result = await this.pool.query("SELECT 1 FROM pg_trigger WHERE tgname = 'sandbox_input_coordination' AND tgrelid = 'pending_events'::regclass AND tgfoid = 'lock_sandbox_binding()'::regprocedure AND tgenabled IN ('O', 'A')");
@@ -86,5 +89,43 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
       if (result.rows.length) await client.query(`DELETE FROM delegation_resource_uses u USING sessions s
         WHERE s.id=u.record->>'sessionId' AND s.status='terminated' AND u.record->>'sandboxSessionId'=$1`, [ticket.bindingId]);
     });
+  }
+  /**
+   * One autocommitted statement over the bindings' rows; it inserts no row,
+   * so a binding without one stays absent. Busy is claimReclamation's: a
+   * resource use of a non-terminated Session, or a pending event of a
+   * non-terminated Session of the binding (a Child shares its root's).
+   */
+  async sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts> {
+    const ids = [...new Set(bindingIds)];
+    // A list of parameters rather than = ANY($1): pg-mem, which runs this
+    // store's tests without a server, matches no row with ANY.
+    const listed = ids.length ? ids.map((_, i) => `$${i + 1}`).join(", ") : "NULL";
+    const { rows } = await this.pool.query<{ id: string | null; sandbox_id: string | null; creating_since: Date | null; reclaiming: boolean;
+      in_use: boolean; all_sessions_terminated: boolean; now: Date }>(
+      `WITH alive AS (
+         SELECT s.id, COALESCE(s.delegation->>'sandboxSessionId', s.id) AS binding_id FROM sessions s
+         WHERE s.status <> 'terminated' AND COALESCE(s.delegation->>'sandboxSessionId', s.id) IN (${listed})
+       ), in_use AS (
+         SELECT u.record->>'sandboxSessionId' AS binding_id FROM delegation_resource_uses u JOIN sessions s ON s.id = u.record->>'sessionId'
+         WHERE u.record->>'sandboxSessionId' IN (${listed}) AND s.status <> 'terminated'
+         UNION SELECT a.binding_id FROM pending_events p JOIN alive a ON a.id = p.session_id
+       ), found AS (
+         SELECT e.id, e.sandbox_id, e.creating_since, e.reclaiming,
+           i.binding_id IS NOT NULL AS in_use, l.binding_id IS NULL AS all_sessions_terminated
+         FROM delegation_environments e
+         LEFT JOIN in_use i ON i.binding_id = e.id
+         LEFT JOIN (SELECT DISTINCT binding_id FROM alive) l ON l.binding_id = e.id
+         WHERE e.id IN (${listed})
+       )
+       -- One row even when no binding has one: it carries the clock.
+       SELECT f.*, clock.now FROM (SELECT now() AS now) clock LEFT JOIN found f ON TRUE`, ids);
+    return {
+      now: rows[0].now,
+      bindings: new Map(rows.flatMap((row) => row.id === null ? [] : [[row.id, {
+        sandboxId: row.sandbox_id, creatingSince: row.creating_since, reclaiming: row.reclaiming,
+        inUse: row.in_use, allSessionsTerminated: row.all_sessions_terminated,
+      }] as const])),
+    };
   }
 }

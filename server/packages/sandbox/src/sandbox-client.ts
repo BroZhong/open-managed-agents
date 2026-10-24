@@ -130,7 +130,7 @@ export interface ListedSandbox {
 
 /** Which Sandboxes {@link SandboxClient.listSandboxes} returns. */
 export interface SandboxListFilter {
-  /** Every one of these labels, with exactly these values. */
+  /** Every one of these labels, with exactly these values; none lists every Sandbox of the API key. */
   metadata: Record<string, string>;
   states: ReadonlyArray<ListedSandbox["state"]>;
 }

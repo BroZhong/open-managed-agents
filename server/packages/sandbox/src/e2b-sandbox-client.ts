@@ -455,8 +455,9 @@ export class E2BSandboxClient implements SandboxClient {
     // pairs (upstream pkg/servers/e2b/list.go), so each key and value is
     // escaped here and the whole once more as a query parameter. The SDK's
     // paginator escapes them twice, which the gateway reads as other keys.
+    // No labels sends no `metadata`: every Sandbox of the API key (the sweeper's list).
     const metadata = Object.entries(filter.metadata)
-      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&") || undefined;
     const listed: ListedSandbox[] = [];
     let nextToken: string | undefined;
     do {
