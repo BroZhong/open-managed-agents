@@ -198,6 +198,10 @@ committed at a database-clock time) or Cold. A Creating binding past its
 Sandboxes labelled with the binding and adopts one or returns it to Cold, so
 no create outcome, known or not, blocks a Session. See ADR-0023.
 
+**Environment failure**:
+A tool call that did not run because the Session's Sandbox was not ready: it could not be connected, its Workspace mount verified, or it created. It is a tool error whose result carries `details.code` `sandbox_unavailable` and a `details.reason`, which the model may retry; it never ends the **Turn** by itself. A Turn prepares its Sandbox beside the model's first request, and each preparation is visible as `span.sandbox_prepare_start`/`_end`. A Turn whose environment failed and never became ready again ends with `session.error` `sandbox_unavailable`, written only at the Turn's end. See ADR-0023 and `docs/sandbox-lifecycle-deployment.md`.
+_Avoid_: prepare failure, sandbox_prepare_failed
+
 **Environment Spec**:
 The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and the **Skill Set** to install. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
 _Avoid_: config, sandbox config, environment, EnvVars

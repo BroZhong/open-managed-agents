@@ -53,6 +53,55 @@ lock cannot fence it. If a late idle update pauses a new Turn early, recovery
 restores the environment for a subsequent tool and reports the original operation
 as uncertain. No implicit command replay or exactly-once guarantee is provided.
 
+## Environment failures in a Turn's events
+
+A Turn prepares its environment beside the model, never before it
+([ADR-0023](adr/0023-sandbox-binding-reconciliation.md), #287). For a Ready
+binding, the Turn starts connecting to its Sandbox, verifying the Workspace
+mount and deciding the Skill Install while the model's first request runs; the
+first tool call waits for them. A Cold binding stays cold until a tool call
+creates its Sandbox; a Creating one is waited for or reconciled by that call. A
+Turn that answers before its connect returns waits for it at its end.
+
+Each preparation is a pair of spans with the same `prepareId`:
+`span.sandbox_prepare_start {turnId, prepareId}` and
+`span.sandbox_prepare_end {turnId, prepareId, outcome, durationMs, sandboxId?,
+code?, reason?}`. `outcome` is `ready` (connected or created, mount verified,
+`sandboxId`), `deferred` (the Turn-start connect found the recorded Sandbox
+gone, or the binding moved on; the first tool call prepares again), `failed`
+(`code` and `reason` below) or `aborted` (the Turn stopped waiting first: an
+Interrupt, a terminated Session, a lost Runner whose span the takeover ends, or
+the Turn's end). A Cold binding's pure-chat Turn writes none.
+
+An environment failure is a tool error, not the end of the Turn. The tool call
+did not run. Its native result (`agent.context_entry` whose `entry.message` has
+role `toolResult` and `isError: true`) carries `details.code`
+`sandbox_unavailable` and `details.reason`: `rejected` (the gateway refused the
+create with 400, 403 or 409), `unknown` (the call's creates did not complete,
+after one more create once an unknown outcome was reconciled), `mount` (the
+Workspace mount failed verification) or `unreachable` (connect, the gateway's
+list or the binding's database row failed, or the row refused the call while
+the binding is reclaimed). The text the model reads is stable
+and carries no gateway diagnostics. The model may call the tool again; the next
+call prepares again. A tool's own failure (an exit code, a missing file) has no
+such code. ADR-0023 also names `sandbox_creating`; no call fails with it,
+because a call waits out a Creating binding until its intent deadline and then
+reconciles it.
+
+**How to tell from events whether a Turn failed because of its environment:**
+it did exactly when the Turn has a `session.error` whose `error.code` is
+`sandbox_unavailable`. The Turn writes it once, after its answer and before
+`session.turn_completed`, when a preparation of the Turn failed and none
+ended `ready` after it, counting every attempt of the Turn: a takeover starts
+from the spans its predecessors wrote. A Turn with environment tool errors but
+no such `session.error` recovered within the Turn. The error keeps the answer,
+like `workspace_storage_error`. A `session.error` is never written in the middle
+of a Turn, because a takeover's plan treats any `session.error` in a Turn as its
+end; a Runner lost after an environment failure therefore leaves a Turn its
+takeover continues. The same code also ends a Turn of a sandboxed Agent on a
+Runner with no Sandbox configured, before its Adapter runs. Skill Install
+failures keep their own code, `skills_install_failed` (ADR-0022).
+
 ## Recovery
 
 Use the explicit Shanghai kubeconfig for read-only diagnosis:
