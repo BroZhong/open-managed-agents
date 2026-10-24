@@ -29,6 +29,7 @@
 import { parseArgs } from "node:util";
 import { Agent } from "undici";
 import {
+  INTENT_DEADLINE_SECONDS,
   SANDBOX_BINDING_LABEL,
   SANDBOX_ENVIRONMENT_LABEL,
   SANDBOX_IDLE_SECONDS,
@@ -43,8 +44,6 @@ import {
 } from "@oma-server/sandbox/sweep";
 import { createPgPool, pgConfigFromEnv, type Pool } from "@oma-server/store";
 
-/** ADR-0023: CLAIM_SECONDS + 30. */
-const INTENT_DEADLINE_SECONDS = 180;
 const PAGE_LIMIT = 100;
 
 const { values: args } = parseArgs({ options: { environment: { type: "string" }, schema: { type: "string" } } });
