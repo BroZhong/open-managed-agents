@@ -5,7 +5,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnDelta, type TurnStreamStore } from "@oma-server/redis";
-import type { SandboxManager, SandboxSession } from "@oma-server/sandbox";
+import { DefaultTurnSandboxes, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent, type DelegationCommand, type DelegationExecution, type PendingEventClaim, type PendingEventClaimEnd, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, ExecOptions, ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -540,13 +540,18 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
       return pi.run(input);
     } };
     const turnStreamStore = scenario.redisDown?.(index) ? redisDown : turnStreams;
-    router = new SessionRouter({ ...runner.stores({ ...stores, turnStreamStore }), eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-      sandboxManager: sandbox(runner, async (call) => {
-        const toolCall = { ...call, runner: index };
-        outcome.toolCalls.push(toolCall);
-        return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
-      }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.disposals.push(index)),
-      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+    const runnerStores = runner.stores({ ...stores, turnStreamStore });
+    router = new SessionRouter({ ...runnerStores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
+      sandboxes: new DefaultTurnSandboxes({
+        manager: sandbox(runner, async (call) => {
+          const toolCall = { ...call, runner: index };
+          outcome.toolCalls.push(toolCall);
+          return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
+        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.disposals.push(index)),
+        bindings: runnerStores.delegationStore, sessions: runnerStores.sessionStore,
+        workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+        onError: ({ error }) => outcome.errors.push({ runner: index, error }),
+      }),
       pendingClaimOwnerId: runner.ownerId, onDrainError: ({ error }) => outcome.errors.push({ runner: index, error }),
       ...(scenario.childSteps !== undefined ? { maxSubagentModelSteps: scenario.childSteps } : {}),
       ...(scenario.maxChildren !== undefined ? { maxConcurrentSubagents: scenario.maxChildren } : {}),

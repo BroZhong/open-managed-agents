@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
 import type { SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
@@ -37,8 +37,10 @@ describe("the claim heartbeat of a completed Turn", () => {
         await journalWriter(input)(event("agent.message", { content: [{ type: "text", text: "done" }] }));
         return "finished";
       } }),
-      sandboxManager: new SlowSandboxes({ sandboxClient: new FakeSandboxClient() }),
-      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+      sandboxes: new DefaultTurnSandboxes({ manager: new SlowSandboxes({ sandboxClient: new FakeSandboxClient() }),
+        bindings: stores.delegationStore, sessions: stores.sessionStore,
+        workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+        onError: ({ error }) => errors.push(error) }),
       pendingClaimOwnerId: "runner", pendingClaimLeaseMs: 500, pendingClaimRenewIntervalMs: 20,
       onDrainError: ({ error }) => errors.push(error),
     });

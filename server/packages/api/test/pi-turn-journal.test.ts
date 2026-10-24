@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { SessionRouter } from "@oma-server/session-router";
 import { PendingEventClaimLostError, presentEvent } from "@oma-server/store";
@@ -67,8 +67,10 @@ it("writes each Pi event once through the Turn journal and keeps Deltas aligned 
   const errors: unknown[] = [];
   const sandbox = new FakeSandboxClient();
   const makeRouter = () => new SessionRouter({ ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
-    sandboxManager: new DefaultSandboxManager({ sandboxClient: sandbox }),
-    workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox }),
+      bindings: stores.delegationStore, sessions: stores.sessionStore,
+      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+      onError: ({ error }) => errors.push(error) }),
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20, onDrainError: ({ error }) => errors.push(error) });
 
   // The Runner is lost right after the delegation is accepted: its claim

@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { sessionSignalScope, type SessionSignal, type SessionSignalScope, type SessionSignals } from "@oma-server/redis";
 import type { Agent, SandboxLifecycleStore, Session } from "@oma-server/store";
@@ -361,8 +361,12 @@ export class Fleet {
       const router = new SessionRouter({
         ...stores,
         eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-        sandboxManager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, lifecycle: this.meter.lifecycle(name) }),
-        workspaceMount: WORKSPACE_MOUNT, pendingClaimOwnerId: name,
+        sandboxes: new DefaultTurnSandboxes({
+          manager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, lifecycle: this.meter.lifecycle(name) }),
+          bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount: WORKSPACE_MOUNT,
+          onError: ({ error }) => this.errors.push(error),
+        }),
+        pendingClaimOwnerId: name,
         wakeSession: (sessionId) => this.signals.publish({ sessionId, kind: "wake" }),
         checkSession: (sessionId) => this.signals.publish({ sessionId, kind: "check" }),
         onDrainError: ({ error }) => this.errors.push(error),

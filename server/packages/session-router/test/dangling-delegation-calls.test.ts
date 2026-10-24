@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import type { PendingEventFence } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
@@ -69,8 +69,10 @@ async function lostWhileDelegating(calls: (child: { childId: string; executionId
     for (const held of state.claims.values()) if (held.ownerId === "lost-runner") held.expiresAtMs = 0;
     stores.pendingEventStore.restoreState(state);
     const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
-      sandboxManager: new DefaultSandboxManager({ sandboxClient: new FakeSandboxClient() }),
-      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+      sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: new FakeSandboxClient() }),
+        bindings: stores.delegationStore, sessions: stores.sessionStore,
+        workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+        onError: ({ error }) => errors.push(error) }),
       pendingClaimOwnerId: "takeover-runner", onDrainError: ({ error }) => errors.push(error) });
     await router.recoverPendingEvents();
     expect(await router.waitForIdle(4000)).toBe(true);

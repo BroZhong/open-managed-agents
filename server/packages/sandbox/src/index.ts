@@ -86,3 +86,18 @@ export {
   type PrepareOptions,
   type SkillInstallObserver,
 } from "./sandbox-manager.js";
+
+export {
+  DefaultTurnSandboxes,
+  isSandboxedAgent,
+  type TurnSandboxes,
+  type TurnSandboxesDeps,
+  type SandboxLease,
+  type SandboxLeaseRequest,
+  type SandboxPrepareFailure,
+  type TurnSettlement,
+} from "./turn-sandboxes.js";
+
+export { skillsInstallFailedText, type TurnExecutorGuard } from "./turn-executor.js";
+
+export { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";

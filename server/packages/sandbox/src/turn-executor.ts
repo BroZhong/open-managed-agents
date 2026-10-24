@@ -1,5 +1,5 @@
 import type { ToolExecutor, ToolFileSystem } from "@open-managed-agents/adapter-core";
-import { SkillInstallError } from "@oma-server/sandbox";
+import { SkillInstallError } from "./skill-install.js";
 
 /** What a Sandbox operation fails with when the Turn's Skill Install it waited for failed (ADR-0022). */
 export function skillsInstallFailedText(error: SkillInstallError): string {
@@ -7,9 +7,9 @@ export function skillsInstallFailedText(error: SkillInstallError): string {
 }
 
 export interface TurnExecutorGuard {
-  /** Refuses an operation unless this attempt still owns its Turn; present when delegations coordinate ownership. */
+  /** Refuses an operation unless this attempt still owns its Turn: a stopped attempt sends the Sandbox nothing. */
   assertOwner?(): Promise<void>;
-  /** An operation found the Turn's Skill Install failed: the Router ends the Turn with it. */
+  /** An operation found the Turn's Skill Install failed: the Turn ends with it. */
   skillInstallFailed(error: SkillInstallError): void;
 }
 

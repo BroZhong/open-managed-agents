@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, type SandboxManager } from "@oma-server/sandbox";
 import type { SandboxActivity, StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -101,6 +101,12 @@ async function harness(options: Script & { adapter?: Adapter } = {}) {
     return claimed;
   };
   const tool = options.tool ?? (async () => "ok");
+  /** One Runner's Turn Sandboxes over the shared stores. */
+  const sandboxesOf = (name: string, manager: SandboxManager = new DefaultSandboxManager({ sandboxClient })) => new DefaultTurnSandboxes({
+    manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
+    workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+    onError: ({ error }) => errors.push({ router: name, error }),
+  });
   const start = (name: string, deps: Partial<SessionRouterDeps> = {}) => {
     const adapter = options.adapter ?? stepsAdapter(options, async (execution, input) => {
       executions.push(execution);
@@ -111,10 +117,7 @@ async function harness(options: Script & { adapter?: Adapter } = {}) {
       resolveAdapter: () => ({ run: (input) => { inputs.push({ router: name, input }); return adapter.run(input); } }),
       pendingClaimOwnerId: name, pendingClaimLeaseMs: 200, pendingClaimRenewIntervalMs: 50,
       pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
-      ...(sandboxed ? {
-        sandboxManager: new DefaultSandboxManager({ sandboxClient }),
-        workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
-      } : {}),
+      ...(sandboxed ? { sandboxes: sandboxesOf(name) } : {}),
       // The Redis wake every Runner receives, this one included.
       wakeSession: (sessionId) => {
         for (const other of live.values()) void other.handleNewEvent(sessionId, agent).catch((error) => errors.push({ router: name, error }));
@@ -142,7 +145,7 @@ async function harness(options: Script & { adapter?: Adapter } = {}) {
     await stores.pendingEventStore.count(sessionId) === 0;
   /** What failed on a Runner that was not lost. */
   const failures = () => errors.filter(({ router }) => !lost.has(router));
-  return { stores, agent, session, createSession, executions, inputs, errors, failures, claims, claimAttempts, live, lost, start, shutDown, lose, enqueue, log, ofType, idle };
+  return { stores, agent, session, createSession, executions, inputs, errors, failures, claims, claimAttempts, live, lost, sandboxesOf, start, shutDown, lose, enqueue, log, ofType, idle };
 }
 
 describe("a Runner that shuts down hands its running Turns to the other Runners", () => {
@@ -451,8 +454,8 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
     }
     const sandboxes = () => new TrackedSandboxes({ sandboxClient: new FakeSandboxClient() });
     await h.enqueue("work");
-    const a = h.start("runner-a", { sandboxManager: sandboxes() });
-    h.start("runner-b", { sandboxManager: sandboxes() });
+    const a = h.start("runner-a", { sandboxes: h.sandboxesOf("runner-a", sandboxes()) });
+    h.start("runner-b", { sandboxes: h.sandboxesOf("runner-b", sandboxes()) });
     void a.handleNewEvent(h.session.id, h.agent);
     await toolRunning.opened;
 

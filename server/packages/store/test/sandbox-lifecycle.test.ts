@@ -44,8 +44,9 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
   });
   it('preserves managed execution through Router completion bookkeeping until settlement requests idle', async () => {
     const idle = vi.fn(async () => {});
-    // SessionRouter.completeTurn releases ordinary delegation use before ack.
-    // This must not consume the managed execution's settlement token.
+    // Completion bookkeeping (a Child execution's finish) releases ordinary
+    // delegation use before ack. This must not consume the managed
+    // execution's settlement token.
     await stores.delegationStore.releaseResourceUse(activity.sessionId, activity.fence);
     await ack();
     await lifecycle.finish(activity, idle);

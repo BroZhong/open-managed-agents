@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryStores } from "@oma-server/store-memory";
+import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { SkillInstallError, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultTurnSandboxes, SkillInstallError, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
@@ -28,15 +28,19 @@ function sandbox(fail: "prepare" | "install" | "checkWorkspace"): SandboxManager
 }
 
 const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" };
+/** The Turn Sandboxes over a failing Sandbox and the test's stores. */
+const sandboxes = (fail: Parameters<typeof sandbox>[0]) => (stores: MemoryStores): Partial<SessionRouterDeps> => ({
+  sandboxes: new DefaultTurnSandboxes({ manager: sandbox(fail), bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount }),
+});
 
 describe("Errors the Router writes", () => {
-  it.each<[code: string, sandboxed: boolean, deps: Partial<SessionRouterDeps>]>([
-    ["unsupported_runtime", false, { resolveAdapter: () => undefined }],
-    ["adapter_error", false, { resolveAdapter: () => ({ async run() { throw new Error("runtime crashed"); } }) }],
-    ["sandbox_unavailable", true, {}],
-    ["sandbox_prepare_failed", true, { sandboxManager: sandbox("prepare"), workspaceMount }],
-    ["skills_install_failed", true, { sandboxManager: sandbox("install"), workspaceMount }],
-    ["workspace_storage_error", true, { sandboxManager: sandbox("checkWorkspace"), workspaceMount }],
+  it.each<[code: string, sandboxed: boolean, deps: (stores: MemoryStores) => Partial<SessionRouterDeps>]>([
+    ["unsupported_runtime", false, () => ({ resolveAdapter: () => undefined })],
+    ["adapter_error", false, () => ({ resolveAdapter: () => ({ async run() { throw new Error("runtime crashed"); } }) })],
+    ["sandbox_unavailable", true, () => ({})],
+    ["sandbox_prepare_failed", true, sandboxes("prepare")],
+    ["skills_install_failed", true, sandboxes("install")],
+    ["workspace_storage_error", true, sandboxes("checkWorkspace")],
   ])("%s names the Turn it is written in", async (code, sandboxed, deps) => {
     const stores = createMemoryStores();
     const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test",
@@ -45,7 +49,7 @@ describe("Errors the Router writes", () => {
     const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
     const errors: unknown[] = [];
     const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => answers,
-      onDrainError: ({ error }) => errors.push(error), ...deps });
+      onDrainError: ({ error }) => errors.push(error), ...deps(stores) });
     await stores.pendingEventStore.enqueue(session.id, { type: "user.message",
       data: { content: [{ type: "text", text: "go" }] }, sessionThreadId: "sthr_primary" });
 

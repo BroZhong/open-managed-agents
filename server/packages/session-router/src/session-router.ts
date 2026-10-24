@@ -12,24 +12,15 @@ import type {
   SkillStore,
   DelegationStore,
   DelegationExecution,
-  SandboxActivity,
 } from "@oma-server/store";
-import { PendingEventClaimLostError, workspaceObjectPrefix, validateArtifactPath } from "@oma-server/store";
+import { PendingEventClaimLostError, validateArtifactPath } from "@oma-server/store";
 import { ManagedMcpResolutionError, resolveManagedMcpServers } from "@oma-server/mcp-catalog";
 import { randomUUID } from "node:crypto";
 import type { SessionStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { ActiveTurnWriter, TurnStreamStore } from "@oma-server/redis";
-import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf } from "@oma-server/sandbox";
-import type {
-  EnvSpec,
-  SandboxManager,
-  SandboxSession,
-  SkillSet,
-  SkillSetMember,
-  WorkspaceMountSpec,
-} from "@oma-server/sandbox";
-import { WORKSPACE_ENV, WORKSPACE_INSTRUCTIONS } from "./workspace-environment.js";
+import { isSandboxedAgent, SkillInstallError, skillSetOf, skillsInstallFailedText, WORKSPACE_INSTRUCTIONS } from "@oma-server/sandbox";
+import type { SandboxLease, SkillSet, SkillSetMember, TurnSandboxes } from "@oma-server/sandbox";
 import type {
   Adapter,
   AdapterInput,
@@ -46,7 +37,6 @@ import { DelegationCoordinator, outcomeFromEvents, isTerminalExecution, type Del
 import { TurnJournal, type JournalEvent } from "./turn-journal.js";
 import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts, type Takeover } from "./plan-resume.js";
 import { repairResult, type DanglingCallResolver, type RepairCause } from "./dangling-call-results.js";
-import { skillsInstallFailedText, turnExecutor } from "./turn-executor.js";
 import { INSTALL_ATTEMPT_STOPPED, SkillInstallSpans, skillInstallKey, unendedSkillInstalls, type SkillInstallEndData } from "./skill-install-spans.js";
 
 /**
@@ -135,22 +125,17 @@ export interface SessionRouterDeps {
   /** The Adapter for an Agent runtime, or undefined when this Runner cannot execute it. */
   resolveAdapter: (runtime: string) => Adapter | undefined;
   /**
-   * The single owner of sandbox lifecycle (ADR-0005 §1, design doc §2/§6).
-   * When present and the agent is sandboxed, the router `open`s exactly one
-   * {@link SandboxSession} per Session (cheap — lazy, no sandbox is started
-   * until the first tool call), injects it as the per-run {@link ToolExecutor},
-   * checks its Workspace availability at each Turn end, and `dispose`s it — destroying the
-   * sandbox — at session end. Absent ⇒ a sandboxed agent fails loud (see
+   * The Turn side of the Sandbox protocol (ADR-0023). Each attempt of a
+   * sandboxed Agent's Turn acquires a lease (cheap — lazy, no sandbox is
+   * started until the first tool call), injects its fenced executor as the
+   * per-run {@link ToolExecutor}, checks its Workspace availability at the
+   * Turn's end and releases it with the runtime's settlement evidence;
+   * termination reclaims through it. The Router keeps no Sandbox handle
+   * across Turns. Absent ⇒ a sandboxed agent fails loud (see
    * {@link isSandboxedButUnprovisionable}); an opted-out agent runs with no
    * injected executor (its own tool execution, no sandbox).
-   *
-   * Replaces the old `toolExecutorFactory` + per-session executor Map: the
-   * SandboxSession owns its own lifecycle and self-heal, so the router keeps
-   * only a lookup Map (`sessions`) and never a lifecycle registry.
    */
-  sandboxManager?: SandboxManager;
-  /** Deployment-owned mount identity; the Host derives its prefix from Session ownership. */
-  workspaceMount?: Omit<WorkspaceMountSpec, "prefix">;
+  sandboxes?: TurnSandboxes;
   /**
    * Per-Agent editable Files (IDENTITY/SOUL/USER/MEMORY). When present, the
    * router assembles the running Agent's Files into `appendSystemPrompt` in a
@@ -170,7 +155,7 @@ export interface SessionRouterDeps {
    * Tenant Skill metadata. Each Turn the router selects the Agent's
    * *equipped* Skills that are valid (exist, in this tenant, owned by this
    * Agent, with a current Skill Bundle) and hands their Skill Set to the
-   * Sandbox session, which installs it at `/skills/<skill-name>` unless the
+   * Turn's Sandbox lease, which installs it at `/skills/<skill-name>` unless the
    * binding records that Set for its Sandbox (ADR-0022). Only PostgreSQL is
    * read here; bundles go from OSS to the Sandbox, never through the Host.
    * Absent ⇒ no Skills.
@@ -189,20 +174,6 @@ export interface SessionRouterDeps {
    * persisted to PostgreSQL. When absent, deltas are live-only (hub chunks).
    */
   turnStreamStore?: TurnStreamStore;
-  /**
-   * Deployment-wide default sandbox environment variables, merged into every
-   * sandboxed Agent's `EnvSpec.env` (the Agent's own `sandbox.env` wins per key).
-   * Used to inject a shared secret a bundled CLI needs — e.g. `VFS_TOKEN` for the
-   * `vfs-cli` baked into the custom sandbox image — without requiring every Agent
-   * to carry the token in its own config. Sourced from server config (a K8s
-   * Secret → env), so the token never lives in code or in the Agent record.
-   * Absent ⇒ only the Agent's own `sandbox.env` is used (prior behavior).
-   */
-  defaultSandboxEnv?: Record<string, string>;
-  /** Deployment-managed sandbox variables, explicitly scoped per Agent id. */
-  managedSandboxEnvByAgentId?: Readonly<
-    Record<string, Readonly<Record<string, string>>>
-  >;
   /** Stable, process-unique pending owner. Injectable for deterministic tests. */
   pendingClaimOwnerId?: string;
   /** Pending lease duration; renewed while an Adapter/tool turn is running. */
@@ -249,16 +220,11 @@ export class SessionRouter {
   private readonly sessionStore: SessionStore;
   private readonly eventStreamHub: EventStreamHub;
   private readonly resolveAdapter: (runtime: string) => Adapter | undefined;
-  private readonly sandboxManager?: SandboxManager;
-  private readonly workspaceMount?: Omit<WorkspaceMountSpec, "prefix">;
+  private readonly sandboxes?: TurnSandboxes;
   private readonly agentFileStore?: AgentFileStore;
   private readonly agentStore?: AgentStore;
   private readonly skillStore?: SkillStore;
   private readonly turnStreamStore?: TurnStreamStore;
-  private readonly defaultSandboxEnv?: Record<string, string>;
-  private readonly managedSandboxEnvByAgentId?: Readonly<
-    Record<string, Readonly<Record<string, string>>>
-  >;
   private readonly pendingClaimOwnerId: string;
   private readonly pendingClaimLeaseMs: number;
   private readonly pendingClaimRenewIntervalMs: number;
@@ -267,7 +233,6 @@ export class SessionRouter {
   private readonly interruptedAdapterDrainTimeoutMs: number;
   private readonly onDrainError?: (failure: PendingRecoveryFailure) => void;
   private readonly activeSessions = new Map<string, ActiveSessionRun>();
-  private readonly settledActivities = new Map<string, SandboxActivity>();
   private readonly claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly claimRetryAttempts = new Map<string, number>();
   private readonly claimHeartbeats = new Map<string, ClaimHeartbeat>();
@@ -279,17 +244,6 @@ export class SessionRouter {
    * observed an empty queue but has not yet removed {@link activeSessions}.
    */
   private readonly wakeRequested = new Set<string>();
-  /**
-   * One {@link SandboxSession} per session, reused across turns. This is a
-   * **lookup** map, NOT a lifecycle registry: the SandboxSession owns its own
-   * lifecycle (lazy create on first primitive, transparent self-heal after a
-   * gateway reclaim, execution-resource cleanup on dispose). The router only remembers
-   * *which* session belongs to a sessionId so the same long-lived binding is
-   * reused turn after turn and disposed exactly once at session end. Each entry
-   * is a distinct session bound to that Session's EnvSpec — never shared across
-   * Sessions.
-   */
-  private readonly sessions = new Map<string, SandboxSession>();
   private readonly delegationStore?: DelegationStore;
   private readonly delegations?: DelegationCoordinator;
   /**
@@ -333,14 +287,11 @@ export class SessionRouter {
     this.sessionStore = deps.sessionStore;
     this.eventStreamHub = deps.eventStreamHub;
     this.resolveAdapter = deps.resolveAdapter;
-    this.sandboxManager = deps.sandboxManager;
-    this.workspaceMount = deps.workspaceMount;
+    this.sandboxes = deps.sandboxes;
     this.agentFileStore = deps.agentFileStore;
     this.agentStore = deps.agentStore;
     this.skillStore = deps.skillStore;
     this.turnStreamStore = deps.turnStreamStore;
-    this.defaultSandboxEnv = deps.defaultSandboxEnv;
-    this.managedSandboxEnvByAgentId = deps.managedSandboxEnvByAgentId;
     this.pendingClaimOwnerId = deps.pendingClaimOwnerId ?? `host_${randomUUID()}`;
     this.pendingClaimLeaseMs = deps.pendingClaimLeaseMs ?? 30_000;
     this.pendingClaimRenewIntervalMs = deps.pendingClaimRenewIntervalMs ?? 10_000;
@@ -689,7 +640,7 @@ export class SessionRouter {
   async recoverPendingEvents(
     onBackgroundError?: (failure: PendingRecoveryFailure) => void,
   ): Promise<PendingRecoverySummary> {
-    await this.retrySettledActivities();
+    await this.sandboxes?.retrySettlements();
     const summary: PendingRecoverySummary = {
       recovered: [],
       discarded: [],
@@ -740,8 +691,8 @@ export class SessionRouter {
   }
 
   /**
-   * Terminate a session: stop the active turn and destroy its sandbox (if one
-   * was ever created). Disposal releases execution resources; successfully
+   * Terminate a session: stop the active turn and reclaim its sandbox (if one
+   * was ever created). Reclamation releases execution resources; successfully
    * closed files already belong to the Workspace and are retained.
    */
   async terminateSession(sessionId: string): Promise<void> {
@@ -767,15 +718,14 @@ export class SessionRouter {
         void this.handleNewEvent(parent.id, parent.agent).catch((error) => this.reportDrainError(parent.id, error));
       }
     }
-    const session = this.sessions.get(sessionId);
-    if (session) await session.dispose();
-    // Keep a failed disposal's closed handle so a later DELETE can retry cleanup.
-    this.sessions.delete(sessionId);
+    // A failed reclamation throws: a later DELETE or the cleanup sweep retries it.
+    const session = await this.sessionStore.getById(sessionId);
+    if (session) await this.sandboxes?.reclaim(session);
   }
 
   /** Retry termination from durable state, including idle Sessions and lost owners. */
   async cleanupTerminatedSession(sessionId: string): Promise<boolean> {
-    await this.retrySettledActivities(sessionId);
+    await this.sandboxes?.retrySettlements(sessionId);
     const session = await this.sessionStore.getById(sessionId);
     if (!session || session.status !== "terminated") return false;
     const active = this.activeSessions.get(sessionId);
@@ -785,17 +735,9 @@ export class SessionRouter {
       return false; // Wait for actual settlement; abort acceptance is not exit proof.
     }
     this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? []);
-    const bindingId = session.delegation?.sandboxSessionId ?? session.id;
-    // Disposal rechecks shared users under binding coordination. A confirmed
-    // missing resource can also clear an obsolete pointer despite old unknown use.
-    const sandbox = this.sandboxFor(sessionId, session, session.agent, EMPTY_SKILL_SET);
-    if (sandbox) await sandbox.dispose();
-    this.sessions.delete(sessionId);
-    // Disposal may retain a binding that became busy after our first check.
-    // Keep its outbox request until the persistent identity is actually cleared.
-    return this.delegationStore
-      ? this.delegationStore.withEnvironmentLock(bindingId, async id => ({ sandboxId: id, value: id === null }))
-      : true;
+    // Keep the outbox request until the binding no longer records a Sandbox:
+    // reclamation retains one that another Session still uses.
+    return this.sandboxes ? this.sandboxes.reclaim(session) : true;
   }
 
   /**
@@ -809,125 +751,27 @@ export class SessionRouter {
     }
   }
 
-  private async finishSettledActivity(activity: SandboxActivity): Promise<void> {
-    const key = JSON.stringify([activity.bindingId, activity.sessionId, activity.fence]);
-    // This map holds observed exit evidence only. If PG is temporarily down,
-    // scans retry recording it; owner loss still leaves unknown activity safe.
-    this.settledActivities.set(key, activity);
-    await this.sandboxManager?.finishActivity?.(activity);
-    await this.delegationStore?.releaseResourceUse(activity.sessionId, activity.fence);
-    this.settledActivities.delete(key);
-  }
-
-  private async retrySettledActivities(sessionId?: string): Promise<void> {
-    for (const activity of this.settledActivities.values()) {
-      if (sessionId && activity.sessionId !== sessionId) continue;
-      try { await this.finishSettledActivity(activity); }
-      catch (error) { this.reportDrainError(activity.sessionId, error); }
-    }
-  }
-
-  /**
-   * Sandbox is mandatory (issue #54): an Agent is sandboxed unless it *explicitly*
-   * opts out with `sandbox.enabled === false`. A missing `sandbox` field therefore
-   * means sandboxed — a legacy Agent with no sandbox config runs in a sandbox and
-   * will fail loud if no manager can be provisioned, which is the intended
-   * mandatory behavior. Only an explicit `enabled: false` is treated as opted-out.
-   */
-  private isSandboxed(agentConfig: Agent): boolean {
-    return agentConfig.sandbox?.enabled !== false;
-  }
-
   /**
    * The fail-loud condition (issue #54): the Agent is sandboxed (mandatory by
-   * default) but no {@link SandboxManager} was configured, so no sandbox can be
+   * default) but no {@link TurnSandboxes} were configured, so no sandbox can be
    * provisioned. Running the turn anyway would let the adapter fall back to
    * built-in fs/bash tools writing to the server pod filesystem — the exact bug
    * this guard prevents. When true the router emits a `session.error` and skips
    * the adapter instead of running unsandboxed.
    */
   private isSandboxedButUnprovisionable(agentConfig: Agent): boolean {
-    return this.isSandboxed(agentConfig) && !this.sandboxManager;
-  }
-
-  /**
-   * Compute the complete recipe the SandboxManager needs for this Session
-   * (design doc §1/§6). A **value**, no I/O: the tenant/workspace binding, the
-   * Agent's image/env, and the Skill Set to install at `/skills/<skill-name>`
-   * outside the persistent Workspace. The Skill Set is precomputed by the
-   * caller (it needs async store lookups for ownership and validation).
-   *
-   * The sandbox env is the deployment-wide {@link defaultSandboxEnv} overlaid
-   * with the Agent's own `sandbox.env`, then any Host-managed values explicitly
-   * scoped to this Agent id. Agents may override ordinary defaults (e.g.
-   * `VFS_TOKEN`); managed values never cross an Agent boundary.
-   */
-  private specFor(
-    session: Session,
-    agent: Agent,
-    skills: SkillSet,
-  ): EnvSpec {
-    if (!this.workspaceMount) throw new Error("OSS Workspace mount is not configured");
-    const mergedEnv = {
-      ...this.defaultSandboxEnv,
-      ...agent.sandbox?.env,
-      ...this.managedSandboxEnvByAgentId?.[agent.id],
-      ...WORKSPACE_ENV,
-    };
-    return {
-      tenantId: session.tenantId,
-      workspaceId: session.workspaceId,
-      workspaceMount: { ...this.workspaceMount, prefix: workspaceObjectPrefix(session.tenantId, session.workspaceId) },
-      image: agent.sandbox?.image,
-      env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
-      skills,
-    };
-  }
-
-  /**
-   * Get (or lazily open) this session's {@link SandboxSession} (design doc §6).
-   * `open` is **cheap** — it starts no sandbox; the first filesystem/code
-   * primitive triggers create+mount verification+Skill Install — so obtaining it here spins
-   * nothing up for a pure-chat turn. The session is remembered in {@link sessions}
-   * and reused across turns; it is disposed only at session end.
-   *
-   * Returns undefined when there is no manager or the agent opted out of the
-   * sandbox — in both cases the adapter runs with no injected executor.
-   */
-  private sandboxFor(
-    sessionId: string,
-    session: Session,
-    agent: Agent,
-    skills: SkillSet,
-  ): SandboxSession | undefined {
-    if (!this.sandboxManager || !this.isSandboxed(agent)) return undefined;
-    let sandbox = this.sessions.get(sessionId);
-    if (!sandbox) {
-      // A Child Session shares its root's binding, and so its Skill Install record.
-      const bindingId = session.delegation?.sandboxSessionId ?? sessionId;
-      const delegationStore = this.delegationStore;
-      sandbox = this.sandboxManager.open(this.specFor(session, agent, skills), delegationStore ? {
-        id: bindingId,
-        withLock: (work) => delegationStore.withEnvironmentLock(bindingId, work),
-        canReclaim: async () => !await delegationStore.hasResourceUsers(bindingId),
-        canExecute: async () => (await this.sessionStore.getById(sessionId))?.status !== "terminated",
-        installedSkills: () => delegationStore.installedSkillSet(bindingId),
-        recordSkillsInstalled: (installed) => delegationStore.recordSkillSetInstall(bindingId, installed),
-      } : undefined);
-      this.sessions.set(sessionId, sandbox);
-    }
-    return sandbox; // lazy: no sandbox actually started yet.
+    return isSandboxedAgent(agentConfig) && !this.sandboxes;
   }
 
   /** Check availability without changing the completed answer or claiming all handles are saved. */
   private async checkWorkspace(
     journal: TurnJournal,
-    sandbox: SandboxSession,
+    lease: SandboxLease,
     pendingEventId: string,
     turnId: string,
   ): Promise<void> {
     try {
-      await sandbox.checkWorkspace();
+      await lease.checkWorkspace();
     } catch {
       this.recordTurnError(journal, pendingEventId, turnId, "workspace_storage_check", {
         message: "Workspace storage could not be checked. The answer is retained; file save status is unconfirmed. Retry the file operation or check the Workspace before continuing.",
@@ -1173,7 +1017,6 @@ export class SessionRouter {
       const data = pending.data as { executionId?: string };
       if (data.executionId) await this.delegationStore.markNotificationProcessed(data.executionId, pendingFence);
     }
-    await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
     journal.record({ type: "session.turn_completed", data: { pendingEventId, turnId } },
       this.turnKey(pendingEventId, "completed"));
     await journal.flush();
@@ -1258,9 +1101,12 @@ export class SessionRouter {
       // Set when the attempt hands its Turn over (#254): its claim is
       // released rather than left to expire, so the next claim takes over now.
       let handedOff = false;
-      let sandboxActivity: import('@oma-server/store').SandboxActivity | undefined;
-      let activitySandbox: SandboxSession | undefined;
+      // The attempt's Sandbox lease, released when the attempt ends with the
+      // evidence of how its runtime ended: settled once it ran and returned,
+      // or never started; otherwise its run, which the lease may watch.
+      let lease: SandboxLease | null = null;
       let executionSettled = false;
+      let runtime: Promise<unknown> | undefined;
       let turnId: string | undefined;
       const turnController = new AbortController();
       const forwardOuterAbort = () => {
@@ -1515,9 +1361,8 @@ export class SessionRouter {
       // in-sandbox `skillPaths` handed to the adapter, so the two never diverge.
       let equippedSkills: EquippedSkill[] = [];
 
-      // Bind the per-session SandboxSession (lazy — no sandbox yet). A pure-chat
-      // turn never touches it, so nothing is created. Needs the Session record
-      // for its tenant/workspace binding.
+      // The Turn's Sandbox lease needs the Session record for its
+      // tenant/workspace binding.
       const session = await this.sessionStore.getById(sessionId);
       if (stopped) return;
       if (!session) {
@@ -1535,54 +1380,58 @@ export class SessionRouter {
       // even a cancellation. Checked again after the claim read, so a stop that
       // lands during it still wins.
       const assertExecutionOwner = async () => {
-        if (!stopped) await this.delegations!.assertClaim(delegationRun);
+        if (!stopped && this.delegations) await this.delegations.assertClaim(delegationRun);
         if (stopped) throw new PendingEventClaimLostError(sessionId, pendingFence.eventId, pendingFence.ownerId, pendingFence.generation);
       };
-      await this.delegationStore?.acquireResourceUse(sessionId,
-        session.delegation?.sandboxSessionId ?? sessionId, pendingFence);
-      executionSettled = true; // No runtime has started, including preparation failures.
-      const activity = { bindingId: session.delegation?.sandboxSessionId ?? sessionId, sessionId, fence: pendingFence };
-      if (this.isSandboxed(currentAgent) && await this.sandboxManager?.beginActivity?.(activity, turnController.signal)) {
-        sandboxActivity = activity;
-        executionSettled = true; // No runtime has started yet.
-      }
-      let sandbox: SandboxSession | undefined;
+      let skills: SkillSet;
       try {
-          equippedSkills = await this.equippedSkills(currentAgent);
-          if (stopped) return;
-          const skills = skillSetOf(equippedSkills.map(({ bundle }) => bundle));
-          sandbox = this.sandboxFor(sessionId, session, currentAgent, skills);
-          activitySandbox = sandbox;
-          skillInstalls = new SkillInstallSpans({ turnId, generation: claim.generation, write: (event, keySegment) => {
-            journal.record(event, this.turnKey(pendingEvent.id, keySegment));
-            // Written at once, so the stream shows it live; a failed write
-            // stops the attempt through the journal.
-            journal.flush().catch(() => {});
-          } });
-          // The Skill Set is computed per attempt: a Resumed Turn installs the
-          // current one. Preparation verifies the mount and decides the
-          // install; the install runs beside inference, and the first Sandbox
-          // operation waits for it (ADR-0022).
-          await sandbox?.prepare(skills, { signal: turnController.signal, skillInstalls });
-          if (stopped) return;
-        } catch (error) {
-          // Deciding the install can fail (reading the binding's record); its
-          // stage names that, and its reason carries no URL.
-          const code = error instanceof SkillInstallError ? "skills_install_failed" : "sandbox_prepare_failed";
-          const refreshError = {
-            message: error instanceof Error ? error.message : "Sandbox preparation failed",
-            code,
-          };
-          if (!await endTurnWithError(turnId, code, refreshError)) return;
-          continue;
+        equippedSkills = await this.equippedSkills(currentAgent);
+        skills = skillSetOf(equippedSkills.map(({ bundle }) => bundle));
+      } catch (error) {
+        // An unsafe or duplicate Skill name fails the Turn visibly before execution.
+        if (!await endTurnWithError(turnId, "sandbox_prepare_failed", {
+          message: error instanceof Error ? error.message : "Sandbox preparation failed",
+          code: "sandbox_prepare_failed",
+        })) return;
+        continue;
       }
+      if (stopped) return;
+      skillInstalls = new SkillInstallSpans({ turnId, generation: claim.generation, write: (event, keySegment) => {
+        journal.record(event, this.turnKey(pendingEvent.id, keySegment));
+        // Written at once, so the stream shows it live; a failed write
+        // stops the attempt through the journal.
+        journal.flush().catch(() => {});
+      } });
+      // The Turn's Sandbox lease (none for an Agent that opted out): lazy, a
+      // pure-chat Turn creates nothing. The Skill Set is computed per attempt:
+      // a Resumed Turn installs the current one. Preparation verifies the
+      // mount and decides the install; the install runs beside inference, and
+      // the first Sandbox operation waits for it (ADR-0022).
+      lease = await this.sandboxes?.acquire({
+        session, agent: currentAgent, fence: pendingFence, signal: turnController.signal, skills, skillInstalls,
+        assertOwner: assertExecutionOwner,
+        // The first operation to find the install failed ends the Turn: the
+        // Adapter run is aborted and the Turn closed with its error. A Turn
+        // already stopping or interrupted ends as it would anyway.
+        skillInstallFailed: (error) => {
+          if (installFailure || turnController.signal.aborted) return;
+          installFailure = error;
+          turnController.abort(error);
+        },
+      }) ?? null;
+      executionSettled = true; // No runtime has started, including preparation failures.
+      if (lease?.failure) {
+        if (!await endTurnWithError(turnId, lease.failure.code, lease.failure)) return;
+        continue;
+      }
+      if (stopped) return;
 
       // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
-      // skipped). Skills are not materialized on the Host — the SandboxManager
-      // installs them into the sandbox (ADR-0022); the adapter is pointed at
-      // their in-sandbox `/skills/<skill-name>` roots below.
+      // skipped). Skills are not materialized on the Host — the Turn's Sandbox
+      // installs them (ADR-0022); the adapter is pointed at their in-sandbox
+      // `/skills/<skill-name>` roots below.
       const appendSystemPrompt = await this.assembleAgentFiles(currentAgent);
-      if (sandbox) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
+      if (lease) appendSystemPrompt.push(WORKSPACE_INSTRUCTIONS);
       if (stopped) return;
       const skillPaths = equippedSkills.map(({ descriptor }) => `/skills/${descriptor.name}`);
       const skillDescriptors = equippedSkills.map(({ descriptor }) => descriptor);
@@ -1605,17 +1454,7 @@ export class SessionRouter {
           promotedEvent,
           currentAgent,
           priorEvents,
-          sandbox && turnExecutor(sandbox, {
-            ...(this.delegations ? { assertOwner: assertExecutionOwner } : {}),
-            // The first operation to find the install failed ends the Turn:
-            // the Adapter run is aborted and the Turn closed with its error.
-            // A Turn already stopping or interrupted ends as it would anyway.
-            skillInstallFailed: (error) => {
-              if (installFailure || turnController.signal.aborted) return;
-              installFailure = error;
-              turnController.abort(error);
-            },
-          }),
+          lease?.executor,
           appendSystemPrompt,
           skillPaths,
           skillDescriptors,
@@ -1696,9 +1535,9 @@ export class SessionRouter {
         return durable;
       };
       // The Adapter is a pure translator: it runs directly and routes any tool
-      // calls through the injected SandboxSession (ADR-0002 §1–2, ADR-0005 §1).
+      // calls through the lease's executor (ADR-0002 §1–2, ADR-0005 §1).
       // There is no separate sandbox orchestrator — the sandbox lives behind the
-      // session and is invisible to the router and the adapter alike.
+      // lease and is invisible to the router and the adapter alike.
       if (stopped) return;
       if (this.handingOff) { handedOff = true; return; }
       executionSettled = false;
@@ -1706,24 +1545,15 @@ export class SessionRouter {
         (result): AdapterOutcome => ({ result }),
         (error: unknown): AdapterOutcome => ({ error }),
       );
+      runtime = run;
       const outcome = await this.awaitAdapter(run, turnController.signal, attemptStopped);
       // However the attempt ends, the Adapter loses its write entry before any
       // closing event: what it recorded so far is written by the next flush,
       // anything later is dropped (ADR-0020).
       journal.revokeAdapter();
-      if (outcome) {
-        executionSettled = true;
-      } else if (sandboxActivity && !handedOff) {
-        // An expired lease or a bounded Interrupt wait is not proof that the
-        // runtime ended. Observe its natural end without blocking the Session.
-        // A Turn detached at the handoff deadline is not watched: this Runner
-        // is exiting, and the next owner's admitted generation supersedes the
-        // abandoned activity (ADR-0019).
-        const activity = sandboxActivity;
-        void run.then(async () => {
-          if (activitySandbox?.executionSettled?.() !== false) await this.finishSettledActivity(activity);
-        }).catch((error) => this.reportDrainError(sessionId, error));
-      }
+      // An expired lease or a bounded Interrupt wait is not proof that the
+      // runtime ended: the lease is then released with the run to watch.
+      if (outcome) executionSettled = true;
       // A stopped attempt leaves the Turn, and the Delta stream all its
       // attempts share, to the attempt that continues it.
       if (stopped) return;
@@ -1779,8 +1609,8 @@ export class SessionRouter {
         return;
       }
 
-      if (sandbox) {
-        await this.checkWorkspace(journal, sandbox, pendingEvent.id, turnId);
+      if (lease) {
+        await this.checkWorkspace(journal, lease, pendingEvent.id, turnId);
       }
       if (skillInstalls) await this.checkSkillInstall(journal, skillInstalls, pendingEvent.id, turnId);
 
@@ -1800,14 +1630,12 @@ export class SessionRouter {
         throw error;
       } finally {
         // A completed history marker, expired lease or bounded Interrupt wait
-        // is not proof of actual runtime settlement.
+        // is not proof of actual runtime settlement: an unsettled runtime is
+        // watched to its natural end, unless the Turn was detached at the
+        // handoff deadline. The Sandbox session goes with the lease.
         try {
-          if (sandboxActivity && executionSettled &&
-            activitySandbox?.executionSettled?.() !== false) {
-            await this.finishSettledActivity(sandboxActivity);
-          } else if (executionSettled && activitySandbox?.executionSettled?.() !== false) {
-            await this.delegationStore?.releaseResourceUse(sessionId, pendingFence);
-          }
+          await lease?.release(executionSettled ? { settled: true }
+            : { settled: false, settles: handedOff ? undefined : runtime });
         } finally {
           skillInstalls?.close();
           stopHeartbeat();
@@ -1830,8 +1658,8 @@ export class SessionRouter {
     }
 
     // The session's sandbox (if any was created) is intentionally kept across
-    // turns and destroyed only when the session is explicitly terminated, via
-    // terminateSession → SandboxSession.dispose.
+    // turns in its binding and reclaimed only when the session is explicitly
+    // terminated, via terminateSession → TurnSandboxes.reclaim.
   }
 
   /** Resolve mutable Agent configuration live for an existing conversation. */

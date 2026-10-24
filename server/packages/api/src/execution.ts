@@ -1,5 +1,5 @@
 import { SessionRouter } from "@oma-server/session-router";
-import { DefaultSandboxManager, E2BSandboxClient, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, E2BSandboxClient, type SandboxManager, type WorkspaceMountSpec } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { PgSessionCleanupStore, type PgStores, type Pool, type ArtifactStore, type SkillBundleStore, type OSSArtifactStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
@@ -43,15 +43,23 @@ export async function startExecution(deps: PgStores & {
     // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
     skillBundleStore: deps.skillBundleStore,
   }) : undefined);
+  const workspaceMount = execution?.workspaceMount ?? workspaceConfig?.mount;
+  const reportDrainFailure = (failure: { sessionId: string; error: unknown }) => console.error("Runner drain failed:", failure);
+  // The Turn side of the Sandbox protocol (ADR-0023): the Router only acquires
+  // and releases leases; bindings, resource uses and activity live behind it.
+  const sandboxes = sandboxManager && workspaceMount ? new DefaultTurnSandboxes({
+    manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount, ...sandboxEnvPolicy,
+    onError: reportDrainFailure,
+  }) : undefined;
   const router = new SessionRouter({
-    ...deps, sandboxManager, workspaceMount: execution?.workspaceMount ?? workspaceConfig?.mount, ...sandboxEnvPolicy,
+    ...deps, sandboxes,
     resolveAdapter: execution?.resolveAdapter ??
       runtimeAdapters(deps.local ? { mock: mockAdapter } : { "pi-agent": piAgentAdapter, mock: mockAdapter }),
     wakeSession: sessionId => deps.signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => deps.signals.publish({ sessionId, kind: "check" }),
     maxConcurrentSubagents: Number(process.env.SUBAGENT_MAX_CONCURRENT ?? 4),
     maxSubagentModelSteps: Number(process.env.SUBAGENT_MAX_MODEL_STEPS ?? 500),
-    onDrainError: failure => console.error("Runner drain failed:", failure),
+    onDrainError: reportDrainFailure,
   });
   const cleanup = new PgSessionCleanupStore(deps.pool);
   const dispatch = new RunnerDispatch({

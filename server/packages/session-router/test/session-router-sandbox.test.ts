@@ -6,6 +6,7 @@ import { PendingEventClaimLostError, packSkillBundle } from "@oma-server/store";
 import {
   FakeSandboxClient,
   DefaultSandboxManager,
+  DefaultTurnSandboxes,
 } from "@oma-server/sandbox";
 import type {
   PendingEventStore,
@@ -123,8 +124,9 @@ const legacyAgent: Agent = {
 
 /**
  * Wire the real Sandbox Manager with a shared mounted Workspace and an
- * in-memory Skill Bundle store. The Router still owns the complete
- * Session lifecycle and emits the durable completion/error events.
+ * in-memory Skill Bundle store, behind the Turn Sandboxes over the in-memory
+ * environment bindings. The Router still owns the complete Session
+ * lifecycle and emits the durable completion/error events.
  */
 function createDeps(opts: {
   adapter: Adapter;
@@ -139,7 +141,7 @@ function createDeps(opts: {
     Record<string, Readonly<Record<string, string>>>
   >;
 }) {
-  const { eventLogStore, pendingEventStore, sessionStore } = createMemoryStores();
+  const { eventLogStore, pendingEventStore, sessionStore, delegationStore } = createMemoryStores();
   const eventStreamHub = new InProcessEventStreamHub();
   const sandboxClient = opts.sandboxClient ?? new FakeSandboxClient();
   const skillBundleStore = opts.skillBundleStore ?? new InMemorySkillBundleStore();
@@ -156,17 +158,21 @@ function createDeps(opts: {
     sessionStore,
     eventStreamHub,
     resolveAdapter: () => opts.adapter,
-    sandboxManager,
-    workspaceMount: {
-      bucket: "agentry",
-      agentName: "agentry-workspace",
-      pvName: "agentry-workspace-oss",
-      credentialProviderName: "agentry-oss-rw",
-    },
+    sandboxes: sandboxManager && new DefaultTurnSandboxes({
+      manager: sandboxManager,
+      bindings: delegationStore,
+      sessions: sessionStore,
+      workspaceMount: {
+        bucket: "agentry",
+        agentName: "agentry-workspace",
+        pvName: "agentry-workspace-oss",
+        credentialProviderName: "agentry-oss-rw",
+      },
+      defaultSandboxEnv: opts.defaultSandboxEnv,
+      managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
+    }),
     skillStore: opts.skillStore,
     agentStore: opts.agentStore,
-    defaultSandboxEnv: opts.defaultSandboxEnv,
-    managedSandboxEnvByAgentId: opts.managedSandboxEnvByAgentId,
   });
 
   return {

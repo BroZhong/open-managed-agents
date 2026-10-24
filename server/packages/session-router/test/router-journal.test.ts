@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { InMemoryTurnStreamStore } from "@oma-server/redis";
-import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
+import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient } from "@oma-server/sandbox";
 import { PendingEventClaimLostError, presentEvent, type StoredEvent } from "@oma-server/store";
 import type { Adapter, DurableEvent, SessionEvent, StreamEvent, TurnJournalPort } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -58,8 +58,10 @@ async function harness(adapter: Adapter, options: { sandboxed?: boolean } = {}) 
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     ...(options.sandboxed ? {
-      sandboxManager: new DefaultSandboxManager({ sandboxClient }),
-      workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+      sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient }),
+        bindings: stores.delegationStore, sessions: stores.sessionStore,
+        workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
+        onError: ({ error }) => errors.push(error) }),
     } : {}),
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
     onDrainError: ({ error }) => errors.push(error),
