@@ -310,6 +310,97 @@ synchronous child, an asynchronous child that finishes after its parent,
 result wakeup, cross-Host resume, steer, Interrupt, full execution traces and
 usage. Check failure and budget-exhaustion results separately from file saves.
 
+### Sandbox binding reconciliation on oma-test (#292)
+
+Live acceptance of [ADR-0023](../docs/adr/0023-sandbox-binding-reconciliation.md) on the
+test environment only. `scripts/verify-sandbox-reconcile.mjs` runs in the oma-test API
+Pod: it refuses any schema but `oma_test` and any base URL but
+`https://agentry-test.welltop.tech/api`, creates its own tenant with a temporary API key
+per phase, reads only its own Sessions (plus aggregate counts in `migration`), only
+SELECTs inside READ ONLY transactions, and never kills, scales or restarts anything. It
+prints `DISRUPT_NOW ...` where the operator acts. `scripts/run-sandbox-reconcile-acceptance.sh`
+is the operator side: it copies the script into a fresh `/tmp` directory of the API Pod,
+runs one phase without `kubectl exec -i` (output written after stdin's EOF is lost on
+these ACS Pods), checks the script's end marker and copies the evidence back (mode 0600)
+after every phase. It also finds the Runner Pod that holds a Turn (`owner`), `kill -9`s a
+Runner's node process (`kill-runner`) and summarizes `sandbox_sweep` log lines
+(`sweep-logs`). The script header lists every assumption about event and API shapes that
+must be re-checked once #284–#291 land; they are collected in its `SHAPES` object.
+
+The test Agent uses the separate SandboxSet `sandbox-system/oma-scale-test-20261021` and
+blanks business credentials and URLs in `sandbox.env`, as the 2026-10-21 burst did, so the
+burst does not drain the shared `auto-story-v2` pool. With 5 warm replicas, about 195 of 200
+creates are cold starts; check cluster capacity first. Run phases one at a time and do not
+interrupt them.
+
+```bash
+export KUBECONFIG=~/.kube/agent-platform-config
+export OMA_RECONCILE_EVIDENCE=~/oma-292/evidence.json; mkdir -p ~/oma-292
+R=deploy/scripts/run-sandbox-reconcile-acceptance.sh
+
+# 1. Read-only sweep report before the release.
+deploy/scripts/run-sandbox-sweep-report.sh test > ~/oma-292/report-before.md
+# 2. Rollback images, then no Runner: no create may be in flight during the migration.
+kubectl -n oma-test get deploy oma-api oma-runner oma-web \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}' | tee ~/oma-292/rollback-images.txt
+kubectl -n oma-test scale deploy/oma-runner --replicas=0
+kubectl -n oma-test wait --for=delete pod -l app=oma-runner --timeout=180s
+$R migration pre                       # no live claim; records the pending rows
+# 3. Migration 0024 (#284; confirm the file name), reviewed, applied by the privileged
+#    migration operator as in "Test migrations". Prepare its rollback SQL the same way.
+node deploy/scripts/migration-for-env.mjs test deploy/migrations/0024_<name>.sql > ~/oma-292/0024-test.sql
+# 4. The new image, built on vfs-dev from the release commit (see "Image pipeline"), then
+#    "Test releases": the full manifest also returns oma-runner to 2 replicas. deploy-app.sh
+#    targets production only.
+node deploy/scripts/render.mjs test API_VERSION RUNNER_VERSION WEB_VERSION > /tmp/oma-test.yaml
+kubectl diff -f /tmp/oma-test.yaml; kubectl apply -f /tmp/oma-test.yaml
+for d in redis oma-api oma-runner oma-web; do kubectl -n oma-test rollout status deploy/$d; done
+curl -fsS https://agentry-test.welltop.tech/api/health | jq -e 'select(.status == "ok")'
+$R migration post                      # creation_pending gone, every pending row Creating(epoch)
+# 5. Burst with a rolling restart during creation.
+kubectl -n sandbox-system get sandboxset oma-scale-test-20261021
+$R init
+$R burst 200                           # on DISRUPT_NOW, in another terminal:
+#   date -u +%FT%TZ; kubectl -n oma-test rollout restart deploy/oma-runner && kubectl -n oma-test rollout status deploy/oma-runner
+$R mark rollout-restart <time printed by date>
+$R check                               # up to 25 min; exit 1 names every failed acceptance check
+# 6. kill -9 during creation. A warm claim ends Creating within seconds; emptying the test
+#    pool first makes the create a cold start (~110 s). Restore it right after the kill, so a
+#    re-create after reconciliation can take a warm Sandbox again.
+kubectl -n sandbox-system get sandboxset oma-scale-test-20261021 -o jsonpath='{.spec.replicas}'   # note it
+kubectl -n sandbox-system patch sandboxset oma-scale-test-20261021 --type merge -p '{"spec":{"replicas":0}}'
+$R kill-start                          # on CLAIMED: $R owner <session>  → OWNER_POD
+                                       # on DISRUPT_NOW: $R kill-runner <OWNER_POD>  → KILLED_AT
+$R mark kill <KILLED_AT>               # fails if the binding was no longer Creating
+kubectl -n sandbox-system patch sandboxset oma-scale-test-20261021 --type merge -p '{"spec":{"replicas":<noted>}}'
+$R kill-finish
+# 7. After one sweeper period (10 min with jitter) since kill-finish:
+deploy/scripts/run-sandbox-sweep-report.sh test > ~/oma-292/report-after.md
+node deploy/scripts/verify-sandbox-reconcile.mjs report-rows "$OMA_RECONCILE_EVIDENCE" ~/oma-292/report-after.md
+#    then wait for the next round of either Runner and compare it with that report:
+$R sweep-logs 90m ~/oma-292/report-after.md
+$R migration after-sweep
+# 8. Termination reclaims by binding; the report shows what is left on the gateway.
+$R cleanup
+deploy/scripts/run-sandbox-sweep-report.sh test > ~/oma-292/report-cleanup.md
+node deploy/scripts/verify-sandbox-reconcile.mjs report-rows "$OMA_RECONCILE_EVIDENCE" ~/oma-292/report-cleanup.md
+$R finish                              # deletes the run directory from the API Pod
+```
+
+| #292 acceptance | Evidence |
+| --- | --- |
+| Old column dropped; pending rows reconciled | `migration post`; `migration after-sweep`; `unresolved` 0 in the report after a period (Creating(epoch) rows without a Sandbox reconcile on first use) |
+| 200 + rolling restart: no binding Creating past its deadline, no Turn ending with `sandbox_unavailable` | `check` (also: every Turn completed and used its Sandbox; prepare p50/p95/max, tool error codes, takeovers, `environment.state`) |
+| No orphan after one sweep | `report-rows` on the report after one period: no `kill` or `adopt` row of this run |
+| kill -9 during create: tools again within 180 s of the takeover | `kill-start`, `mark kill`, `kill-finish` (also within 180 s + 60 s of the intent) |
+| `sandbox_sweep` periodic and equal to the read-only report | `sweep-logs`: consecutive rounds 5–15 min apart, the first round after the report equals its planned counters |
+
+`sweep-logs` reads the current and previous container of each Runner Pod that exists; Pods
+replaced by the rolling restart have taken their logs with them, and a restart resets a
+Runner's schedule. Write the result to `docs/verification/sandbox-reconcile-oma-test-<date>.md`
+with the evidence JSON. Rollback: Runners to 0, the rollback SQL through
+`migration-for-env.mjs test`, then the images in `rollback-images.txt` through `render.mjs test`.
+
 ### Shared native sandbox credentials
 
 The Host reads `sandbox-system/base-secret` at startup and supplies its valid
