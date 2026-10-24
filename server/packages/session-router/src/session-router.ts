@@ -101,6 +101,25 @@ class PendingLeaseLostError extends Error {
   }
 }
 
+/**
+ * The Agent's equipped Skills cannot be installed under their names, which
+ * become `/skills/<name>` (ADR-0022): one is unsafe, or two are equal. The
+ * Turn ends with `skills_invalid` before it runs.
+ */
+class SkillSetInvalid extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SkillSetInvalid";
+  }
+}
+
+/** One safe directory name: a single, literal path component. */
+function isDirectoryName(name: string): boolean {
+  if (name.includes("/")) return false;
+  try { validateArtifactPath(name); return true; }
+  catch { return false; }
+}
+
 export interface SessionRouterDeps {
   /**
    * Tell every Runner that a Session's input may be claimable: any of them
@@ -1436,11 +1455,11 @@ export class SessionRouter {
         equippedSkills = await this.equippedSkills(currentAgent);
         skills = skillSetOf(equippedSkills.map(({ bundle }) => bundle));
       } catch (error) {
-        // An unsafe or duplicate Skill name fails the Turn visibly before execution.
-        if (!await endTurnWithError(turnId, "sandbox_prepare_failed", {
-          message: error instanceof Error ? error.message : "Sandbox preparation failed",
-          code: "sandbox_prepare_failed",
-        })) return;
+        // An unsafe or duplicate Skill name fails the Turn visibly before
+        // execution (ADR-0022). A store failure is no answer about the
+        // names: like any other, the claim's retry runs the Turn again.
+        if (!(error instanceof SkillSetInvalid)) throw error;
+        if (!await endTurnWithError(turnId, "skills_invalid", { message: error.message, code: "skills_invalid" })) return;
         continue;
       }
       if (stopped) return;
@@ -1879,10 +1898,9 @@ export class SessionRouter {
       if (skill.bundleSha256 === null || skill.bundleSize === null) continue;
       // Names become path components without rewriting: reject ambiguity rather
       // than silently hiding a second equipped Skill behind the first.
-      validateArtifactPath(skill.name);
-      if (skill.name.includes("/")) throw new Error("Skill name must be one directory name");
+      if (!isDirectoryName(skill.name)) throw new SkillSetInvalid(`Equipped Skill name is not one safe directory name: ${JSON.stringify(skill.name)}`);
       if (valid.some(({ descriptor }) => descriptor.name === skill.name)) {
-        throw new Error(`Equipped Skills have a duplicate name: ${skill.name}`);
+        throw new SkillSetInvalid(`Equipped Skills have a duplicate name: ${skill.name}`);
       }
       valid.push({
         id: skillId,

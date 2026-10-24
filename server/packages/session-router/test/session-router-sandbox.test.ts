@@ -1223,9 +1223,25 @@ describe("SessionRouter — end-to-end integration (#78)", () => {
     expect(adapterRan).toBe(false);
     expect(sandboxClient.created).toHaveLength(0);
     expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data).toContainEqual(expect.objectContaining({
-      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "sandbox_prepare_failed" }) }),
+      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "skills_invalid",
+        message: expect.stringMatching(names.length === 2 ? /duplicate name: same/ : /not one safe directory name/) }) }),
     }));
     expect((await sessionStore.getById(session.id))?.status).toBe("idle");
+  });
+
+  it("leaves the Turn of an Agent whose Skills could not be read to the claim's retry, not to skills_invalid", async () => {
+    const skillStore = new InMemorySkillStore();
+    vi.spyOn(skillStore, "getById").mockRejectedValue(new Error("database unavailable"));
+    let adapterRan = false;
+    const adapter: Adapter = { async run() { adapterRan = true; return "finished"; } };
+    const { router, sessionStore, pendingEventStore, eventLogStore } = createDeps({ adapter, skillStore });
+    const agent = { ...sandboxedAgent, skills: ["skill_1"] };
+    const session = await sessionStore.create({ tenantId: "tenant_1", agentId: agent.id, agent, workspaceId: "ws_1" });
+    await enqueue(pendingEventStore, session.id, "load equipped Skills");
+    await expect(router.handleNewEvent(session.id, agent)).rejects.toThrow("database unavailable");
+    expect(adapterRan).toBe(false);
+    expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data.filter((stored) => stored.type === "session.error")).toEqual([]);
+    expect(await pendingEventStore.peek(session.id)).not.toBeNull();
   });
 
   it("an existing Session picks up live Agent system, newly equipped Skills, and MCP", async () => {

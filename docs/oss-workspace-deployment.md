@@ -172,7 +172,8 @@ requires them.
 Equipped Skills are installed read-only outside the Workspace at
 `/skills/<skill-name>/`, a symlink to the installed Skill Set version, and only
 when the Agent's Skill Set changed. Unsafe or duplicate equipped names fail
-visibly; neither Skills nor Agent Files become Workspace objects.
+the Turn visibly with `session.error` `skills_invalid`, before it runs; neither
+Skills nor Agent Files become Workspace objects.
 
 ## Read-only OSS startup check
 
