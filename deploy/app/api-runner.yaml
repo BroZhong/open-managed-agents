@@ -170,7 +170,6 @@ data:
   OMA_PROXY_URL: http://10.0.165.246:7890
   SANDBOX_ENABLED: 'true'
   SANDBOX_TEMPLATE: auto-story-v2
-  E2B_REQUEST_TIMEOUT_MS: '185000'
   E2B_API_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:8080
   E2B_SANDBOX_URL: http://sandbox-manager.sandbox-system.svc.cluster.local:7788
   NO_PROXY: localhost,127.0.0.1,sandbox-manager.sandbox-system.svc.cluster.local

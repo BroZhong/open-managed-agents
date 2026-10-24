@@ -10,7 +10,12 @@ import {
 import { ExecAbortedBeforeStartError, SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import { createSandboxFileSystem } from "./sandbox-file-system.js";
-import { SANDBOX_RUNNING_SECONDS } from "./sandbox-client.js";
+import {
+  CLAIM_SECONDS,
+  CREATE_REQUEST_MS,
+  SANDBOX_RUNNING_SECONDS,
+  WAIT_READY_SECONDS,
+} from "./sandbox-client.js";
 import type {
   SandboxClient,
   SandboxCreateOptions,
@@ -94,6 +99,22 @@ export type CreateSandboxFn = (
 
 const DEFAULT_TEMPLATE = "auto-story-v2";
 
+/** Client timeouts of the control-plane calls other than create; each is one short gateway step. */
+const CONTROL_REQUEST_MS = {
+  /**
+   * The gateway bounds a resume only by this request; a timed-out connect
+   * leaves the resume running. The 2026-10-10 lifecycle verification measured
+   * 0.7–0.8 s from Paused and 30 ms from Running.
+   */
+  connect: 60_000,
+  /** Read from the manager's cache. */
+  getInfo: 20_000,
+  /** One Kubernetes delete; the deletion is confirmed afterwards by getInfo. */
+  kill: 30_000,
+  /** One Kubernetes patch of the deadline. */
+  setTimeout: 30_000,
+} as const;
+
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.agentry.welltop.tech"); SDK resolves api.<domain>. */
   domain: string;
@@ -106,12 +127,10 @@ export interface E2BSandboxClientOptions {
    * pass a fake so the client can be exercised with no network.
    */
   createSandbox?: CreateSandboxFn;
-  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number; timeoutMs: number }) => Promise<E2BSandbox>;
+  connectSandbox?: (id: string, opts: { apiKey: string; domain: string; requestTimeoutMs: number; timeoutMs: number; signal: AbortSignal }) => Promise<E2BSandbox>;
   getSandboxInfo?: (id: string) => Promise<{ state: string }>;
   killSandbox?: (id: string) => Promise<unknown>;
   setSandboxTimeout?: (id: string, timeoutMs: number) => Promise<void>;
-  /** Slightly exceeds ALB 180s so its timeout response can reach the SDK. */
-  requestTimeoutMs?: number;
   /** Host OSS readback proves the mount writes into the exact trusted prefix. */
   verifyWorkspaceProbe: (
     target: WorkspaceMountTarget,
@@ -142,7 +161,6 @@ export class E2BSandboxClient implements SandboxClient {
   private readonly getSandboxInfo: NonNullable<E2BSandboxClientOptions["getSandboxInfo"]>;
   private readonly killSandbox: NonNullable<E2BSandboxClientOptions["killSandbox"]>;
   private readonly setSandboxTimeout: NonNullable<E2BSandboxClientOptions["setSandboxTimeout"]>;
-  private readonly requestTimeoutMs: number;
   private readonly verifyWorkspaceProbe: E2BSandboxClientOptions["verifyWorkspaceProbe"];
   private readonly creationMetadata = new Map<string, Record<string, string>>();
   /** id -> live sandbox handle, so subsequent ops resolve the instance. */
@@ -171,24 +189,26 @@ export class E2BSandboxClient implements SandboxClient {
     this.defaultTemplate = opts.defaultTemplate ?? DEFAULT_TEMPLATE;
     this.createSandbox = opts.createSandbox ?? defaultCreateSandbox;
     this.connectSandbox = opts.connectSandbox ?? ((id, options) => Sandbox.connect(id, options));
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? 185_000;
     this.verifyWorkspaceProbe = opts.verifyWorkspaceProbe;
-    const control = { apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs };
-    this.getSandboxInfo = opts.getSandboxInfo ?? (id => Sandbox.getInfo(id, control));
-    this.killSandbox = opts.killSandbox ?? (id => Sandbox.kill(id, control));
-    this.setSandboxTimeout = opts.setSandboxTimeout ?? ((id, timeoutMs) => Sandbox.setTimeout(id, timeoutMs, control));
+    const control = { apiKey: this.apiKey, domain: this.domain };
+    this.getSandboxInfo = opts.getSandboxInfo ??
+      (id => Sandbox.getInfo(id, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.getInfo }));
+    this.killSandbox = opts.killSandbox ??
+      (id => Sandbox.kill(id, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.kill }));
+    this.setSandboxTimeout = opts.setSandboxTimeout ??
+      ((id, timeoutMs) => Sandbox.setTimeout(id, timeoutMs, { ...control, requestTimeoutMs: CONTROL_REQUEST_MS.setTimeout }));
   }
 
   async create(opts: SandboxCreateOptions = {}): Promise<SandboxHandle> {
     const template = resolveTemplate(opts.image, this.defaultTemplate);
     const sandbox = await this.createSandbox(template, {
-      requestTimeoutMs: this.requestTimeoutMs,
+      requestTimeoutMs: CREATE_REQUEST_MS,
       apiKey: this.apiKey,
       domain: this.domain,
       metadata: { ...opts.metadata,
         'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
-        'e2b.agents.kruise.io/claim-timeout-seconds': '150',
-        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '150',
+        'e2b.agents.kruise.io/claim-timeout-seconds': String(CLAIM_SECONDS),
+        'e2b.agents.kruise.io/wait-ready-timeout-seconds': String(WAIT_READY_SECONDS),
       },
       lifecycle: { onTimeout: 'pause', autoResume: false },
       ...(opts.env ? { envs: opts.env } : {}),
@@ -206,7 +226,7 @@ export class E2BSandboxClient implements SandboxClient {
     try {
       const sandbox = this.require(id);
       const requested = this.creationMetadata.get(id) ?? {};
-      const info = await sandbox.getInfo({ requestTimeoutMs: 20_000 });
+      const info = await sandbox.getInfo({ requestTimeoutMs: CONTROL_REQUEST_MS.getInfo });
       const volume = JSON.parse(
         requested["e2b.agents.kruise.io/csi-volume-config"] ?? "null",
       )?.[0];
@@ -401,8 +421,12 @@ export class E2BSandboxClient implements SandboxClient {
   async reconnect(id: string, metadata: Record<string, string>): Promise<boolean> {
     let sandbox: E2BSandbox;
     try {
+      // A handle keeps the requestTimeoutMs it was opened with as the default
+      // of its data-plane requests (file transfers, command start). Give it the
+      // same default as a created handle and bound the connect itself by signal.
       sandbox = await this.connectSandbox(id, {
-        apiKey: this.apiKey, domain: this.domain, requestTimeoutMs: this.requestTimeoutMs, timeoutMs: SANDBOX_RUNNING_SECONDS * 1000,
+        apiKey: this.apiKey, domain: this.domain, timeoutMs: SANDBOX_RUNNING_SECONDS * 1000,
+        requestTimeoutMs: CREATE_REQUEST_MS, signal: AbortSignal.timeout(CONTROL_REQUEST_MS.connect),
       });
     } catch (error) {
       if (error instanceof SandboxNotFoundError) { this.forget(id); return false; }

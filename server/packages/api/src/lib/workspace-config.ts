@@ -33,10 +33,6 @@ export function workspaceConfigFromEnv(env: HostEnv) {
   const oss = workspaceStorageConfigFromEnv(env);
   const bucket = oss.bucket;
   if (env.SANDBOX_ENABLED !== "true") throw new Error("OSS Workspace requires SANDBOX_ENABLED=true");
-  const requestTimeoutMs = Number(env.E2B_REQUEST_TIMEOUT_MS ?? 185_000);
-  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs < 180_000 || requestTimeoutMs > 300_000) {
-    throw new Error("E2B_REQUEST_TIMEOUT_MS must be between 180000 and 300000 for the ALB 180-second window");
-  }
   const mount: Omit<WorkspaceMountSpec, "prefix"> = {
     bucket,
     agentName: env.WORKSPACE_OSS_AGENT_NAME || "agentry-workspace",
@@ -49,7 +45,6 @@ export function workspaceConfigFromEnv(env: HostEnv) {
       domain: required(env, "E2B_DOMAIN"),
       apiKey: required(env, "E2B_API_KEY"),
       defaultTemplate: env.SANDBOX_TEMPLATE || "auto-story-v2",
-      requestTimeoutMs,
     },
   };
 }

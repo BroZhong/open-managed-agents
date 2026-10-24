@@ -17,12 +17,11 @@ describe("OSS Workspace startup configuration", () => {
     expect(config.oss.bucket).toBe("agentry");
     expect(config.oss.publicEndpoint).toBe("https://oss-cn-shanghai.aliyuncs.com");
     expect(config.mount).toEqual({ bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" });
-    expect(config.sandbox.requestTimeoutMs).toBe(185000);
-    expect(config.sandbox.defaultTemplate).toBe("auto-story-v2");
+    // Request budgets derive from the gateway's claim timeout in code (ADR-0023), not from configuration.
+    expect(config.sandbox).toEqual({ domain: "sandbox.agentry.welltop.tech", apiKey: "test-e2b", defaultTemplate: "auto-story-v2" });
   });
-  it("rejects a disabled mount and an SDK request deadline below the ALB window", () => {
+  it("rejects a disabled mount", () => {
     expect(() => workspaceConfigFromEnv({ ...env, SANDBOX_ENABLED: "false" })).toThrow("SANDBOX_ENABLED=true");
-    expect(() => workspaceConfigFromEnv({ ...env, E2B_REQUEST_TIMEOUT_MS: "60000" })).toThrow("180000");
   });
   it("signs Skill install URLs for the region's internal endpoint unless configured", () => {
     expect(skillBundleStorageConfigFromEnv(env)).toMatchObject({ bucket: "agentry", internalEndpoint: "https://oss-cn-shanghai-internal.aliyuncs.com" });

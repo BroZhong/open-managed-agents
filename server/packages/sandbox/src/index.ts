@@ -12,6 +12,13 @@ export type {
 } from "./sandbox-client.js";
 
 export {
+  CLAIM_SECONDS,
+  WAIT_READY_SECONDS,
+  CREATE_REQUEST_MS,
+  INTENT_DEADLINE_SECONDS,
+} from "./sandbox-client.js";
+
+export {
   E2BSandboxClient,
   parseFindOutput,
   wrapCommand,

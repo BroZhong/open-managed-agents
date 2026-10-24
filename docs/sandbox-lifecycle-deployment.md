@@ -23,9 +23,16 @@ controller is included in the application.
 
 ## Runtime budgets and state
 
-The official SDK receives 150-second claim and readiness budgets and the existing
-185-second client request budget (slightly longer than ALB's 180 seconds). These
-are bounded failure budgets, not a promise of cold-start latency. Native create
+Creation budgets derive from the gateway's 150-second claim timeout
+([ADR-0023](adr/0023-sandbox-binding-reconciliation.md)): create sends a
+135-second readiness wait inside the 150-second claim, its client request times
+out at 170 seconds, and a creation intent's deadline is 180 seconds. The Runner
+calls `sandbox-manager.sandbox-system.svc:8080` directly (`E2B_API_URL`); no ALB
+or proxy is on that path, so the budgets are code constants
+(`server/packages/sandbox/src/sandbox-client.ts`), not configuration. The other
+control-plane calls have shorter fixed client timeouts: connect, which resumes a
+Paused Sandbox, 60 seconds; getInfo 20 seconds; kill and setTimeout 30 seconds.
+These are bounded failure budgets, not a promise of cold-start latency. Native create
 requests include `reserve-paused-sandbox-duration: 24h`; `connect` refreshes 24h;
 `setTimeout` shortens to 30m without changing expiry action. No renewals happen
 between normal tools. Control-plane queries occur only during recovery/deletion,

@@ -63,6 +63,16 @@ test("production keeps live configuration and routing", () => {
   assert.doesNotMatch(docs.join("\n"), /name: redis$/m);
 });
 
+test("Runners call the gateway in-cluster; request budgets come from code, not configuration", () => {
+  for (const env of ["test", "production"]) {
+    const docs = render(env);
+    const cm = configMap(docs, "oma-runner-config");
+    assert.equal(field(cm, "E2B_API_URL"), "http://sandbox-manager.sandbox-system.svc.cluster.local:8080", env);
+    assert.doesNotMatch(docs.join("\n"), /E2B_REQUEST_TIMEOUT_MS/, env);
+  }
+  assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /E2B_REQUEST_TIMEOUT_MS/);
+});
+
 test("test sandbox RBAC grants only the oma-test Runner identity", () => {
   const rbac = readFileSync(new URL("deploy/environments/test/sandbox-rbac.yaml", root), "utf8");
   assert.match(rbac, /namespace: sandbox-system/);

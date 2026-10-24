@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
-import { SandboxNotFoundError } from 'e2b';
+import { Sandbox, SandboxNotFoundError } from 'e2b';
 import {
   E2BSandboxClient,
   parseFindOutput,
@@ -11,6 +11,7 @@ import {
   type E2BCommandHandle,
 } from "../src/e2b-sandbox-client.js";
 import type { SandboxExecChunk } from "../src/sandbox-client.js";
+import { CLAIM_SECONDS, CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, WAIT_READY_SECONDS } from "../src/index.js";
 
 /** A recorded `commands.run` call. */
 interface RunCall {
@@ -283,9 +284,13 @@ describe('managed Sandbox lifetime and exit evidence', () => {
       metadata: { 'oma.dev/binding': 'parent',
         'e2b.agents.kruise.io/reserve-paused-sandbox-duration': '24h',
         'e2b.agents.kruise.io/claim-timeout-seconds': '150',
-        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '150' },
+        'e2b.agents.kruise.io/wait-ready-timeout-seconds': '135' },
     });
     expect(factoryCalls[0].opts.metadata).not.toHaveProperty('e2b.agents.kruise.io/never-timeout');
+  });
+  it('derives every creation budget from the gateway claim timeout', () => {
+    expect([WAIT_READY_SECONDS, CLAIM_SECONDS, CREATE_REQUEST_MS / 1000, INTENT_DEADLINE_SECONDS])
+      .toEqual([135, 150, 170, 180]);
   });
   it('retains uncertainty after a lost command stream, even if a later command exits', async () => {
     const { client, sandboxes } = makeClient();
@@ -387,11 +392,11 @@ describe("E2BSandboxClient", () => {
     expect(factoryCalls[0].template).toBe("configured-template");
   });
 
-  it("create leaves mount provisioning to CSI and gives ALB cold starts enough request time", async () => {
+  it("create leaves mount provisioning to CSI and waits past the gateway's claim timeout", async () => {
     const { client, sandboxes, factoryCalls } = makeClient();
     await client.create();
     expect(sandboxes[0].runCalls).toEqual([]);
-    expect(factoryCalls[0].opts.requestTimeoutMs).toBe(185_000);
+    expect(factoryCalls[0].opts.requestTimeoutMs).toBe(170_000);
   });
 
   const target = {
@@ -877,6 +882,7 @@ describe("resolveTemplate", () => {
 });
 
 describe('direct lifecycle control-plane operations', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it('deletes an uncached Paused identity without connecting, and requires deletion confirmation', async () => {
     const kill = vi.fn(async () => true);
     const info = vi.fn().mockResolvedValueOnce({ state: 'paused' }).mockRejectedValueOnce(new SandboxNotFoundError('missing'));
@@ -894,7 +900,29 @@ describe('direct lifecycle control-plane operations', () => {
     await client.reconnect('same-id', {});
     await client.reconnect('same-id', {});
     expect(connect).toHaveBeenCalledTimes(2);
-    expect(connect).toHaveBeenLastCalledWith('same-id', expect.objectContaining({ timeoutMs: 86400000, requestTimeoutMs: 185000 }));
+    expect(connect).toHaveBeenLastCalledWith('same-id', expect.objectContaining({ timeoutMs: 86400000 }));
+  });
+  it('bounds connect by its own signal and gives the handle the same request default as a created one', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const connect = vi.fn(async (_id: string, _opts: { signal: AbortSignal; requestTimeoutMs: number }) => new FakeSandbox('same-id'));
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {}, connectSandbox: connect });
+    await client.reconnect('same-id', {});
+    expect(timeout).toHaveBeenCalledWith(60_000);
+    expect(connect.mock.calls[0][1].signal).toBe(timeout.mock.results[0].value);
+    expect(connect.mock.calls[0][1].requestTimeoutMs).toBe(170_000);
+  });
+  it('bounds every other control-plane call by its own timeout, shorter than create', async () => {
+    const getInfo = vi.spyOn(Sandbox, 'getInfo').mockResolvedValueOnce({ state: 'running' } as Awaited<ReturnType<typeof Sandbox.getInfo>>)
+      .mockRejectedValueOnce(new SandboxNotFoundError('missing'));
+    const kill = vi.spyOn(Sandbox, 'kill').mockResolvedValue(true);
+    const setTimeout = vi.spyOn(Sandbox, 'setTimeout').mockResolvedValue();
+    const client = new E2BSandboxClient({ domain: 'example.test', apiKey: 'fixture', verifyWorkspaceProbe: async () => {} });
+    expect(await client.state('id')).toBe('running');
+    await client.setTimeout('id', 1800);
+    await client.destroy('id');
+    expect(getInfo).toHaveBeenCalledWith('id', expect.objectContaining({ apiKey: 'fixture', requestTimeoutMs: 20_000 }));
+    expect(setTimeout).toHaveBeenCalledWith('id', 1_800_000, expect.objectContaining({ requestTimeoutMs: 30_000 }));
+    expect(kill).toHaveBeenCalledWith('id', expect.objectContaining({ requestTimeoutMs: 30_000 }));
   });
 });
 

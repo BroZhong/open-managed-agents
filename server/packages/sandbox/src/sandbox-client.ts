@@ -1,6 +1,29 @@
 export const SANDBOX_RUNNING_SECONDS = 24 * 60 * 60;
 export const SANDBOX_IDLE_SECONDS = 30 * 60;
 
+/**
+ * The gateway's real bound on a claim, including the waits for a claim worker
+ * and for readiness. Every creation budget derives from it (ADR-0023). The
+ * Runner calls the gateway in-cluster, so no ALB or proxy bounds them.
+ *
+ * wait-ready 135 s < claim 150 s < create request 170 s < intent deadline 180 s:
+ * - wait-ready runs inside the claim and leaves it time for init and mount;
+ * - the create request outwaits the claim, so the creator normally learns the
+ *   outcome itself instead of timing out;
+ * - the deadline outwaits the create request, and a client abort cancels the
+ *   gateway's claim, so after the deadline no create of that attempt is still
+ *   in flight;
+ * - the create request stays under the SDK HTTP client's 300 s header timeout,
+ *   which would otherwise end it first.
+ */
+export const CLAIM_SECONDS = 150;
+/** The readiness wait inside the claim. */
+export const WAIT_READY_SECONDS = CLAIM_SECONDS - 15;
+/** Client timeout of the create request. */
+export const CREATE_REQUEST_MS = (CLAIM_SECONDS + 20) * 1000;
+/** Counted from the committed creation intent; after it, no create of that attempt is in flight. */
+export const INTENT_DEADLINE_SECONDS = CLAIM_SECONDS + 30;
+
 import type { WorkspaceMountTarget } from "./workspace-mount.js";
 
 /**
