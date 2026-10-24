@@ -1,4 +1,4 @@
-import type { GatewayListEntry, ListedSandbox } from "./sandbox-client.js";
+import { intentExpired, type GatewayListEntry, type ListedSandbox } from "./sandbox-client.js";
 
 /**
  * Which listed Sandboxes the sweeper (ADR-0023, "The sweeper") keeps, kills,
@@ -9,7 +9,7 @@ import type { GatewayListEntry, ListedSandbox } from "./sandbox-client.js";
  * package (the report bundles it), hence the re-exports.
  */
 export type { ListedSandbox, GatewayListEntry };
-export { SANDBOX_IDLE_SECONDS, listedSandbox } from "./sandbox-client.js";
+export { INTENT_DEADLINE_SECONDS, SANDBOX_IDLE_SECONDS, listedSandbox } from "./sandbox-client.js";
 
 /** The binding (root Session id) a Sandbox was created for. */
 export const SANDBOX_BINDING_LABEL = "oma.dev/binding";
@@ -137,7 +137,7 @@ export function selectSweep(
       else if (longDeadline(sandbox)) decisions.set(sandboxId, { sandboxId, bindingId, action: "shorten" });
       else keep("short-deadline");
     } else if (row.creatingSince !== null) {
-      if (now < row.creatingSince.getTime() + options.intentDeadlineSeconds * 1000) keep("creating");
+      if (!intentExpired(row.creatingSince, options.now, options.intentDeadlineSeconds)) keep("creating");
       else unresolved.set(bindingId, [...(unresolved.get(bindingId) ?? []), sandbox]);
     } else kill("cold");
   }

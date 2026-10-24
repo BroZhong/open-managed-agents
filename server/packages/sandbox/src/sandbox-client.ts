@@ -24,6 +24,16 @@ export const CREATE_REQUEST_MS = (CLAIM_SECONDS + 20) * 1000;
 /** Counted from the committed creation intent; after it, no create of that attempt is in flight. */
 export const INTENT_DEADLINE_SECONDS = CLAIM_SECONDS + 30;
 
+/** When the creation intent committed at `creatingSince`, by the database clock, reaches its deadline (epoch ms). */
+export function intentExpiresAt(creatingSince: Date, deadlineSeconds = INTENT_DEADLINE_SECONDS): number {
+  return creatingSince.getTime() + deadlineSeconds * 1000;
+}
+
+/** Whether the creation intent committed at `creatingSince` is past its deadline at `now`, both by the database clock. */
+export function intentExpired(creatingSince: Date, now: Date, deadlineSeconds = INTENT_DEADLINE_SECONDS): boolean {
+  return now.getTime() >= intentExpiresAt(creatingSince, deadlineSeconds);
+}
+
 import type { WorkspaceMountTarget } from "./workspace-mount.js";
 
 /**

@@ -7,7 +7,7 @@ import type {
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ToolEnvironmentError } from "@open-managed-agents/adapter-core";
-import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected } from "./sandbox-client.js";
+import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected, intentExpired, intentExpiresAt } from "./sandbox-client.js";
 import type { ListedSandbox, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
@@ -147,7 +147,7 @@ type EnsureStep =
 function holdsIntent(binding: EnvironmentBinding, notBefore: Date): boolean {
   const since = binding.creatingSince?.getTime();
   return binding.sandboxId === null && since !== undefined
-    && since >= notBefore.getTime() && since < notBefore.getTime() + INTENT_DEADLINE_MS;
+    && since >= notBefore.getTime() && since < intentExpiresAt(notBefore);
 }
 
 /** Creates independent Session resources; their OSS Workspace may be shared. */
@@ -318,7 +318,7 @@ export class DefaultSandboxManager implements SandboxManager {
  * Sandbox the gateway does not list yet.
  */
 function creationMayBeInFlight({ creatingSince, now }: EnvironmentBinding): boolean {
-  return creatingSince !== null && now.getTime() < creatingSince.getTime() + INTENT_DEADLINE_MS;
+  return creatingSince !== null && !intentExpired(creatingSince, now);
 }
 
 /**
@@ -875,7 +875,7 @@ class SandboxSessionImpl implements SandboxSession {
           return { next: "cold", value: { kind: "retry" } };
         }
         if (binding.creatingSince !== null) {
-          const remainingMs = binding.creatingSince.getTime() + INTENT_DEADLINE_MS - binding.now.getTime();
+          const remainingMs = intentExpiresAt(binding.creatingSince) - binding.now.getTime();
           // Another Turn's create, or this call's own whose outcome is
           // unknown, may still produce the Sandbox.
           if (remainingMs > 0) throw new CreationInProgress(remainingMs);
