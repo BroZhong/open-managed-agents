@@ -93,6 +93,19 @@ export interface SandboxCreateOptions {
 }
 
 /**
+ * A create the gateway answered with an HTTP error status. Only the status is
+ * kept: the answer's body can carry provider diagnostics and credentials
+ * (#260). A create that failed without an answer (a timeout, a lost
+ * connection) rejects with any other error.
+ */
+export class SandboxCreateRejected extends Error {
+  constructor(readonly status: number) {
+    super(`Sandbox create answered HTTP ${status}`);
+    this.name = "SandboxCreateRejected";
+  }
+}
+
+/**
  * A handle to one live sandbox. The `id` is backend-specific (the e2b
  * `sandboxId`); everything else is done through the client keyed by it.
  */
@@ -163,7 +176,11 @@ export interface SandboxClient {
    */
   fileSystem?(id: string): ToolFileSystem;
 
-  /** Create (schedule) a sandbox and resolve once it is ready to accept ops. */
+  /**
+   * Create (schedule) a sandbox and resolve once it is ready to accept ops.
+   * Rejects with {@link SandboxCreateRejected} when the gateway answered
+   * with an error status.
+   */
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
   /** Attach a Host to a persisted, trusted Sandbox identity without creating it. */
   reconnect(id: string, metadata: Record<string, string>): Promise<boolean>;

@@ -18,6 +18,7 @@ export {
   WAIT_READY_SECONDS,
   CREATE_REQUEST_MS,
   INTENT_DEADLINE_SECONDS,
+  SandboxCreateRejected,
 } from "./sandbox-client.js";
 
 export {
@@ -79,6 +80,7 @@ export {
 export {
   DefaultSandboxManager,
   SandboxSessionClosed,
+  SandboxUnavailable,
   type SandboxManager,
   type SandboxSession,
   type SandboxManagerDeps,

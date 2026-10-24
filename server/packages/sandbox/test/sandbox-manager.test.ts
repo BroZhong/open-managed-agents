@@ -3,14 +3,16 @@ import type { ToolFileSystem } from "@open-managed-agents/adapter-core";
 import {
   DefaultSandboxManager,
   SandboxSessionClosed,
+  SandboxUnavailable,
   type EnvSpec,
   type SandboxEnvironmentBinding,
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
+import { INTENT_DEADLINE_SECONDS, SandboxCreateRejected } from "../src/sandbox-client.js";
 import { isSkillInstallCommand, skillSetOf } from "../src/skill-install.js";
 import type { SandboxLifecycleStore } from '@oma-server/store';
 import { Bundles, text } from "./skill-bundles.js";
-import { durableBinding } from "./bindings.js";
+import { databaseClock, durableBinding } from "./bindings.js";
 
 const mount = {
   bucket: "agentry",
@@ -447,6 +449,24 @@ describe("mounted Workspace Sandbox Manager", () => {
     client.skillInstallFault = undefined;
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("body");
     expect(client.created).toHaveLength(1);
+  });
+
+  it("returns to Cold only the intent its rejected create was committed with, never another Runner's", async () => {
+    const { client, manager } = makeManager();
+    const clock = databaseClock();
+    const binding = durableBinding("root", clock.now);
+    // Stalled past its deadline, the create is superseded: another Runner reconciled and committed a fresh intent.
+    const fresh = { sandboxId: null, creatingSince: new Date(clock.now().getTime() + INTENT_DEADLINE_SECONDS * 1000) };
+    client.createFault = (step) => {
+      if (step !== "claim") return;
+      clock.elapse(INTENT_DEADLINE_SECONDS);
+      binding.write(fresh);
+      throw new SandboxCreateRejected(409);
+    };
+    const failure = await manager.open(specFor(), binding).writeFile("a.txt", "x").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(SandboxUnavailable);
+    expect(failure).toMatchObject({ reason: "rejected", status: 409 });
+    expect(binding.row()).toBe(fresh);
   });
 });
 

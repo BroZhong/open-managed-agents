@@ -1,4 +1,4 @@
-import { ApiClient, ConnectionConfig, Sandbox, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
+import { ApiClient, AuthenticationError, ConnectionConfig, RateLimitError, Sandbox, SandboxError, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
 import {
   WORKSPACE_MOUNT_PROBE,
   WORKSPACE_MOUNT_PROBE_CLEANUP,
@@ -14,6 +14,7 @@ import {
   CLAIM_SECONDS,
   CREATE_REQUEST_MS,
   SANDBOX_RUNNING_SECONDS,
+  SandboxCreateRejected,
   WAIT_READY_SECONDS,
   listedSandbox,
 } from "./sandbox-client.js";
@@ -220,7 +221,7 @@ export class E2BSandboxClient implements SandboxClient {
       lifecycle: { onTimeout: 'pause', autoResume: false },
       ...(opts.env ? { envs: opts.env } : {}),
       timeoutMs: (opts.timeoutSeconds ?? SANDBOX_RUNNING_SECONDS) * 1000,
-    });
+    }).catch(createFailed);
     this.sandboxes.set(sandbox.sandboxId, sandbox);
     this.creationMetadata.set(sandbox.sandboxId, { ...opts.metadata });
     return { id: sandbox.sandboxId };
@@ -757,6 +758,20 @@ export function parseFindOutput(stdout: string): SandboxFileEntry[] {
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));
   return entries;
+}
+
+/**
+ * Rethrow a failed create as {@link SandboxCreateRejected} when the gateway
+ * answered it with an HTTP status, otherwise (a timeout, a lost connection)
+ * as it is. The SDK keeps the status only in its error: AuthenticationError
+ * for 401, RateLimitError for 429, and for every other status a SandboxError
+ * whose message is "<status>: <the answer's message>" (its handleApiError).
+ */
+function createFailed(error: unknown): never {
+  if (error instanceof AuthenticationError) throw new SandboxCreateRejected(401);
+  if (error instanceof RateLimitError) throw new SandboxCreateRejected(429);
+  const status = error instanceof SandboxError ? /^([1-5]\d\d): /.exec(error.message)?.[1] : undefined;
+  throw status === undefined ? error : new SandboxCreateRejected(Number(status));
 }
 
 /** Default factory over the real e2b SDK. */

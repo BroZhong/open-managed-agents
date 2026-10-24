@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { Agent, DelegationStore, EnvironmentBinding, EnvironmentLockResult, PendingEventFence, Session, SessionStore } from "@oma-server/store";
-import { DefaultSandboxManager } from "../src/sandbox-manager.js";
+import { DefaultSandboxManager, SandboxUnavailable } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
-import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
+import { CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SandboxCreateRejected, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
 import { EMPTY_SKILL_SET, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { DefaultTurnSandboxes, type SandboxLease } from "../src/turn-sandboxes.js";
@@ -47,6 +47,8 @@ const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvNa
 const agent: Agent = { id: "agent_sbx", tenantId: TENANT, name: "Sandboxed", model: "model", system: "", runtime: "pi-agent",
   sandbox: { enabled: true }, createdAt: new Date(), updatedAt: new Date() };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A create that ran into its client timeout, as the SDK's request signal fails it. */
+const timedOut = () => new DOMException("The operation was aborted due to timeout", "TimeoutError");
 /** A promise and whether it settled yet. */
 function watch<T>(promise: Promise<T>) {
   const watched = { promise, settled: false };
@@ -130,8 +132,11 @@ class Runner {
  * Crash injection into Sandbox creation (ADR-0023, #284): a Runner is lost at
  * each step of creating its binding's Sandbox, and the next Turn, on another
  * Runner, adopts or recreates the Sandbox once the intent's deadline has
- * passed and uses its tools. Each Runner has its own Sandbox Manager; the
- * stores and the gateway outlive them. Time passes only as a test lets it.
+ * passed and uses its tools. Creates the gateway fails (#285): a definite
+ * rejection returns the binding to Cold at once; an unknown outcome is
+ * reconciled within the same tool call, which creates once more at most.
+ * Each Runner has its own Sandbox Manager; the stores and the gateway outlive
+ * them. Time passes only as a test lets it.
  */
 export function bindingReconciliationContract(name: string, createStores: () => Promise<ReconciliationStores>,
   options: {
@@ -168,9 +173,10 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       /** A lost Runner's claim lapses: the next Runner takes the input over. */
       const lapse = (target: Session, fence: PendingEventFence) => stores.pendingEventStore.releaseClaim(target.id, fence.eventId, fence);
       /** A Turn on `on`: its lease, taken under a fresh claim. */
-      const turn = async (on: Runner, target: Session, skills: SkillSet = EMPTY_SKILL_SET): Promise<{ lease: SandboxLease; fence: PendingEventFence }> => {
+      const turn = async (on: Runner, target: Session, skills: SkillSet = EMPTY_SKILL_SET,
+        signal = new AbortController().signal): Promise<{ lease: SandboxLease; fence: PendingEventFence }> => {
         const fence = await claim(target);
-        const lease = (await on.sandboxes.acquire({ session: target, agent, fence, signal: new AbortController().signal, skills, skillInstallFailed: () => {} }))!;
+        const lease = (await on.sandboxes.acquire({ session: target, agent, fence, signal, skills, skillInstallFailed: () => {} }))!;
         return { lease, fence };
       };
       /** Lose `loss`'s Runner in its Turn's first tool call; resolves once it is lost and its claim lapsed. */
@@ -407,24 +413,129 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(h.gateway.created).toEqual([orphan, created]);
     });
 
-    it("keeps the intent of a create that failed, fails the tool, and reconciles on the first use past the deadline", async () => {
+    it.each([400, 403, 409])("returns the binding to Cold at once when the gateway rejects the create with HTTP %i: no reconcile, no retry", async (status) => {
       const h = await setup();
       const session = await h.session();
-      h.gateway.createFault = (step) => { if (step === "claim") throw new Error("HTTP 500: internal detail"); };
+      let creates = 0;
+      h.gateway.createFault = (step) => { if (step === "claim") { creates++; throw new SandboxCreateRejected(status); } };
       const { lease } = await h.turn(h.runner(), session);
-      const failure = await lease.executor!.writeFile("a.txt", "x").catch((error: Error) => error);
-      expect(failure).toBeInstanceOf(Error);
-      expect((failure as Error).message).toMatch(/^Sandbox creation did not complete\. .*reconciled with the gateway automatically within 180 seconds/);
-      expect((failure as Error).message).not.toMatch(/internal detail|unconfirmed/);
-      expect(await h.row(session.id)).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });
+      const failure = await lease.executor!.writeFile("a.txt", "x").catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(SandboxUnavailable);
+      expect(failure).toMatchObject({ code: "sandbox_unavailable", reason: "rejected", status,
+        message: "The gateway rejected the Sandbox creation. A later tool call can retry." });
+      expect(creates).toBe(1);
+      expect(h.list).not.toHaveBeenCalled();
+      expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      // Cold: the next tool creates at once, with no deadline to wait for.
       h.gateway.createFault = undefined;
-      // A later tool of the same Turn waits for the deadline, reconciles to Cold and creates.
-      const retry = watch(h.toolsWork(lease, session.id));
-      await sleep(250);
-      expect(retry.settled).toBe(false);
-      await h.elapse(INTENT_DEADLINE_SECONDS);
-      const sandboxId = await retry.promise;
+      const sandboxId = await h.toolsWork(lease, session.id);
       expect(h.gateway.created).toEqual([sandboxId]);
+      expect(h.list).not.toHaveBeenCalled();
+    });
+
+    it("waits for the deadline after a create whose answer was lost, then adopts the Sandbox the gateway did create, in the same tool call", async () => {
+      const h = await setup();
+      const session = await h.session();
+      let lost = false;
+      h.gateway.createFault = (step) => { if (step === "respond" && !lost) { lost = true; throw timedOut(); } };
+      const { lease } = await h.turn(h.runner(), session);
+      const tool = watch(h.toolsWork(lease, session.id));
+      await vi.waitFor(() => expect(lost).toBe(true));
+      const [claimedId] = h.gateway.created;
+      await sleep(250);
+      expect(tool.settled).toBe(false);
+      expect(h.list).not.toHaveBeenCalled();
+      expect(await h.row(session.id)).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });
+      await h.elapse(INTENT_DEADLINE_SECONDS);
+      expect(await tool.promise).toBe(claimedId);
+      expect(h.list).toHaveBeenCalledTimes(1);
+      expect(h.gateway.created).toEqual([claimedId]);
+    });
+
+    it.each([
+      ["a gateway 500 (the claim timeout among them)", () => new SandboxCreateRejected(500)],
+      ["a connection lost before any answer", () => new TypeError("fetch failed")],
+    ])("waits for the deadline after %s, reconciles, and creates once more in the same tool call when the gateway holds none", async (_, failure) => {
+      const h = await setup();
+      const session = await h.session();
+      let creates = 0;
+      h.gateway.createFault = (step) => { if (step === "claim" && ++creates === 1) throw failure(); };
+      const { lease } = await h.turn(h.runner(), session);
+      const tool = watch(h.toolsWork(lease, session.id));
+      await vi.waitFor(() => expect(creates).toBe(1));
+      await sleep(250);
+      expect(tool.settled).toBe(false);
+      expect(h.list).not.toHaveBeenCalled();
+      await h.elapse(INTENT_DEADLINE_SECONDS);
+      const sandboxId = await tool.promise;
+      expect(creates).toBe(2);
+      expect(h.list).toHaveBeenCalledTimes(1);
+      expect(h.gateway.created).toEqual([sandboxId]);
+      expect(await h.row(session.id)).toEqual({ sandboxId, creatingSince: null });
+    });
+
+    it("ends a tool call whose creates both time out with a tool error and a Cold binding, two intent deadlines after its first intent", async () => {
+      const h = await setup();
+      const session = await h.session();
+      const budget = CREATE_REQUEST_MS / 1000;
+      let creates = 0;
+      // Each create runs into its client timeout: the clock passes the request's budget, then the request aborts.
+      h.gateway.createFault = async (step) => { if (step === "claim") { await h.elapse(budget); creates++; throw timedOut(); } };
+      const { lease } = await h.turn(h.runner(), session);
+      const tool = watch(lease.executor!.writeFile("a.txt", "x").catch((error: unknown) => error));
+      await vi.waitFor(() => expect(creates).toBe(1));
+      await sleep(250);
+      expect(tool.settled).toBe(false);
+      expect(h.list).not.toHaveBeenCalled();
+      // The first intent's deadline: reconciled, none found, created once more.
+      await h.elapse(INTENT_DEADLINE_SECONDS - budget);
+      await vi.waitFor(() => expect(creates).toBe(2));
+      expect(h.list).toHaveBeenCalledTimes(1);
+      await sleep(250);
+      expect(tool.settled).toBe(false);
+      // The second intent's deadline: reconciled, none found, the tool fails. Nothing is waited for after it.
+      await h.elapse(INTENT_DEADLINE_SECONDS - budget);
+      const failure = await tool.promise;
+      expect(failure).toBeInstanceOf(SandboxUnavailable);
+      expect(failure).toMatchObject({ code: "sandbox_unavailable", reason: "unknown",
+        message: "Sandbox creation did not complete. A later tool call can retry." });
+      expect(String(failure)).not.toMatch(/abort|timeout/i);
+      expect(creates).toBe(2);
+      expect(h.list).toHaveBeenCalledTimes(2);
+      expect(h.gateway.created).toEqual([]);
+      expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+    });
+
+    it("fails the tool at once, the binding Cold, when the create after reconciling is rejected", async () => {
+      const h = await setup();
+      const session = await h.session();
+      let creates = 0;
+      h.gateway.createFault = (step) => {
+        if (step === "claim") throw ++creates === 1 ? new SandboxCreateRejected(503) : new SandboxCreateRejected(403);
+      };
+      const { lease } = await h.turn(h.runner(), session);
+      const tool = watch(lease.executor!.writeFile("a.txt", "x").catch((error: unknown) => error));
+      await vi.waitFor(() => expect(creates).toBe(1));
+      await h.elapse(INTENT_DEADLINE_SECONDS);
+      expect(await tool.promise).toMatchObject({ code: "sandbox_unavailable", reason: "rejected", status: 403 });
+      expect(creates).toBe(2);
+      expect(h.list).toHaveBeenCalledTimes(1);
+      expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+    });
+
+    it("ends the wait after an unknown outcome with the Turn's signal, and keeps the intent for reconciliation", async () => {
+      const h = await setup();
+      const session = await h.session();
+      h.gateway.createFault = (step) => { if (step === "claim") throw new SandboxCreateRejected(500); };
+      const interrupt = new AbortController();
+      const { lease } = await h.turn(h.runner(), session, EMPTY_SKILL_SET, interrupt.signal);
+      const tool = watch(lease.executor!.writeFile("a.txt", "x").catch((error: unknown) => error));
+      await sleep(250);
+      expect(tool.settled).toBe(false);
+      interrupt.abort(new Error("interrupted"));
+      expect(await tool.promise).toMatchObject({ name: "AbortError" });
+      expect(h.list).not.toHaveBeenCalled();
+      expect(await h.row(session.id)).toMatchObject({ sandboxId: null, creatingSince: expect.any(Date) });
     });
 
     it.runIf(options.clockMoves)("kills the Sandbox of a late creator that returns while another intent is being created, and follows that one", async () => {

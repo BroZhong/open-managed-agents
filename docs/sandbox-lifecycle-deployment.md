@@ -63,14 +63,18 @@ kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n sandbox-system get s
 
 Creation commits `creating_since = now()` (database clock) before calling the
 gateway, and the successful create writes `sandbox_id` and clears it
-([ADR-0023](adr/0023-sandbox-binding-reconciliation.md)). Any other outcome (a
-failed create, a lost Runner, a lost binding write) leaves the intent. A Turn
-that finds it waits until `creating_since` + 180 seconds, then reconciles the
-binding itself: it lists the gateway's running and paused Sandboxes labelled
-`oma.dev/binding=<root Session id>`, adopts the one it finds (a running one,
-else the earliest claimed, killing any others), or returns the binding to Cold
-and creates. No operator action is needed, and none should clear the column by
-hand. A creator whose binding write finds the row moved on kills its own
+([ADR-0023](adr/0023-sandbox-binding-reconciliation.md)). A create the gateway
+rejects with HTTP 400, 403 or 409 returns the binding to Cold and fails the
+tool call. Any other outcome (a 5xx, the gateway's claim timeout included, a
+create timeout or lost connection, a lost Runner, a lost binding write) leaves
+the intent. A Turn that finds it waits until `creating_since` + 180 seconds,
+then reconciles the binding itself: it lists the gateway's running and paused
+Sandboxes labelled `oma.dev/binding=<root Session id>`, adopts the one it finds
+(a running one, else the earliest claimed, killing any others), or returns the
+binding to Cold and creates. The tool call whose create had the unknown outcome
+does so itself and creates once more at most, so it fails after about six
+minutes at worst. No operator action is needed, and none should clear the
+column by hand. A creator whose binding write finds the row moved on kills its own
 Sandbox. Every created Sandbox also carries `oma.dev/environment`, the Runner's
 `OMA_ENVIRONMENT` (`production` or `test`, required). A known failed mount
 keeps its bound ID so subsequent preparation can retry without duplicating

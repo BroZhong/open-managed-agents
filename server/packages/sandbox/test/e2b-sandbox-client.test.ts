@@ -11,7 +11,7 @@ import {
   type E2BCommandHandle,
 } from "../src/e2b-sandbox-client.js";
 import type { SandboxExecChunk } from "../src/sandbox-client.js";
-import { CLAIM_SECONDS, CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, WAIT_READY_SECONDS } from "../src/index.js";
+import { CLAIM_SECONDS, CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SandboxCreateRejected, WAIT_READY_SECONDS } from "../src/index.js";
 
 /** A recorded `commands.run` call. */
 interface RunCall {
@@ -993,6 +993,47 @@ describe("listing Sandboxes from the gateway (ADR-0023)", () => {
     try {
       const failure = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1" }, states: ["running"] }).catch((error: Error) => error);
       expect(failure).toEqual(new Error("Sandbox list answered HTTP 500"));
+    } finally { await server.close(); }
+  });
+});
+
+describe("classifying a failed create by the gateway's answer (ADR-0023)", () => {
+  /** A gateway on localhost that answers every create with `answer`. */
+  async function gateway(answer: (response: import("node:http").ServerResponse) => void) {
+    const { createServer } = await import("node:http");
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => answer(response));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    vi.stubEnv("E2B_API_URL", `http://127.0.0.1:${port}`);
+    return { close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }) };
+  }
+  /** The real SDK's create, as production calls it. */
+  const create = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", verifyWorkspaceProbe: async () => {} })
+    .create({ metadata: { "oma.dev/binding": "sesn_1" } }).catch((error: unknown) => error);
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it.each([400, 401, 403, 409, 429, 500, 503])("reports an HTTP %i answer by its status alone", async (status) => {
+    const server = await gateway((response) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify({ code: status, message: "claim failed: secret annotation" }));
+    });
+    try {
+      const failure = await create();
+      expect(failure).toBeInstanceOf(SandboxCreateRejected);
+      expect(failure).toMatchObject({ status, message: `Sandbox create answered HTTP ${status}` });
+      expect(JSON.stringify(failure) + String(failure)).not.toMatch(/secret/);
+    } finally { await server.close(); }
+  });
+
+  it("reports a connection lost before any answer as no answer at all", async () => {
+    const server = await gateway((response) => { response.socket?.destroy(); });
+    try {
+      const failure = await create();
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure).not.toBeInstanceOf(SandboxCreateRejected);
     } finally { await server.close(); }
   });
 });

@@ -7,7 +7,7 @@ import type {
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
-import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
+import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected } from "./sandbox-client.js";
 import type { SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
@@ -66,12 +66,40 @@ const INTENT_DEADLINE_MS = INTENT_DEADLINE_SECONDS * 1000;
  * replaces the poll with the binding's `environment` signal.
  */
 const CREATING_POLL_MS = 100;
-/** A create that did not return a Sandbox keeps its intent until the binding is reconciled (ADR-0023). */
-const CREATION_INCOMPLETE = `Sandbox creation did not complete. The Session's Sandbox is reconciled with the gateway automatically within ${INTENT_DEADLINE_SECONDS} seconds; a later tool call can retry.`;
+/**
+ * The gateway's definite answers to a create: an invalid request (400), the
+ * API key's quota (403), a conflict (409). It claimed nothing. Any other
+ * failure, 5xx among them, is an unknown outcome: the gateway answers its
+ * claim timeout, as any internal failure, with 500 (upstream
+ * pkg/servers/e2b/create.go), whatever became of the claim.
+ */
+const DEFINITE_REJECTIONS: ReadonlySet<number> = new Set([400, 403, 409]);
+
+/**
+ * The tool error of an ensure that got no Sandbox (ADR-0023). `rejected`:
+ * the gateway definitely refused the create (`status`), and the binding is
+ * Cold. `unknown`: the call's creates, including the one more after
+ * reconciling an unknown outcome, did not complete. The message is stable:
+ * SDK and provider diagnostics can carry credentials.
+ */
+export class SandboxUnavailable extends Error {
+  readonly code = "sandbox_unavailable";
+  constructor(readonly reason: "rejected" | "unknown", readonly status?: number) {
+    super(reason === "rejected"
+      ? "The gateway rejected the Sandbox creation. A later tool call can retry."
+      : "Sandbox creation did not complete. A later tool call can retry.");
+    this.name = "SandboxUnavailable";
+  }
+}
 
 /** Thrown inside the binding lock to leave it without a write while another Turn creates the Sandbox. */
 class CreationInProgress extends Error {
   constructor(readonly remainingMs: number) { super("Sandbox creation in progress"); }
+}
+
+/** A create whose outcome is unknown: its intent stays, and ensure reconciles it past its deadline. */
+class CreateOutcomeUnknown extends Error {
+  constructor() { super("Sandbox create outcome is unknown"); }
 }
 
 /** What ensure does next, decided from the binding row alone. */
@@ -540,10 +568,22 @@ class SandboxSessionImpl implements SandboxSession {
    * confirmed missing Sandbox → Cold; Creating → wait; Unresolved →
    * reconcile; Cold → create. A wait ends at the intent deadline, so no
    * outcome, known or not, blocks the binding for longer.
+   *
+   * A create the gateway rejected leaves the binding Cold and fails the call.
+   * One with an unknown outcome keeps its intent: the call waits for its
+   * deadline, reconciles, and creates once more if the gateway holds none;
+   * that create's unknown outcome is waited for and reconciled too, then the
+   * call fails. The call so leaves the binding Ready or Cold unless the
+   * Turn's signal ends a wait. Alone on its binding, it has its Sandbox, or
+   * fails, within two intent deadlines (a create is bounded by
+   * CREATE_REQUEST_MS, inside its intent's deadline), two gateway lists and
+   * the binding's reads and writes: about six minutes (ADR-0023,
+   * Consequences). Preparing a Sandbox it got (mount, Skills) adds its own.
    */
   private async provision(): Promise<string> {
-    // One create per call. #285 grants an unknown outcome one more, after reconciling.
+    // One create per call, and one more after an unknown outcome was reconciled.
     let creates = 1;
+    let retries = 1;
     for (;;) {
       let id: string | undefined;
       try {
@@ -556,6 +596,11 @@ class SandboxSessionImpl implements SandboxSession {
           id = await this.create(step.notBefore);
         }
       } catch (error) {
+        // Its intent stays: the next steps wait for the deadline and reconcile it.
+        if (error instanceof CreateOutcomeUnknown) {
+          if (retries > 0) { retries--; creates++; }
+          continue;
+        }
         // Another Runner moved the row on meanwhile: read it again and follow it.
         if (!(error instanceof EnvironmentBindingChanged)) throw error;
       }
@@ -585,7 +630,7 @@ class SandboxSessionImpl implements SandboxSession {
           if (remainingMs > 0) throw new CreationInProgress(remainingMs);
           return { value: { kind: "reconcile", creatingSince: binding.creatingSince } };
         }
-        if (!mayCreate) throw new Error(CREATION_INCOMPLETE);
+        if (!mayCreate) throw new SandboxUnavailable("unknown");
         // Commit the intent before create: a lost response, a lost Runner or a
         // lost binding write leaves an intent any Runner reconciles after its deadline.
         return { next: "creating", value: { kind: "create", notBefore: binding.now } };
@@ -609,7 +654,7 @@ class SandboxSessionImpl implements SandboxSession {
         timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: this.metadata(),
       });
     } catch (error) {
-      throw this.createFailed(error);
+      throw await this.createFailed(error, notBefore);
     }
     if (!await this.record(handle.id, notBefore)) {
       // Ready with another Sandbox, Cold, or Creating anew: nothing will use this one.
@@ -632,30 +677,36 @@ class SandboxSessionImpl implements SandboxSession {
    * the Sandbox after the deadline.
    */
   private async record(id: string, notBefore: Date): Promise<boolean> {
+    return this.decide<boolean>(async (binding) => {
+      // A Runner that reconciled the intent past its deadline adopted it already.
+      if (binding.sandboxId === id) return { value: true };
+      if (!holdsIntent(binding, notBefore)) return { value: false };
+      return { next: { ready: id }, value: true };
+    });
+  }
+  /** Under the binding lock; a row that moved on between the read and the write is decided again as it is now. */
+  private async decide<T>(work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
     for (;;) {
       try {
-        return await this.binding.withLock<boolean>(async (binding) => {
-          // A Runner that reconciled the intent past its deadline adopted it already.
-          if (binding.sandboxId === id) return { value: true };
-          if (!holdsIntent(binding, notBefore)) return { value: false };
-          return { next: { ready: id }, value: true };
-        });
+        return await this.binding.withLock<T>(work);
       } catch (error) {
-        // Moved on between the read and the write: decide again on the row as it is now.
         if (!(error instanceof EnvironmentBindingChanged)) throw error;
       }
     }
   }
   /**
-   * The tool error of a create that returned no Sandbox. Its intent stays, so
-   * the first use past the deadline reconciles the binding. #285 classifies
-   * the failure: a definite rejection (400/403/409) returns the binding to
-   * Cold; an unknown outcome waits for the deadline, reconciles and creates
-   * once more within the same call.
+   * Classify a create that returned no Sandbox (ADR-0023, "create"). A
+   * definite rejection claimed nothing: CAS Creating → Cold while the binding
+   * holds the intent committed after the read at `notBefore`, and the tool
+   * fails without reconciling or retrying. Any other failure is an unknown
+   * outcome, whose intent stays for ensure to reconcile. Tools never see the
+   * SDK's error: it can carry provider diagnostics.
    */
-  private createFailed(_error: unknown): Error {
-    // SDK errors can carry provider diagnostics: tools see a stable message.
-    return new Error(CREATION_INCOMPLETE);
+  private async createFailed(error: unknown, notBefore: Date): Promise<Error> {
+    if (!(error instanceof SandboxCreateRejected) || !DEFINITE_REJECTIONS.has(error.status)) return new CreateOutcomeUnknown();
+    await this.decide<void>(async (binding) => (holdsIntent(binding, notBefore) ? { next: "cold", value: undefined } : { value: undefined }))
+      .catch(() => { /* Unwritten, the intent is reconciled past its deadline. */ });
+    return new SandboxUnavailable("rejected", error.status);
   }
   /**
    * Converge an Unresolved binding on what the gateway holds for it
