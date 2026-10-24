@@ -9,6 +9,7 @@ export type {
   SandboxExecChunk,
   SandboxExecOptions,
   SandboxFileEntry,
+  ListedSandbox,
 } from "./sandbox-client.js";
 
 export {
@@ -17,6 +18,21 @@ export {
   CREATE_REQUEST_MS,
   INTENT_DEADLINE_SECONDS,
 } from "./sandbox-client.js";
+
+export {
+  SANDBOX_BINDING_LABEL,
+  SANDBOX_ENVIRONMENT_LABEL,
+  SWEEP_MAX_KILLS,
+  selectSweep,
+  type SandboxEnvironment,
+  type SweepBinding,
+  type SweepOptions,
+  type SweepDecision,
+  type SweepKillReason,
+  type SweepKeepReason,
+  type SweepCounts,
+  type SweepSelection,
+} from "./sandbox-sweep.js";
 
 export {
   E2BSandboxClient,

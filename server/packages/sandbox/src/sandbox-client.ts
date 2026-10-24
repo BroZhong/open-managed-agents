@@ -100,6 +100,21 @@ export interface SandboxHandle {
   id: string;
 }
 
+/** One Sandbox as the gateway's list (`GET /v2/sandboxes`) returns it. */
+export interface ListedSandbox {
+  sandboxId: string;
+  state: "running" | "paused";
+  /** Includes annotations that can hold credentials (#260): never log it. */
+  metadata: Record<string, string>;
+  /** When the Sandbox was claimed. */
+  startedAt: Date;
+  /**
+   * The platform deadline: pause for a running Sandbox, deletion for a paused
+   * one. null when the Sandbox has none; `setTimeout` is then a no-op.
+   */
+  endAt: Date | null;
+}
+
 /**
  * Low-level sandbox lifecycle + file/exec port. Production uses the E2B SDK; a fake implements the same surface in-memory for tests.
  */
