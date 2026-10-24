@@ -26,6 +26,10 @@ For Skill storage and installation, ADR-0022 is authoritative: versioned Skill
 Bundles in OSS installed by Skill Set version. It supersedes ADR-0005 §3–4 and
 ADR-0008's Skills paragraph, and revises ADR-0004's fork copy and ADR-0019's
 per-Turn Skills refresh.
+For Sandbox binding creation and recovery, ADR-0023 is authoritative: the gateway
+is the truth, a creation intent has a deadline and is reconciled by
+`oma.dev/binding`, termination reclaims by binding and every Runner sweeps. It
+supersedes ADR-0019's operator-only reconciliation and revises its budgets.
 For mounted Workspace storage and Sandbox paths, ADR-0008 supersedes the
 former storage portions of ADR-0002 and ADR-0005. ADR-0009 defines the direct
 Workspace file API and supersedes ADR-0008’s per-Session write gate.
