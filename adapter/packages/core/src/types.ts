@@ -364,12 +364,49 @@ export interface SpanSkillsInstallEndEvent extends BaseEvent {
   reason?: string;
 }
 
+/**
+ * One preparation of the Turn's environment (ADR-0023): at Turn start,
+ * connecting to the Sandbox a Ready binding records and verifying its mount,
+ * beside the model's first request; for a tool, bringing the binding to Ready
+ * (connect, wait for another Turn's create, reconcile, create) and verifying
+ * the mount. The Host writes its start and its end, an Adapter never does; a
+ * Turn whose binding is Cold and that uses no tool writes neither.
+ * `prepareId` pairs the two.
+ */
+export interface SpanSandboxPrepareStartEvent extends BaseEvent {
+  type: "span.sandbox_prepare_start";
+  prepareId: string;
+}
+
+export interface SpanSandboxPrepareEndEvent extends BaseEvent {
+  type: "span.sandbox_prepare_end";
+  prepareId: string;
+  /**
+   * `ready`: `sandboxId` is connected and its mount verified.
+   * `deferred`: the Turn-start connect found no Sandbox to connect (the
+   * recorded one is gone, or the binding moved on); the first tool brings
+   * the binding to Ready.
+   * `failed`: an environment failure; `code` is the one the tools that
+   * waited for it carry in their results' details.
+   * `aborted`: the Turn stopped waiting for it first, as `reason` says.
+   */
+  outcome: "ready" | "deferred" | "failed" | "aborted";
+  /** Absent when the attempt that took the Turn over ends the span. */
+  durationMs?: number;
+  sandboxId?: string;
+  /** `failed` only: `sandbox_unavailable` or `sandbox_creating`. */
+  code?: string;
+  reason?: string;
+}
+
 export type SpanEvent =
   | SpanModelRequestStartEvent
   | SpanModelFirstTokenEvent
   | SpanModelRequestEndEvent
   | SpanSkillsInstallStartEvent
-  | SpanSkillsInstallEndEvent;
+  | SpanSkillsInstallEndEvent
+  | SpanSandboxPrepareStartEvent
+  | SpanSandboxPrepareEndEvent;
 
 // ─── Canonical agent events ──────────────────────────────────────────────────
 
