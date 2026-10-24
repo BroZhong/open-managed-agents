@@ -805,12 +805,13 @@ export class SessionRouter {
   }
 
   /**
-   * Record, as the Turn ends, that its environment failed and never became
-   * ready again (ADR-0023): like the Workspace check, the error keeps the
-   * answer. A Turn that recovered records nothing. Only the Turn's end writes
-   * it: planResume takes any session.error in a Turn as the Turn's end, so
-   * mid-Turn an environment failure is only a tool error, and a Turn taken
-   * over after one continues.
+   * Record, as the Turn ends, that a tool call of it met an environment
+   * failure and the environment never became ready again (ADR-0023): like
+   * the Workspace check, the error keeps the answer. A Turn that recovered,
+   * or whose failed preparation no tool call waited for, records nothing.
+   * Only the Turn's end writes it: planResume takes any session.error in a
+   * Turn as the Turn's end, so mid-Turn an environment failure is only a tool
+   * error, and a Turn taken over after one continues.
    */
   private async checkEnvironment(
     journal: TurnJournal,
@@ -1455,10 +1456,12 @@ export class SessionRouter {
       // binding's Sandbox, verifies its mount and decides the install beside
       // inference, and so does the install; the first Sandbox operation waits
       // for them (ADR-0022, ADR-0023). An environment failure is a tool error,
-      // never the end of the Turn.
+      // never the end of the Turn; the Turn's end judges from the calls that
+      // met one whether its environment failed.
       lease = await this.sandboxes?.acquire({
         session, agent: currentAgent, fence: pendingFence, signal: turnController.signal, skills, skillInstalls, sandboxPrepares,
         assertOwner: assertExecutionOwner,
+        environmentFailed: () => turnPrepares.toolFailed(),
         // The first operation to find the install failed ends the Turn: the
         // Adapter run is aborted and the Turn closed with its error. A Turn
         // already stopping or interrupted ends as it would anyway.

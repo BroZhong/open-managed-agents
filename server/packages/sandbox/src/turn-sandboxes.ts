@@ -175,7 +175,8 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
       .catch(() => {});
     const settledInSandbox = () => sandbox.executionSettled?.() !== false;
     return {
-      executor: turnExecutor(sandbox, { assertOwner: request.assertOwner, skillInstallFailed: request.skillInstallFailed }),
+      executor: turnExecutor(sandbox, { assertOwner: request.assertOwner, skillInstallFailed: request.skillInstallFailed,
+        environmentFailed: request.environmentFailed }),
       prepared: () => prepared,
       checkWorkspace: () => sandbox.checkWorkspace(),
       release: async (evidence) => {

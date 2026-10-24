@@ -14,10 +14,10 @@ await usePiSettings();
 
 /**
  * The first call meets an environment failure; the model calls again, and
- * that call runs. A Runner lost before the retry's preparation leaves no
- * sign the environment became ready again: that Turn ends with
- * sandbox_unavailable, as every Turn whose environment failed and never
- * became ready again does.
+ * that call runs. A Runner lost after the failed call's result and before
+ * the retry's preparation leaves no sign the environment became ready again:
+ * that Turn ends with sandbox_unavailable, as every Turn does whose tool
+ * call met an environment failure that no ready preparation followed.
  */
 const recovered: Scenario = {
   inputs: ["list the files"],
@@ -38,9 +38,14 @@ const unavailable: Scenario = {
   errors: ["sandbox_unavailable"],
 };
 
-/** Whether the Turn's last preparation that decided anything failed. */
-const leftUnavailable = (log: StoredEvent[]) => log.filter((event) => event.type === "span.sandbox_prepare_end")
-  .map((event) => (event.data as { outcome: string }).outcome).filter((outcome) => outcome === "failed" || outcome === "ready").at(-1) === "failed";
+/**
+ * Whether the Turn ends unavailable: a call's native result carries an
+ * environment failure's code, and the Turn's last preparation that decided
+ * anything failed.
+ */
+const leftUnavailable = (log: StoredEvent[]) => [...details(log).values()].some((result) => result.code === "sandbox_unavailable")
+  && log.filter((event) => event.type === "span.sandbox_prepare_end").map((event) => (event.data as { outcome: string }).outcome)
+    .filter((outcome) => outcome === "failed" || outcome === "ready").at(-1) === "failed";
 const errors = (outcome: Outcome) => outcome.log.filter((event) => event.type === "session.error")
   .map((event) => (event.data as { error: { code: string } }).error.code);
 /** The details of each call's native result, by call. */

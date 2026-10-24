@@ -10,19 +10,26 @@ const answers: Adapter = { async run(input) {
   await journalWriter(input)({ id: "answer", timestamp: new Date().toISOString(), type: "agent.message", content: [{ type: "text", text: "done" }] });
   return "finished";
 } };
+/** Reads a file through the Turn's executor, then answers: a read that fails is a tool error. */
+const readsThenAnswers: Adapter = { async run(input) {
+  await input.toolExecutor!.readFile("note.txt").catch(() => {});
+  return answers.run(input);
+} };
 
 /** A Sandbox that runs nothing; `fail` names the step that fails. */
 function sandbox(fail: "connect" | "install" | "checkWorkspace"): SandboxManager {
+  const unreachable = new SandboxUnavailable("unreachable");
   const session: SandboxSession = {
     fileSystem: {} as SandboxSession["fileSystem"],
     async *exec() { /* runs nothing */ },
-    readFile: async () => "", writeFile: async () => {}, list: async () => [],
+    // An operation that waited for the failed connect fails with it.
+    readFile: async () => { if (fail === "connect") throw unreachable; return ""; },
+    writeFile: async () => {}, list: async () => [],
     prepare: async (skills, options) => {
       if (fail === "connect") {
-        const error = new SandboxUnavailable("unreachable");
         options?.sandboxPrepares?.started();
-        options?.sandboxPrepares?.ended({ outcome: "failed", error });
-        throw error;
+        options?.sandboxPrepares?.ended({ outcome: "failed", error: unreachable });
+        throw unreachable;
       }
       if (fail === "install") {
         options?.skillInstalls?.started(skills!);
@@ -46,7 +53,7 @@ describe("Errors the Router writes", () => {
     ["unsupported_runtime", false, () => ({ resolveAdapter: () => undefined })],
     ["adapter_error", false, () => ({ resolveAdapter: () => ({ async run() { throw new Error("runtime crashed"); } }) })],
     ["sandbox_unavailable", true, () => ({})],
-    ["sandbox_unavailable", true, sandboxes("connect")],
+    ["sandbox_unavailable", true, (stores) => ({ ...sandboxes("connect")(stores), resolveAdapter: () => readsThenAnswers })],
     ["skills_install_failed", true, sandboxes("install")],
     ["workspace_storage_error", true, sandboxes("checkWorkspace")],
   ])("%s names the Turn it is written in", async (code, sandboxed, deps) => {

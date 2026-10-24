@@ -168,25 +168,30 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(finish).toHaveBeenCalledTimes(2);
     });
 
-    it("fails the operations that met an environment failure with sandbox_unavailable, tells the Turn, and prepares again on the next one", async () => {
+    it("fails the operations that met an environment failure with sandbox_unavailable, tells the Turn of the preparation and the operation, and prepares again on the next one", async () => {
       const h = await setup();
       const session = await h.session();
       await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
       const [id] = h.client.created;
       h.client.setMountFailure(id, "storage offline");
       const prepares: SandboxPrepareOutcome[] = [];
-      const sandboxPrepares = { started: vi.fn(), ended: (outcome: SandboxPrepareOutcome) => { prepares.push(outcome); } };
+      // The Turn hears of each operation that met the failure, after the preparation that failed.
+      const heard: string[] = [];
+      const sandboxPrepares = { started: vi.fn(), ended: (outcome: SandboxPrepareOutcome) => { prepares.push(outcome); heard.push(`preparation ${outcome.outcome}`); } };
+      const environmentFailed = (error: SandboxUnavailable) => { heard.push(`operation failed: ${error.reason}`); };
       const fence = await h.claim(session);
-      const lease = (await h.acquire(session, fence, { sandboxPrepares }))!;
+      const lease = (await h.acquire(session, fence, { sandboxPrepares, environmentFailed }))!;
       const failure = await lease.executor.readFile("saved.txt").catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(SandboxUnavailable);
       expect(failure).toMatchObject({ code: "sandbox_unavailable", reason: "mount", details: { reason: "mount" },
         message: new WorkspaceMountUnavailable().message });
       expect(prepares).toEqual([{ outcome: "failed", error: failure }]);
+      expect(heard).toEqual(["preparation failed", "operation failed: mount"]);
       expect(await h.users(session.id)).toBe(true);
       h.client.setMountFailure(id);
       expect(await lease.executor.readFile("saved.txt")).toBe("x");
       expect(prepares).toEqual([{ outcome: "failed", error: failure }, { outcome: "ready", sandboxId: id }]);
+      expect(heard).toEqual(["preparation failed", "operation failed: mount", "preparation ready"]);
       expect(sandboxPrepares.started).toHaveBeenCalledTimes(2);
       expect(h.client.created).toEqual([id]);
       await h.ack(session, fence);

@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, DefaultTurnSandboxes, FakeSandboxClient, SandboxCreateRejected } from "@oma-server/sandbox";
-import type { StoredEvent } from "@oma-server/store";
-import type { Adapter, AdapterInput, SessionEvent } from "@open-managed-agents/adapter-core";
+import { presentEvent, type StoredEvent } from "@oma-server/store";
+import { ToolEnvironmentError, type Adapter, type AdapterInput, type SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter } from "../src/session-router.js";
 import { PREPARE_ATTEMPT_STOPPED } from "../src/sandbox-prepare-spans.js";
@@ -76,19 +76,31 @@ async function harness(script: Script) {
   return { stores, agent, session, gateway, attempts, lost, errors, runner, enqueue, turn, log, ofType };
 }
 
-/** A tool call through the Turn's executor, recorded as Pi records it: its result is an error the model sees. */
+/**
+ * A tool call through the Turn's executor, its result recorded as Pi records
+ * it: a native toolResult entry, an error the model sees whose details carry
+ * an environment failure's code.
+ */
 async function tool(input: AdapterInput, write: Write, id: string): Promise<unknown> {
   await write(event("agent.tool_use", { toolUseId: id, name: "write", input: { path: "note.txt" } }));
+  const result = (text: string, error?: unknown) => write(event("agent.context_entry", { sdk: "pi@0.83.0",
+    entry: { type: "message", id: `entry_${id}`, parentId: null, timestamp: new Date().toISOString(), message: {
+      role: "toolResult", toolCallId: id, toolName: "write", content: [{ type: "text", text }], isError: error !== undefined,
+      ...(error instanceof ToolEnvironmentError ? { details: { ...error.details, code: error.code } } : {}), timestamp: Date.now() } },
+    presentation: { version: 1, blocks: [{ type: "agent.tool_result" }] } }));
   try {
     await input.toolExecutor!.writeFile("note.txt", id);
-    await write(event("agent.tool_result", { toolUseId: id, content: [{ type: "text", text: "written" }], isError: false }));
+    await result("written");
     return undefined;
   } catch (error) {
-    await write(event("agent.tool_result", { toolUseId: id, content: [{ type: "text", text: (error as Error).message }], isError: true }));
+    await result((error as Error).message, error);
     return error;
   }
 }
 const answer = (write: Write, text = "done") => write(event("agent.message", { content: [{ type: "text", text }] }));
+/** Each tool call's result, as the Session's events display it. */
+const results = (log: StoredEvent[]) => log.flatMap((stored) => presentEvent(stored)).filter((shown) => shown.type === "agent.tool_result")
+  .map((shown) => shown.data as { toolUseId: string; isError: boolean });
 const spansOf = (log: StoredEvent[]) => log.filter((stored) => stored.type.startsWith("span.sandbox_prepare_"))
   .map((stored) => [stored.type, stored.data]);
 const errorCodes = (log: StoredEvent[]) => log.filter((stored) => stored.type === "session.error")
@@ -111,9 +123,10 @@ describe("an environment failure is a tool error (ADR-0023)", () => {
     const turn = log.slice(start, end + 1);
     // The Turn ran on after each failure; the error is written once, at its end.
     expect(turn.map((stored) => stored.type).filter((type) => !type.startsWith("span.model"))).toEqual(["session.status_running",
-      "agent.tool_use", "span.sandbox_prepare_start", "span.sandbox_prepare_end", "agent.tool_result",
-      "agent.tool_use", "span.sandbox_prepare_start", "span.sandbox_prepare_end", "agent.tool_result",
+      "agent.tool_use", "span.sandbox_prepare_start", "span.sandbox_prepare_end", "agent.context_entry",
+      "agent.tool_use", "span.sandbox_prepare_start", "span.sandbox_prepare_end", "agent.context_entry",
       "agent.message", "session.error", "session.turn_completed"]);
+    expect(results(turn)).toEqual(["call_1", "call_2"].map((toolUseId) => expect.objectContaining({ toolUseId, isError: true })));
     expect(errorCodes(log)).toEqual(["sandbox_unavailable"]);
     expect((await h.ofType("session.error"))[0].data).toEqual({ turnId: "turn_1_a1", error: { code: "sandbox_unavailable",
       message: expect.stringContaining("The answer is retained") } });
@@ -217,6 +230,36 @@ describe("an environment failure is a tool error (ADR-0023)", () => {
   });
 });
 
+describe("a failed preparation no tool call waited for", () => {
+  it("shows in the span of a pure-chat Turn whose Turn-start connect failed, which records no error; a Turn whose tool met it does", async () => {
+    const h = await harness(async (input, write) => {
+      if (!input.message.content.some((block) => block.type === "text" && block.text === "chat only")) await tool(input, write, `call_${h.attempts.length}`);
+      await answer(write);
+    });
+    await h.turn("create");
+    // The binding is Ready; its Sandbox can no longer be reached.
+    vi.spyOn(h.gateway, "reconnect").mockRejectedValue(new Error("gateway unreachable"));
+    await h.turn("chat only");
+    let log = await h.log();
+    const chat = log.slice(log.map((stored) => stored.type).lastIndexOf("session.status_running"));
+    expect(spansOf(chat)).toEqual([
+      ["span.sandbox_prepare_start", { turnId: expect.any(String), prepareId: "1.1" }],
+      ["span.sandbox_prepare_end", { turnId: expect.any(String), prepareId: "1.1", outcome: "failed", code: "sandbox_unavailable", reason: "unreachable", durationMs: expect.any(Number) }],
+    ]);
+    expect(errorCodes(log)).toEqual([]);
+    expect(chat.map((stored) => stored.type).filter((type) => type.startsWith("session.") || type === "agent.message"))
+      .toEqual(["session.status_running", "agent.message", "session.turn_completed", "session.status_idle"]);
+
+    await h.turn("write a note");
+    log = await h.log();
+    expect(results(log).at(-1)).toMatchObject({ toolUseId: "call_3", isError: true });
+    expect(errorCodes(log)).toEqual(["sandbox_unavailable"]);
+    const completed = (await h.ofType("session.turn_completed")).map((stored) => (stored.data as { turnId: string }).turnId);
+    expect((await h.ofType("session.error"))[0].data).toMatchObject({ turnId: completed[2] });
+    expect(h.errors).toEqual([]);
+  });
+});
+
 describe("a Runner lost after an environment failure", () => {
   it("leaves the Turn to the takeover, which continues it: an environment ready again records no error", async () => {
     const h = await harness(async (input, write, attempt) => {
@@ -234,7 +277,7 @@ describe("a Runner lost after an environment failure", () => {
     h.gateway.createFault = (step) => { if (step === "claim") throw new SandboxCreateRejected(403); };
     await h.enqueue("write a note");
     await h.runner("runner-a").handleNewEvent(h.session.id, h.agent);
-    expect((await h.ofType("agent.tool_result")).map((stored) => stored.data)).toEqual([expect.objectContaining({ toolUseId: "call_1", isError: true })]);
+    expect(results(await h.log())).toEqual([expect.objectContaining({ toolUseId: "call_1", isError: true })]);
     expect(await h.ofType("session.error")).toEqual([]);
     h.gateway.createFault = undefined;
     await sleep(120); // The lease runs out.
@@ -246,8 +289,7 @@ describe("a Runner lost after an environment failure", () => {
     expect(h.attempts.map((input) => [input.turnId, input.resume !== undefined])).toEqual([["turn_1_a1", false], ["turn_1_a1", true]]);
     const log = await h.log();
     expect(log.filter((stored) => stored.type === "session.turn_resumed")).toHaveLength(1);
-    expect((await h.ofType("agent.tool_result")).map((stored) => [(stored.data as { toolUseId: string }).toolUseId, (stored.data as { isError: boolean }).isError]))
-      .toEqual([["call_1", true], ["call_2", false]]);
+    expect(results(log).map(({ toolUseId, isError }) => [toolUseId, isError])).toEqual([["call_1", true], ["call_2", false]]);
     expect(errorCodes(log)).toEqual([]);
     expect((await h.ofType("session.turn_completed")).map((stored) => (stored.data as { turnId: string }).turnId)).toEqual(["turn_1_a1"]);
     expect(h.gateway.created).toHaveLength(1);
@@ -293,7 +335,7 @@ describe("a Runner lost after an environment failure", () => {
     expect(lostEnd).toEqual({ turnId: expect.any(String), prepareId: "1.1", outcome: "aborted", reason: PREPARE_ATTEMPT_STOPPED });
     expect(end).toMatchObject({ prepareId: "2.1", outcome: "ready" });
     expect(errorCodes(log)).toEqual([]);
-    expect((await h.ofType("agent.tool_result")).map((stored) => (stored.data as { isError: boolean }).isError)).toEqual([false, false]);
+    expect(results(log).map(({ isError }) => isError)).toEqual([false, false]);
   });
 
   it("ends the continued Turn with sandbox_unavailable when its environment never became ready again", async () => {

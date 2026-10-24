@@ -95,16 +95,19 @@ reconciles it.
 **How to tell from events whether a Turn failed because of its environment:**
 it did exactly when the Turn has a `session.error` whose `error.code` is
 `sandbox_unavailable`. The Turn writes it once, after its answer and before
-`session.turn_completed`, when a preparation of the Turn failed and none
-ended `ready` after it, counting every attempt of the Turn: a takeover starts
-from the spans its predecessors wrote. A Turn with environment tool errors but
-no such `session.error` recovered within the Turn. The error keeps the answer,
-like `workspace_storage_error`. A `session.error` is never written in the middle
-of a Turn, because a takeover's plan treats any `session.error` in a Turn as its
-end; a Runner lost after an environment failure therefore leaves a Turn its
-takeover continues. The same code also ends a Turn of a sandboxed Agent on a
-Runner with no Sandbox configured, before its Adapter runs. Skill Install
-failures keep their own code, `skills_install_failed` (ADR-0022).
+`session.turn_completed`, when a tool call of the Turn failed with an
+environment failure and no preparation ended `ready` after it, counting every
+attempt of the Turn: a takeover starts from the tool results and spans its
+predecessors wrote. A failed preparation no tool call waited for, such as the
+Turn-start connect of a pure-chat Turn, shows in its span only. A Turn with
+environment tool errors but no such `session.error` recovered within the
+Turn. The error keeps the answer, like `workspace_storage_error`. A
+`session.error` is never written in the middle of a Turn, because a takeover's
+plan treats any `session.error` in a Turn as its end; a Runner lost after an
+environment failure therefore leaves a Turn its takeover continues. The same
+code also ends a Turn of a sandboxed Agent on a Runner with no Sandbox
+configured, before its Adapter runs. Skill Install failures keep their own
+code, `skills_install_failed` (ADR-0022).
 
 ## The environment in the Session API
 

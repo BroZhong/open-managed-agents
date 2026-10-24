@@ -1,4 +1,5 @@
 import type { ToolExecutor, ToolFileSystem } from "@open-managed-agents/adapter-core";
+import { SandboxUnavailable } from "./sandbox-manager.js";
 import { SkillInstallError } from "./skill-install.js";
 
 /** What a Sandbox operation fails with when the Turn's Skill Install it waited for failed (ADR-0022). */
@@ -11,6 +12,12 @@ export interface TurnExecutorGuard {
   assertOwner?(): Promise<void>;
   /** An operation found the Turn's Skill Install failed: the Turn ends with it. */
   skillInstallFailed(error: SkillInstallError): void;
+  /**
+   * An operation did not run because the Turn's environment was not
+   * available: a tool call met an environment failure, which only the Turn's
+   * end acts on (ADR-0023).
+   */
+  environmentFailed?(error: SandboxUnavailable): void;
 }
 
 /**
@@ -26,10 +33,11 @@ export interface TurnExecutorGuard {
  * skills_install_failed and tells the guard, which ends the Turn instead of
  * letting the model retry around it. One that meets an environment failure
  * (SandboxUnavailable) has not run either, and fails with it unchanged: a
- * tool error the model can retry (ADR-0023).
+ * tool error the model can retry (ADR-0023). The guard hears of it.
  */
 export function turnExecutor(executor: ToolExecutor, guard: TurnExecutorGuard): ToolExecutor {
   const failed = (error: unknown): unknown => {
+    if (error instanceof SandboxUnavailable) guard.environmentFailed?.(error);
     if (!(error instanceof SkillInstallError)) return error;
     guard.skillInstallFailed(error);
     return new Error(skillsInstallFailedText(error));

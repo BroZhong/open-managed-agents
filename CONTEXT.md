@@ -202,7 +202,7 @@ cold, creating or ready as above, or unavailable while the binding records
 the last **Environment failure** of its current state.
 
 **Environment failure**:
-A tool call that did not run because the Session's Sandbox was not ready: it could not be connected, its Workspace mount verified, or it created. It is a tool error whose result carries `details.code` `sandbox_unavailable` and a `details.reason`, which the model may retry; it never ends the **Turn** by itself. A Turn prepares its Sandbox beside the model's first request, and each preparation is visible as `span.sandbox_prepare_start`/`_end`. A Turn whose environment failed and never became ready again ends with `session.error` `sandbox_unavailable`, written only at the Turn's end. See ADR-0023 and `docs/sandbox-lifecycle-deployment.md`.
+A tool call that did not run because the Session's Sandbox was not ready: it could not be connected, its Workspace mount verified, or it created. It is a tool error whose result carries `details.code` `sandbox_unavailable` and a `details.reason`, which the model may retry; it never ends the **Turn** by itself. A Turn prepares its Sandbox beside the model's first request, and each preparation is visible as `span.sandbox_prepare_start`/`_end`. A Turn in which a tool call met one, and whose environment never became ready again, ends with `session.error` `sandbox_unavailable`, written only at the Turn's end; a failed preparation no tool call waited for shows in its span only. See ADR-0023 and `docs/sandbox-lifecycle-deployment.md`.
 _Avoid_: prepare failure, sandbox_prepare_failed
 
 **Environment Spec**:
