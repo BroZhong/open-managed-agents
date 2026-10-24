@@ -11,7 +11,7 @@ import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS,
 import type { ListedSandbox, SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes, killSandboxes } from "./sandbox-kill.js";
-import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
+import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type EnvironmentTransition, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
 import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
 import { EMPTY_SKILL_SET, SkillInstallError, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
@@ -394,6 +394,30 @@ export async function reconcileBinding(client: Pick<SandboxClient, "listSandboxe
   return converged ? { kept, duplicates } : null;
 }
 
+/**
+ * The binding's row as a session last read it, or as a move it committed
+ * left it; unknown after a move to Creating, whose time it does not learn.
+ */
+type KnownRow = Pick<EnvironmentBinding, "sandboxId" | "creatingSince">;
+
+/** `binding`, telling `known` of each row the session reads and each move it commits. */
+function knownBinding(binding: SandboxEnvironmentBinding, known: (row: KnownRow | undefined) => void): SandboxEnvironmentBinding {
+  return {
+    ...binding,
+    withLock: async (work) => {
+      let next: EnvironmentTransition | undefined;
+      const value = await binding.withLock(async (row) => {
+        known({ sandboxId: row.sandboxId, creatingSince: row.creatingSince });
+        const result = await work(row);
+        next = result.next;
+        return result;
+      });
+      if (next) known(next === "creating" ? undefined : { sandboxId: next === "cold" ? null : next.ready, creatingSince: null });
+      return value;
+    },
+  };
+}
+
 class SandboxSessionImpl implements SandboxSession {
   executionSettled(): boolean {
     return !this.uncertainTurn && (!this.sandboxId || !this.deps.sandboxClient.hasUncertainExecution(this.sandboxId));
@@ -420,13 +444,17 @@ class SandboxSessionImpl implements SandboxSession {
    * failed or was cancelled, they rethrow its error until the next prepare.
    */
   private installing?: Promise<void>;
+  private readonly binding: SandboxEnvironmentBinding;
+  /** What an environment failure is recorded against (see recordFailure). */
+  private known?: KnownRow;
 
   constructor(
     private readonly deps: SandboxManagerDeps,
     private readonly skillInstaller: SkillInstaller,
     private readonly spec: EnvSpec,
-    private readonly binding: SandboxEnvironmentBinding,
+    binding: SandboxEnvironmentBinding,
   ) {
+    this.binding = knownBinding(binding, (row) => { this.known = row; });
     const legacyRoot = (spec as EnvSpec & { workspaceDir?: unknown })
       .workspaceDir;
     if (legacyRoot !== undefined && legacyRoot !== SANDBOX_WORKSPACE_ROOT) {
@@ -592,7 +620,7 @@ class SandboxSessionImpl implements SandboxSession {
       }
       this.deps.sandboxClient.resetExecutionUncertainty(id);
       await this.attach(id, false);
-      return { value: id };
+      return { value: id, observed: "ready" };
     }).catch((error: unknown) => {
       // The row moved on meanwhile: the first operation follows it.
       if (error instanceof EnvironmentBindingChanged) return null;
@@ -621,7 +649,9 @@ class SandboxSessionImpl implements SandboxSession {
    * start and end. This is the one place an environment failure is
    * observed: every failure but a cancellation is one, and it reaches each
    * operation that waited for the preparation as a SandboxUnavailable,
-   * a tool error the model can retry. The next operation prepares again.
+   * a tool error the model can retry, and the binding as its last error. The
+   * next operation prepares again; one that connects or creates the Sandbox
+   * clears the error.
    */
   private async preparation<T extends string | null>(work: (begin: () => void) => Promise<T>): Promise<T> {
     const { signal, sandboxPrepares: observer } = this.turn;
@@ -637,12 +667,33 @@ class SandboxSessionImpl implements SandboxSession {
         throw error;
       }
       const failure = environmentFailure(error);
+      this.recordFailure(failure);
       begin();
       observer?.ended({ outcome: "failed", error: failure });
       throw failure;
     }
     if (begun) observer?.ended(id === null ? { outcome: "deferred" } : { outcome: "ready", sandboxId: id });
     return id;
+  }
+  /**
+   * Record an environment failure as the binding's last error, which the
+   * Session API reports (ADR-0023), by its compare-and-set and only while
+   * the row is as this session last read or left it: a move another Turn or
+   * Runner made since (a new Sandbox or intent, Cold) began a state the
+   * failure says nothing about. A connect another Turn completed on the
+   * unmoved row meanwhile leaves no trace to compare with, so the record can
+   * follow it; the next preparation that ends ready clears it. Not awaited:
+   * one store serializes a binding's callers, so this session's next
+   * preparation follows the record, and a lost write loses only the record.
+   */
+  private recordFailure(failure: SandboxUnavailable): void {
+    const known = this.known;
+    if (!known) return;
+    this.binding.withLock<void>(async ({ sandboxId, creatingSince }) =>
+      sandboxId === known.sandboxId && creatingSince?.getTime() === known.creatingSince?.getTime()
+        ? { value: undefined, observed: { failure: { code: failure.code, reason: failure.reason } } }
+        : { value: undefined })
+      .catch(() => { /* Unreachable, reclaimed or moved on meanwhile: nothing is recorded. */ });
   }
   /** Reattach an existing Sandbox under binding coordination: its mount is verified again. */
   private async attach(id: string, connect = true): Promise<void> {
@@ -818,7 +869,7 @@ class SandboxSessionImpl implements SandboxSession {
         if (id !== null) {
           if (await this.deps.sandboxClient.reconnect(id, this.metadata())) {
             await this.attach(id, false);
-            return { value: { kind: "ready", sandboxId: id } };
+            return { value: { kind: "ready", sandboxId: id }, observed: "ready" };
           }
           this.sandboxId = undefined;
           return { next: "cold", value: { kind: "retry" } };

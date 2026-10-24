@@ -239,12 +239,16 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const h = await setup();
       const session = await h.session();
       await h.lose("after-intent", session);
-      expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: expect.any(Date) });
+      const intent = await h.row(session.id);
+      expect(intent).toEqual({ sandboxId: null, creatingSince: expect.any(Date) });
+      // The Session API reports the intent its lost Runner left (#290).
+      expect(await h.stores.delegationStore.environment(session.id)).toEqual({ state: "creating", since: intent.creatingSince, lastError: null });
       expect(h.gateway.created).toEqual([]);
       const { sandboxId } = await takeOver(h, session);
       expect(h.list).toHaveBeenCalledTimes(1);
       expect(h.gateway.created).toEqual([sandboxId]);
       expect(await h.row(session.id)).toEqual({ sandboxId, creatingSince: null });
+      expect(await h.stores.delegationStore.environment(session.id)).toMatchObject({ state: "ready", lastError: null });
     });
 
     it("adopts the Sandbox the gateway claimed after the Runner was lost during create", async () => {
@@ -432,11 +436,15 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(creates).toBe(1);
       expect(h.list).not.toHaveBeenCalled();
       expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      // The Session API reports the failure until the Sandbox is created (#290).
+      await vi.waitFor(async () => expect(await h.stores.delegationStore.environment(session.id))
+        .toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "rejected" } }));
       // Cold: the next tool creates at once, with no deadline to wait for.
       h.gateway.createFault = undefined;
       const sandboxId = await h.toolsWork(lease, session.id);
       expect(h.gateway.created).toEqual([sandboxId]);
       expect(h.list).not.toHaveBeenCalled();
+      expect(await h.stores.delegationStore.environment(session.id)).toMatchObject({ state: "ready", lastError: null });
     });
 
     it("waits for the deadline after a create whose answer was lost, then adopts the Sandbox the gateway did create, in the same tool call", async () => {
@@ -511,6 +519,8 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(h.list).toHaveBeenCalledTimes(2);
       expect(h.gateway.created).toEqual([]);
       expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      await vi.waitFor(async () => expect(await h.stores.delegationStore.environment(session.id))
+        .toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "unknown" } }));
     }, 15_000);
 
     it("fails the tool at once, the binding Cold, when the create after reconciling is rejected", async () => {

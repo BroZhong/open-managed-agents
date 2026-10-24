@@ -12,6 +12,7 @@ import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { INTENT_DEADLINE_SECONDS, SandboxCreateRejected } from "../src/sandbox-client.js";
 import { isSkillInstallCommand, skillSetOf } from "../src/skill-install.js";
 import type { SandboxLifecycleStore } from '@oma-server/store';
+import { createMemoryStores } from "@oma-server/store-memory";
 import { Bundles, text } from "./skill-bundles.js";
 import { databaseClock, durableBinding } from "./bindings.js";
 
@@ -651,5 +652,109 @@ describe("each preparation of the Turn's environment is observed (ADR-0023, #287
     turn.abort(new DOMException("Session interrupted", "AbortError"));
     await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
     expect(seen).toEqual(["started", { outcome: "aborted", reason: expect.objectContaining({ name: "AbortError" }) }]);
+  });
+});
+
+describe("the binding keeps the last environment failure for the Session API (ADR-0023, #290)", () => {
+  /** A binding kept by the in-memory store, as a Runner's sessions share it. */
+  function storeBinding(id = "root") {
+    const { delegationStore: store } = createMemoryStores();
+    const binding: SandboxEnvironmentBinding = { id, withLock: (work) => store.withEnvironmentLock(id, work) };
+    return { store, binding, environment: () => store.environment(id) };
+  }
+  const rejectCreates = (client: FakeSandboxClient) => {
+    client.createFault = (step) => { if (step === "claim") throw new SandboxCreateRejected(403); };
+  };
+
+  it("records a rejected create with its code, reason and time, and clears it once a later tool creates the Sandbox", async () => {
+    const { client, manager } = makeManager();
+    const { binding, environment } = storeBinding();
+    rejectCreates(client);
+    const session = manager.open(specFor(), binding);
+    await session.prepare();
+    await expect(session.writeFile("a.txt", "x")).rejects.toMatchObject({ code: "sandbox_unavailable", reason: "rejected" });
+    await settle();
+    const failed = await environment();
+    expect(failed).toEqual({ state: "unavailable", since: failed.lastError!.at,
+      lastError: { code: "sandbox_unavailable", reason: "rejected", at: expect.any(Date) } });
+
+    client.createFault = undefined;
+    await session.writeFile("a.txt", "x");
+    const recovered = await environment();
+    expect(recovered).toMatchObject({ state: "ready", lastError: null });
+    expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(failed.lastError!.at.getTime());
+  });
+
+  it("records an unreachable Sandbox of a Ready binding, and the next Turn's connect clears it", async () => {
+    const { client, manager } = makeManager();
+    const { binding, environment } = storeBinding();
+    await manager.open(specFor(), binding).writeFile("saved.txt", "kept");
+    const ready = await environment();
+    expect(ready).toMatchObject({ state: "ready", lastError: null });
+
+    const reconnect = vi.spyOn(client, "reconnect").mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const session = manager.open(specFor(), binding);
+    await expect(session.prepare()).rejects.toMatchObject({ reason: "unreachable" });
+    await settle();
+    expect(await environment()).toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "unreachable" } });
+    // A repeated failure: still unavailable since the first.
+    const first = await environment();
+    await expect(session.readFile("saved.txt")).rejects.toMatchObject({ reason: "unreachable" });
+    await settle();
+    expect(await environment()).toMatchObject({ state: "unavailable", since: first.since });
+
+    reconnect.mockRestore();
+    await manager.open(specFor(), binding).prepare();
+    const recovered = await environment();
+    expect(recovered).toMatchObject({ state: "ready", lastError: null });
+    expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(first.lastError!.at.getTime());
+  });
+
+  it("records a failed mount of a Sandbox it just created against that Sandbox", async () => {
+    const { client, manager } = makeManager();
+    const { binding, environment } = storeBinding();
+    vi.spyOn(client, "verifyWorkspaceMount").mockRejectedValueOnce(new Error("mount missing"));
+    await expect(manager.open(specFor(), binding).writeFile("a.txt", "x")).rejects.toMatchObject({ reason: "mount" });
+    await settle();
+    expect(await environment()).toMatchObject({ state: "unavailable", lastError: { reason: "mount" } });
+    // The binding still records the Sandbox: the next tool retries its preparation, not its creation.
+    expect(client.created).toHaveLength(1);
+  });
+
+  it("records no failure once another Runner moved the binding on: the failure is about a state that ended", async () => {
+    const { client, manager } = makeManager();
+    const { store, binding, environment } = storeBinding();
+    // The creator's mount check is slow; meanwhile another Runner finds its Sandbox gone and returns the binding to Cold.
+    let failMount!: () => void;
+    vi.spyOn(client, "verifyWorkspaceMount").mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      failMount = () => reject(new Error("mount missing"));
+    }));
+    const writing = manager.open(specFor(), binding).writeFile("a.txt", "x");
+    await vi.waitFor(() => expect(failMount).toBeDefined());
+    await store.withEnvironmentLock("root", async () => ({ next: "cold", value: undefined }));
+    const cold = await environment();
+    failMount();
+    await expect(writing).rejects.toMatchObject({ reason: "mount" });
+    await settle();
+    expect(await environment()).toEqual(cold);
+    expect(cold).toMatchObject({ state: "cold", lastError: null });
+  });
+
+  it("records nothing for a preparation the Turn stopped waiting for", async () => {
+    const { manager } = makeManager();
+    const { store, binding, environment } = storeBinding();
+    // Another Turn's create is in flight.
+    await store.withEnvironmentLock("root", async () => ({ next: "creating", value: undefined }));
+    const creating = await environment();
+    const turn = new AbortController();
+    const session = manager.open(specFor(), binding);
+    await session.prepare(undefined, { signal: turn.signal });
+    const waiting = session.writeFile("a.txt", "x");
+    await settle();
+    turn.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
+    await settle();
+    expect(await environment()).toEqual(creating);
+    expect(creating.state).toBe("creating");
   });
 });

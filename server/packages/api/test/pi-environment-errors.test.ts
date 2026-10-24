@@ -104,6 +104,9 @@ it("returns each tool call of a Pi Turn whose Sandbox is never available as a to
   expect(log.map((stored) => stored.type).slice(-3)).toEqual(["session.error", "session.turn_completed", "session.status_idle"]);
   expect(log.filter((stored) => stored.type === "span.sandbox_prepare_end").map((stored) => stored.data))
     .toEqual([0, 1].map(() => expect.objectContaining({ outcome: "failed", code: "sandbox_unavailable", reason: "rejected" })));
+  // The Session API reports it from the binding (#290).
+  expect(await h.stores.delegationStore.environment(h.session.id))
+    .toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "rejected" } });
   expect(h.errors).toEqual([]);
 }, 60000);
 
