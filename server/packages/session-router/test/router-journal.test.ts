@@ -58,7 +58,7 @@ async function harness(adapter: Adapter, options: { sandboxed?: boolean } = {}) 
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     ...(options.sandboxed ? {
-      sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient }),
+      sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient, environment: "test" }),
         bindings: stores.delegationStore, sessions: stores.sessionStore,
         workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
         onError: ({ error }) => errors.push(error) }),

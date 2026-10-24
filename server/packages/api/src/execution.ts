@@ -39,6 +39,7 @@ export async function startExecution(deps: PgStores & {
         await (deps.artifactStore as OSSArtifactStore).verifyWorkspaceProbe(target.prefix, name, content);
       },
     }),
+    environment: workspaceConfig.environment,
     lifecycle: await sandboxLifecycle(deps.pool),
     // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
     skillBundleStore: deps.skillBundleStore,

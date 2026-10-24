@@ -149,7 +149,7 @@ function createDeps(opts: {
   const sandboxManager =
     opts.withManager === false
       ? undefined
-      : new DefaultSandboxManager({ sandboxClient, skillBundleStore });
+      : new DefaultSandboxManager({ sandboxClient, skillBundleStore, environment: "test" });
 
   const router = new SessionRouter({
     interruptedAdapterDrainTimeoutMs: opts.interruptedAdapterDrainTimeoutMs,

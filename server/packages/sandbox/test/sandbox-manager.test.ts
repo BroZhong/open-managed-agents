@@ -8,8 +8,9 @@ import {
 } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { isSkillInstallCommand, skillSetOf } from "../src/skill-install.js";
-import type { InstalledSkillSet, SandboxLifecycleStore } from '@oma-server/store';
+import type { SandboxLifecycleStore } from '@oma-server/store';
 import { Bundles, text } from "./skill-bundles.js";
+import { durableBinding } from "./bindings.js";
 
 const mount = {
   bucket: "agentry",
@@ -29,59 +30,35 @@ function specFor(extra: Partial<EnvSpec> = {}): EnvSpec {
 function makeManager() {
   const client = new FakeSandboxClient();
   const bundles = new Bundles();
-  const manager = new DefaultSandboxManager({ sandboxClient: client, skillBundleStore: bundles });
+  const manager = new DefaultSandboxManager({ sandboxClient: client, skillBundleStore: bundles, environment: "test" });
   const exec = vi.spyOn(client, "exec");
   const installs = () => exec.mock.calls.filter(([, command]) => isSkillInstallCommand(command)).length;
   return { client, bundles, manager, installs };
 }
 
-/** A durable binding: the Sandbox pointer and the Skill Install record with its compare-and-set. */
-function durableBinding(id = "root") {
-  let sandboxId: string | null = null;
-  let installed: InstalledSkillSet | null = null;
-  const binding: SandboxEnvironmentBinding & { forgetSkills(): void; installed(): InstalledSkillSet | null } = {
-    id,
-    withLock: async (work) => { const result = await work(sandboxId); sandboxId = result.sandboxId; return result.value; },
-    installedSkills: async () => installed,
-    recordSkillsInstalled: async (next) => {
-      if (next.sandboxId !== sandboxId) return "detached";
-      if (installed?.sandboxId === next.sandboxId && installed.generation >= next.generation) return "superseded";
-      installed = next;
-      return "recorded";
-    },
-    forgetSkills: () => { installed = null; },
-    installed: () => installed,
-  };
-  return binding;
-}
-
 describe("mounted Workspace Sandbox Manager", () => {
   it('retries explicit deletion without resuming and clears the binding only after confirmation', async () => {
     const client = new FakeSandboxClient();
-    let storedId: string | null = null;
+    const binding = durableBinding('root');
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
-      claimReclamation: vi.fn(async () => storedId ? { bindingId: 'root', sandboxId: storedId } : null),
-      completeReclamation: vi.fn(async () => { storedId = null; }),
+      claimReclamation: vi.fn(async () => { const { sandboxId } = binding.row(); return sandboxId ? { bindingId: 'root', sandboxId } : null; }),
+      completeReclamation: vi.fn(async () => { binding.write({ sandboxId: null, creatingSince: null }); }),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store });
-    const session = manager.open(specFor(), { id: 'root', withLock: async work => {
-      const result = await work(storedId); storedId = result.sandboxId; return result.value;
-    } });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store, environment: "test" });
+    const session = manager.open(specFor(), binding);
     await session.writeFile('saved.txt', 'persistent');
     expect(client.createOptsOf(client.created[0]).timeoutSeconds).toBe(86400);
-    client.pause(storedId!);
+    client.pause(binding.row().sandboxId!);
     const reconnect = vi.spyOn(client, 'reconnect');
     vi.spyOn(client, 'destroy').mockRejectedValueOnce(new Error('network unavailable'));
     await expect(session.dispose()).rejects.toThrow('network');
     expect(store.completeReclamation).not.toHaveBeenCalled();
-    expect(storedId).not.toBeNull();
+    expect(binding.row().sandboxId).not.toBeNull();
     await session.dispose();
-    expect(storedId).toBeNull();
+    expect(binding.row().sandboxId).toBeNull();
     expect(reconnect).not.toHaveBeenCalled();
-    const replacement = manager.open(specFor(), { id: 'root', withLock: async work => {
-      const result = await work(storedId); storedId = result.sandboxId; return result.value;
-    } });
+    const replacement = manager.open(specFor(), binding);
     expect(await replacement.readFile('saved.txt')).toBe('persistent');
   });
   it('does not bypass binding coordination through reclaim()', async () => {
@@ -91,36 +68,34 @@ describe("mounted Workspace Sandbox Manager", () => {
       claimReclamation: vi.fn(async () => { throw new Error('database unavailable'); }),
       completeReclamation: vi.fn(async () => {}),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store });
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store, environment: "test" });
     await expect(manager.reclaim('arbitrary')).rejects.toThrow('ticket');
     expect(client.destroyed).toEqual([]);
   });
   it('preserves shared users but clears their obsolete pointer only on confirmed native deletion', async () => {
     const { client } = makeManager();
-    let id: string | null = null;
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
       claimReclamation: vi.fn(async () => null), completeReclamation: vi.fn(async () => {}),
     };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store });
-    const binding: SandboxEnvironmentBinding = { id: 'shared', withLock: async work => {
-      const result = await work(id); id = result.sandboxId; return result.value;
-    } };
+    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store, environment: "test" });
+    const binding = durableBinding('shared');
+    const id = () => binding.row().sandboxId;
     const parent = manager.open(specFor(), binding);
     await parent.writeFile('saved', 'value');
-    const original = id!;
+    const original = id()!;
     client.pause(original);
     const connect = vi.spyOn(client, 'reconnect');
     await parent.dispose();
-    expect(id).toBe(original);
+    expect(id()).toBe(original);
     expect(connect).not.toHaveBeenCalled();
     const cleanup = manager.open(specFor(), binding);
     vi.spyOn(client, 'state').mockRejectedValueOnce(new Error('control plane timeout'));
     await expect(cleanup.dispose()).rejects.toThrow('timeout');
-    expect(id).toBe(original);
+    expect(id()).toBe(original);
     client.reclaim(original);
     await cleanup.dispose();
-    expect(id).toBeNull();
+    expect(id()).toBeNull();
     expect(client.destroyed).toEqual([]);
     expect(store.completeReclamation).not.toHaveBeenCalled();
   });
@@ -194,12 +169,13 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("checks resource users inside the environment lock before disposing a parent", async () => {
     const { client, manager } = makeManager();
-    let storedId: string | null = null;
+    const durable = durableBinding();
     let insideLock = false;
     const binding: SandboxEnvironmentBinding = {
+      id: durable.id,
       withLock: async (work) => {
         insideLock = true;
-        try { const result = await work(storedId); storedId = result.sandboxId; return result.value; }
+        try { return await durable.withLock(work); }
         finally { insideLock = false; }
       },
       canReclaim: async () => { expect(insideLock).toBe(true); return false; },
@@ -224,7 +200,7 @@ describe("mounted Workspace Sandbox Manager", () => {
       mkdir: unavailable, createTempFile: unavailable,
     });
     Object.assign(client, { fileSystem });
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     const capability = session.fileSystem;
     await capability.writeFile("native.bin", new Uint8Array([0, 255]));
     expect(await capability.readFile("native.bin")).toEqual(new Uint8Array([0, 255]));
@@ -243,8 +219,8 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("writes are shared immediately and survive disposal and rebuilding", async () => {
     const { client, manager } = makeManager();
-    const a = manager.open(specFor());
-    const b = manager.open(specFor());
+    const a = manager.open(specFor(), durableBinding("a"));
+    const b = manager.open(specFor(), durableBinding("b"));
     await a.writeFile("中文 空格.txt", "saved by a");
     expect(await b.readFile("中文 空格.txt")).toBe("saved by a");
     await b.writeFile("other.txt", "saved by b");
@@ -255,14 +231,16 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(await a.readFile("中文 空格.txt")).toBe("saved by a");
     await a.dispose();
     await b.dispose();
-    const rebuilt = manager.open(specFor());
+    const rebuilt = manager.open(specFor(), durableBinding("c"));
     expect(await rebuilt.readFile("other.txt")).toBe("saved by b");
   });
   it("requests the exact trusted CSI prefix and rejects another Workspace before creating", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding("sesn_root"));
     await session.writeFile("a", "saved");
     expect(client.createOptsOf(client.created[0]).metadata).toEqual({
+      "oma.dev/binding": "sesn_root",
+      "oma.dev/environment": "test",
       "oma.dev/tenant": "tenant_1",
       "oma.dev/workspace": "ws_1",
       "security.agents.kruise.io/agent-name": "agentry-workspace",
@@ -272,6 +250,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(() =>
       manager.open(
         specFor({ workspaceMount: { ...mount, prefix: "other/ws_1/" } }),
+        durableBinding(),
       ),
     ).toThrow(/prefix/);
     expect(client.created).toHaveLength(1);
@@ -279,7 +258,7 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("a missing mount or expired permissions blocks tools and disposal still preserves saved files", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     await session.writeFile("saved.txt", "already closed");
     const id = client.created[0];
     client.setMountFailure(id, "permission denied");
@@ -290,7 +269,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     await expect(session.prepare()).rejects.toThrow(/Workspace storage/);
     await session.dispose();
     expect(client.destroyed).toEqual([id]);
-    const next = manager.open(specFor());
+    const next = manager.open(specFor(), durableBinding("next"));
     expect(await next.readFile("saved.txt")).toBe("already closed");
     await expect(next.readFile("failed.txt")).rejects.toThrow(/no such file/);
     await expect(
@@ -300,7 +279,7 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("a wrong mounted prefix blocks reads until the same mount recovers", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     await session.writeFile("saved.txt", "saved");
     const id = client.created[0];
     client.setMountIdentity(id, {
@@ -323,7 +302,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     vi.spyOn(client, "verifyWorkspaceMount").mockRejectedValueOnce(
       new Error("secret provider detail"),
     );
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     await expect(session.writeFile("a.txt", "first")).rejects.toThrow(
       /Workspace storage/,
     );
@@ -336,7 +315,7 @@ describe("mounted Workspace Sandbox Manager", () => {
   it("installs renamed Skills by name, and reinstalls them on a rebuilt Sandbox", async () => {
     const { client, manager, bundles } = makeManager();
     const writer = await bundles.add("writer", [text("SKILL.md", "v1"), text("old.txt", "obsolete")]);
-    const session = manager.open(specFor({ skills: skillSetOf([writer]) }));
+    const session = manager.open(specFor({ skills: skillSetOf([writer]) }), durableBinding());
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
     await session.writeFile("data.txt", "workspace");
     const id = client.created[0];
@@ -366,13 +345,14 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("keeps another Workspace isolated while same-Workspace overwrites remain last-close wins", async () => {
     const { manager } = makeManager();
-    const a = manager.open(specFor());
-    const b = manager.open(specFor());
+    const a = manager.open(specFor(), durableBinding("a"));
+    const b = manager.open(specFor(), durableBinding("b"));
     const other = manager.open(
       specFor({
         workspaceId: "ws_2",
         workspaceMount: { ...mount, prefix: "tenant_1/ws_2/" },
       }),
+      durableBinding("other"),
     );
     await a.writeFile("a.txt", "one");
     await b.writeFile("a.txt", "two");
@@ -384,7 +364,7 @@ describe("mounted Workspace Sandbox Manager", () => {
   it.each(["mount check", "download", "extract", "switch"])("keeps the old Skills when a failed %s is retried after another rename", async (failure) => {
     const { client, manager, bundles } = makeManager();
     const original = await bundles.add("writer", [text("SKILL.md", "original")]);
-    const session = manager.open(specFor({ skills: skillSetOf([original]) }));
+    const session = manager.open(specFor({ skills: skillSetOf([original]) }), durableBinding());
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("original");
     const id = client.created[0];
     const files = [text("SKILL.md", "renamed"), text("helper.txt", "helper")];
@@ -406,7 +386,7 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("pure chat preparation, availability checks and disposal never create a Sandbox", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     await session.prepare();
     await session.checkWorkspace();
     await session.dispose();
@@ -417,7 +397,7 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("concurrent tool calls share one create and keep cwd, env, timeout and Interrupt signal", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     await Promise.all([
       session.writeFile("a", "A"),
       session.writeFile("b", "B"),
@@ -443,7 +423,7 @@ describe("mounted Workspace Sandbox Manager", () => {
 
   it("retries disposal after a gateway failure without reopening execution", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor());
+    const session = manager.open(specFor(), durableBinding());
     await session.writeFile("saved", "kept");
     vi.spyOn(client, "destroy").mockRejectedValueOnce(
       new Error("gateway unavailable"),
@@ -460,7 +440,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     const { client, manager, bundles } = makeManager();
     const skills = skillSetOf([await bundles.add("writer", [text("SKILL.md", "body")])]);
     client.skillInstallFault = (stage) => { if (stage === "download") throw new Error("Skill source unavailable"); };
-    const session = manager.open(specFor({ skills }));
+    const session = manager.open(specFor({ skills }), durableBinding());
     await expect(session.readFile("/skills/writer/SKILL.md")).rejects.toThrow(/Skill Install failed at download: Skill source unavailable/);
     expect(client.created).toHaveLength(1);
     expect(client.filesOf(client.created[0]).has("/skills/writer/SKILL.md")).toBe(false);

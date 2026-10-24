@@ -64,3 +64,16 @@ export class SkillVersionConflictError extends Error {
     this.name = "SkillVersionConflictError";
   }
 }
+
+/**
+ * An environment binding's compare-and-set lost a race: another Runner or a
+ * reclamation moved the row on after `withEnvironmentLock` read it, so
+ * nothing was written. The caller acts on the row as it is now.
+ */
+export class EnvironmentBindingChanged extends Error {
+  readonly code = "environment_binding_changed";
+  constructor(readonly bindingId: string) {
+    super("Sandbox binding changed concurrently; retry input");
+    this.name = "EnvironmentBindingChanged";
+  }
+}

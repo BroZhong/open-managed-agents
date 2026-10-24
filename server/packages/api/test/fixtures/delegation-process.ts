@@ -42,7 +42,7 @@ if (process.env.TEST_DELETE_URL) {
     deleted.add(id);
   };
 }
-const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: activities });
+const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: activities, environment: "test" });
 const workspaceMount = { bucket: "test", agentName: "test", pvName: "test", credentialProviderName: "test" };
 const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local: true,
   artifactStore: new InMemoryArtifactStore(), skillBundleStore: new InMemorySkillBundleStore() };

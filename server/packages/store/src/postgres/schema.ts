@@ -175,7 +175,10 @@ CREATE INDEX IF NOT EXISTS delegation_executions_open_idx ON ${s}.delegation_exe
 CREATE TABLE IF NOT EXISTS ${s}.delegation_resource_uses (id TEXT PRIMARY KEY, record JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS ${s}.delegation_environments (id TEXT PRIMARY KEY, sandbox_id TEXT);
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creation_pending BOOLEAN NOT NULL DEFAULT FALSE;
+-- The binding records intent (ADR-0023): Creating since this time, by the
+-- database clock, while sandbox_id is NULL; past the intent deadline any
+-- Runner reconciles it with the gateway. NULL when Ready or Cold.
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creating_since TIMESTAMPTZ;
 -- The last complete Skill Install (ADR-0022): the Sandbox it went into, the
 -- Skill Set hash it installed and its /skills switch generation in that
 -- Sandbox. All NULL until one is recorded.

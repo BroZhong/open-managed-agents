@@ -7,9 +7,10 @@ import type {
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
 import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
-import { SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
-import type { SandboxClient } from "./sandbox-client.js";
-import type { InstalledSkillSet, SandboxActivity, SandboxLifecycleStore, SkillBundleStore, SkillSetRecordOutcome } from '@oma-server/store';
+import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
+import type { SandboxClient, SandboxHandle } from "./sandbox-client.js";
+import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
+import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
 import { setTimeout as delay } from 'node:timers/promises';
 import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
@@ -35,6 +36,11 @@ export interface SandboxManagerDeps {
   /** Business execution/queue coordination and explicit termination only. */
   lifecycle?: SandboxLifecycleStore;
   sandboxClient: SandboxClient;
+  /**
+   * Labels every Sandbox created (`oma.dev/environment`): each environment's
+   * sweeper acts only on its own Sandboxes (ADR-0023).
+   */
+  environment: SandboxEnvironment;
   /** Signs the short-lived URLs a Skill Install downloads; required to install any Skill. */
   skillBundleStore?: Pick<SkillBundleStore, "createInstallUrl">;
   /** Skill Install budget calibration (ADR-0022): 20 MB/s with a 30 s floor by default. */
@@ -53,13 +59,49 @@ export class SandboxSessionClosed extends Error {
   }
 }
 
-class BindingCreationPending extends Error {}
+const INTENT_DEADLINE_MS = INTENT_DEADLINE_SECONDS * 1000;
+/**
+ * How often a Turn waiting for another's create reads the binding again. The
+ * wait ends at the intent deadline, when the binding is reconciled. #286
+ * replaces the poll with the binding's `environment` signal.
+ */
+const CREATING_POLL_MS = 100;
+/** A create that did not return a Sandbox keeps its intent until the binding is reconciled (ADR-0023). */
+const CREATION_INCOMPLETE = `Sandbox creation did not complete. The Session's Sandbox is reconciled with the gateway automatically within ${INTENT_DEADLINE_SECONDS} seconds; a later tool call can retry.`;
+
+/** Thrown inside the binding lock to leave it without a write while another Turn creates the Sandbox. */
+class CreationInProgress extends Error {
+  constructor(readonly remainingMs: number) { super("Sandbox creation in progress"); }
+}
+
+/** What ensure does next, decided from the binding row alone. */
+type EnsureStep =
+  | { kind: "ready"; sandboxId: string }
+  /** A confirmed missing Sandbox moved the binding to Cold. */
+  | { kind: "retry" }
+  | { kind: "wait"; ms: number }
+  /** Unresolved: Creating past its deadline since `creatingSince`. */
+  | { kind: "reconcile"; creatingSince: Date }
+  /** The intent is committed; the read that decided it was at `notBefore`, by the database clock. */
+  | { kind: "create"; notBefore: Date };
+
+/**
+ * Whether the binding still holds the creation intent committed right after
+ * the read at `notBefore`. Another intent can be committed only once that
+ * one is resolved, which no other Runner does before its deadline, so an
+ * intent that began within a deadline of `notBefore` is that one.
+ */
+function holdsIntent(binding: EnvironmentBinding, notBefore: Date): boolean {
+  const since = binding.creatingSince?.getTime();
+  return binding.sandboxId === null && since !== undefined
+    && since >= notBefore.getTime() && since < notBefore.getTime() + INTENT_DEADLINE_MS;
+}
 
 /** Creates independent Session resources; their OSS Workspace may be shared. */
 export interface SandboxManager {
   beginActivity?(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean>;
   finishActivity?(activity: SandboxActivity): Promise<void>;
-  open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession;
+  open(spec: EnvSpec, binding: SandboxEnvironmentBinding): SandboxSession;
   list(filter?: {
     tenantId?: string;
     workspaceId?: string;
@@ -67,10 +109,15 @@ export interface SandboxManager {
   reclaim(sandboxId: string): Promise<void>;
 }
 
-/** Infrastructure capability supplied separately from the serializable recipe. */
+/**
+ * Infrastructure capability supplied separately from the serializable recipe:
+ * the durable binding row, the only state a Sandbox session reads (ADR-0023).
+ */
 export interface SandboxEnvironmentBinding {
-  id?: string;
-  withLock<T>(callback: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  /** The root Session's id, which every Sandbox of the binding carries as `oma.dev/binding`. */
+  id: string;
+  /** See `DelegationStore.withEnvironmentLock`. */
+  withLock<T>(work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
   canExecute?(): Promise<boolean>;
   /** Evaluated inside withLock immediately before reclamation. */
   canReclaim?(): Promise<boolean>;
@@ -138,7 +185,9 @@ export class DefaultSandboxManager implements SandboxManager {
   async beginActivity(activity: SandboxActivity, signal?: AbortSignal): Promise<boolean> {
     const store = this.deps.lifecycle;
     if (!store) return false;
-    const deadline = Date.now() + 185_000;
+    // No binding transition is waited for longer than a creation intent may
+    // stay unresolved; termination's outbox retries a slower reclamation.
+    const deadline = Date.now() + INTENT_DEADLINE_MS;
     while (!await store.begin(activity)) {
       if (Date.now() >= deadline) throw new Error('Sandbox termination cleanup is still pending; retry later');
       await delay(250, undefined, { signal });
@@ -149,8 +198,7 @@ export class DefaultSandboxManager implements SandboxManager {
     const store = this.deps.lifecycle;
     await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
   }
-  open(spec: EnvSpec, binding?: SandboxEnvironmentBinding): SandboxSession {
-    if (this.deps.lifecycle && !binding?.id) throw new Error('Managed Sandbox lifecycle requires durable environment bindings');
+  open(spec: EnvSpec, binding: SandboxEnvironmentBinding): SandboxSession {
     return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, binding);
   }
   async list(_filter?: {
@@ -172,15 +220,15 @@ class SandboxSessionImpl implements SandboxSession {
   readonly fileSystem: ToolFileSystem;
   private readonly target: WorkspaceMountTarget;
   private skills: SkillSet;
+  /** The Sandbox this Turn's operations use; the binding row decides it. */
   private sandboxId?: string;
-  /** Only an in-flight create/rebuild is shared; failed provisioning can be retried. */
+  /** Only an in-flight ensure is shared; failed provisioning can be retried. */
   private ensuring?: Promise<string>;
   private disposing?: Promise<void>;
   private closed = false;
   private prepared = false;
   private generation = 0;
   private uncertainTurn = false;
-  private creationUnconfirmed = false;
   private recovering?: Promise<void>;
   /** The Turn the session was last prepared for. */
   private turn: PrepareOptions = {};
@@ -194,7 +242,7 @@ class SandboxSessionImpl implements SandboxSession {
     private readonly deps: SandboxManagerDeps,
     private readonly skillInstaller: SkillInstaller,
     private readonly spec: EnvSpec,
-    private readonly binding?: SandboxEnvironmentBinding,
+    private readonly binding: SandboxEnvironmentBinding,
   ) {
     const legacyRoot = (spec as EnvSpec & { workspaceDir?: unknown })
       .workspaceDir;
@@ -302,29 +350,28 @@ class SandboxSessionImpl implements SandboxSession {
     try {
       if (!this.recovering && generation === this.generation) {
         this.prepared = false;
-        this.recovering = this.recover(id).finally(() => { this.recovering = undefined; });
+        this.recovering = this.recover().finally(() => { this.recovering = undefined; });
       }
       await this.recovering;
       recovered = this.prepared;
     } catch { /* Unknown control-plane outcomes cannot justify replacement. */ }
     throw new Error(`Sandbox operation outcome is unconfirmed and may have side effects. The original operation was not replayed. ${recovered ? 'The environment is available for subsequent tools.' : 'Environment recovery is unconfirmed; a subsequent tool may retry preparation.'} Inspect files or external effects before deciding whether to request the operation again.`);
   }
-  private async recover(failedId: string): Promise<void> {
-    const restore = async (storedId: string | null) => {
+  private async recover(): Promise<void> {
+    const id = await this.binding.withLock<string | null>(async ({ sandboxId: id }) => {
       await this.assertExecutable();
-      const id = storedId ?? this.sandboxId;
-      if (!id) return { sandboxId: null, value: null };
-      const state = await this.deps.sandboxClient.state(id);
-      if (state === 'missing') {
+      this.sandboxId = id ?? undefined;
+      // Creating or Cold: the next tool's ensure follows the binding.
+      if (!id) return { value: null };
+      if (await this.deps.sandboxClient.state(id) === 'missing') {
         this.sandboxId = undefined;
-        return { sandboxId: null, value: null };
+        return { next: "cold", value: null };
       }
       // Never replace Running or unknown resources. Refresh a Running handle
       // only after an exception; ordinary tools do not perform this I/O.
       await this.attach(id);
-      return { sandboxId: id, value: id };
-    };
-    const id = this.binding ? await this.binding.withLock(restore) : (await restore(failedId)).value;
+      return { value: id };
+    });
     // A known missing environment stays cold until the next tool requests it.
     if (id) await this.finishPreparation(id);
   }
@@ -338,20 +385,20 @@ class SandboxSessionImpl implements SandboxSession {
     this.installing = undefined;
     this.prepared = false;
     this.uncertainTurn = false;
-    const refresh = async (id: string | null, creationPending = false) => {
+    const id = await this.binding.withLock<string | null>(async ({ sandboxId: id }) => {
       await this.assertExecutable();
-      if (creationPending) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
       this.sandboxId = id ?? undefined;
-      if (!id) return { sandboxId: null, value: null };
+      // Creating, Unresolved or Cold: the Turn starts without waiting, and its
+      // first tool's ensure waits, reconciles or creates (ADR-0023).
+      if (!id) return { value: null };
       if (!await this.deps.sandboxClient.reconnect(id, this.metadata())) {
         this.sandboxId = undefined;
-        return { sandboxId: null, value: null };
+        return { next: "cold", value: null };
       }
       this.deps.sandboxClient.resetExecutionUncertainty(id);
       await this.attach(id, false);
-      return { sandboxId: id, value: id };
-    };
-    const id = await this.withPreparationLock(refresh);
+      return { value: id };
+    });
     if (!id) return;
     // Reconnecting, verifying the mount and deciding the install block the
     // Turn as before; the install itself runs beside it (ADR-0022).
@@ -389,7 +436,7 @@ class SandboxSessionImpl implements SandboxSession {
     const { signal, skillInstalls } = this.turn;
     const skills = this.skills;
     let started = false;
-    const pending = await this.skillInstaller.begin(this.binding?.id ?? this.binding ?? this, this.skillLedger(),
+    const pending = await this.skillInstaller.begin(this.binding.id, this.skillLedger(),
       { sandboxId: id, tenantId: this.spec.tenantId }, skills, {
         signal, onStart: () => { started = true; skillInstalls?.started(skills); },
       });
@@ -407,7 +454,7 @@ class SandboxSessionImpl implements SandboxSession {
   }
   private skillLedger(): SkillInstallLedger | undefined {
     const binding = this.binding;
-    if (!binding?.installedSkills || !binding.recordSkillsInstalled) return undefined;
+    if (!binding.installedSkills || !binding.recordSkillsInstalled) return undefined;
     return { installed: () => binding.installedSkills!(), record: installed => binding.recordSkillsInstalled!(installed) };
   }
   async checkWorkspace(): Promise<void> {
@@ -417,7 +464,7 @@ class SandboxSessionImpl implements SandboxSession {
   }
   private async assertExecutable(): Promise<void> {
     this.assertOpen();
-    if (this.binding?.canExecute && !await this.binding.canExecute()) throw new SandboxSessionClosed();
+    if (this.binding.canExecute && !await this.binding.canExecute()) throw new SandboxSessionClosed();
   }
 
   dispose(): Promise<void> {
@@ -427,38 +474,35 @@ class SandboxSessionImpl implements SandboxSession {
       try {
         await this.ensuring;
       } catch {
-        /* An ambiguous create keeps its finite native deadline and durable intent. */
+        /* A create that did not complete keeps its intent for reconciliation. */
       }
       const lifecycle = this.deps.lifecycle;
-      const bindingId = this.binding?.id;
-      if (lifecycle && bindingId) {
-        const ticket = await lifecycle.claimReclamation(bindingId);
+      // #288 reclaims by binding: every Sandbox the gateway lists for it.
+      if (lifecycle) {
+        const ticket = await lifecycle.claimReclamation(this.binding.id);
         if (ticket) {
           await this.deps.sandboxClient.destroy(ticket.sandboxId);
           await lifecycle.completeReclamation(ticket);
-        }
-        if (ticket) this.sandboxId = undefined;
-        else if (this.binding) await this.binding.withLock(async id => {
+          this.sandboxId = undefined;
+        } else await this.binding.withLock<void>(async ({ sandboxId: id }) => {
           // Unknown business users may retain a pointer beyond native expiry.
           // Control-plane NotFound is sufficient to clear that vanished resource;
           // a Running/Paused resource remains untouched and is never resumed.
           if (id && await this.deps.sandboxClient.state(id) === 'missing') {
             this.sandboxId = undefined;
-            return { sandboxId: null, value: undefined };
+            return { next: "cold", value: undefined };
           }
-          return { sandboxId: id, value: undefined };
+          return { value: undefined };
         });
         return;
       }
-      const destroy = async (id: string | null) => {
-        if (this.binding?.canReclaim && !await this.binding.canReclaim()) return { sandboxId: id, value: undefined };
-        if (id) {
-          await this.deps.sandboxClient.destroy(id);
-        }
-        return { sandboxId: null, value: undefined };
-      };
-      if (this.binding) await this.binding.withLock(destroy);
-      else await destroy(this.sandboxId ?? null);
+      await this.binding.withLock<void>(async ({ sandboxId: id }) => {
+        if (this.binding.canReclaim && !await this.binding.canReclaim()) return { value: undefined };
+        // A creation intent stays: its create may still produce the Sandbox.
+        if (!id) return { value: undefined };
+        await this.deps.sandboxClient.destroy(id);
+        return { next: "cold", value: undefined };
+      });
       this.sandboxId = undefined;
 
     })().catch((error) => {
@@ -483,77 +527,164 @@ class SandboxSessionImpl implements SandboxSession {
     if (this.recovering) await this.recovering;
     // No business operation runs before the Turn's install succeeded.
     if (this.installing) await this.installing;
-    if (this.creationUnconfirmed) throw new Error('Sandbox creation or binding commit is unconfirmed; automatic replacement is disabled');
     if (this.prepared && this.sandboxId) return this.sandboxId;
-    if (!this.ensuring) this.ensuring = this.ensurePrepared().finally(() => { this.ensuring = undefined; });
+    // Parallel tool calls of the Turn share one in-flight ensure.
+    if (!this.ensuring) this.ensuring = this.provision().finally(() => { this.ensuring = undefined; });
     const id = await this.ensuring;
     this.assertOpen();
     return id;
   }
-  private async withPreparationLock<T>(work: (id: string | null) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
-    if (!this.binding) return (await work(this.sandboxId ?? null)).value;
-    const deadline = Date.now() + 185_000;
+  /**
+   * Bring the binding to Ready and prepare its Sandbox (ADR-0023, "ensure").
+   * Each step reads the row and acts on it alone: Ready → connect, a
+   * confirmed missing Sandbox → Cold; Creating → wait; Unresolved →
+   * reconcile; Cold → create. A wait ends at the intent deadline, so no
+   * outcome, known or not, blocks the binding for longer.
+   */
+  private async provision(): Promise<string> {
+    // One create per call. #285 grants an unknown outcome one more, after reconciling.
+    let creates = 1;
     for (;;) {
+      let id: string | undefined;
       try {
-        return await this.binding.withLock(async (id, pending) => {
-          await this.assertExecutable();
-          if (pending) throw new BindingCreationPending();
-          return work(id);
-        });
+        const step = await this.nextStep(creates > 0);
+        if (step.kind === "ready") id = step.sandboxId;
+        else if (step.kind === "wait") await delay(step.ms, undefined, { signal: this.turn.signal });
+        else if (step.kind === "reconcile") await this.reconcile(step.creatingSince);
+        else if (step.kind === "create") {
+          creates--;
+          id = await this.create(step.notBefore);
+        }
       } catch (error) {
-        if (!(error instanceof BindingCreationPending)) throw error;
-        if (Date.now() >= deadline) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
-        await delay(100);
+        // Another Runner moved the row on meanwhile: read it again and follow it.
+        if (!(error instanceof EnvironmentBindingChanged)) throw error;
+      }
+      if (id) {
+        await this.finishPreparation(id);
+        return id;
       }
     }
   }
-  private async ensurePrepared(): Promise<string> {
-    // Commit intent before issuing create. A lost response or Runner crash must
-    // leave an explicit ambiguous binding, not permission to allocate again.
-    const reserve = async (id: string | null, creationPending = false) => {
-      await this.assertExecutable();
-      if (creationPending) throw new Error('Sandbox creation is unconfirmed; automatic replacement is disabled');
-      if (id) {
-        if (await this.deps.sandboxClient.reconnect(id, this.metadata())) {
-          await this.attach(id, false);
-          return { sandboxId: id, value: id };
+  /** Decide ensure's next step from the binding row, under its lock. */
+  private async nextStep(mayCreate: boolean): Promise<EnsureStep> {
+    try {
+      return await this.binding.withLock<EnsureStep>(async (binding) => {
+        await this.assertExecutable();
+        const id = binding.sandboxId;
+        if (id !== null) {
+          if (await this.deps.sandboxClient.reconnect(id, this.metadata())) {
+            await this.attach(id, false);
+            return { value: { kind: "ready", sandboxId: id } };
+          }
+          this.sandboxId = undefined;
+          return { next: "cold", value: { kind: "retry" } };
         }
-      }
-      return { sandboxId: null, creationPending: true, value: null };
-    };
-    let existing: string | null;
-    try { existing = await this.withPreparationLock(reserve); }
-    catch (error) { this.prepared = false; throw error; }
-    if (existing) {
-      await this.finishPreparation(existing);
-      return existing;
+        if (binding.creatingSince !== null) {
+          const remainingMs = binding.creatingSince.getTime() + INTENT_DEADLINE_MS - binding.now.getTime();
+          // Another Turn's create may still produce the Sandbox.
+          if (remainingMs > 0) throw new CreationInProgress(remainingMs);
+          return { value: { kind: "reconcile", creatingSince: binding.creatingSince } };
+        }
+        if (!mayCreate) throw new Error(CREATION_INCOMPLETE);
+        // Commit the intent before create: a lost response, a lost Runner or a
+        // lost binding write leaves an intent any Runner reconciles after its deadline.
+        return { next: "creating", value: { kind: "create", notBefore: binding.now } };
+      });
+    } catch (error) {
+      if (!(error instanceof CreationInProgress)) throw error;
+      return { kind: "wait", ms: Math.min(CREATING_POLL_MS, error.remainingMs) };
     }
-    this.creationUnconfirmed = true;
-    const handle = await this.deps.sandboxClient.create({
-      image: this.spec.image, env: this.spec.env,
-      timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: this.metadata(),
-    }).catch(() => { throw new Error('Sandbox creation response is unconfirmed; automatic replacement is disabled. The platform retains a finite lifetime for any allocated resource.'); });
-    const initialize = async (id: string | null) => {
-      await this.assertExecutable();
-      if (id && id !== handle.id) throw new Error('Sandbox binding changed during creation');
-      let failure: unknown;
-      try { await this.verify(handle.id); } catch (error) { failure = error; }
-      // Retain a known finite-lived resource even on preparation failure. The
-      // next Turn can retry preparation, not allocate an untracked replacement.
-      return { sandboxId: handle.id, creationPending: false, value: failure };
-    };
-    const failure = this.binding ? await this.binding.withLock(initialize) : (await initialize(null)).value;
+  }
+  /**
+   * Create the Sandbox for the intent just committed and record it: CAS
+   * Creating → Ready (ADR-0023, "create"). Resolves its id, or undefined when
+   * the binding moved on meanwhile: the Sandbox is killed and ensure follows
+   * the row.
+   */
+  private async create(notBefore: Date): Promise<string | undefined> {
+    let handle: SandboxHandle;
+    try {
+      handle = await this.deps.sandboxClient.create({
+        image: this.spec.image, env: this.spec.env,
+        timeoutSeconds: SANDBOX_RUNNING_SECONDS, metadata: this.metadata(),
+      });
+    } catch (error) {
+      throw this.createFailed(error);
+    }
+    if (!await this.record(handle.id, notBefore)) {
+      // Ready with another Sandbox, Cold, or Creating anew: nothing will use this one.
+      await this.deps.sandboxClient.destroy(handle.id).catch(() => { /* the sweeper kills an unrecorded Sandbox */ });
+      return undefined;
+    }
     this.sandboxId = handle.id;
-    this.creationUnconfirmed = false;
-    if (failure) throw failure;
-    this.assertOpen();
-    // A brand-new Sandbox installs once its mount is verified.
-    await this.finishPreparation(handle.id);
+    await this.assertExecutable();
+    // A known Sandbox whose mount fails verification stays recorded: the
+    // next tool retries its preparation, not its creation.
+    await this.verify(handle.id);
     return handle.id;
+  }
+  /**
+   * CAS Creating → Ready(id) while the binding holds the intent committed
+   * after the read at `notBefore`. Recorded even for a Session terminated
+   * meanwhile: reclamation finds a Sandbox the binding names. False when the
+   * row moved on. A write whose outcome is unknown (the database unreachable)
+   * rejects and leaves the intent, which reconciliation resolves by adopting
+   * the Sandbox after the deadline.
+   */
+  private async record(id: string, notBefore: Date): Promise<boolean> {
+    for (;;) {
+      try {
+        return await this.binding.withLock<boolean>(async (binding) => {
+          // A Runner that reconciled the intent past its deadline adopted it already.
+          if (binding.sandboxId === id) return { value: true };
+          if (!holdsIntent(binding, notBefore)) return { value: false };
+          return { next: { ready: id }, value: true };
+        });
+      } catch (error) {
+        // Moved on between the read and the write: decide again on the row as it is now.
+        if (!(error instanceof EnvironmentBindingChanged)) throw error;
+      }
+    }
+  }
+  /**
+   * The tool error of a create that returned no Sandbox. Its intent stays, so
+   * the first use past the deadline reconciles the binding. #285 classifies
+   * the failure: a definite rejection (400/403/409) returns the binding to
+   * Cold; an unknown outcome waits for the deadline, reconciles and creates
+   * once more within the same call.
+   */
+  private createFailed(_error: unknown): Error {
+    // SDK errors can carry provider diagnostics: tools see a stable message.
+    return new Error(CREATION_INCOMPLETE);
+  }
+  /**
+   * Converge an Unresolved binding on what the gateway holds for it
+   * (ADR-0023, "reconcile"). Past the deadline no create of the intent is in
+   * flight: none found → Cold; one → adopt it; several → keep a running one,
+   * else the earliest claimed, and kill the others. Ensure then connects,
+   * verifies the mount and installs Skills as for any Ready binding.
+   */
+  private async reconcile(creatingSince: Date): Promise<void> {
+    // By binding alone: its id is a Session id, unique across environments,
+    // and a Sandbox created before the environment label is adopted too.
+    const found = await this.deps.sandboxClient.listSandboxes({
+      metadata: { [SANDBOX_BINDING_LABEL]: this.binding.id }, states: ["running", "paused"],
+    });
+    const [kept, ...duplicates] = [...found].sort(byKeepPreference);
+    const converged = await this.binding.withLock<boolean>(async (binding) => {
+      // Another Runner may have reconciled this intent first; ensure follows the row.
+      if (binding.sandboxId !== null || binding.creatingSince?.getTime() !== creatingSince.getTime()) return { value: false };
+      return { next: kept ? { ready: kept.sandboxId } : "cold", value: true };
+    });
+    if (!converged) return;
+    for (const { sandboxId } of duplicates) {
+      await this.deps.sandboxClient.destroy(sandboxId).catch(() => { /* the sweeper kills a superseded Sandbox */ });
+    }
   }
   private metadata(): Record<string, string> {
     return {
-      ...(this.binding?.id ? { 'oma.dev/binding': this.binding.id } : {}),
+      [SANDBOX_BINDING_LABEL]: this.binding.id,
+      [SANDBOX_ENVIRONMENT_LABEL]: this.deps.environment,
       "oma.dev/tenant": this.spec.tenantId,
       "oma.dev/workspace": this.spec.workspaceId,
       ...workspaceMountMetadata(this.spec.workspaceMount, SANDBOX_WORKSPACE_ROOT),

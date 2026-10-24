@@ -28,6 +28,7 @@ patches:
     - {op: replace, path: /data/PG_POOL_MAX, value: '10'}
     - {op: replace, path: /data/REDIS_HOST, value: redis}
     - {op: replace, path: /data/S3_BUCKET, value: workspace-test}
+    - {op: replace, path: /data/OMA_ENVIRONMENT, value: test}
 - target:
     kind: Deployment
     name: oma-runner

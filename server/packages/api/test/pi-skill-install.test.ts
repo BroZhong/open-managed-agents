@@ -61,7 +61,7 @@ it("ends a Pi Turn whose first tool call finds the Skill Install failed: the cal
   sandbox.skillInstallFault = (stage) => { if (stage === "switch") throw new Error("No space left on device"); };
   const errors: unknown[] = [];
   const router = new SessionRouter({ ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => pi,
-    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox }),
+    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore,
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       onError: ({ error }) => errors.push(error) }),

@@ -5,12 +5,19 @@ import { PgSessionStore } from "./session-store.js";
 import { PgPendingEventStore } from "./pending-event-store.js";
 import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationTable, type DelegationRecord } from "../delegation-store.js";
 import type { EventLogStoreAppendInput } from "../interfaces/event-log-store.js";
-import type { DelegationExecution, DelegationCommand, DelegationWait, InstalledSkillSet, SkillSetRecordOutcome } from "../interfaces/delegation-store.js";
+import type { DelegationExecution, DelegationCommand, DelegationWait, EnvironmentBinding, EnvironmentLockResult, EnvironmentTransition, InstalledSkillSet, SkillSetRecordOutcome } from "../interfaces/delegation-store.js";
 import type { StoredEvent } from "../types.js";
+import { EnvironmentBindingChanged } from "../errors.js";
 import type { PendingEventFence } from "../interfaces/pending-event-store.js";
 
 const tables: Record<DelegationTable, string> = { executions: "delegation_executions", waits: "delegation_waits", commands: "delegation_commands", resource_uses: "delegation_resource_uses" };
-type EnvironmentRow = { sandbox_id: string | null; reclaiming: boolean; creation_pending: boolean };
+type EnvironmentRow = { sandbox_id: string | null; reclaiming: boolean; creating_since: Date | null; now: Date };
+/** The row as compared: both reads come back as Dates of millisecond precision. */
+const sameRow = (a: EnvironmentRow, b: EnvironmentRow) =>
+  a.sandbox_id === b.sandbox_id && (a.creating_since?.getTime() ?? null) === (b.creating_since?.getTime() ?? null);
+/** `sandbox_id`, and whether `creating_since` becomes the transaction's now(). */
+const written = (next: EnvironmentTransition): [string | null, boolean] =>
+  next === "cold" ? [null, false] : next === "creating" ? [null, true] : [next.ready, false];
 /** All writes use the same SQL transaction as existing Sessions and event queues. */
 export class PgDelegationStore extends TransactionalDelegationStore {
   private readonly environmentQueues = new Map<string, Promise<void>>();
@@ -167,7 +174,7 @@ export class PgDelegationStore extends TransactionalDelegationStore {
    * compare-and-set in two short transactions, so a concurrent writer (another
    * Runner or a reclamation) fails this commit instead of being overwritten.
    */
-  async withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
+  async withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
     const previous = this.environmentQueues.get(bindingId) ?? Promise.resolve();
     const current = previous.then(() => this.environmentOperation(bindingId, work));
     const settled = current.then(() => {}, () => {});
@@ -175,14 +182,21 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     void settled.then(() => { if (this.environmentQueues.get(bindingId) === settled) this.environmentQueues.delete(bindingId); });
     return current;
   }
-  private async environmentOperation<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T> {
+  /**
+   * The intent is written with the database clock: `creating_since` is the
+   * compare-and-set transaction's now(), and `now` the snapshot's, so every
+   * Runner judges a deadline against the same clock (ADR-0023).
+   */
+  private async environmentOperation<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
     const snapshot = await this.environmentTransaction(bindingId, async (_client, row) => row);
-    const result = await work(snapshot.sandbox_id, snapshot.creation_pending);
+    const result = await work({ sandboxId: snapshot.sandbox_id, creatingSince: snapshot.creating_since, now: snapshot.now });
     return this.environmentTransaction(bindingId, async (client, row) => {
-      if (row.sandbox_id !== snapshot.sandbox_id || row.creation_pending !== snapshot.creation_pending) {
-        throw new Error("Sandbox binding changed concurrently; retry input");
+      if (!sameRow(row, snapshot)) throw new EnvironmentBindingChanged(bindingId);
+      if (result.next) {
+        const [sandboxId, creating] = written(result.next);
+        await client.query("UPDATE delegation_environments SET sandbox_id = $2, creating_since = CASE WHEN $3::boolean THEN now() END WHERE id = $1",
+          [bindingId, sandboxId, creating]);
       }
-      await client.query("UPDATE delegation_environments SET sandbox_id = $2, creation_pending = $3 WHERE id = $1", [bindingId, result.sandboxId, result.creationPending ?? snapshot.creation_pending]);
       return result.value;
     });
   }
@@ -214,7 +228,7 @@ export class PgDelegationStore extends TransactionalDelegationStore {
     try {
       await client.query("BEGIN");
       await client.query("INSERT INTO delegation_environments (id, sandbox_id) VALUES ($1, NULL) ON CONFLICT (id) DO NOTHING", [bindingId]);
-      const row = await client.query<EnvironmentRow>("SELECT sandbox_id, reclaiming, creation_pending FROM delegation_environments WHERE id = $1 FOR UPDATE", [bindingId]);
+      const row = await client.query<EnvironmentRow>("SELECT sandbox_id, reclaiming, creating_since, now() AS now FROM delegation_environments WHERE id = $1 FOR UPDATE", [bindingId]);
       if (row.rows[0].reclaiming) throw new Error('Sandbox reclamation in progress; retry input');
       const result = await work(client, row.rows[0]);
       await client.query("COMMIT");

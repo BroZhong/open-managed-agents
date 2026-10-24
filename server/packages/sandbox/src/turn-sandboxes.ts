@@ -207,8 +207,10 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     // Disposal rechecks shared users under binding coordination. A confirmed
     // missing resource can also clear an obsolete pointer despite old unknown use.
     await this.deps.manager.open(this.specFor(session, session.agent, EMPTY_SKILL_SET), this.bindingFor(session)).dispose();
-    // Disposal may retain a binding that became busy after its check.
-    return this.deps.bindings.withEnvironmentLock(bindingId, async (id) => ({ sandboxId: id, value: id === null }));
+    // Disposal may retain a binding that became busy after its check. A
+    // binding with a creation intent records no Sandbox either; #288 reclaims
+    // whatever the gateway lists for it.
+    return this.deps.bindings.withEnvironmentLock(bindingId, async ({ sandboxId }) => ({ value: sandboxId === null }));
   }
 
   async retrySettlements(sessionId?: string): Promise<void> {

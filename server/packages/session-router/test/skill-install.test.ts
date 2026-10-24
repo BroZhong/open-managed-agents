@@ -55,7 +55,7 @@ async function harness(adapter: Adapter, options: { budget?: SkillInstallBudget;
   const makeRouter = (deps: Partial<SessionRouterDeps> = {}) => new SessionRouter({
     ...stores, eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
     sandboxes: new DefaultTurnSandboxes({
-      manager: new DefaultSandboxManager({ sandboxClient: sandbox, skillBundleStore: bundles, skillInstallBudget: options.budget }),
+      manager: new DefaultSandboxManager({ sandboxClient: sandbox, skillBundleStore: bundles, skillInstallBudget: options.budget, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount,
       onError: ({ error }) => errors.push(error),
     }),

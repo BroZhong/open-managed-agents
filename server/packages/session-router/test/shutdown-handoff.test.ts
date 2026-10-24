@@ -102,7 +102,7 @@ async function harness(options: Script & { adapter?: Adapter } = {}) {
   };
   const tool = options.tool ?? (async () => "ok");
   /** One Runner's Turn Sandboxes over the shared stores. */
-  const sandboxesOf = (name: string, manager: SandboxManager = new DefaultSandboxManager({ sandboxClient })) => new DefaultTurnSandboxes({
+  const sandboxesOf = (name: string, manager: SandboxManager = new DefaultSandboxManager({ sandboxClient, environment: "test" })) => new DefaultTurnSandboxes({
     manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
     workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
     onError: ({ error }) => errors.push({ router: name, error }),
@@ -452,7 +452,7 @@ describe("a Runner that shuts down hands its running Turns to the other Runners"
         }
       }
     }
-    const sandboxes = () => new TrackedSandboxes({ sandboxClient: new FakeSandboxClient() });
+    const sandboxes = () => new TrackedSandboxes({ sandboxClient: new FakeSandboxClient(), environment: "test" });
     await h.enqueue("work");
     const a = h.start("runner-a", { sandboxes: h.sandboxesOf("runner-a", sandboxes()) });
     h.start("runner-b", { sandboxes: h.sandboxesOf("runner-b", sandboxes()) });

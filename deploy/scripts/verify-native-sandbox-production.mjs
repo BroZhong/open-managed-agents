@@ -52,7 +52,7 @@ async function events(id) {
   }
   throw new Error('Event pagination incomplete');
 }
-const binding = async () => (await pool.query(`SELECT e.sandbox_id,e.creation_pending FROM delegation_environments e JOIN sessions s ON s.id=e.id WHERE s.tenant_id=$1 AND s.id=$2`, [evidence.runId, evidence.root])).rows[0];
+const binding = async () => (await pool.query(`SELECT e.sandbox_id,e.creating_since FROM delegation_environments e JOIN sessions s ON s.id=e.id WHERE s.tenant_id=$1 AND s.id=$2`, [evidence.runId, evidence.root])).rows[0];
 async function ownedSandbox() {
   const row = await binding(); assert(row?.sandbox_id);
   const info = await Sandbox.getInfo(row.sandbox_id, sdk);

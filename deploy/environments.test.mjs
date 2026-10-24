@@ -73,6 +73,15 @@ test("Runners call the gateway in-cluster; request budgets come from code, not c
   assert.doesNotMatch(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /E2B_REQUEST_TIMEOUT_MS/);
 });
 
+test("each environment's Runners label their Sandboxes with it; the API creates none", () => {
+  for (const env of ["test", "production"]) {
+    const docs = render(env);
+    assert.equal(field(configMap(docs, "oma-runner-config"), "OMA_ENVIRONMENT"), env);
+    assert.equal(field(configMap(docs, "oma-api-config"), "OMA_ENVIRONMENT"), undefined, env);
+  }
+  assert.match(readFileSync(new URL("deploy/k8s.yaml", root), "utf8"), /^  OMA_ENVIRONMENT: "production"$/m);
+});
+
 test("test sandbox RBAC grants only the oma-test Runner identity", () => {
   const rbac = readFileSync(new URL("deploy/environments/test/sandbox-rbac.yaml", root), "utf8");
   assert.match(rbac, /namespace: sandbox-system/);

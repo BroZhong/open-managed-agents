@@ -1,5 +1,5 @@
 import type { OSSArtifactStoreOptions, OSSSkillBundleStoreOptions } from "@oma-server/store";
-import type { WorkspaceMountSpec } from "@oma-server/sandbox";
+import type { SandboxEnvironment, WorkspaceMountSpec } from "@oma-server/sandbox";
 
 type HostEnv = Readonly<Record<string, string | undefined>>;
 function required(env: HostEnv, name: string): string {
@@ -29,6 +29,17 @@ export function skillBundleStorageConfigFromEnv(env: HostEnv): OSSSkillBundleSto
   return { ...oss, internalEndpoint: env.WORKSPACE_OSS_INTERNAL_ENDPOINT?.trim() || `https://${oss.region}-internal.aliyuncs.com` };
 }
 
+/**
+ * The environment the Runner's Sandboxes belong to. Every Sandbox it creates
+ * carries it as `oma.dev/environment`, and each environment's sweeper acts
+ * only on its own (ADR-0023); production and test share a gateway.
+ */
+function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
+  const value = env.OMA_ENVIRONMENT?.trim();
+  if (value !== "production" && value !== "test") throw new Error("Sandboxes require OMA_ENVIRONMENT=production or OMA_ENVIRONMENT=test");
+  return value;
+}
+
 export function workspaceConfigFromEnv(env: HostEnv) {
   const oss = workspaceStorageConfigFromEnv(env);
   const bucket = oss.bucket;
@@ -41,6 +52,7 @@ export function workspaceConfigFromEnv(env: HostEnv) {
   };
   return {
     oss, mount,
+    environment: sandboxEnvironmentFromEnv(env),
     sandbox: {
       domain: required(env, "E2B_DOMAIN"),
       apiKey: required(env, "E2B_API_KEY"),

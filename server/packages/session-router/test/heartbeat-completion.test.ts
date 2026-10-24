@@ -37,7 +37,7 @@ describe("the claim heartbeat of a completed Turn", () => {
         await journalWriter(input)(event("agent.message", { content: [{ type: "text", text: "done" }] }));
         return "finished";
       } }),
-      sandboxes: new DefaultTurnSandboxes({ manager: new SlowSandboxes({ sandboxClient: new FakeSandboxClient() }),
+      sandboxes: new DefaultTurnSandboxes({ manager: new SlowSandboxes({ sandboxClient: new FakeSandboxClient(), environment: "test" }),
         bindings: stores.delegationStore, sessions: stores.sessionStore,
         workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
         onError: ({ error }) => errors.push(error) }),

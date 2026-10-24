@@ -258,8 +258,29 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await finish(child, fence);
       await stores.delegationStore.releaseResourceUse(child.childId, fence);
       expect(await stores.delegationStore.hasResourceUsers(input.sandboxSessionId)).toBe(false);
-      await stores.delegationStore.withEnvironmentLock("binding", async (existing) => { expect(existing).toBeNull(); return { sandboxId: "sandbox-1", value: 1 }; });
-      expect(await stores.delegationStore.withEnvironmentLock("binding", async (existing) => ({ sandboxId: existing, value: existing }))).toBe("sandbox-1");
+      await stores.delegationStore.withEnvironmentLock("binding", async ({ sandboxId }) => { expect(sandboxId).toBeNull(); return { next: { ready: "sandbox-1" }, value: 1 }; });
+      expect(await stores.delegationStore.withEnvironmentLock("binding", async ({ sandboxId }) => ({ value: sandboxId }))).toBe("sandbox-1");
+    });
+    it("records a creation intent with the database clock and ends it by Ready or Cold (ADR-0023)", async () => {
+      const store = stores.delegationStore;
+      const read = () => store.withEnvironmentLock("intent", async (binding) => ({ value: binding }));
+      const cold = await read();
+      expect(cold).toMatchObject({ sandboxId: null, creatingSince: null });
+      await store.withEnvironmentLock("intent", async () => ({ next: "creating", value: undefined }));
+      const creating = await read();
+      expect(creating.sandboxId).toBeNull();
+      // now() when the intent committed: after the read that decided it, not after a later read.
+      expect(creating.creatingSince!.getTime()).toBeGreaterThanOrEqual(cold.now.getTime());
+      expect(creating.creatingSince!.getTime()).toBeLessThanOrEqual(creating.now.getTime());
+      // A callback that names no move keeps the intent, and one that throws moves nothing.
+      expect(await store.withEnvironmentLock("intent", async ({ creatingSince }) => ({ value: creatingSince }))).toEqual(creating.creatingSince);
+      await expect(store.withEnvironmentLock("intent", async () => { throw new Error("gateway unavailable"); })).rejects.toThrow("gateway unavailable");
+      expect(await read()).toMatchObject({ sandboxId: null, creatingSince: creating.creatingSince });
+      await store.withEnvironmentLock("intent", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
+      expect(await read()).toMatchObject({ sandboxId: "sandbox-1", creatingSince: null });
+      await store.withEnvironmentLock("intent", async () => ({ next: "creating", value: undefined }));
+      await store.withEnvironmentLock("intent", async () => ({ next: "cold", value: undefined }));
+      expect(await read()).toMatchObject({ sandboxId: null, creatingSince: null });
     });
     it("records a Skill Install only while the binding still holds the Sandbox it went into", async () => {
       const store = stores.delegationStore;
@@ -267,32 +288,32 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       expect(await store.installedSkillSet("skills-binding")).toBeNull();
       // Nothing is bound yet: there is no Sandbox an install could have gone into.
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first, generation: 1 })).toBe("detached");
-      await store.withEnvironmentLock("skills-binding", async () => ({ sandboxId: "sandbox-1", value: undefined }));
+      await store.withEnvironmentLock("skills-binding", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
       expect(await store.installedSkillSet("skills-binding")).toBeNull();
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first, generation: 1 })).toBe("recorded");
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: first, generation: 1 });
       // A record is not part of the environment operation's compare-and-set.
-      expect(await store.withEnvironmentLock("skills-binding", async (id) => {
+      expect(await store.withEnvironmentLock("skills-binding", async ({ sandboxId }) => {
         expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: second, generation: 2 })).toBe("recorded");
-        return { sandboxId: id, value: id };
+        return { next: { ready: sandboxId! }, value: sandboxId };
       })).toBe("sandbox-1");
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: second, generation: 2 });
       // A rebuilt binding keeps the old record, naming the old Sandbox: the
       // new Sandbox never inherits it, and a late install into the old one is refused.
-      await store.withEnvironmentLock("skills-binding", async () => ({ sandboxId: "sandbox-2", value: undefined }));
+      await store.withEnvironmentLock("skills-binding", async () => ({ next: { ready: "sandbox-2" }, value: undefined }));
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-1", setHash: second, generation: 2 });
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-1", setHash: first, generation: 3 })).toBe("detached");
       // Generations count switches per Sandbox: a new Sandbox starts again.
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-2", setHash: first, generation: 1 })).toBe("recorded");
       expect(await store.installedSkillSet("skills-binding")).toEqual({ sandboxId: "sandbox-2", setHash: first, generation: 1 });
-      await store.withEnvironmentLock("skills-binding", async () => ({ sandboxId: null, value: undefined }));
+      await store.withEnvironmentLock("skills-binding", async () => ({ next: "cold", value: undefined }));
       expect(await store.recordSkillSetInstall("skills-binding", { sandboxId: "sandbox-2", setHash: second, generation: 2 })).toBe("detached");
       expect(await store.installedSkillSet("other-binding")).toBeNull();
     });
     it("keeps the latest switch when installs into one Sandbox record out of order", async () => {
       const store = stores.delegationStore;
       const [x, y] = ["c".repeat(64), "d".repeat(64)];
-      await store.withEnvironmentLock("racing-binding", async () => ({ sandboxId: "sandbox-1", value: undefined }));
+      await store.withEnvironmentLock("racing-binding", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
       // Y switched first (generation 1), X after it (generation 2), but X records first.
       expect(await store.recordSkillSetInstall("racing-binding", { sandboxId: "sandbox-1", setHash: x, generation: 2 })).toBe("recorded");
       expect(await store.recordSkillSetInstall("racing-binding", { sandboxId: "sandbox-1", setHash: y, generation: 1 })).toBe("superseded");

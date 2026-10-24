@@ -20,7 +20,7 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     const agent = await stores.agentStore.create({ tenantId: 'tenant', name: 'agent', model: 'model', runtime: 'pi', system: '' });
     const session = await stores.sessionStore.create({ tenantId: 'tenant', agentId: agent.id, agent, workspaceId: 'shared' });
     activity = await begin(session.id, session.id);
-    await stores.delegationStore.withEnvironmentLock(session.id, async () => ({ sandboxId: 'sandbox-original', value: undefined }));
+    await stores.delegationStore.withEnvironmentLock(session.id, async () => ({ next: { ready: 'sandbox-original' }, value: undefined }));
   });
   afterAll(async () => { await harness?.close(); });
   async function begin(sessionId: string, bindingId: string, origin = 'user.message') {
@@ -30,7 +30,7 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await lifecycle.begin(use); return use;
   }
   const ack = (use = activity) => stores.pendingEventStore.ack(use.sessionId, use.fence.eventId, use.fence);
-  const id = () => stores.delegationStore.withEnvironmentLock(activity.bindingId, async id => ({ sandboxId: id, value: id }));
+  const id = () => stores.delegationStore.withEnvironmentLock(activity.bindingId, async ({ sandboxId }) => ({ value: sandboxId }));
 
   it('sets idle only after actual settlement and an empty queue, without a clock or scanner', async () => {
     const idle = vi.fn(async () => {});
@@ -122,14 +122,16 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await expect(id()).rejects.toThrow('reclamation');
     await restarted.completeReclamation(ticket);
     expect(await id()).toBeNull();
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ sandboxId: 'replacement', value: undefined }));
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: { ready: 'replacement' }, value: undefined }));
     await lifecycle.completeReclamation(ticket);
     expect(await id()).toBe('replacement');
   });
-  it('durably preserves an ambiguous creation intent across Runner restart', async () => {
-    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ sandboxId: null, creationPending: true, value: undefined }));
+  it('durably keeps a creation intent and its database-clock start across Runner restart', async () => {
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
+    const { rows: [row] } = await harness.pool.query<{ creating_since: Date }>('SELECT creating_since FROM delegation_environments WHERE id = $1', [activity.bindingId]);
     const restarted = await createPgStores(harness.pool, { ensureSchema: false });
-    const state = await restarted.delegationStore.withEnvironmentLock(activity.bindingId, async (sandboxId, pending) => ({ sandboxId, value: { sandboxId, pending } }));
-    expect(state).toEqual({ sandboxId: null, pending: true });
+    const state = await restarted.delegationStore.withEnvironmentLock(activity.bindingId, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } }));
+    expect(state).toEqual({ sandboxId: null, creatingSince: row.creating_since });
   });
 });

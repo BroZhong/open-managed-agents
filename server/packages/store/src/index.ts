@@ -86,7 +86,7 @@ export type {
   PendingEventRenewal,
 } from "./interfaces/pending-event-store.js";
 
-export { PendingEventClaimLostError } from "./errors.js";
+export { PendingEventClaimLostError, EnvironmentBindingChanged } from "./errors.js";
 
 export type {
   ApiKeyStore,

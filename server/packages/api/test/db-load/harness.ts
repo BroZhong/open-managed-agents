@@ -362,7 +362,7 @@ export class Fleet {
         ...stores,
         eventStreamHub: new InProcessEventStreamHub(), resolveAdapter: () => adapter,
         sandboxes: new DefaultTurnSandboxes({
-          manager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, lifecycle: this.meter.lifecycle(name) }),
+          manager: new DefaultSandboxManager({ sandboxClient: this.sandboxClient, lifecycle: this.meter.lifecycle(name), environment: "test" }),
           bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount: WORKSPACE_MOUNT,
           onError: ({ error }) => this.errors.push(error),
         }),

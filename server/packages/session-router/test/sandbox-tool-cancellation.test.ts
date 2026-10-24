@@ -105,7 +105,7 @@ function managedSandbox(options: {
       return session;
     }
   }
-  const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox() });
+  const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox(), environment: "test" });
   return { manager, commands, finished, sessions, disposed: () => false };
 }
 

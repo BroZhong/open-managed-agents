@@ -125,6 +125,33 @@ export interface InstalledSkillSet {
  * binding no longer holds the Sandbox it went into.
  */
 export type SkillSetRecordOutcome = "recorded" | "superseded" | "detached";
+/**
+ * An environment binding's row as `withEnvironmentLock` reads it (ADR-0023).
+ * The row records intent; whether a Sandbox exists is the gateway's answer.
+ * Its state is derived: Ready while `sandboxId` is set, Creating while
+ * `creatingSince` is, Cold when neither is.
+ */
+export interface EnvironmentBinding {
+  sandboxId: string | null;
+  /** When the creation intent was committed, by the database clock. */
+  creatingSince: Date | null;
+  /**
+   * The database clock at this read. Whether a creation intent is past its
+   * deadline is decided against it, never against a Runner's clock.
+   */
+  now: Date;
+}
+/**
+ * The state a binding moves to: Ready with a Sandbox, or Cold, either of
+ * which ends a creation intent; or Creating, whose `creating_since` is the
+ * database's `now()` when the move commits.
+ */
+export type EnvironmentTransition = { ready: string } | "cold" | "creating";
+export interface EnvironmentLockResult<T> {
+  value: T;
+  /** Absent: the row stays as it was read. */
+  next?: EnvironmentTransition;
+}
 /** Coordination shares the pending-input lease: no second execution scheduler. */
 export interface DelegationStore {
   /** Reconcile durable Session termination even when its input/lease was already removed. */
@@ -133,7 +160,16 @@ export interface DelegationStore {
   getChild(tenantId: string, childId: string): Promise<Session | null>;
   getExecution(tenantId: string, executionId: string): Promise<DelegationExecution | null>;
   listExecutions(tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }): Promise<DelegationExecution[]>;
-  withEnvironmentLock<T>(bindingId: string, work: (sandboxId: string | null, creationPending?: boolean) => Promise<{ sandboxId: string | null; creationPending?: boolean; value: T }>): Promise<T>;
+  /**
+   * Read the binding (created Cold on first use), run `work` on it, then
+   * move it to `next` by compare-and-set: the move applies only while the row
+   * is still as `work` read it, and otherwise rejects with
+   * `EnvironmentBindingChanged`. A `work` that throws
+   * moves nothing. No database lock or pooled client is held while `work`
+   * runs, which may call the gateway; callers of one store are serialized per
+   * binding. Rejects while the binding's reclamation is in progress.
+   */
+  withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
   /** The binding's last recorded Skill Install; null when none was recorded. */
   installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
   /**

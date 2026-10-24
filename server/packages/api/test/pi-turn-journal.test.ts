@@ -67,7 +67,7 @@ it("writes each Pi event once through the Turn journal and keeps Deltas aligned 
   const errors: unknown[] = [];
   const sandbox = new FakeSandboxClient();
   const makeRouter = () => new SessionRouter({ ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
-    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox }),
+    sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: sandbox, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore,
       workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
       onError: ({ error }) => errors.push(error) }),
