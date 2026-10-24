@@ -35,10 +35,9 @@ function fleet() {
     begin: vi.fn(async () => !reclaiming),
     finish: vi.fn(async () => {}),
     claimReclamation: vi.fn(async (bindingId: string) => {
-      const sandboxId = await stores.delegationStore.withEnvironmentLock(bindingId, async (row) => ({ value: row.sandboxId }));
-      if (!sandboxId) return null;
+      const row = await stores.delegationStore.withEnvironmentLock(bindingId, async ({ sandboxId, creatingSince, now }) => ({ value: { sandboxId, creatingSince, now } }));
       reclaiming = true;
-      return { bindingId, sandboxId };
+      return { bindingId, ...row };
     }),
     completeReclamation: vi.fn(async ({ bindingId }) => {
       await stores.delegationStore.withEnvironmentLock(bindingId, async () => ({ next: "cold", value: undefined }));

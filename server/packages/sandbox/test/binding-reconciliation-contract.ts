@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { SANDBOX_WORKSPACE_ROOT } from "@open-managed-agents/adapter-core";
 import type { Agent, DelegationStore, EnvironmentBinding, EnvironmentLockResult, PendingEventFence, Session, SessionStore } from "@oma-server/store";
-import { DefaultSandboxManager, SandboxUnavailable } from "../src/sandbox-manager.js";
+import { DefaultSandboxManager, SandboxSessionClosed, SandboxUnavailable } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { CREATE_REQUEST_MS, INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SandboxCreateRejected, type SandboxClient, type SandboxCreateOptions } from "../src/sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
@@ -66,7 +66,8 @@ class Runner {
   dead = false;
   readonly sandboxes: DefaultTurnSandboxes;
   constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: EnvironmentSignals, readonly loss?: LossPoint) {
-    const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", environmentSignals: hints });
+    const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", environmentSignals: hints,
+      lifecycle: stores.lifecycle && this.alive(stores.lifecycle) });
     this.sandboxes = new DefaultTurnSandboxes({ manager, bindings: this.bindings(stores.delegationStore),
       sessions: this.alive(stores.sessionStore) as Pick<SessionStore, "getById">, workspaceMount });
     if (loss === "during-skill-install") {
@@ -172,6 +173,11 @@ export function bindingReconciliationContract(name: string, createStores: () => 
         const claimed = (await stores.pendingEventStore.claim(target.id, "runner", 60_000))!;
         return { eventId: claimed.event.id, ownerId: claimed.ownerId, generation: claimed.generation };
       };
+      /** Terminate a Session as the API and its Router do: revoked, its queue discarded. */
+      const terminate = async (target: Session) => {
+        await stores.sessionStore.terminate(target.id);
+        await stores.pendingEventStore.clear(target.id);
+      };
       /** A lost Runner's claim lapses: the next Runner takes the input over. */
       const lapse = (target: Session, fence: PendingEventFence) => stores.pendingEventStore.releaseClaim(target.id, fence.eventId, fence);
       /** A Turn on `on`: its lease, taken under a fresh claim. */
@@ -210,7 +216,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
         expect(gateway.filesOf(sandboxId!).get(marker)?.content).toBe(`written for ${bindingId}`);
         return sandboxId!;
       };
-      return { stores, gateway, gatewayClock, bundles, list, runner, session, claim, lapse, turn, lose, row, elapse, listed, claimed, toolsWork };
+      return { stores, gateway, gatewayClock, bundles, list, runner, session, claim, terminate, lapse, turn, lose, row, elapse, listed, claimed, toolsWork };
     }
     type Harness = Awaited<ReturnType<typeof setup>>;
 
@@ -564,6 +570,110 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(recorded).not.toBe(lateId);
       expect(await late.promise).toBe(recorded);
       expect(await h.listed(parent.id)).toEqual([recorded]);
+    });
+
+    /** Termination reclaims by binding (ADR-0023, "Release and reclamation", #288). */
+    describe("termination", () => {
+      /** A tool call of `target`'s Turn on a fresh Runner whose create stalls in the gateway until released. */
+      async function stalledCreate(h: Harness, target: Session) {
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        let stalled = false;
+        h.gateway.createFault = async (at) => { if (at === "claim" && !stalled) { stalled = true; await released; } };
+        const { lease } = await h.turn(h.runner(), target);
+        const tool = watch(lease.executor!.writeFile("a.txt", "never written"));
+        await vi.waitFor(() => expect(stalled).toBe(true));
+        return { tool, release };
+      }
+
+      it("kills the Sandbox a lost create left when its Session is terminated, though the binding never recorded it", async () => {
+        const h = await setup();
+        const session = await h.session();
+        await h.lose("after-create", session);
+        const [orphan] = h.gateway.created;
+        await h.elapse(INTENT_DEADLINE_SECONDS);
+        await h.terminate(session);
+        expect(await h.runner().sandboxes.reclaim(session)).toBe(true);
+        expect(h.gateway.destroyed).toEqual([orphan]);
+        expect(await h.listed(session.id)).toEqual([]);
+        expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      });
+
+      it("replays the orphans of 2026-10-22: a terminated Session whose binding stayed Creating loses every Sandbox claimed for it, and no other binding's", async () => {
+        const h = await setup();
+        const session = await h.session();
+        const other = await h.session();
+        const first = await h.claimed(session.id);
+        const second = await h.claimed(session.id);
+        const othersOrphan = await h.claimed(other.id);
+        await h.stores.legacyPending(session.id);
+        await h.stores.legacyPending(other.id);
+        await h.terminate(session);
+        expect(await h.runner().sandboxes.reclaim(session)).toBe(true);
+        expect(h.gateway.destroyed).toEqual([first, second]);
+        expect(await h.listed(other.id)).toEqual([othersOrphan]);
+        expect(await h.row(other.id)).toMatchObject({ sandboxId: null, creatingSince: new Date(0) });
+      });
+
+      it("retains the binding while a create may still be in flight on another Runner, and kills that create's Sandbox once retried past the deadline", async () => {
+        const h = await setup();
+        const session = await h.session();
+        const { tool, release } = await stalledCreate(h, session);
+        await h.terminate(session);
+        const cleaner = h.runner();
+        // Nothing listed yet: the intent is fresh, so the binding is retained.
+        expect(await cleaner.sandboxes.reclaim(session)).toBe(false);
+        expect(h.gateway.destroyed).toEqual([]);
+        release();
+        // The creator's tool fails: with the native lifecycle the claimed
+        // reclamation refuses its binding write; without it the creator
+        // records its Sandbox, and finds its Session terminated.
+        const failure = await tool.promise.catch((error: unknown) => error);
+        if (h.stores.lifecycle) expect(failure).toEqual(new Error("Sandbox reclamation in progress; retry input"));
+        else expect(failure).toBeInstanceOf(SandboxSessionClosed);
+        const [created] = h.gateway.created;
+        expect(await h.listed(session.id)).toEqual([created]);
+        await h.elapse(INTENT_DEADLINE_SECONDS);
+        expect(await cleaner.sandboxes.reclaim(session)).toBe(true);
+        expect(h.gateway.destroyed).toEqual([created]);
+        expect(await h.listed(session.id)).toEqual([]);
+        expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      });
+
+      it("never lets a creator answering after reclamation record its Sandbox: it kills the Sandbox itself", async () => {
+        const h = await setup();
+        const session = await h.session();
+        const { tool, release } = await stalledCreate(h, session);
+        await h.terminate(session);
+        const cleaner = h.runner();
+        expect(await cleaner.sandboxes.reclaim(session)).toBe(false);
+        await h.elapse(INTENT_DEADLINE_SECONDS);
+        expect(await cleaner.sandboxes.reclaim(session)).toBe(true);
+        expect(h.gateway.destroyed).toEqual([]);
+        release();
+        await expect(tool.promise).rejects.toThrow();
+        const [late] = h.gateway.created;
+        expect(h.gateway.destroyed).toEqual([late]);
+        expect(await h.listed(session.id)).toEqual([]);
+        expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      });
+
+      it("retries a reclamation whose kill failed, and keeps the binding meanwhile", async () => {
+        const h = await setup();
+        const session = await h.session();
+        const { lease } = await h.turn(h.runner(), session);
+        const recorded = await h.toolsWork(lease, session.id);
+        const extra = await h.claimed(session.id);
+        await h.terminate(session);
+        const cleaner = h.runner();
+        vi.spyOn(h.gateway, "destroy").mockRejectedValueOnce(new Error("temporary gateway failure"));
+        await expect(cleaner.sandboxes.reclaim(session)).rejects.toThrow("temporary gateway failure");
+        expect(await h.listed(session.id)).toEqual([recorded]);
+        expect(h.gateway.destroyed).toEqual([extra]);
+        expect(await cleaner.sandboxes.reclaim(session)).toBe(true);
+        expect(h.gateway.destroyed).toEqual([extra, recorded]);
+        expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
+      });
     });
   });
 }

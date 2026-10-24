@@ -24,7 +24,7 @@ function sandbox(fail: "prepare" | "install" | "checkWorkspace"): SandboxManager
     checkWorkspace: async () => { if (fail === "checkWorkspace") throw new Error("mount gone"); },
     dispose: async () => {},
   };
-  return { open: () => session, list: async () => [], reclaim: async () => {} };
+  return { open: () => session, list: async () => [], reclaim: async () => true };
 }
 
 const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" };

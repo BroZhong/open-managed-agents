@@ -36,6 +36,8 @@ export {
   type SweepSelection,
 } from "./sandbox-sweep.js";
 
+export { killSandboxes, killBindingSandboxes, type SandboxKills } from "./sandbox-kill.js";
+
 export {
   E2BSandboxClient,
   parseFindOutput,

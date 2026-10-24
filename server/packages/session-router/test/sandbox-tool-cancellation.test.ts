@@ -38,7 +38,7 @@ function deferred<T = void>() {
 function localSandbox() {
   const local = new LocalToolExecutor({ root });
   const commands: SandboxCommand[] = [];
-  let disposed = false;
+  let reclaimed = false;
   const session: SandboxSession = {
     fileSystem: local.fileSystem,
     async *exec(command, options) {
@@ -54,10 +54,10 @@ function localSandbox() {
     list: (glob) => local.list(glob),
     prepare: async () => {},
     checkWorkspace: async () => {},
-    dispose: async () => { disposed = true; },
+    dispose: async () => {},
   };
-  const manager: SandboxManager = { open: () => session, list: async () => [], reclaim: async () => {} };
-  return { manager, commands, disposed: () => disposed };
+  const manager: SandboxManager = { open: () => session, list: async () => [], reclaim: async () => { reclaimed = true; return true; } };
+  return { manager, commands, reclaimed: () => reclaimed };
 }
 
 /**
@@ -106,7 +106,7 @@ function managedSandbox(options: {
     }
   }
   const manager = new Sandboxes({ sandboxClient: new LocalProcessSandbox(), environment: "test" });
-  return { manager, commands, finished, sessions, disposed: () => false };
+  return { manager, commands, finished, sessions, reclaimed: () => false };
 }
 
 /** Pi's managed bash, driven with the Turn signal exactly as Pi aborts its running tools. */
@@ -209,12 +209,12 @@ describe("cancelling a running Sandbox tool through the fenced executor", () => 
     await tool.settled;
     await running;
 
-    // No SIGTERM helper and no transport kill: disposing the Sandbox is
+    // No SIGTERM helper and no transport kill: reclaiming the Sandbox is
     // termination's own cleanup, so the execution was left to run undisturbed.
     expect(h.sandbox.commands).toHaveLength(1);
     expect(frames(h.sandbox.commands[0]).at(-1)?.type).toBe("result");
     expect(h.sandbox.commands[0].exit).toEqual({ exitCode: 0 });
-    expect(h.sandbox.disposed()).toBe(true);
+    expect(h.sandbox.reclaimed()).toBe(true);
   }, 15000);
 
   it("sends nothing to the running execution after the lease is lost", async () => {

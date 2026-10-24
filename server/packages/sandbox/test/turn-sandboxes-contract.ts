@@ -71,6 +71,10 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       return { stores, client, bundles, manager, open, errors, sandboxes, session, claim, ack, acquire, turn, users };
     }
 
+    /** A Sandbox claimed for the binding that nothing recorded, as a lost create leaves one. */
+    const claimedFor = async (h: Awaited<ReturnType<typeof setup>>, bindingId: string) =>
+      (await h.client.create({ metadata: { "oma.dev/binding": bindingId, "oma.dev/environment": "test" } })).id;
+
     /** Admission and its end are observed, as the native lifecycle store's are. */
     function trackActivity(manager: DefaultSandboxManager) {
       const begin = vi.spyOn(manager, "beginActivity").mockResolvedValue(true);
@@ -310,6 +314,7 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const child = await h.session({}, parent);
       await h.turn(parent, (executor) => executor!.writeFile("saved.txt", "kept"));
       const [id] = h.client.created;
+      const extra = await claimedFor(h, parent.id);
       const fence = await h.claim(child);
       const childLease = (await h.acquire(child, fence))!;
       await h.stores.sessionStore.terminate(parent.id);
@@ -317,11 +322,55 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(h.client.destroyed).toEqual([]);
       await h.ack(child, fence);
       await childLease.release({ settled: true });
+      // A failed kill rejects; the others are attempted, and the retry finishes.
       vi.spyOn(h.client, "destroy").mockRejectedValueOnce(new Error("temporary gateway failure"));
       await expect(h.sandboxes.reclaim(parent)).rejects.toThrow("temporary gateway failure");
+      expect(h.client.destroyed).toEqual([extra]);
       expect(await h.sandboxes.reclaim(parent)).toBe(true);
-      expect(h.client.destroyed).toEqual([id]);
+      expect(h.client.destroyed).toEqual([extra, id]);
       expect(h.client.workspaceContents(`${TENANT}/ws_1/`).get("saved.txt")?.content).toBe("kept");
+    });
+
+    it("kills the recorded Sandbox and every other one the gateway lists for a terminated Session's binding, and no other binding's", async () => {
+      const h = await setup();
+      const session = await h.session();
+      const other = await h.session();
+      await h.turn(session, (executor) => executor!.writeFile("saved.txt", "kept"));
+      await h.turn(other, (executor) => executor!.writeFile("other.txt", "theirs"));
+      const [recorded, othersSandbox] = h.client.created;
+      // Left by lost creates: claimed for the binding, recorded by none.
+      const extra = await claimedFor(h, session.id);
+      const pausedExtra = await claimedFor(h, session.id);
+      h.client.pause(pausedExtra);
+      const othersExtra = await claimedFor(h, other.id);
+      const list = vi.spyOn(h.client, "listSandboxes");
+      await h.stores.sessionStore.terminate(session.id);
+      expect(await h.sandboxes.reclaim(session)).toBe(true);
+      expect(h.client.destroyed).toEqual([recorded, extra, pausedExtra]);
+      expect(list).toHaveBeenCalledExactlyOnceWith({ metadata: { "oma.dev/binding": session.id }, states: ["running", "paused"] });
+      expect((await list.mock.results[0].value).map(({ sandboxId }: { sandboxId: string }) => sandboxId)).toEqual([extra, pausedExtra]);
+      expect(await h.client.state(othersExtra)).toBe("running");
+      expect(await h.stores.delegationStore.withEnvironmentLock(session.id, async ({ sandboxId, creatingSince }) => ({ value: { sandboxId, creatingSince } })))
+        .toEqual({ sandboxId: null, creatingSince: null });
+      // The other Session goes on in its own Sandbox.
+      expect(await h.turn(other, (executor) => executor!.readFile("other.txt"))).toBe("theirs");
+      expect(h.client.created).toEqual([recorded, othersSandbox, extra, pausedExtra, othersExtra]);
+    });
+
+    it.skipIf(!options.lifecycle)("kills nothing while input is queued for a Child Session of the binding", async () => {
+      const h = await setup();
+      const parent = await h.session();
+      const child = await h.session({}, parent);
+      await h.turn(parent, (executor) => executor!.writeFile("saved.txt", "kept"));
+      const [id] = h.client.created;
+      const extra = await claimedFor(h, parent.id);
+      await h.stores.pendingEventStore.enqueue(child.id, { type: "delegation_input", data: {}, sessionThreadId: "sthr_primary" });
+      await h.stores.sessionStore.terminate(parent.id);
+      expect(await h.sandboxes.reclaim(parent)).toBe(false);
+      expect(h.client.destroyed).toEqual([]);
+      await h.stores.pendingEventStore.clear(child.id);
+      expect(await h.sandboxes.reclaim(parent)).toBe(true);
+      expect(h.client.destroyed).toEqual([id, extra]);
     });
 
     it.skipIf(!options.lifecycle)("shortens an admitted Turn's Sandbox deadline after its settled release, never before observed exit", async () => {

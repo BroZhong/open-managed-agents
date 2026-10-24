@@ -735,8 +735,9 @@ export class SessionRouter {
       return false; // Wait for actual settlement; abort acceptance is not exit proof.
     }
     this.checkReconciled(await this.delegationStore?.reconcileTerminatedExecutions(sessionId) ?? []);
-    // Keep the outbox request until the binding no longer records a Sandbox:
-    // reclamation retains one that another Session still uses.
+    // Keep the outbox request until the binding records no Sandbox and no
+    // creation intent: reclamation retains one that another Session still
+    // uses, or whose create may still be in flight.
     return this.sandboxes ? this.sandboxes.reclaim(session) : true;
   }
 

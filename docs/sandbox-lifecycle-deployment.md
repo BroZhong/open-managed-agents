@@ -91,15 +91,20 @@ reconciled on first use. `0024_binding_creating_since.rollback.sql` restores
 `creation_pending` (true for every intent) for the previous image.
 
 Explicit termination uses `session_cleanup` and a committed `reclaiming` ticket.
-Kill is direct by ID and deletion is confirmed through the control plane before
-clearing the pointer. Network/confirmation failures leave the ticket retryable.
+It kills the Sandbox the binding records, then every Sandbox the gateway lists
+with the binding's `oma.dev/binding`, whether the binding records a Sandbox, a
+creation intent or neither, and clears the binding to Cold only once deletion
+is confirmed through the control plane. Network/confirmation failures leave the
+ticket retryable. A binding whose creation intent is within its 180 s deadline
+stays claimed until a retry past it, so a create still in flight is killed too.
 Shared non-terminated children and queued input prevent deleting their binding.
 Saved Workspace files and history are retained.
 
 There is no instruction to remove unknown activity records and no rollback that
 reinstalls infinite lifetime. The recurring sweeper of ADR-0023 is not enabled
 yet (#291); until then a Sandbox no binding records runs to its platform
-deadline.
+deadline unless its Session's termination reclaims it. Sessions whose cleanup
+completed before termination reclaimed by binding are not revisited.
 
 ## Verification
 

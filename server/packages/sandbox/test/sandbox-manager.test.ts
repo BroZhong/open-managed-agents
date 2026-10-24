@@ -44,7 +44,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     const binding = durableBinding('root');
     const store: SandboxLifecycleStore = {
       begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
-      claimReclamation: vi.fn(async () => { const { sandboxId } = binding.row(); return sandboxId ? { bindingId: 'root', sandboxId } : null; }),
+      claimReclamation: vi.fn(async () => ({ bindingId: 'root', ...binding.row(), now: new Date() })),
       completeReclamation: vi.fn(async () => { binding.write({ sandboxId: null, creatingSince: null }); }),
     };
     const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store, environment: "test" });
@@ -62,17 +62,6 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(reconnect).not.toHaveBeenCalled();
     const replacement = manager.open(specFor(), binding);
     expect(await replacement.readFile('saved.txt')).toBe('persistent');
-  });
-  it('does not bypass binding coordination through reclaim()', async () => {
-    const { client } = makeManager();
-    const store: SandboxLifecycleStore = {
-      begin: vi.fn(async () => true), finish: vi.fn(async () => {}),
-      claimReclamation: vi.fn(async () => { throw new Error('database unavailable'); }),
-      completeReclamation: vi.fn(async () => {}),
-    };
-    const manager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: store, environment: "test" });
-    await expect(manager.reclaim('arbitrary')).rejects.toThrow('ticket');
-    expect(client.destroyed).toEqual([]);
   });
   it('preserves shared users but clears their obsolete pointer only on confirmed native deletion', async () => {
     const { client } = makeManager();

@@ -118,13 +118,51 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     const ticket = (await lifecycle.claimReclamation(activity.bindingId))!;
     expect(ticket.sandboxId).toBe('sandbox-original');
     const restarted = new PgSandboxLifecycleStore(harness.pool);
-    expect(await restarted.claimReclamation(activity.bindingId)).toEqual(ticket);
+    expect(await restarted.claimReclamation(activity.bindingId)).toEqual({ ...ticket, now: expect.any(Date) });
     await expect(id()).rejects.toThrow('reclamation');
     await restarted.completeReclamation(ticket);
     expect(await id()).toBeNull();
     await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: { ready: 'replacement' }, value: undefined }));
     await lifecycle.completeReclamation(ticket);
     expect(await id()).toBe('replacement');
+  });
+  it('claims a binding with a creation intent and no Sandbox, holds it while claimed, and clears it to Cold', async () => {
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
+    const { rows: [intent] } = await harness.pool.query<{ creating_since: Date }>('SELECT creating_since FROM delegation_environments WHERE id = $1', [activity.bindingId]);
+    expect(await lifecycle.claimReclamation(activity.bindingId)).toBeNull();
+    await stores.sessionStore.terminate(activity.sessionId);
+    const ticket = (await lifecycle.claimReclamation(activity.bindingId))!;
+    // The database clock judges whether a create of the intent may still be in flight.
+    expect(ticket).toEqual({ bindingId: activity.bindingId, sandboxId: null, creatingSince: intent.creating_since, now: expect.any(Date) });
+    expect(ticket.now.getTime()).toBeGreaterThanOrEqual(intent.creating_since.getTime());
+    // Claimed, the binding admits no Turn and refuses every binding write: a creator cannot record its Sandbox.
+    expect(await lifecycle.begin(activity)).toBe(false);
+    await expect(stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: { ready: 'late-creator' }, value: undefined })))
+      .rejects.toThrow('reclamation');
+    await lifecycle.completeReclamation(ticket);
+    const row = () => harness.pool.query<{ sandbox_id: string | null; creating_since: Date | null; reclaiming: boolean }>(
+      'SELECT sandbox_id, creating_since, reclaiming FROM delegation_environments WHERE id = $1', [activity.bindingId]).then(({ rows }) => rows[0]);
+    expect(await row()).toEqual({ sandbox_id: null, creating_since: null, reclaiming: false });
+    // A Cold binding is claimed too: the gateway may hold Sandboxes for it.
+    const cold = (await lifecycle.claimReclamation(activity.bindingId))!;
+    expect(cold).toEqual({ bindingId: activity.bindingId, sandboxId: null, creatingSince: null, now: expect.any(Date) });
+    await lifecycle.completeReclamation(cold);
+    expect(await row()).toEqual({ sandbox_id: null, creating_since: null, reclaiming: false });
+  });
+  it('lets no ticket of an earlier intent complete a later reclamation', async () => {
+    await stores.sessionStore.terminate(activity.sessionId);
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
+    await harness.pool.query("UPDATE delegation_environments SET creating_since = now() - interval '1 hour' WHERE id = $1", [activity.bindingId]);
+    const earlier = (await lifecycle.claimReclamation(activity.bindingId))!;
+    await lifecycle.completeReclamation(earlier);
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));
+    const later = (await lifecycle.claimReclamation(activity.bindingId))!;
+    expect(later.creatingSince).not.toEqual(earlier.creatingSince);
+    await lifecycle.completeReclamation(earlier);
+    await expect(id()).rejects.toThrow('reclamation');
+    await lifecycle.completeReclamation(later);
+    expect(await id()).toBeNull();
   });
   it('durably keeps a creation intent and its database-clock start across Runner restart', async () => {
     await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));

@@ -60,21 +60,29 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore {
   }
   async claimReclamation(bindingId: string): Promise<SandboxReclamation | null> {
     return this.locked(bindingId, async client => {
-      const { rows: [row] } = await client.query<{ sandbox_id: string | null; reclaiming: boolean }>('SELECT sandbox_id, reclaiming FROM delegation_environments WHERE id=$1', [bindingId]);
-      if (!row.sandbox_id) return null;
-      if (row.reclaiming) return { bindingId, sandboxId: row.sandbox_id };
+      const { rows: [row] } = await client.query<{ sandbox_id: string | null; creating_since: Date | null; now: Date; reclaiming: boolean }>(
+        'SELECT sandbox_id, creating_since, now() AS now, reclaiming FROM delegation_environments WHERE id=$1', [bindingId]);
+      // Whatever the row records, even nothing: a lost create can leave a
+      // Sandbox only the gateway knows, and reclamation kills it by binding.
+      const ticket: SandboxReclamation = { bindingId, sandboxId: row.sandbox_id, creatingSince: row.creating_since, now: row.now };
+      if (row.reclaiming) return ticket;
       const busy = await client.query(`SELECT 1 FROM delegation_resource_uses u JOIN sessions s ON s.id=u.record->>'sessionId'
         WHERE u.record->>'sandboxSessionId'=$1 AND s.status <> 'terminated'
         UNION ALL SELECT 1 FROM pending_events p JOIN sessions s ON s.id=p.session_id
         WHERE COALESCE(s.delegation->>'sandboxSessionId',s.id)=$1 AND s.status <> 'terminated' LIMIT 1`, [bindingId]);
       if (busy.rows.length) return null;
       await client.query('UPDATE delegation_environments SET reclaiming=TRUE WHERE id=$1', [bindingId]);
-      return { bindingId, sandboxId: row.sandbox_id };
+      return ticket;
     });
   }
   async completeReclamation(ticket: SandboxReclamation): Promise<void> {
     await this.locked(ticket.bindingId, async client => {
-      const result = await client.query('UPDATE delegation_environments SET sandbox_id=NULL, reclaiming=FALSE WHERE id=$1 AND sandbox_id=$2 AND reclaiming=TRUE RETURNING id', [ticket.bindingId, ticket.sandboxId]);
+      // The ticket's row, as read (a Date has millisecond precision): nothing
+      // moves a reclaiming row, so only this reclamation's own callback matches.
+      const result = await client.query(`UPDATE delegation_environments SET sandbox_id=NULL, creating_since=NULL, reclaiming=FALSE
+        WHERE id=$1 AND reclaiming=TRUE AND sandbox_id IS NOT DISTINCT FROM $2
+          AND date_trunc('milliseconds', creating_since) IS NOT DISTINCT FROM $3::timestamptz RETURNING id`,
+      [ticket.bindingId, ticket.sandboxId, ticket.creatingSince]);
       if (result.rows.length) await client.query(`DELETE FROM delegation_resource_uses u USING sessions s
         WHERE s.id=u.record->>'sessionId' AND s.status='terminated' AND u.record->>'sandboxSessionId'=$1`, [ticket.bindingId]);
     });

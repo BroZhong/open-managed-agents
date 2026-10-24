@@ -152,8 +152,8 @@ export interface Outcome {
   errors: Array<{ runner: number; error: unknown }>;
   /** Every Delta any Runner streamed, in order, with its Session. */
   deltas: Array<TurnDelta & { sessionId: string }>;
-  /** Every Sandbox a Runner disposed, by that Runner. */
-  disposals: number[];
+  /** Every binding a Runner reclaimed, by that Runner. */
+  reclamations: number[];
 }
 
 /** What a lost Runner left of one Session whose claim it held, or that it held none. */
@@ -371,7 +371,7 @@ function request(body: { model: string; thinking?: unknown; system?: unknown; me
 }
 
 /** A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool` as every tool. */
-function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void, disposed: () => void): SandboxManager {
+function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void, reclaimed: () => void): SandboxManager {
   const files = new Map<string, Uint8Array>();
   let temporary = 0;
   const missing = (path: string) => Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
@@ -401,9 +401,9 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
       options?.onExit?.({ exitCode: 0 });
     },
     readFile: unsupported, writeFile: unsupported, list: unsupported,
-    prepare: async () => {}, checkWorkspace: async () => {}, dispose: async () => { disposed(); },
+    prepare: async () => {}, checkWorkspace: async () => {}, dispose: async () => {},
   };
-  return { open: () => session, list: async () => [], reclaim: async () => {} };
+  return { open: () => session, list: async () => [], reclaim: async () => { reclaimed(); return true; } };
 }
 
 export const PROVIDER = "scripted";
@@ -440,7 +440,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
   const providerOf = (runner: number): CustomProviderDefinition => ({ id: PROVIDER, name: "Scripted", api: "anthropic-messages",
     baseUrl: "https://model.example.invalid", apiKey: "controlled-test-key",
     models: (scenario.models?.(runner) ?? MODELS).map((id) => ({ id, name: id, contextWindow: scenario.contextWindow ?? 200_000, maxTokens: 8192, input: ["text"] })) });
-  const outcome: Outcome = { log: [], sessionId: session.id, sessions: [], executions: [], stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], commands: [], errors: [], deltas: [], disposals: [] };
+  const outcome: Outcome = { log: [], sessionId: session.id, sessions: [], executions: [], stores, runners: [], requests: [], toolCalls: [], attempts: [], losses: [], commands: [], errors: [], deltas: [], reclamations: [] };
   // The Redis stand-in all Runners share; it records every Delta as it is appended.
   const turnStreams = new InMemoryTurnStreamStore();
   const appendDelta = turnStreams.appendDelta.bind(turnStreams);
@@ -547,7 +547,7 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
           const toolCall = { ...call, runner: index };
           outcome.toolCalls.push(toolCall);
           return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
-        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.disposals.push(index)),
+        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.reclamations.push(index)),
         bindings: runnerStores.delegationStore, sessions: runnerStores.sessionStore,
         workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
         onError: ({ error }) => outcome.errors.push({ runner: index, error }),

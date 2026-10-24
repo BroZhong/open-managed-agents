@@ -2,7 +2,7 @@ import type { Agent, DelegationStore, PendingEventFence, SandboxActivity, Sessio
 import { workspaceObjectPrefix } from "@oma-server/store";
 import type { ToolExecutor } from "@open-managed-agents/adapter-core";
 import type { EnvSpec, SandboxEnvironmentBinding, SandboxManager, SandboxSession, SkillInstallObserver } from "./sandbox-manager.js";
-import { EMPTY_SKILL_SET, SkillInstallError, type SkillSet } from "./skill-install.js";
+import { SkillInstallError, type SkillSet } from "./skill-install.js";
 import { turnExecutor, type TurnExecutorGuard } from "./turn-executor.js";
 import { WORKSPACE_ENV } from "./workspace-environment.js";
 import type { WorkspaceMountSpec } from "./workspace-mount.js";
@@ -102,8 +102,9 @@ export interface TurnSandboxes {
   /** The Turn's lease; null for an Agent that is not sandboxed. Rejects only when the Turn may not use the Sandbox at all. */
   acquire(request: SandboxLeaseRequest): Promise<SandboxLease | null>;
   /**
-   * Reclaim a terminated Session's Sandbox: its binding is reclaimed once no
-   * other Session uses it. True once the binding records no Sandbox; the
+   * Reclaim a terminated Session's Sandbox: its binding is reclaimed, with
+   * every Sandbox the gateway lists for it, once no other Session uses it.
+   * True once the binding records no Sandbox and no creation intent; the
    * caller keeps its cleanup request until then.
    */
   reclaim(session: Session): Promise<boolean>;
@@ -203,14 +204,10 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
   }
 
   async reclaim(session: Session): Promise<boolean> {
-    const bindingId = bindingIdOf(session);
-    // Disposal rechecks shared users under binding coordination. A confirmed
-    // missing resource can also clear an obsolete pointer despite old unknown use.
-    await this.deps.manager.open(this.specFor(session, session.agent, EMPTY_SKILL_SET), this.bindingFor(session)).dispose();
-    // Disposal may retain a binding that became busy after its check. A
-    // binding with a creation intent records no Sandbox either; #288 reclaims
-    // whatever the gateway lists for it.
-    return this.deps.bindings.withEnvironmentLock(bindingId, async ({ sandboxId }) => ({ value: sandboxId === null }));
+    // By binding: shared users are rechecked under its coordination, and a
+    // confirmed missing resource can also clear an obsolete pointer despite
+    // old unknown use.
+    return this.deps.manager.reclaim(this.bindingFor(session));
   }
 
   async retrySettlements(sessionId?: string): Promise<void> {

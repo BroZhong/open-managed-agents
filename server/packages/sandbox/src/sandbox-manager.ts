@@ -10,6 +10,7 @@ import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-manag
 import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected } from "./sandbox-client.js";
 import type { SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
+import { killBindingSandboxes } from "./sandbox-kill.js";
 import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
 import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
 import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
@@ -133,7 +134,13 @@ export interface SandboxManager {
     tenantId?: string;
     workspaceId?: string;
   }): Promise<SandboxDescriptor[]>;
-  reclaim(sandboxId: string): Promise<void>;
+  /**
+   * Reclaim a terminated Session's binding by binding (ADR-0023, "Release
+   * and reclamation"). True once the binding records no Sandbox and no
+   * creation intent: reclaimed, or Cold while another Session still uses it.
+   * False while it is retained; the caller retries.
+   */
+  reclaim(binding: SandboxEnvironmentBinding): Promise<boolean>;
 }
 
 /**
@@ -199,7 +206,11 @@ export interface SandboxSession {
   prepare(skills?: SkillSet, options?: PrepareOptions): Promise<void>;
   /** Availability check only: never scans files or claims all open handles were saved. */
   checkWorkspace(): Promise<void>;
-  /** Close execution resources. Completed writes already belong to the Workspace. */
+  /**
+   * Close the session, then reclaim its binding as `SandboxManager.reclaim`
+   * does; while that is retained, a later call tries again. Completed writes
+   * already belong to the Workspace.
+   */
   dispose(): Promise<void>;
 }
 
@@ -241,9 +252,66 @@ export class DefaultSandboxManager implements SandboxManager {
   }): Promise<SandboxDescriptor[]> {
     return [];
   }
-  async reclaim(sandboxId: string): Promise<void> {
-    if (this.deps.lifecycle) throw new Error('Managed Sandbox reclamation requires a binding and a durable reclamation ticket');
-    await this.deps.sandboxClient.destroy(sandboxId);
+  reclaim(binding: SandboxEnvironmentBinding): Promise<boolean> {
+    return reclaimBinding(this.deps, signallingBinding(binding, this.deps.environmentSignals));
+  }
+}
+
+/**
+ * Whether a create of the binding's creation intent may still be in flight:
+ * until the intent's deadline, by the database clock, it can still produce a
+ * Sandbox the gateway does not list yet.
+ */
+function creationMayBeInFlight({ creatingSince, now }: EnvironmentBinding): boolean {
+  return creatingSince !== null && now.getTime() < creatingSince.getTime() + INTENT_DEADLINE_MS;
+}
+
+/**
+ * Reclaim a terminated Session's binding (ADR-0023, "Release and
+ * reclamation"). Once no other Session uses it (with the native lifecycle:
+ * and no input is queued for it), kill the Sandbox it records and every one
+ * the gateway lists for it, whether it records one, a creation intent or
+ * nothing, and clear it to Cold only once all are confirmed missing. A failed
+ * kill rejects and keeps the reclamation for the caller's retry.
+ *
+ * A binding Creating within its intent deadline stays retained after the
+ * kills: its create may still produce a Sandbox the list did not show. With
+ * the native lifecycle the reclamation stays claimed meanwhile, which refuses
+ * the creator's binding write, and the first retry past the deadline, when no
+ * create of the intent is in flight any more, lists and kills the Sandbox it
+ * left. Without it, the creator records its Sandbox and that retry kills it
+ * as the recorded one. A creator answering after the binding went Cold finds
+ * no intent to record and kills its Sandbox itself; the sweeper (#291) kills
+ * one whose kill failed.
+ */
+async function reclaimBinding({ lifecycle, sandboxClient: client, environmentSignals: signals }: SandboxManagerDeps, binding: SandboxEnvironmentBinding): Promise<boolean> {
+  if (lifecycle) {
+    const ticket = await lifecycle.claimReclamation(binding.id);
+    if (!ticket) return binding.withLock<boolean>(async ({ sandboxId: id, creatingSince }) => {
+      // Unknown business users may retain a pointer beyond native expiry.
+      // Control-plane NotFound is sufficient to clear that vanished resource;
+      // a Running/Paused resource remains untouched and is never resumed.
+      if (id && await client.state(id) === 'missing') return { next: "cold", value: true };
+      return { value: id === null && creatingSince === null };
+    });
+    await killBindingSandboxes(client, binding.id, ticket.sandboxId);
+    if (creationMayBeInFlight(ticket)) return false;
+    await lifecycle.completeReclamation(ticket);
+    // Turns waiting for admission while it was reclaimed ask again now.
+    signals?.publish(binding.id);
+    return true;
+  }
+  try {
+    return await binding.withLock<boolean>(async (row) => {
+      if (binding.canReclaim && !await binding.canReclaim()) return { value: row.sandboxId === null && row.creatingSince === null };
+      await killBindingSandboxes(client, binding.id, row.sandboxId);
+      if (creationMayBeInFlight(row)) return { value: false };
+      return { next: "cold", value: true };
+    });
+  } catch (error) {
+    // A creator recorded its Sandbox meanwhile: the retry kills it as the recorded one.
+    if (error instanceof EnvironmentBindingChanged) return false;
+    throw error;
   }
 }
 
@@ -510,37 +578,9 @@ class SandboxSessionImpl implements SandboxSession {
       } catch {
         /* A create that did not complete keeps its intent for reconciliation. */
       }
-      const lifecycle = this.deps.lifecycle;
-      // #288 reclaims by binding: every Sandbox the gateway lists for it.
-      if (lifecycle) {
-        const ticket = await lifecycle.claimReclamation(this.binding.id);
-        if (ticket) {
-          await this.deps.sandboxClient.destroy(ticket.sandboxId);
-          await lifecycle.completeReclamation(ticket);
-          // Turns waiting for admission while it was reclaimed ask again now.
-          this.deps.environmentSignals?.publish(this.binding.id);
-          this.sandboxId = undefined;
-        } else await this.binding.withLock<void>(async ({ sandboxId: id }) => {
-          // Unknown business users may retain a pointer beyond native expiry.
-          // Control-plane NotFound is sufficient to clear that vanished resource;
-          // a Running/Paused resource remains untouched and is never resumed.
-          if (id && await this.deps.sandboxClient.state(id) === 'missing') {
-            this.sandboxId = undefined;
-            return { next: "cold", value: undefined };
-          }
-          return { value: undefined };
-        });
-        return;
-      }
-      await this.binding.withLock<void>(async ({ sandboxId: id }) => {
-        if (this.binding.canReclaim && !await this.binding.canReclaim()) return { value: undefined };
-        // A creation intent stays: its create may still produce the Sandbox.
-        if (!id) return { value: undefined };
-        await this.deps.sandboxClient.destroy(id);
-        return { next: "cold", value: undefined };
-      });
-      this.sandboxId = undefined;
-
+      if (await reclaimBinding(this.deps, this.binding)) this.sandboxId = undefined;
+      // Retained: a later dispose reclaims again.
+      else this.disposing = undefined;
     })().catch((error) => {
       this.disposing = undefined;
       throw error;
@@ -686,10 +726,11 @@ class SandboxSessionImpl implements SandboxSession {
   /**
    * CAS Creating → Ready(id) while the binding holds the intent committed
    * after the read at `notBefore`. Recorded even for a Session terminated
-   * meanwhile: reclamation finds a Sandbox the binding names. False when the
-   * row moved on. A write whose outcome is unknown (the database unreachable)
-   * rejects and leaves the intent, which reconciliation resolves by adopting
-   * the Sandbox after the deadline.
+   * meanwhile: reclamation finds a Sandbox the binding names. A claimed
+   * reclamation refuses the write, and kills the Sandbox by binding. False
+   * when the row moved on. A write whose outcome is unknown (the database
+   * unreachable) rejects and leaves the intent, which reconciliation resolves
+   * by adopting the Sandbox after the deadline.
    */
   private async record(id: string, notBefore: Date): Promise<boolean> {
     return this.decide<boolean>(async (binding) => {

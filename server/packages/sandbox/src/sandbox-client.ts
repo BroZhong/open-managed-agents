@@ -219,6 +219,9 @@ export interface SandboxClient {
   /** List recursively; missingOk returns empty only when the root is confirmed ENOENT. */
   list(id: string, dir: string, options?: { missingOk?: boolean }): Promise<SandboxFileEntry[]>;
 
-  /** Tear the sandbox down. Idempotent — destroying twice is a no-op. */
+  /**
+   * Tear the sandbox down; resolves only once the gateway confirms it missing.
+   * Idempotent — destroying twice is a no-op.
+   */
   destroy(id: string): Promise<void>;
 }
