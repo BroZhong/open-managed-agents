@@ -1,4 +1,4 @@
-import { Sandbox, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
+import { ApiClient, ConnectionConfig, Sandbox, SandboxNotFoundError, FileNotFoundError, InvalidArgumentError } from "e2b";
 import {
   WORKSPACE_MOUNT_PROBE,
   WORKSPACE_MOUNT_PROBE_CLEANUP,
@@ -15,14 +15,17 @@ import {
   CREATE_REQUEST_MS,
   SANDBOX_RUNNING_SECONDS,
   WAIT_READY_SECONDS,
+  listedSandbox,
 } from "./sandbox-client.js";
 import type {
+  ListedSandbox,
   SandboxClient,
   SandboxCreateOptions,
   SandboxExecChunk,
   SandboxExecOptions,
   SandboxFileEntry,
   SandboxHandle,
+  SandboxListFilter,
 } from "./sandbox-client.js";
 
 export interface E2BCommandResult {
@@ -113,7 +116,11 @@ const CONTROL_REQUEST_MS = {
   kill: 30_000,
   /** One Kubernetes patch of the deadline. */
   setTimeout: 30_000,
+  /** One page, read from the manager's cache: 8 pages of 100 took 141 ms in-cluster on 2026-10-23. */
+  list: 20_000,
 } as const;
+/** The gateway's largest page. */
+const LIST_PAGE_LIMIT = 100;
 
 export interface E2BSandboxClientOptions {
   /** E2B domain (e.g. "sandbox.agentry.welltop.tech"); SDK resolves api.<domain>. */
@@ -437,6 +444,34 @@ export class E2BSandboxClient implements SandboxClient {
     // regular mount verifier independently checks the gateway's authorization.
     this.creationMetadata.set(id, { ...metadata });
     return true;
+  }
+
+  async listSandboxes(filter: SandboxListFilter): Promise<ListedSandbox[]> {
+    // The SDK's client keeps the request on its own dispatcher (no HTTP proxy)
+    // and on the gateway E2B_API_URL names, as every other call here.
+    const { api } = new ApiClient(new ConnectionConfig({ apiKey: this.apiKey, domain: this.domain }));
+    // The gateway unescapes `metadata` once more before splitting it into
+    // pairs (upstream pkg/servers/e2b/list.go), so each key and value is
+    // escaped here and the whole once more as a query parameter. The SDK's
+    // paginator escapes them twice, which the gateway reads as other keys.
+    const metadata = Object.entries(filter.metadata)
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
+    const listed: ListedSandbox[] = [];
+    let nextToken: string | undefined;
+    do {
+      const { data, response } = await api.GET("/v2/sandboxes", {
+        params: { query: { metadata, state: [...filter.states], limit: LIST_PAGE_LIMIT, nextToken } },
+        signal: AbortSignal.timeout(CONTROL_REQUEST_MS.list),
+      });
+      // The body may echo metadata, which can hold credentials (#260): report the status only.
+      if (!response.ok || !data) throw new Error(`Sandbox list answered HTTP ${response.status}`);
+      for (const entry of data) {
+        const sandbox = listedSandbox(entry);
+        if (sandbox) listed.push(sandbox);
+      }
+      nextToken = response.headers.get("x-next-token") || undefined;
+    } while (nextToken);
+    return listed;
   }
 
   async destroy(id: string): Promise<void> {

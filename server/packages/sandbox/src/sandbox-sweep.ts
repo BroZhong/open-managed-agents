@@ -1,4 +1,4 @@
-import type { ListedSandbox } from "./sandbox-client.js";
+import type { GatewayListEntry, ListedSandbox } from "./sandbox-client.js";
 
 /**
  * Which listed Sandboxes the sweeper (ADR-0023, "The sweeper") keeps, kills,
@@ -8,8 +8,8 @@ import type { ListedSandbox } from "./sandbox-client.js";
  * Also the package's `./sweep` entry, which loads without the rest of the
  * package (the report bundles it), hence the re-exports.
  */
-export type { ListedSandbox };
-export { SANDBOX_IDLE_SECONDS } from "./sandbox-client.js";
+export type { ListedSandbox, GatewayListEntry };
+export { SANDBOX_IDLE_SECONDS, listedSandbox } from "./sandbox-client.js";
 
 /** The binding (root Session id) a Sandbox was created for. */
 export const SANDBOX_BINDING_LABEL = "oma.dev/binding";
@@ -91,6 +91,12 @@ const byClaimThenId = (a: ListedSandbox, b: ListedSandbox) =>
   claimedAt(a) - claimedAt(b) || (a.sandboxId < b.sandboxId ? -1 : a.sandboxId > b.sandboxId ? 1 : 0);
 const runningFirst = (a: ListedSandbox, b: ListedSandbox) =>
   Number(a.state === "paused") - Number(b.state === "paused");
+/**
+ * The order in which reconciliation keeps one binding's Sandboxes, ensure's
+ * and the sweeper's alike (ADR-0023): a running one, else the earliest
+ * claimed; it keeps the first and kills the rest.
+ */
+export const byKeepPreference = (a: ListedSandbox, b: ListedSandbox) => runningFirst(a, b) || byClaimThenId(a, b);
 
 export function selectSweep(
   listed: readonly ListedSandbox[],
@@ -138,7 +144,7 @@ export function selectSweep(
   // adopted Sandbox without a deadline is not shortened (a no-op); unused, the
   // next round kills it by the Ready row.
   for (const [bindingId, group] of unresolved) {
-    const [adopted, ...duplicates] = [...group].sort((a, b) => runningFirst(a, b) || byClaimThenId(a, b));
+    const [adopted, ...duplicates] = [...group].sort(byKeepPreference);
     const shorten = !bindings.get(bindingId)!.inUse && longDeadline(adopted);
     decisions.set(adopted.sandboxId, { sandboxId: adopted.sandboxId, bindingId, action: "adopt", shorten });
     for (const { sandboxId } of duplicates) decisions.set(sandboxId, { sandboxId, bindingId, action: "kill", reason: "duplicate", deferred: false });

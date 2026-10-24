@@ -9,6 +9,7 @@ export type {
   SandboxExecChunk,
   SandboxExecOptions,
   SandboxFileEntry,
+  SandboxListFilter,
   ListedSandbox,
 } from "./sandbox-client.js";
 
@@ -47,6 +48,7 @@ export {
   FakeSandboxClient,
   type FakeSandboxClientOptions,
   type FakeSkillInstallFault,
+  type FakeCreateFault,
 } from "./fake-sandbox-client.js";
 
 export {

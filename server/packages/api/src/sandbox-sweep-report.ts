@@ -33,7 +33,9 @@ import {
   SANDBOX_ENVIRONMENT_LABEL,
   SANDBOX_IDLE_SECONDS,
   SWEEP_MAX_KILLS,
+  listedSandbox,
   selectSweep,
+  type GatewayListEntry,
   type ListedSandbox,
   type SandboxEnvironment,
   type SweepBinding,
@@ -56,14 +58,6 @@ const apiUrl = process.env.E2B_API_URL;
 const apiKey = process.env.E2B_API_KEY;
 if (!apiUrl || !apiKey) throw new Error("The gateway needs E2B_API_URL and E2B_API_KEY");
 
-interface GatewaySandbox { sandboxID: string; state: string; metadata?: Record<string, string> | null; startedAt: string; endAt: string }
-
-/** The gateway reports no deadline as Go's zero time, 0001-01-01T00:00:00Z. */
-function deadline(raw: string | undefined): Date | null {
-  const time = raw ? Date.parse(raw) : Number.NaN;
-  return Number.isNaN(time) || time <= 0 ? null : new Date(time);
-}
-
 async function listSandboxes(): Promise<{ sandboxes: ListedSandbox[]; pages: number; otherStates: number }> {
   // Keep the in-cluster call off any HTTP proxy, as bootstrap does for internal Storage.
   const dispatcher = new Agent();
@@ -77,12 +71,9 @@ async function listSandboxes(): Promise<{ sandboxes: ListedSandbox[]; pages: num
       if (nextToken) url.searchParams.set("nextToken", nextToken);
       const response = await fetch(url, { headers: { "X-API-Key": apiKey! }, signal: AbortSignal.timeout(30_000), dispatcher } as RequestInit);
       if (!response.ok) throw new Error(`GET /v2/sandboxes answered HTTP ${response.status}`);
-      for (const listed of await response.json() as GatewaySandbox[]) {
-        if (listed.state !== "running" && listed.state !== "paused") { otherStates++; continue; }
-        sandboxes.push({
-          sandboxId: listed.sandboxID, state: listed.state, metadata: listed.metadata ?? {},
-          startedAt: new Date(listed.startedAt), endAt: deadline(listed.endAt),
-        });
+      for (const entry of await response.json() as GatewayListEntry[]) {
+        const sandbox = listedSandbox(entry);
+        if (sandbox) sandboxes.push(sandbox); else otherStates++;
       }
       pages++;
       nextToken = response.headers.get("x-next-token");

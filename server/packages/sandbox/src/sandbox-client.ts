@@ -115,6 +115,36 @@ export interface ListedSandbox {
   endAt: Date | null;
 }
 
+/** Which Sandboxes {@link SandboxClient.listSandboxes} returns. */
+export interface SandboxListFilter {
+  /** Every one of these labels, with exactly these values. */
+  metadata: Record<string, string>;
+  states: ReadonlyArray<ListedSandbox["state"]>;
+}
+
+/** One entry of the gateway's `GET /v2/sandboxes` body. */
+export interface GatewayListEntry {
+  sandboxID: string;
+  state: string;
+  metadata?: Record<string, string> | null;
+  startedAt: string;
+  endAt: string;
+}
+
+/**
+ * A listed Sandbox from its gateway entry; undefined in a state other than
+ * running or paused. The gateway reports "no deadline" as Go's zero time,
+ * 0001-01-01T00:00:00Z, which becomes null.
+ */
+export function listedSandbox(entry: GatewayListEntry): ListedSandbox | undefined {
+  if (entry.state !== "running" && entry.state !== "paused") return undefined;
+  const endAt = entry.endAt ? Date.parse(entry.endAt) : Number.NaN;
+  return {
+    sandboxId: entry.sandboxID, state: entry.state, metadata: entry.metadata ?? {},
+    startedAt: new Date(entry.startedAt), endAt: Number.isNaN(endAt) || endAt <= 0 ? null : new Date(endAt),
+  };
+}
+
 /**
  * Low-level sandbox lifecycle + file/exec port. Production uses the E2B SDK; a fake implements the same surface in-memory for tests.
  */
@@ -137,6 +167,12 @@ export interface SandboxClient {
   create(opts?: SandboxCreateOptions): Promise<SandboxHandle>;
   /** Attach a Host to a persisted, trusted Sandbox identity without creating it. */
   reconnect(id: string, metadata: Record<string, string>): Promise<boolean>;
+  /**
+   * Every Sandbox the gateway lists for this API key that matches `filter`,
+   * across all pages: how a binding is reconciled with what exists
+   * (ADR-0023). The gateway filters exactly, from its cache.
+   */
+  listSandboxes(filter: SandboxListFilter): Promise<ListedSandbox[]>;
 
   /** Verify the real OSS mount, exact prefix and ordinary-user read/write access. */
   verifyWorkspaceMount(id: string, target: WorkspaceMountTarget): Promise<void>;

@@ -937,3 +937,62 @@ describe('environmental stream failure', () => {
     expect(client.hasUncertainExecution(id)).toBe(true);
   });
 });
+
+describe("listing Sandboxes from the gateway (ADR-0023)", () => {
+  /**
+   * A gateway on localhost that parses `metadata` as upstream
+   * pkg/servers/e2b/list.go does: the query string's decoding, one more
+   * unescape, then a split into key=value pairs, no further decoding.
+   */
+  async function gateway(pages: Array<{ body: unknown[]; next?: string }>) {
+    const { createServer } = await import("node:http");
+    const requests: Array<{ url: URL; apiKey?: string; metadata: Record<string, string> }> = [];
+    const server = createServer((request, response) => {
+      const url = new URL(request.url!, "http://gateway");
+      const metadata = Object.fromEntries(decodeURIComponent(url.searchParams.get("metadata") ?? "").split("&")
+        .filter(Boolean).map((pair) => pair.split("=", 2) as [string, string]));
+      requests.push({ url, apiKey: request.headers["x-api-key"] as string | undefined, metadata });
+      const page = pages[requests.length - 1];
+      if (!page) { response.writeHead(500).end(JSON.stringify({ message: "secret annotation" })); return; }
+      response.writeHead(200, { "content-type": "application/json", ...(page.next ? { "x-next-token": page.next } : {}) });
+      response.end(JSON.stringify(page.body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    vi.stubEnv("E2B_API_URL", `http://127.0.0.1:${port}`);
+    return { requests, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  }
+  const entry = (sandboxID: string, extra: Record<string, unknown> = {}) => ({
+    sandboxID, templateID: "auto-story-v2", state: "running", metadata: { "oma.dev/binding": "sesn_1" },
+    startedAt: "2026-10-22T13:20:10Z", endAt: "2026-10-23T13:20:10Z", cpuCount: 2, memoryMB: 4096, ...extra,
+  });
+  const client = () => new E2BSandboxClient({ domain: "sandbox.example.test", apiKey: "gateway-key", verifyWorkspaceProbe: async () => {} });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("filters by exact labels the gateway can parse, follows x-next-token and maps the year-1 deadline to none", async () => {
+    const server = await gateway([
+      { body: [entry("sbx-a"), entry("sbx-b", { state: "paused", endAt: "0001-01-01T00:00:00Z" })], next: "page-2" },
+      { body: [entry("sbx-c", { metadata: null })] },
+    ]);
+    try {
+      const listed = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" }, states: ["running", "paused"] });
+      expect(listed).toEqual([
+        { sandboxId: "sbx-a", state: "running", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
+        { sandboxId: "sbx-b", state: "paused", metadata: { "oma.dev/binding": "sesn_1" }, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: null },
+        { sandboxId: "sbx-c", state: "running", metadata: {}, startedAt: new Date("2026-10-22T13:20:10Z"), endAt: new Date("2026-10-23T13:20:10Z") },
+      ]);
+      expect(server.requests.map(({ metadata }) => metadata)).toEqual(Array(2).fill({ "oma.dev/binding": "sesn_1", "oma.dev/environment": "test" }));
+      expect(server.requests.map(({ url }) => [url.searchParams.get("state"), url.searchParams.get("limit"), url.searchParams.get("nextToken")]))
+        .toEqual([["running,paused", "100", null], ["running,paused", "100", "page-2"]]);
+      expect(server.requests.every(({ apiKey }) => apiKey === "gateway-key")).toBe(true);
+    } finally { await server.close(); }
+  });
+
+  it("fails on a gateway error without repeating its body", async () => {
+    const server = await gateway([]);
+    try {
+      const failure = await client().listSandboxes({ metadata: { "oma.dev/binding": "sesn_1" }, states: ["running"] }).catch((error: Error) => error);
+      expect(failure).toEqual(new Error("Sandbox list answered HTTP 500"));
+    } finally { await server.close(); }
+  });
+});
