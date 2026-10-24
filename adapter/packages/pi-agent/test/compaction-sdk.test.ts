@@ -241,15 +241,13 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
   it("restores Child Session tools and steering on resume, with isolated parent context and a model switch", async () => {
     const { executor, dispose } = await createLocalToolExecutor();
     let delivered = false;
-    const applied = vi.fn(async () => {});
     const child = { ...input(records(seed())), sessionId: "child", toolExecutor: executor,
       message: { role: "user" as const, source: "delegation" as const, content: [{ type: "text" as const, text: "child task" }] },
-      execution: { isChild: true, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "instruction1", message: "verify result" }]), applied } } };
+      execution: { isChild: true, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "instruction1", message: "verify result" }]) } } };
     try {
       control.toolPending = true;
       const events = await run(child);
       expect(events.filter(e => e.type === "session.error")).toEqual([]);
-      expect(applied).toHaveBeenCalledWith("instruction1");
       const history = [...child.history, ...events,
         { id: "instruction1", type: "subagent.instruction", instructionId: "instruction1", text: "verify result" } as unknown as SessionEvent];
       const messages = restorePiSession(history).buildSessionContext().messages;
@@ -275,7 +273,7 @@ describe("Pi 0.83.0 native/platform compaction contract", () => {
     const history = records(seed(false));
     let delivered = false;
     const events = await run({ ...input(history), resume: { completedModelSteps: 0, blockBase: 0 },
-      execution: { isChild: false, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "continue-steer", message: "verify continuation" }]), applied: async () => {} } } });
+      execution: { isChild: false, steering: { takePending: async () => delivered ? [] : (delivered = true, [{ id: "continue-steer", message: "verify continuation" }]) } } });
     expect(events.filter(e => e.type === "session.error")).toEqual([]);
     const restored = restorePiSession([...history, ...events]);
     expect(restored.getBranch().some(entry => entry.type === "custom_message" && entry.customType === "oma.continuation")).toBe(false);
