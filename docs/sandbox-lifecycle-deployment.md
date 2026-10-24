@@ -13,7 +13,9 @@ then start the complete new build. Do not run mixed policies or roll back to a
 build requiring `sandbox_activities` after this migration. The migration removes
 `idle_since`, the old activity table and its trigger. `reclaiming` remains the
 explicit termination ticket. `creating_since` (migration 0024, which replaced
-`creation_pending`) records a creation intent; see Recovery.
+`creation_pending`) records a creation intent; see Recovery. Migration 0025
+adds what the Session API reports of the environment; see "The environment in
+the Session API".
 The new trigger serializes queue acceptance with binding decisions; startup checks
 that it is installed. API/Runner split migrations remain required.
 
@@ -103,6 +105,38 @@ end; a Runner lost after an environment failure therefore leaves a Turn its
 takeover continues. The same code also ends a Turn of a sandboxed Agent on a
 Runner with no Sandbox configured, before its Adapter runs. Skill Install
 failures keep their own code, `skills_install_failed` (ADR-0022).
+
+## The environment in the Session API
+
+`GET /v1/sessions/{id}` returns `environment: {state, since, last_error}`
+(#290), read from the Session's binding without its lock, so it answers at
+once while a Turn prepares or the binding is reclaimed. A Child Session reports
+the binding it shares with its root. The Session list does not carry it.
+
+- `state` is `unavailable` while the binding records an environment failure;
+  otherwise `ready` while it records a Sandbox, `creating` while it records a
+  creation intent (also an Unresolved one past its deadline, until the next
+  tool call reconciles it), and `cold` when it records neither.
+- `last_error` is `{code, reason, at}` of the last failure a preparation
+  observed in the current state, with the tool results' `details.code` and
+  `details.reason`. A later preparation that connects to or creates the
+  Sandbox clears it, and so does any move of the binding (a new creation
+  intent, a new Sandbox, Cold, a completed reclamation): the failure was the
+  old state's. A failure is recorded by the binding's compare-and-set only
+  while the row is as the failing preparation last read or left it, so it
+  never overwrites a move made since. A connect another Turn completed on
+  the unmoved row at the same time leaves nothing to compare with; the next
+  preparation that ends ready clears such a record.
+- `since` is when the state began, by the database clock: the last move, the
+  first failure after it, or the recovery from one. It is `null` while the
+  binding has not moved since migration 0025 (a never-used binding is
+  `cold` with `since: null`).
+
+Migration `0025_binding_environment_status.sql` adds `state_since` and
+`last_error_code`, `last_error_reason`, `last_error_at` to
+`delegation_environments`; apply it before the image that needs them (the
+previous image ignores them). `0025_binding_environment_status.rollback.sql`
+drops them once the previous image runs.
 
 ## Recovery
 

@@ -346,9 +346,10 @@ kubectl -n oma-test get deploy oma-api oma-runner oma-web \
 kubectl -n oma-test scale deploy/oma-runner --replicas=0
 kubectl -n oma-test wait --for=delete pod -l app=oma-runner --timeout=180s
 $R migration pre                       # no live claim; records the pending rows
-# 3. Migration 0024 (#284; confirm the file name), reviewed, applied by the privileged
-#    migration operator as in "Test migrations". Prepare its rollback SQL the same way.
+# 3. Migrations 0024 (#284; confirm the file name) and 0025 (#290), reviewed, applied in order by
+#    the privileged migration operator as in "Test migrations". Prepare their rollback SQL the same way.
 node deploy/scripts/migration-for-env.mjs test deploy/migrations/0024_<name>.sql > ~/oma-292/0024-test.sql
+node deploy/scripts/migration-for-env.mjs test deploy/migrations/0025_binding_environment_status.sql > ~/oma-292/0025-test.sql
 # 4. The new image, built on vfs-dev from the release commit (see "Image pipeline"), then
 #    "Test releases": the full manifest also returns oma-runner to 2 replicas. deploy-app.sh
 #    targets production only.
