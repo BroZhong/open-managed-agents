@@ -83,6 +83,9 @@ export {
   DefaultSandboxManager,
   SandboxSessionClosed,
   SandboxUnavailable,
+  type SandboxUnavailableReason,
+  type SandboxPrepareObserver,
+  type SandboxPrepareOutcome,
   type SandboxManager,
   type SandboxSession,
   type SandboxManagerDeps,
@@ -102,7 +105,6 @@ export {
   type TurnSandboxesDeps,
   type SandboxLease,
   type SandboxLeaseRequest,
-  type SandboxPrepareFailure,
   type TurnSettlement,
 } from "./turn-sandboxes.js";
 

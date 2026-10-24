@@ -1,8 +1,8 @@
 import type { Agent, DelegationStore, PendingEventFence, SandboxActivity, Session, SessionStore } from "@oma-server/store";
 import { workspaceObjectPrefix } from "@oma-server/store";
 import type { ToolExecutor } from "@open-managed-agents/adapter-core";
-import type { EnvSpec, SandboxEnvironmentBinding, SandboxManager, SandboxSession, SkillInstallObserver } from "./sandbox-manager.js";
-import { SkillInstallError, type SkillSet } from "./skill-install.js";
+import type { EnvSpec, SandboxEnvironmentBinding, SandboxManager, SandboxPrepareObserver, SkillInstallObserver } from "./sandbox-manager.js";
+import type { SkillSet } from "./skill-install.js";
 import { turnExecutor, type TurnExecutorGuard } from "./turn-executor.js";
 import { WORKSPACE_ENV } from "./workspace-environment.js";
 import type { WorkspaceMountSpec } from "./workspace-mount.js";
@@ -39,12 +39,8 @@ export interface SandboxLeaseRequest extends TurnExecutorGuard {
   skills: SkillSet;
   /** Told of every Skill Install the Sandbox runs for the Turn, a cold Sandbox's included. */
   skillInstalls?: SkillInstallObserver;
-}
-
-/** Why the Turn's Sandbox could not be prepared: the error its Turn ends with. */
-export interface SandboxPrepareFailure {
-  code: "sandbox_prepare_failed" | "skills_install_failed";
-  message: string;
+  /** Told of every preparation of the Turn's environment: the Turn-start connect and each operation's ensure. */
+  sandboxPrepares?: SandboxPrepareObserver;
 }
 
 /**
@@ -72,15 +68,19 @@ export interface SandboxLease {
   /**
    * The Turn's executor (ADR-0005 §1), fenced by ownership of the Turn: a
    * fresh capability per Turn, so stale owners cannot start new Sandbox work.
-   * Every operation waits for the Turn's Skill Install. Absent when
-   * preparation failed.
+   * Every operation waits for the Turn's preparation and Skill Install. An
+   * environment failure fails the operations that met it with a
+   * SandboxUnavailable, a tool error the model can retry; it never ends the
+   * Turn (ADR-0023).
    */
-  readonly executor?: ToolExecutor;
+  readonly executor: ToolExecutor;
   /**
-   * Set when the Sandbox could not be prepared for the Turn: the Turn ends
-   * with it before its Adapter runs, and still releases the lease.
+   * Resolves once the Turn-start preparation has ended, whatever its
+   * outcome: the connect to the binding's Sandbox, its mount check and the
+   * decision of its Skill Install. A Turn that ends before it waits for it,
+   * so an install it starts is the Turn's (ADR-0022).
    */
-  readonly failure?: SandboxPrepareFailure;
+  prepared(): Promise<void>;
   /** Availability check only: never scans files or claims all open handles were saved. */
   checkWorkspace(): Promise<void>;
   /**
@@ -151,6 +151,9 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     const { session, agent, fence, signal } = request;
     if (!isSandboxedAgent(agent)) return null;
     const { manager, bindings } = this.deps;
+    // `open` is cheap: it starts no Sandbox, the first filesystem or code
+    // primitive does, so a pure-chat Turn spins nothing up.
+    const sandbox = manager.open(this.specFor(session, agent, request.skills), this.bindingFor(session));
     const activity: SandboxActivity = { bindingId: bindingIdOf(session), sessionId: session.id, fence };
     // The use protects the binding from reclamation while this claim owns
     // the Turn; an admitted activity keeps it until observed settlement.
@@ -163,37 +166,28 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
       await bindings.releaseResourceUse(session.id, fence);
       throw error;
     }
-    let sandbox: SandboxSession | undefined;
-    let failure: SandboxPrepareFailure | undefined;
-    try {
-      // `open` is cheap: it starts no Sandbox, the first filesystem or code
-      // primitive does, so a pure-chat Turn spins nothing up.
-      sandbox = manager.open(this.specFor(session, agent, request.skills), this.bindingFor(session));
-      // Preparation verifies the mount and decides the install; the install
-      // runs beside inference, and the first Sandbox operation waits for it.
-      await sandbox.prepare(request.skills, { signal, skillInstalls: request.skillInstalls });
-    } catch (error) {
-      // Deciding the install can fail (reading the binding's record); its
-      // stage names that, and its reason carries no URL.
-      failure = {
-        code: error instanceof SkillInstallError ? "skills_install_failed" : "sandbox_prepare_failed",
-        message: error instanceof Error ? error.message : "Sandbox preparation failed",
-      };
-    }
-    const prepared = sandbox;
-    const settledInSandbox = () => prepared?.executionSettled?.() !== false;
+    // Preparation connects to a Ready binding's Sandbox, verifies its mount
+    // and decides the install beside the model's first request; the install
+    // runs on beside inference. The first Sandbox operation waits for both
+    // (ADR-0022, ADR-0023). Their failures reach the operations that wait for
+    // them and the Turn's observers, never the Turn itself.
+    const prepared = sandbox.prepare(request.skills, { signal, skillInstalls: request.skillInstalls, sandboxPrepares: request.sandboxPrepares })
+      .catch(() => {});
+    const settledInSandbox = () => sandbox.executionSettled?.() !== false;
     return {
-      executor: prepared && !failure ? turnExecutor(prepared, { assertOwner: request.assertOwner, skillInstallFailed: request.skillInstallFailed }) : undefined,
-      failure,
-      checkWorkspace: async () => { await prepared?.checkWorkspace(); },
+      executor: turnExecutor(sandbox, { assertOwner: request.assertOwner, skillInstallFailed: request.skillInstallFailed }),
+      prepared: () => prepared,
+      checkWorkspace: () => sandbox.checkWorkspace(),
       release: async (evidence) => {
         if (!evidence.settled) {
           // Observe the runtime's natural end without blocking the Session.
-          if (admitted && evidence.settles) void evidence.settles.then(async () => {
+          if (admitted && evidence.settles) void Promise.all([evidence.settles, prepared]).then(async () => {
             if (settledInSandbox()) await this.finish(activity);
           }).catch((error) => this.deps.onError?.({ sessionId: session.id, error }));
           return;
         }
+        // Connecting renews the Sandbox's deadline: the Turn's use ends after it.
+        await prepared;
         // A command that ended without exit evidence keeps the Turn's use:
         // unknown execution never requests idle.
         if (!settledInSandbox()) return;

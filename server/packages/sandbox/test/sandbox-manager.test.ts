@@ -4,6 +4,7 @@ import {
   DefaultSandboxManager,
   SandboxSessionClosed,
   SandboxUnavailable,
+  type SandboxPrepareOutcome,
   type EnvSpec,
   type SandboxEnvironmentBinding,
 } from "../src/sandbox-manager.js";
@@ -577,5 +578,78 @@ describe("a Turn's Skill Install runs beside the Turn (#268)", () => {
     expect(await session.readFile("/skills/writer/SKILL.md")).toBe("v1");
     expect(observer.started).toHaveBeenCalledExactlyOnceWith(skills);
     expect(observer.ended).toHaveBeenCalledExactlyOnceWith({ report: expect.objectContaining({ downloaded: 1 }) });
+  });
+});
+
+describe("each preparation of the Turn's environment is observed (ADR-0023, #287)", () => {
+  /** A recorder of the session's preparations, in order. */
+  function prepares() {
+    const seen: Array<"started" | SandboxPrepareOutcome> = [];
+    return { seen, observer: { started: () => { seen.push("started"); }, ended: (outcome: SandboxPrepareOutcome) => { seen.push(outcome); } } };
+  }
+
+  it("tells nothing of a Cold binding's Turn start; its first operation's create is one preparation, ready", async () => {
+    const { client, manager } = makeManager();
+    const session = manager.open(specFor(), durableBinding());
+    const { seen, observer } = prepares();
+    await session.prepare(undefined, { sandboxPrepares: observer });
+    expect(seen).toEqual([]);
+    await Promise.all([session.writeFile("a", "A"), session.writeFile("b", "B")]);
+    expect(seen).toEqual(["started", { outcome: "ready", sandboxId: client.created[0] }]);
+  });
+
+  it("connects a Ready binding's Sandbox at Turn start, and defers to the first operation once its Sandbox is gone", async () => {
+    const { client, manager } = makeManager();
+    const binding = durableBinding();
+    await manager.open(specFor(), binding).writeFile("saved.txt", "kept");
+    const [first] = client.created;
+    const ready = prepares();
+    await manager.open(specFor(), binding).prepare(undefined, { sandboxPrepares: ready.observer });
+    expect(ready.seen).toEqual(["started", { outcome: "ready", sandboxId: first }]);
+
+    client.reclaim(first);
+    const gone = prepares();
+    const session = manager.open(specFor(), binding);
+    await session.prepare(undefined, { sandboxPrepares: gone.observer });
+    expect(gone.seen).toEqual(["started", { outcome: "deferred" }]);
+    expect(await session.readFile("saved.txt")).toBe("kept");
+    expect(gone.seen.slice(2)).toEqual(["started", { outcome: "ready", sandboxId: client.created[1] }]);
+  });
+
+  it("reports a failure of the gateway as sandbox_unavailable with a stable message, and the cause kept", async () => {
+    const { client, manager } = makeManager();
+    const binding = durableBinding();
+    await manager.open(specFor(), binding).writeFile("saved.txt", "kept");
+    vi.spyOn(client, "reconnect").mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.1:8080 token=secret"));
+    const { seen, observer } = prepares();
+    const session = manager.open(specFor(), binding);
+    const prepared = session.prepare(undefined, { sandboxPrepares: observer });
+    const failure = await session.readFile("saved.txt").catch((error: unknown) => error);
+    await expect(prepared).rejects.toBe(failure);
+    expect(failure).toBeInstanceOf(SandboxUnavailable);
+    expect(failure).toMatchObject({ code: "sandbox_unavailable", reason: "unreachable",
+      message: "The Session's Sandbox could not be reached. The tool was not executed; a later tool call can retry." });
+    expect(String(failure)).not.toContain("secret");
+    expect((failure as Error).cause).toEqual(new Error("connect ECONNREFUSED 10.0.0.1:8080 token=secret"));
+    // The next operation prepares again.
+    await expect(session.readFile("saved.txt")).rejects.toBeInstanceOf(SandboxUnavailable);
+    expect(seen).toEqual(["started", { outcome: "failed", error: failure }, "started", { outcome: "failed", error: expect.any(SandboxUnavailable) }]);
+  });
+
+  it("ends a preparation the Turn stopped waiting for as aborted, which is no environment failure", async () => {
+    const { manager } = makeManager();
+    const clock = databaseClock();
+    const binding = durableBinding("root", clock.now);
+    // Another Turn's create is in flight.
+    binding.write({ sandboxId: null, creatingSince: clock.now() });
+    const { seen, observer } = prepares();
+    const turn = new AbortController();
+    const session = manager.open(specFor(), binding);
+    await session.prepare(undefined, { signal: turn.signal, sandboxPrepares: observer });
+    const waiting = session.writeFile("a.txt", "x");
+    await settle();
+    turn.abort(new DOMException("Session interrupted", "AbortError"));
+    await expect(waiting).rejects.toMatchObject({ name: "AbortError" });
+    expect(seen).toEqual(["started", { outcome: "aborted", reason: expect.objectContaining({ name: "AbortError" }) }]);
   });
 });

@@ -6,14 +6,14 @@ import type {
   ToolFileSystem,
   ToolFileSystemOptions,
 } from "@open-managed-agents/adapter-core";
-import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
+import { SANDBOX_WORKSPACE_ROOT, ExecAbortedBeforeStartError, ToolEnvironmentError } from "@open-managed-agents/adapter-core";
 import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS, SandboxCreateRejected } from "./sandbox-client.js";
 import type { SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { killBindingSandboxes } from "./sandbox-kill.js";
 import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
 import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
-import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
+import { EMPTY_SKILL_SET, SkillInstallError, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
   assertWorkspaceMountSpec,
   workspaceMountMetadata,
@@ -75,21 +75,46 @@ const INTENT_DEADLINE_MS = INTENT_DEADLINE_SECONDS * 1000;
  */
 const DEFINITE_REJECTIONS: ReadonlySet<number> = new Set([400, 403, 409]);
 
+/** Why the Session's Sandbox was not available to a tool call. */
+export type SandboxUnavailableReason =
+  /** The gateway definitely refused the create (`status`); the binding is Cold. */
+  | "rejected"
+  /** The call's creates, including the one more after reconciling an unknown outcome, did not complete. */
+  | "unknown"
+  /** The Sandbox's Workspace mount could not be verified. */
+  | "mount"
+  /** The Sandbox, the gateway or the binding could not be reached: connect, reconcile's list, the binding's row. */
+  | "unreachable";
+
+const UNAVAILABLE: Record<SandboxUnavailableReason, string> = {
+  rejected: "The gateway rejected the Sandbox creation. A later tool call can retry.",
+  unknown: "Sandbox creation did not complete. A later tool call can retry.",
+  mount: new WorkspaceMountUnavailable().message,
+  unreachable: "The Session's Sandbox could not be reached. The tool was not executed; a later tool call can retry.",
+};
+
 /**
- * The tool error of an ensure that got no Sandbox (ADR-0023). `rejected`:
- * the gateway definitely refused the create (`status`), and the binding is
- * Cold. `unknown`: the call's creates, including the one more after
- * reconciling an unknown outcome, did not complete. The message is stable:
- * SDK and provider diagnostics can carry credentials.
+ * The environment failure of a tool call (ADR-0023): the Session's Sandbox
+ * was not ready, so the operation did not run. It is a tool error the model
+ * can retry, carrying `code` and `reason` in the result's details, never the
+ * end of the Turn. The message is stable: SDK and provider diagnostics can
+ * carry credentials, and the error they came with is kept as the cause.
  */
-export class SandboxUnavailable extends Error {
-  readonly code = "sandbox_unavailable";
-  constructor(readonly reason: "rejected" | "unknown", readonly status?: number) {
-    super(reason === "rejected"
-      ? "The gateway rejected the Sandbox creation. A later tool call can retry."
-      : "Sandbox creation did not complete. A later tool call can retry.");
+export class SandboxUnavailable extends ToolEnvironmentError {
+  declare readonly code: "sandbox_unavailable";
+  constructor(readonly reason: SandboxUnavailableReason, readonly status?: number, options?: ErrorOptions) {
+    super("sandbox_unavailable", UNAVAILABLE[reason], { reason }, options);
     this.name = "SandboxUnavailable";
   }
+}
+
+/**
+ * What the operations waiting for a failed preparation see: a create's own
+ * classification, or the kind of step that failed.
+ */
+function environmentFailure(error: unknown): SandboxUnavailable {
+  if (error instanceof SandboxUnavailable) return error;
+  return new SandboxUnavailable(error instanceof WorkspaceMountUnavailable ? "mount" : "unreachable", undefined, { cause: error });
 }
 
 /** Thrown inside the binding lock to leave it without a write while another Turn creates the Sandbox. */
@@ -175,6 +200,30 @@ export interface SkillInstallObserver {
   ended(outcome: { report: SkillInstallReport } | { error: unknown }): void;
 }
 
+/** How one preparation of the Turn's environment ended (ADR-0023). */
+export type SandboxPrepareOutcome =
+  /** The Sandbox is connected, or created, and its mount verified. */
+  | { outcome: "ready"; sandboxId: string }
+  /**
+   * The Turn-start connect found no Sandbox to connect: the recorded one is
+   * gone, or the binding moved on. The first operation brings it to Ready.
+   */
+  | { outcome: "deferred" }
+  /** An environment failure: each operation that waited for it fails with `error`. */
+  | { outcome: "failed"; error: SandboxUnavailable }
+  /** The Turn stopped waiting for it, or its Session was terminated, as `reason` says. */
+  | { outcome: "aborted"; reason: unknown };
+
+/**
+ * Told of each preparation of the Turn's environment, which records them
+ * (ADR-0023): the Turn-start connect of a Ready binding, and each operation's
+ * ensure. One runs at a time.
+ */
+export interface SandboxPrepareObserver {
+  started(): void;
+  ended(outcome: SandboxPrepareOutcome): void;
+}
+
 /** What a Turn hands the preparation of its session. */
 export interface PrepareOptions {
   /**
@@ -185,6 +234,8 @@ export interface PrepareOptions {
   signal?: AbortSignal;
   /** Told of every install the session runs until the next prepare, a cold Sandbox's included. */
   skillInstalls?: SkillInstallObserver;
+  /** Told of every preparation of the environment until the next prepare. */
+  sandboxPrepares?: SandboxPrepareObserver;
 }
 
 export interface SandboxSession {
@@ -195,13 +246,17 @@ export interface SandboxSession {
   writeFile(path: string, content: string): Promise<void>;
   list(globOrDir?: string): Promise<FileListEntry[]>;
   /**
-   * Recheck an existing mount and decide whether the Sandbox must install
-   * `skills`: it does unless the binding records them for this Sandbox.
-   * Resolves once that is known, a skipped install fully prepared; an install
-   * runs on beside the Turn (ADR-0022). Every operation waits for it, so none
-   * runs before it succeeded, and its failure (a SkillInstallError) or
-   * cancellation fails each of them until the next prepare. Cold sessions
-   * stay cold and install on creation, before their first operation.
+   * Prepare the session for a Turn: connect to the Sandbox the binding
+   * records, recheck its mount and decide whether it must install `skills`,
+   * which it does unless the binding records them for this Sandbox. The Turn
+   * does not wait for it (ADR-0023): every operation does, so none runs
+   * before preparation and the install succeeded. Resolves once the install
+   * is decided, a skipped install fully prepared; an install runs on beside
+   * the Turn (ADR-0022). An environment failure (SandboxUnavailable)
+   * fails the operations that waited for it, and the next one prepares
+   * again; a failed install (a SkillInstallError) or a cancelled one fails
+   * each of them until the next prepare. Cold sessions stay cold and install
+   * on creation, before their first operation.
    */
   prepare(skills?: SkillSet, options?: PrepareOptions): Promise<void>;
   /** Availability check only: never scans files or claims all open handles were saved. */
@@ -326,6 +381,8 @@ class SandboxSessionImpl implements SandboxSession {
   private sandboxId?: string;
   /** Only an in-flight ensure is shared; failed provisioning can be retried. */
   private ensuring?: Promise<string>;
+  /** The Turn-start connect prepare() runs beside the Turn; operations wait for it. */
+  private connecting?: Promise<void>;
   private disposing?: Promise<void>;
   private closed = false;
   private prepared = false;
@@ -487,12 +544,24 @@ class SandboxSessionImpl implements SandboxSession {
     this.installing = undefined;
     this.prepared = false;
     this.uncertainTurn = false;
-    const id = await this.binding.withLock<string | null>(async ({ sandboxId: id }) => {
+    // Set before prepare first yields: an operation the Turn starts meanwhile waits for it.
+    const connecting = this.connect();
+    this.connecting = connecting;
+    try { await connecting; }
+    finally { if (this.connecting === connecting) this.connecting = undefined; }
+  }
+  /**
+   * Connect to the Sandbox the binding records and verify its mount, under
+   * binding coordination, then decide its install. A Creating, Unresolved or
+   * Cold binding is left as it is: the first operation's ensure waits,
+   * reconciles or creates (ADR-0023).
+   */
+  private async connect(): Promise<void> {
+    const id = await this.preparation((begin) => this.binding.withLock<string | null>(async ({ sandboxId: id }) => {
       await this.assertExecutable();
       this.sandboxId = id ?? undefined;
-      // Creating, Unresolved or Cold: the Turn starts without waiting, and its
-      // first tool's ensure waits, reconciles or creates (ADR-0023).
       if (!id) return { value: null };
+      begin();
       if (!await this.deps.sandboxClient.reconnect(id, this.metadata())) {
         this.sandboxId = undefined;
         return { next: "cold", value: null };
@@ -500,15 +569,56 @@ class SandboxSessionImpl implements SandboxSession {
       this.deps.sandboxClient.resetExecutionUncertainty(id);
       await this.attach(id, false);
       return { value: id };
-    });
+    }).catch((error: unknown) => {
+      // The row moved on meanwhile: the first operation follows it.
+      if (error instanceof EnvironmentBindingChanged) return null;
+      throw error;
+    }));
     if (!id) return;
-    // Reconnecting, verifying the mount and deciding the install block the
-    // Turn as before; the install itself runs beside it (ADR-0022).
-    const install = await this.beginInstall(id);
+    let install: { settled: Promise<void> } | undefined;
+    try {
+      install = await this.beginInstall(id);
+    } catch (error) {
+      // Deciding the install failed: it fails each operation as a failed install does (ADR-0022).
+      this.installing = Promise.reject(error);
+      this.installing.catch(() => {});
+      throw error;
+    }
     if (!install) { this.markPrepared(id); return; }
+    // The install runs on beside the Turn (ADR-0022).
     this.installing = install.settled.then(() => this.markPrepared(id));
     // Each operation rethrows a failure; until one asks, it is not unhandled.
     this.installing.catch(() => {});
+  }
+  /**
+   * One preparation of the Turn's environment (ADR-0023): the Turn-start
+   * connect, or an operation's ensure. `work` calls `begin` once there is a
+   * Sandbox to prepare, and the Turn's observer hears of the preparation's
+   * start and end. This is the one place an environment failure is
+   * observed: every failure but a cancellation is one, and it reaches each
+   * operation that waited for the preparation as a SandboxUnavailable,
+   * a tool error the model can retry. The next operation prepares again.
+   */
+  private async preparation<T extends string | null>(work: (begin: () => void) => Promise<T>): Promise<T> {
+    const { signal, sandboxPrepares: observer } = this.turn;
+    let begun = false;
+    const begin = () => { if (!begun) { begun = true; observer?.started(); } };
+    let id: T;
+    try {
+      id = await work(begin);
+    } catch (error) {
+      // The Turn stopped waiting, or its Session was terminated: no environment failure.
+      if (error instanceof SandboxSessionClosed || signal?.aborted) {
+        if (begun) observer?.ended({ outcome: "aborted", reason: error });
+        throw error;
+      }
+      const failure = environmentFailure(error);
+      begin();
+      observer?.ended({ outcome: "failed", error: failure });
+      throw failure;
+    }
+    if (begun) observer?.ended(id === null ? { outcome: "deferred" } : { outcome: "ready", sandboxId: id });
+    return id;
   }
   /** Reattach an existing Sandbox under binding coordination: its mount is verified again. */
   private async attach(id: string, connect = true): Promise<void> {
@@ -538,10 +648,18 @@ class SandboxSessionImpl implements SandboxSession {
     const { signal, skillInstalls } = this.turn;
     const skills = this.skills;
     let started = false;
-    const pending = await this.skillInstaller.begin(this.binding.id, this.skillLedger(),
-      { sandboxId: id, tenantId: this.spec.tenantId }, skills, {
-        signal, onStart: () => { started = true; skillInstalls?.started(skills); },
-      });
+    let pending: Awaited<ReturnType<SkillInstaller["begin"]>>;
+    try {
+      pending = await this.skillInstaller.begin(this.binding.id, this.skillLedger(),
+        { sandboxId: id, tenantId: this.spec.tenantId }, skills, {
+          signal, onStart: () => { started = true; skillInstalls?.started(skills); },
+        });
+    } catch (error) {
+      // Deciding the install failed (stage check): the Turn hears of it as of
+      // an install that failed, and a Turn that used no tool ends with it.
+      if (error instanceof SkillInstallError) { skillInstalls?.started(skills); skillInstalls?.ended({ error }); }
+      throw error;
+    }
     if (!pending) return undefined;
     return { settled: pending.settled.then(
       (report) => { if (started && report) skillInstalls?.ended({ report }); },
@@ -600,7 +718,10 @@ class SandboxSessionImpl implements SandboxSession {
   }
   private async ensure(): Promise<string> {
     this.assertOpen();
-    if (this.recovering) await this.recovering;
+    // A recovery that failed leaves the Sandbox unprepared: ensure prepares it.
+    if (this.recovering) await this.recovering.catch(() => {});
+    // The Turn-start connect: its failure fails the operations that waited for it.
+    if (this.connecting) await this.connecting;
     // No business operation runs before the Turn's install succeeded.
     if (this.installing) await this.installing;
     if (this.prepared && this.sandboxId) return this.sandboxId;
@@ -609,19 +730,22 @@ class SandboxSessionImpl implements SandboxSession {
       // Heard from before its first read of the row: a change committed after
       // a read ends the wait that read decided.
       const changes = new BindingChanges(this.deps.environmentSignals, this.binding.id);
-      this.ensuring = this.provision(changes).finally(() => { changes.close(); this.ensuring = undefined; });
+      this.ensuring = this.preparation(async (begin) => { begin(); return this.provision(changes); })
+        .then(async (id) => { await this.finishPreparation(id); return id; })
+        .finally(() => { changes.close(); this.ensuring = undefined; });
     }
     const id = await this.ensuring;
     this.assertOpen();
     return id;
   }
   /**
-   * Bring the binding to Ready and prepare its Sandbox (ADR-0023, "ensure").
-   * Each step reads the row and acts on it alone: Ready → connect, a
-   * confirmed missing Sandbox → Cold; Creating → wait; Unresolved →
-   * reconcile; Cold → create. A wait ends on the binding's `environment`
-   * hint, or after 2 s, when the row is read again; it lasts until the intent
-   * deadline at most, so no outcome, known or not, blocks the binding longer.
+   * Bring the binding to Ready and verify its Sandbox's mount (ADR-0023,
+   * "ensure"); ensure then installs Skills. Each step reads the row and acts
+   * on it alone: Ready → connect, a confirmed missing Sandbox → Cold;
+   * Creating → wait; Unresolved → reconcile; Cold → create. A wait ends on
+   * the binding's `environment` hint, or after 2 s, when the row is read
+   * again; it lasts until the intent deadline at most, so no outcome, known
+   * or not, blocks the binding longer.
    *
    * A create the gateway rejected leaves the binding Cold and fails the call.
    * One with an unknown outcome keeps its intent: the call waits for its
@@ -658,10 +782,7 @@ class SandboxSessionImpl implements SandboxSession {
         // Another Runner moved the row on meanwhile: read it again and follow it.
         if (!(error instanceof EnvironmentBindingChanged)) throw error;
       }
-      if (id) {
-        await this.finishPreparation(id);
-        return id;
-      }
+      if (id) return id;
     }
   }
   /** Decide ensure's next step from the binding row, under its lock. */

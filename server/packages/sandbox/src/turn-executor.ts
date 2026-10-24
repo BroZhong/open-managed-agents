@@ -21,9 +21,12 @@ export interface TurnExecutorGuard {
  * wrapper to abort with SIGTERM). Killing the command would stop only the
  * wrapper and leave Pi's bash process group running.
  *
- * Every operation waits for the Turn's Skill Install. One that finds it
- * failed has not run: it fails with skills_install_failed and tells the
- * guard, which ends the Turn instead of letting the model retry around it.
+ * Every operation waits for the Turn's preparation and Skill Install. One
+ * that finds the install failed has not run: it fails with
+ * skills_install_failed and tells the guard, which ends the Turn instead of
+ * letting the model retry around it. One that meets an environment failure
+ * (SandboxUnavailable) has not run either, and fails with it unchanged: a
+ * tool error the model can retry (ADR-0023).
  */
 export function turnExecutor(executor: ToolExecutor, guard: TurnExecutorGuard): ToolExecutor {
   const failed = (error: unknown): unknown => {

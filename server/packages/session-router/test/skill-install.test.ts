@@ -403,10 +403,8 @@ describe("Skill Install beside inference (#268)", () => {
     const download = deferred();
     h.sandbox.skillInstallFault = (stage) => stage === "download" ? download.promise : undefined;
     const order: string[] = [];
-    let atRequest: string[] = [];
     h.run(async (input, write) => {
-      await input.journal.flush();
-      atRequest = (await h.spans()).map((stored) => stored.type);
+      // The Turn-start connect, which decides the install, runs beside the request (ADR-0023).
       order.push("model request");
       const read = input.toolExecutor!.readFile(SKILL).then((body) => { order.push(`tool ran: ${body}`); return body; });
       await sleep(30);
@@ -416,8 +414,8 @@ describe("Skill Install beside inference (#268)", () => {
       await write(text("done"));
     });
     await h.turn();
-    expect(atRequest).toEqual(["span.skills_install_start"]);
     expect(order).toEqual(["model request", "install released after 0 business reads", "tool ran: v2"]);
+    expect((await h.spans()).map((stored) => stored.type)).toEqual(["span.skills_install_start", "span.skills_install_end"]);
     expect(h.errors).toEqual([]);
   });
 

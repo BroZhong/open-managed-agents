@@ -901,11 +901,13 @@ describe("SessionRouter — Workspace availability after completed writes", () =
   it("does not probe after a completed answer; verifies the next Turn and recovers without replay", async () => {
     const sandboxClient = new FakeSandboxClient();
     let adapterRuns = 0;
+    const toolErrors: unknown[] = [];
     const adapter: Adapter = {
       async run(input) {
         const write = journalWriter(input);
         adapterRuns++;
-        await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`);
+        // A tool error, as Pi returns it to the model: the Turn goes on.
+        await input.toolExecutor!.writeFile("saved.txt", `saved-${adapterRuns}`).catch((error: unknown) => { toolErrors.push(error); });
         if (adapterRuns === 1) sandboxClient.setMountFailure(sandboxClient.created[0], "storage offline");
         await write({
           id: `answer-${adapterRuns}`, timestamp: "2026-09-14T00:00:00.000Z", type: "agent.message",
@@ -936,18 +938,23 @@ describe("SessionRouter — Workspace availability after completed writes", () =
     await router.handleNewEvent(session.id, sandboxedAgent);
     expect(adapterRuns).toBe(1);
 
+    // The next Turn runs: its tool fails with the environment failure, and
+    // the Turn, its environment never ready again, ends with sandbox_unavailable.
     await enqueue(pendingEventStore, session.id, "cannot execute while unavailable");
     await router.handleNewEvent(session.id, sandboxedAgent);
-    expect(adapterRuns).toBe(1);
-    expect((await eventLogStore.getEvents(session.id, { limit: 100 })).data).toContainEqual(expect.objectContaining({
-      type: "session.error", data: expect.objectContaining({ error: expect.objectContaining({ code: "sandbox_prepare_failed" }) }),
-    }));
+    expect(adapterRuns).toBe(2);
+    expect(toolErrors).toEqual([expect.objectContaining({ name: "SandboxUnavailable", code: "sandbox_unavailable", reason: "mount" })]);
+    const errors = async () => (await eventLogStore.getEvents(session.id, { limit: 100 })).data.filter((event) => event.type === "session.error");
+    expect((await errors()).map((event) => (event.data as { error: { code: string } }).error.code)).toEqual(["sandbox_unavailable"]);
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-1");
     sandboxClient.setMountFailure(sandboxClient.created[0]);
     await enqueue(pendingEventStore, session.id, "retry after recovery");
     await router.handleNewEvent(session.id, sandboxedAgent);
-    expect(adapterRuns).toBe(2);
+    expect(adapterRuns).toBe(3);
+    expect(toolErrors).toHaveLength(1);
+    expect(await errors()).toHaveLength(1);
     expect(sandboxClient.created).toHaveLength(1);
-    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-2");
+    expect(sandboxClient.workspaceContents("tenant_1/ws_1/").get("saved.txt")?.content).toBe("saved-3");
     expect((await sessionStore.getById(session.id))?.status).toBe("idle");
   });
 

@@ -191,7 +191,6 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const lose = async (loss: LossPoint, target: Session, skills?: SkillSet) => {
         const lost = runner(loss);
         const { lease, fence } = await turn(lost, target, skills);
-        expect(lease.failure).toBeUndefined();
         void lease.executor!.writeFile("/tmp/lost-runner", "never confirmed");
         await vi.waitFor(() => expect(lost.dead).toBe(true));
         await lapse(target, fence);
@@ -228,7 +227,6 @@ export function bindingReconciliationContract(name: string, createStores: () => 
     async function takeOver(h: Harness, target: Session) {
       h.list.mockClear();
       const { lease } = await h.turn(h.runner(), target);
-      expect(lease.failure).toBeUndefined();
       const tool = watch(h.toolsWork(lease, target.id));
       await sleep(250);
       expect(tool.settled).toBe(false);
@@ -626,10 +624,12 @@ export function bindingReconciliationContract(name: string, createStores: () => 
         expect(h.gateway.destroyed).toEqual([]);
         release();
         // The creator's tool fails: with the native lifecycle the claimed
-        // reclamation refuses its binding write; without it the creator
-        // records its Sandbox, and finds its Session terminated.
+        // reclamation refuses its binding write, an environment failure the
+        // tool reports (#287); without it the creator records its Sandbox,
+        // and finds its Session terminated.
         const failure = await tool.promise.catch((error: unknown) => error);
-        if (h.stores.lifecycle) expect(failure).toEqual(new Error("Sandbox reclamation in progress; retry input"));
+        if (h.stores.lifecycle) expect(failure).toMatchObject({ name: "SandboxUnavailable", reason: "unreachable",
+          cause: new Error("Sandbox reclamation in progress; retry input") });
         else expect(failure).toBeInstanceOf(SandboxSessionClosed);
         const [created] = h.gateway.created;
         expect(await h.listed(session.id)).toEqual([created]);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
-import { DefaultTurnSandboxes, SkillInstallError, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultTurnSandboxes, SandboxUnavailable, SkillInstallError, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
 import type { Adapter } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { SessionRouter, type SessionRouterDeps } from "../src/session-router.js";
@@ -11,15 +11,23 @@ const answers: Adapter = { async run(input) {
   return "finished";
 } };
 
-/** A Sandbox that runs nothing; `fail` names the step that throws. */
-function sandbox(fail: "prepare" | "install" | "checkWorkspace"): SandboxManager {
+/** A Sandbox that runs nothing; `fail` names the step that fails. */
+function sandbox(fail: "connect" | "install" | "checkWorkspace"): SandboxManager {
   const session: SandboxSession = {
     fileSystem: {} as SandboxSession["fileSystem"],
     async *exec() { /* runs nothing */ },
     readFile: async () => "", writeFile: async () => {}, list: async () => [],
-    prepare: async () => {
-      if (fail === "prepare") throw new Error("mount refused");
-      if (fail === "install") throw new SkillInstallError("download", "HTTP 403, curl exit 0 for bundle 0123456789ab");
+    prepare: async (skills, options) => {
+      if (fail === "connect") {
+        const error = new SandboxUnavailable("unreachable");
+        options?.sandboxPrepares?.started();
+        options?.sandboxPrepares?.ended({ outcome: "failed", error });
+        throw error;
+      }
+      if (fail === "install") {
+        options?.skillInstalls?.started(skills!);
+        options?.skillInstalls?.ended({ error: new SkillInstallError("download", "HTTP 403, curl exit 0 for bundle 0123456789ab") });
+      }
     },
     checkWorkspace: async () => { if (fail === "checkWorkspace") throw new Error("mount gone"); },
     dispose: async () => {},
@@ -38,7 +46,7 @@ describe("Errors the Router writes", () => {
     ["unsupported_runtime", false, () => ({ resolveAdapter: () => undefined })],
     ["adapter_error", false, () => ({ resolveAdapter: () => ({ async run() { throw new Error("runtime crashed"); } }) })],
     ["sandbox_unavailable", true, () => ({})],
-    ["sandbox_prepare_failed", true, sandboxes("prepare")],
+    ["sandbox_unavailable", true, sandboxes("connect")],
     ["skills_install_failed", true, sandboxes("install")],
     ["workspace_storage_error", true, sandboxes("checkWorkspace")],
   ])("%s names the Turn it is written in", async (code, sandboxed, deps) => {

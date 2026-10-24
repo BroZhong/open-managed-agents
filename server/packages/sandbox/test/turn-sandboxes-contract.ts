@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Agent, DelegationStore, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
-import { DefaultSandboxManager } from "../src/sandbox-manager.js";
+import { DefaultSandboxManager, SandboxUnavailable, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { SANDBOX_IDLE_SECONDS } from "../src/sandbox-client.js";
@@ -15,6 +15,14 @@ export interface TurnSandboxStores {
   delegationStore: DelegationStore;
   /** The native lifecycle store, where the backend has one. */
   lifecycle?: SandboxLifecycleStore;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A promise and whether it has settled yet. */
+function watch<T>(promise: Promise<T>) {
+  const watched = { promise, settled: false };
+  promise.then(() => { watched.settled = true; }, () => { watched.settled = true; });
+  return watched;
 }
 
 const workspaceMount = { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" };
@@ -135,28 +143,73 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       await expect(nextLease.checkWorkspace()).resolves.toBeUndefined();
     });
 
-    it("reports a failed preparation on the lease, which still holds the Turn's use until its release", async () => {
+    it("acquires the lease without waiting for the Turn-start connect, which the first operation and the release wait for", async () => {
+      const h = await setup();
+      const { begin, finish } = trackActivity(h.manager);
+      const session = await h.session();
+      await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
+      let connected!: () => void;
+      const connecting = new Promise<void>((resolve) => { connected = resolve; });
+      const reconnect = h.client.reconnect.bind(h.client);
+      vi.spyOn(h.client, "reconnect").mockImplementation(async (id, metadata) => { await connecting; return reconnect(id, metadata); });
+      const fence = await h.claim(session);
+      const lease = (await h.acquire(session, fence))!;
+      expect(begin).toHaveBeenCalledTimes(2);
+      const read = watch(lease.executor.readFile("saved.txt"));
+      await h.ack(session, fence);
+      const released = watch(lease.release({ settled: true }));
+      await sleep(20);
+      expect(read.settled).toBe(false);
+      expect(released.settled).toBe(false);
+      expect(finish).toHaveBeenCalledTimes(1);
+      connected();
+      expect(await read.promise).toBe("x");
+      await released.promise;
+      expect(finish).toHaveBeenCalledTimes(2);
+    });
+
+    it("fails the operations that met an environment failure with sandbox_unavailable, tells the Turn, and prepares again on the next one", async () => {
       const h = await setup();
       const session = await h.session();
       await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
-      h.client.setMountFailure(h.client.created[0], "storage offline");
+      const [id] = h.client.created;
+      h.client.setMountFailure(id, "storage offline");
+      const prepares: SandboxPrepareOutcome[] = [];
+      const sandboxPrepares = { started: vi.fn(), ended: (outcome: SandboxPrepareOutcome) => { prepares.push(outcome); } };
       const fence = await h.claim(session);
-      const lease = (await h.acquire(session, fence))!;
-      expect(lease.failure).toEqual({ code: "sandbox_prepare_failed", message: new WorkspaceMountUnavailable().message });
-      expect(lease.executor).toBeUndefined();
+      const lease = (await h.acquire(session, fence, { sandboxPrepares }))!;
+      const failure = await lease.executor.readFile("saved.txt").catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(SandboxUnavailable);
+      expect(failure).toMatchObject({ code: "sandbox_unavailable", reason: "mount", details: { reason: "mount" },
+        message: new WorkspaceMountUnavailable().message });
+      expect(prepares).toEqual([{ outcome: "failed", error: failure }]);
       expect(await h.users(session.id)).toBe(true);
+      h.client.setMountFailure(id);
+      expect(await lease.executor.readFile("saved.txt")).toBe("x");
+      expect(prepares).toEqual([{ outcome: "failed", error: failure }, { outcome: "ready", sandboxId: id }]);
+      expect(sandboxPrepares.started).toHaveBeenCalledTimes(2);
+      expect(h.client.created).toEqual([id]);
+      await h.ack(session, fence);
       await lease.release({ settled: true });
       expect(await h.users(session.id)).toBe(false);
     });
 
-    it("names a Skill Install that failed while preparation decided it", async () => {
+    it("fails the Turn's operations with skills_install_failed when deciding its Skill Install failed, and tells the Turn of it as of a failed install", async () => {
       const h = await setup();
       const session = await h.session();
       await h.turn(session, (executor) => executor!.writeFile("saved.txt", "x"));
       vi.spyOn(h.stores.delegationStore, "installedSkillSet").mockRejectedValueOnce(new Error("connection reset"));
       const skills = skillSetOf([await h.bundles.add("writer", [text("SKILL.md", "v1")])]);
-      const lease = (await h.acquire(session, await h.claim(session), { skills }))!;
-      expect(lease.failure).toEqual({ code: "skills_install_failed", message: "Skill Install failed at check: cannot read what the binding installed: connection reset" });
+      const failed: SkillInstallError[] = [];
+      const skillInstalls = { started: vi.fn(), ended: vi.fn() };
+      const lease = (await h.acquire(session, await h.claim(session), { skills, skillInstalls, skillInstallFailed: (error) => failed.push(error) }))!;
+      const message = "Skill Install failed at check: cannot read what the binding installed: connection reset";
+      await expect(lease.executor.readFile("saved.txt")).rejects.toThrow(`skills_install_failed: ${message}. The tool was not executed.`);
+      expect(failed).toEqual([expect.objectContaining({ stage: "check", message })]);
+      expect(skillInstalls.started).toHaveBeenCalledExactlyOnceWith(skills);
+      expect(skillInstalls.ended).toHaveBeenCalledExactlyOnceWith({ error: failed[0] });
+      // Like a failed install, it fails each operation of the Turn.
+      await expect(lease.executor.readFile("saved.txt")).rejects.toThrow(/^skills_install_failed: /);
     });
 
     it("ends an operation that waited for a failed Skill Install without running it, and tells the Turn", async () => {
@@ -187,8 +240,10 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const h = await setup();
       vi.spyOn(h.manager, "beginActivity").mockRejectedValue(new Error("Sandbox termination cleanup is still pending; retry later"));
       const session = await h.session();
+      const binding = vi.spyOn(h.stores.delegationStore, "withEnvironmentLock");
       await expect(h.acquire(session, await h.claim(session))).rejects.toThrow("cleanup is still pending");
-      expect(h.open).not.toHaveBeenCalled();
+      // Opened, which starts nothing, but never prepared.
+      expect(binding).not.toHaveBeenCalled();
       expect(await h.users(session.id)).toBe(false);
     });
 

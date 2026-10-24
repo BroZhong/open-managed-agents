@@ -5,7 +5,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory";
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { BestEffortTurnStreamStore, InMemoryTurnStreamStore, type TurnDelta, type TurnStreamStore } from "@oma-server/redis";
-import { DefaultTurnSandboxes, type SandboxManager, type SandboxSession } from "@oma-server/sandbox";
+import { DefaultTurnSandboxes, SandboxUnavailable, type SandboxManager, type SandboxPrepareObserver, type SandboxSession } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
 import { presentEvent, type DelegationCommand, type DelegationExecution, type PendingEventClaim, type PendingEventClaimEnd, type StoredEvent } from "@oma-server/store";
 import type { Adapter, AdapterInput, ExecOptions, ToolFileSystem } from "@open-managed-agents/adapter-core";
@@ -83,6 +83,14 @@ export interface Scenario {
   model(request: ModelRequest, run: Run): ModelReply | Promise<ModelReply>;
   /** A Sandbox tool call's output text; it may lose its Runner while it runs. */
   tool?(call: ToolCall, run: Run): string | Promise<string>;
+  /**
+   * The environment failure a Sandbox tool call meets, if any (ADR-0023): the
+   * call fails without running, a tool error carrying the failure's code.
+   * With it, each Runner's Sandbox reports its preparations as the Sandbox
+   * Manager does: a failed one at each failure, a ready one at a Turn's
+   * first tool that runs.
+   */
+  environment?(call: ToolCall, run: Run): SandboxUnavailable | undefined;
   /**
    * Whether the event log refuses to store `event`, as PostgreSQL refuses a
    * row it cannot store: the Runner's write fails with {@link RefusedWrite}.
@@ -370,10 +378,18 @@ function request(body: { model: string; thinking?: unknown; system?: unknown; me
     text: JSON.stringify(body.messages), results, runner, model: body.model, thinking: body.thinking, system };
 }
 
-/** A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool` as every tool. */
-function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void, reclaimed: () => void): SandboxManager {
+/**
+ * A Sandbox that speaks the Pi tool wrapper's protocol in process, with `tool`
+ * as every tool. With `reportsPreparations`, a tool that fails with an
+ * environment failure is a failed preparation, and a Turn's first tool that
+ * runs a ready one.
+ */
+function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promise<string>, sent: (command: string[]) => void, reclaimed: () => void,
+  reportsPreparations = false): SandboxManager {
   const files = new Map<string, Uint8Array>();
   let temporary = 0;
+  let prepares: SandboxPrepareObserver | undefined;
+  let ready = false;
   const missing = (path: string) => Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
   const unsupported = async () => { throw new Error("not used by the scenario's tools"); };
   // Own properties: the fenced executor guards each one by its key.
@@ -393,7 +409,21 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
         const sent = JSON.parse(Buffer.from(files.get(command.at(-1)!) ?? new Uint8Array()).toString()) as { id: string; name: string; args: Json };
         // The wrapper reports its pid as it starts, so Pi can ask it to abort (#240).
         yield { stream: "stdout" as const, text: JSON.stringify({ type: "accepted", pid: 4242 }) + "\n" };
-        const text = await run({ id: sent.id, name: sent.name, args: sent.args });
+        let text: string;
+        try {
+          text = await run({ id: sent.id, name: sent.name, args: sent.args });
+        } catch (error) {
+          if (!(error instanceof SandboxUnavailable)) throw error;
+          ready = false;
+          prepares?.started();
+          prepares?.ended({ outcome: "failed", error });
+          throw error;
+        }
+        if (!ready) {
+          ready = true;
+          prepares?.started();
+          prepares?.ended({ outcome: "ready", sandboxId: "harness-sandbox" });
+        }
         // A command that outlives its Runner reports to nobody.
         if (runner.dead) await GONE;
         yield { stream: "stdout" as const, text: JSON.stringify({ type: "result", result: { content: [{ type: "text", text }], details: undefined } }) + "\n" };
@@ -401,7 +431,12 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
       options?.onExit?.({ exitCode: 0 });
     },
     readFile: unsupported, writeFile: unsupported, list: unsupported,
-    prepare: async () => {}, checkWorkspace: async () => {}, dispose: async () => {},
+    prepare: async (_skills, options) => {
+      if (!reportsPreparations) return;
+      prepares = options?.sandboxPrepares;
+      ready = false;
+    },
+    checkWorkspace: async () => {}, dispose: async () => {},
   };
   return { open: () => session, list: async () => [], reclaim: async () => { reclaimed(); return true; } };
 }
@@ -545,9 +580,12 @@ export async function execute(scenario: Scenario, loseAfter: Array<LoseAfter | u
       sandboxes: new DefaultTurnSandboxes({
         manager: sandbox(runner, async (call) => {
           const toolCall = { ...call, runner: index };
+          // It does not run: no call of it is executed.
+          const failure = scenario.environment?.(toolCall, run);
+          if (failure) throw failure;
           outcome.toolCalls.push(toolCall);
           return scenario.tool ? scenario.tool(toolCall, run) : `ran ${call.id}`;
-        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.reclamations.push(index)),
+        }, (command) => outcome.commands.push({ runner: index, command }), () => outcome.reclamations.push(index), scenario.environment !== undefined),
         bindings: runnerStores.delegationStore, sessions: runnerStores.sessionStore,
         workspaceMount: { bucket: "agentry", agentName: "agentry-workspace", pvName: "agentry-workspace-oss", credentialProviderName: "agentry-oss-rw" },
         onError: ({ error }) => outcome.errors.push({ runner: index, error }),
@@ -814,9 +852,15 @@ function expectSessionResumed(scenario: Scenario, outcome: Outcome, session: Ses
   expect(new Set(unknown), `${of}calls of unknown outcome`).toEqual(new Set(left.filter((call) => !fromRecord.includes(call) && !interrupted.includes(call))));
   // A handoff leaves a call without a result only when its deadline detached the Turn.
   for (const loss of outcome.losses) if (loss.sessionId === session.id && loss.reason === "released" && !loss.detached) expect(loss.dangling).toEqual([]);
-  // A Sandbox call with a real result ran.
+  // A Sandbox call with a real result ran, unless it met an environment
+  // failure: its native result carries the failure's code (ADR-0023).
   const executions = outcome.toolCalls.map((call) => call.id);
-  for (const call of calls.filter((id) => !unknown.includes(id) && !interrupted.includes(id) && !HOST_TOOLS.has(nameOf(id) ?? ""))) {
+  const unavailable = new Set(log.flatMap((event) => {
+    const message = event.type === "agent.context_entry"
+      ? (event.data as { entry?: { message?: { role?: string; toolCallId?: string; details?: { code?: unknown } } } }).entry?.message : undefined;
+    return message?.role === "toolResult" && message.details?.code === "sandbox_unavailable" ? [message.toolCallId] : [];
+  }));
+  for (const call of calls.filter((id) => !unknown.includes(id) && !interrupted.includes(id) && !unavailable.has(id) && !HOST_TOOLS.has(nameOf(id) ?? ""))) {
     expect(executions, `${of}${call} ran`).toContain(call);
   }
   // Each model step and its usage is recorded once; every committed answer counts.

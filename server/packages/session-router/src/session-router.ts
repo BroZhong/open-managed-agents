@@ -38,6 +38,7 @@ import { TurnJournal, type JournalEvent } from "./turn-journal.js";
 import { danglingToolCalls, planResume, type DanglingToolCall, type RecoveryError, type ResumeFacts, type Takeover } from "./plan-resume.js";
 import { repairResult, type DanglingCallResolver, type RepairCause } from "./dangling-call-results.js";
 import { INSTALL_ATTEMPT_STOPPED, SkillInstallSpans, skillInstallKey, unendedSkillInstalls, type SkillInstallEndData } from "./skill-install-spans.js";
+import { PREPARE_ATTEMPT_STOPPED, SandboxPrepareSpans, sandboxPrepareKey, unendedSandboxPrepares, type SandboxPrepareEndData } from "./sandbox-prepare-spans.js";
 
 /**
  * The fixed assembly order for an Agent's Files into `appendSystemPrompt`.
@@ -804,6 +805,28 @@ export class SessionRouter {
   }
 
   /**
+   * Record, as the Turn ends, that its environment failed and never became
+   * ready again (ADR-0023): like the Workspace check, the error keeps the
+   * answer. A Turn that recovered records nothing. Only the Turn's end writes
+   * it: planResume takes any session.error in a Turn as the Turn's end, so
+   * mid-Turn an environment failure is only a tool error, and a Turn taken
+   * over after one continues.
+   */
+  private async checkEnvironment(
+    journal: TurnJournal,
+    sandboxPrepares: SandboxPrepareSpans,
+    pendingEventId: string,
+    turnId: string,
+  ): Promise<void> {
+    if (!sandboxPrepares.unavailable()) return;
+    this.recordTurnError(journal, pendingEventId, turnId, "sandbox_unavailable", {
+      message: "The Session's Sandbox was unavailable and did not become ready again before the Turn ended. The answer is retained; the tool calls that failed with sandbox_unavailable were not executed. The next Turn prepares the Sandbox again.",
+      code: "sandbox_unavailable",
+    });
+    await journal.flush();
+  }
+
+  /**
    * The one write entry of a Turn attempt (ADR-0020), composed of the
    * attempt's fenced append, live publication and Delta output. A tool result
    * answering a delegation wait is appended by consuming that wait, once the
@@ -957,8 +980,9 @@ export class SessionRouter {
    * Mark that this attempt continues a Turn another claim held, before it
    * writes anything else of the Turn. One marker per takeover: a lost
    * takeover's marker stays, and the next claim writes its own. A Skill
-   * Install the stopped attempt left without an end span gets one now: that
-   * attempt no longer waits for it, whatever it did (ADR-0022).
+   * Install or a Sandbox preparation the stopped attempt left without an end
+   * span gets one now: that attempt no longer waits for it, whatever it did
+   * (ADR-0022, ADR-0023).
    */
   private recordTakeover(journal: TurnJournal, pendingEventId: string, turnId: string, generation: number,
     takeover: Takeover | undefined, events: readonly StoredEvent[]): void {
@@ -968,6 +992,10 @@ export class SessionRouter {
     for (const start of unendedSkillInstalls(events)) {
       const end: SkillInstallEndData = { ...start, outcome: "aborted", reason: INSTALL_ATTEMPT_STOPPED };
       journal.record({ type: "span.skills_install_end", data: end }, this.turnKey(pendingEventId, skillInstallKey(start.installId, "end")));
+    }
+    for (const start of unendedSandboxPrepares(events)) {
+      const end: SandboxPrepareEndData = { ...start, outcome: "aborted", reason: PREPARE_ATTEMPT_STOPPED };
+      journal.record({ type: "span.sandbox_prepare_end", data: end }, this.turnKey(pendingEventId, sandboxPrepareKey(start.prepareId, "end")));
     }
   }
 
@@ -1130,6 +1158,9 @@ export class SessionRouter {
       // ends the Turn (ADR-0022).
       let skillInstalls: SkillInstallSpans | undefined;
       let installFailure: SkillInstallError | undefined;
+      // The spans of the preparations of the Turn's environment, and whether
+      // it was left unavailable, by this attempt or an earlier one (ADR-0023).
+      let sandboxPrepares: SandboxPrepareSpans | undefined;
       // Every durable write of this attempt goes through its one journal.
       const attemptWrites: AttemptWrites = {};
       const journal = this.createJournal(sessionId, pendingFence, attemptWrites, stopOnFailure);
@@ -1142,8 +1173,9 @@ export class SessionRouter {
       const stopAttempt = (reason: unknown): void => {
         if (stopped) return;
         stopped = true;
-        // The next attempt ends the spans of installs this one leaves running.
+        // The next attempt ends the spans of installs and preparations this one leaves running.
         skillInstalls?.close();
+        sandboxPrepares?.close();
         journal.revokeAdapter();
         stopHeartbeat();
         turnController.abort(reason);
@@ -1188,6 +1220,13 @@ export class SessionRouter {
       let plan = planResume(facts);
       turnId = plan.turnId;
       journal.bindTurn(turnId);
+      sandboxPrepares = new SandboxPrepareSpans({ turnId, generation: claim.generation, events: facts.events, write: (event, keySegment) => {
+        journal.record(event, this.turnKey(pendingEvent.id, keySegment));
+        // Written at once, so the stream shows it live; a failed write
+        // stops the attempt through the journal.
+        journal.flush().catch(() => {});
+      } });
+      const turnPrepares = sandboxPrepares;
       // This attempt as a writer of the active-Turn projection: no attempt of
       // an earlier input, or of an earlier generation of this one, replaces
       // what it records.
@@ -1196,9 +1235,16 @@ export class SessionRouter {
       // marker is written and its input acknowledged. False once the attempt
       // lost its claim on the way.
       const endTurn = async (endedTurnId: string): Promise<boolean> => {
-        // An install still running ends inside the Turn: its end span precedes
-        // the Turn's end, and a complete install is recorded on the binding.
+        // A Turn that outran its Sandbox's preparation waits for it, so an
+        // install it starts is the Turn's. An install still running ends
+        // inside the Turn: its end span precedes the Turn's end, and a
+        // complete install is recorded on the binding.
+        await lease?.prepared();
         await skillInstalls?.settled();
+        // A preparation still running ends with the Turn; an environment
+        // that failed and never became ready again ends it with an error.
+        turnPrepares.endTurn();
+        await this.checkEnvironment(journal, turnPrepares, pendingEvent.id, endedTurnId);
         // No Delta may land in the stream after it is reclaimed.
         await journal.endDeltas();
         await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
@@ -1405,11 +1451,13 @@ export class SessionRouter {
       } });
       // The Turn's Sandbox lease (none for an Agent that opted out): lazy, a
       // pure-chat Turn creates nothing. The Skill Set is computed per attempt:
-      // a Resumed Turn installs the current one. Preparation verifies the
-      // mount and decides the install; the install runs beside inference, and
-      // the first Sandbox operation waits for it (ADR-0022).
+      // a Resumed Turn installs the current one. Preparation connects a Ready
+      // binding's Sandbox, verifies its mount and decides the install beside
+      // inference, and so does the install; the first Sandbox operation waits
+      // for them (ADR-0022, ADR-0023). An environment failure is a tool error,
+      // never the end of the Turn.
       lease = await this.sandboxes?.acquire({
-        session, agent: currentAgent, fence: pendingFence, signal: turnController.signal, skills, skillInstalls,
+        session, agent: currentAgent, fence: pendingFence, signal: turnController.signal, skills, skillInstalls, sandboxPrepares,
         assertOwner: assertExecutionOwner,
         // The first operation to find the install failed ends the Turn: the
         // Adapter run is aborted and the Turn closed with its error. A Turn
@@ -1420,11 +1468,7 @@ export class SessionRouter {
           turnController.abort(error);
         },
       }) ?? null;
-      executionSettled = true; // No runtime has started, including preparation failures.
-      if (lease?.failure) {
-        if (!await endTurnWithError(turnId, lease.failure.code, lease.failure)) return;
-        continue;
-      }
+      executionSettled = true; // No runtime has started yet.
       if (stopped) return;
 
       // Assemble the Agent's Files into appendSystemPrompt (fixed order, missing
@@ -1633,7 +1677,10 @@ export class SessionRouter {
         // A completed history marker, expired lease or bounded Interrupt wait
         // is not proof of actual runtime settlement: an unsettled runtime is
         // watched to its natural end, unless the Turn was detached at the
-        // handoff deadline. The Sandbox session goes with the lease.
+        // handoff deadline. The Sandbox session goes with the lease. A
+        // preparation the attempt leaves running writes nothing more: the
+        // attempt that continues the Turn ends its span.
+        sandboxPrepares?.close();
         try {
           await lease?.release(executionSettled ? { settled: true }
             : { settled: false, settles: handedOff ? undefined : runtime });
