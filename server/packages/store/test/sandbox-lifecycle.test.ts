@@ -164,6 +164,28 @@ describe.skipIf(!process.env.PG_TEST_URL)('native Sandbox execution coordination
     await lifecycle.completeReclamation(later);
     expect(await id()).toBeNull();
   });
+  it('reports the environment of a binding under reclamation without its lock, and Cold once it completes', async () => {
+    await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ value: undefined,
+      observed: { failure: { code: 'sandbox_unavailable', reason: 'unreachable' } } }));
+    const failed = await stores.delegationStore.environment(activity.bindingId);
+    expect(failed).toMatchObject({ state: 'unavailable', lastError: { code: 'sandbox_unavailable', reason: 'unreachable' } });
+    await stores.sessionStore.terminate(activity.sessionId);
+    const ticket = (await lifecycle.claimReclamation(activity.bindingId))!;
+    // The binding's environment transactions are refused while it is claimed; its read is not.
+    await expect(id()).rejects.toThrow('reclamation');
+    expect(await stores.delegationStore.environment(activity.bindingId)).toEqual(failed);
+    // A row lock another transaction holds does not block the read either.
+    const holder = await harness.pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM delegation_environments WHERE id = $1 FOR UPDATE', [activity.bindingId]);
+      expect(await stores.delegationStore.environment(activity.bindingId)).toEqual(failed);
+    } finally { await holder.query('ROLLBACK'); holder.release(); }
+    await lifecycle.completeReclamation(ticket);
+    const reclaimed = await stores.delegationStore.environment(activity.bindingId);
+    expect(reclaimed).toMatchObject({ state: 'cold', lastError: null });
+    expect(reclaimed.since!.getTime()).toBeGreaterThanOrEqual(failed.since!.getTime());
+  });
   it('durably keeps a creation intent and its database-clock start across Runner restart', async () => {
     await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'cold', value: undefined }));
     await stores.delegationStore.withEnvironmentLock(activity.bindingId, async () => ({ next: 'creating', value: undefined }));

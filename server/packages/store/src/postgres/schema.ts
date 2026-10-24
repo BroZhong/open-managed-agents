@@ -179,6 +179,15 @@ ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS reclaiming BOO
 -- database clock, while sandbox_id is NULL; past the intent deadline any
 -- Runner reconciles it with the gateway. NULL when Ready or Cold.
 ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS creating_since TIMESTAMPTZ;
+-- What the Session API reports of the binding (ADR-0023): when its state
+-- began, by the database clock (its last move, its first environment failure
+-- since, or its recovery; NULL before its first move), and the last
+-- environment failure observed in that state: code, reason and time. A move
+-- or a preparation that ends ready clears the failure.
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS state_since TIMESTAMPTZ;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_code TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_reason TEXT;
+ALTER TABLE ${s}.delegation_environments ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
 -- The last complete Skill Install (ADR-0022): the Sandbox it went into, the
 -- Skill Set hash it installed and its /skills switch generation in that
 -- Sandbox. All NULL until one is recorded.

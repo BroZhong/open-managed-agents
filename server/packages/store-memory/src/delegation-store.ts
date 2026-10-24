@@ -1,4 +1,4 @@
-import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
+import { TransactionalDelegationStore, delegationFenceLost, type DelegationTransaction, type DelegationRecord, type DelegationTable, type EnvironmentBinding, type EnvironmentLockResult, type EnvironmentRecord, type InstalledSkillSet, type SkillSetRecordOutcome, type WorkspaceMetadataStore } from "@oma-server/store";
 import type { InMemorySessionStore } from "./session-store.js";
 import type { InMemoryPendingEventStore } from "./pending-event-store.js";
 import type { InMemoryEventLogStore } from "./event-log-store.js";
@@ -7,7 +7,7 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
   private records = new Map<DelegationTable, Map<string, DelegationRecord>>();
   private queue: Promise<void> = Promise.resolve();
   /** Environment binding rows; an absent one is Cold. */
-  private environments = new Map<string, { sandboxId: string | null; creatingSince: Date | null }>();
+  private environments = new Map<string, EnvironmentRecord>();
   private installedSkills = new Map<string, InstalledSkillSet>();
   private environmentQueues = new Map<string, Promise<void>>();
   constructor(private readonly sessions: InMemorySessionStore, private readonly pending: InMemoryPendingEventStore, private readonly events: InMemoryEventLogStore, private readonly workspaces: Pick<WorkspaceMetadataStore, "getById">,
@@ -72,10 +72,15 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
    */
   withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T> {
     const perform = async () => {
-      const row = this.environments.get(bindingId) ?? { sandboxId: null, creatingSince: null };
-      const { value, next } = await work({ ...row, now: this.databaseClock() });
-      if (next) this.environments.set(bindingId, next === "creating" ? { sandboxId: null, creatingSince: this.databaseClock() }
-        : { sandboxId: next === "cold" ? null : next.ready, creatingSince: null });
+      let row = this.environments.get(bindingId) ?? { sandboxId: null, creatingSince: null, stateSince: null, lastError: null };
+      const { value, next, observed } = await work({ sandboxId: row.sandboxId, creatingSince: row.creatingSince, now: this.databaseClock() });
+      const now = this.databaseClock();
+      // As PgDelegationStore writes them: a move begins a new state, a first
+      // failure begins unavailability, a ready observation ends it.
+      if (next) row = { sandboxId: typeof next === "object" ? next.ready : null, creatingSince: next === "creating" ? now : null, stateSince: now, lastError: null };
+      if (observed === "ready") { if (row.lastError) row = { ...row, stateSince: now, lastError: null }; }
+      else if (observed) row = { ...row, stateSince: row.lastError ? row.stateSince : now, lastError: { ...observed.failure, at: now } };
+      if (next || observed) this.environments.set(bindingId, row);
       return value;
     };
     const previous = this.environmentQueues.get(bindingId) ?? Promise.resolve();
@@ -84,6 +89,10 @@ export class InMemoryDelegationStore extends TransactionalDelegationStore {
     this.environmentQueues.set(bindingId, settled);
     void settled.then(() => { if (this.environmentQueues.get(bindingId) === settled) this.environmentQueues.delete(bindingId); });
     return result;
+  }
+  protected async environmentRecord(bindingId: string): Promise<EnvironmentRecord | undefined> {
+    const row = this.environments.get(bindingId);
+    return row && structuredClone(row);
   }
   async installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null> {
     const installed = this.installedSkills.get(bindingId);

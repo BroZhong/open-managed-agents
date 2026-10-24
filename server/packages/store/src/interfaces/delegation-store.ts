@@ -147,10 +147,50 @@ export interface EnvironmentBinding {
  * database's `now()` when the move commits.
  */
 export type EnvironmentTransition = { ready: string } | "cold" | "creating";
+/**
+ * An environment failure a preparation of the binding's Sandbox observed
+ * (ADR-0023): `code` and `reason` as the tool results it failed carry them.
+ */
+export interface EnvironmentFailure {
+  code: string;
+  reason: string;
+}
+/**
+ * What `work` found of the binding's environment: its Sandbox ready
+ * (connected, its mount verified), which ends a recorded failure; or a
+ * failure, recorded with the database clock as the binding's last error.
+ */
+export type EnvironmentObservation = "ready" | { failure: EnvironmentFailure };
 export interface EnvironmentLockResult<T> {
   value: T;
-  /** Absent: the row stays as it was read. */
+  /**
+   * Absent: the row stays as it was read. A move begins a new state: it
+   * records when, and clears the last error, which was the old state's.
+   */
   next?: EnvironmentTransition;
+  /** Recorded by the same compare-and-set, after `next`. */
+  observed?: EnvironmentObservation;
+}
+/**
+ * A binding's environment as the Session API reports it (ADR-0023), derived
+ * from its row: `unavailable` while it records an error, else `ready` while
+ * it records a Sandbox, `creating` while it records a creation intent (past
+ * its deadline too: the next use reconciles it), and `cold` otherwise.
+ */
+export type EnvironmentState = "cold" | "creating" | "ready" | "unavailable";
+export interface EnvironmentStatus {
+  state: EnvironmentState;
+  /**
+   * When the state began, by the database clock: the binding's last move,
+   * its first failure since, or its recovery from one. Null when the binding
+   * never moved since migration 0025 (an unused binding is Cold).
+   */
+  since: Date | null;
+  /**
+   * The last environment failure observed in the current state, recorded at
+   * `at`; null once a preparation ended ready or the binding moved.
+   */
+  lastError: (EnvironmentFailure & { at: Date }) | null;
 }
 /** Coordination shares the pending-input lease: no second execution scheduler. */
 export interface DelegationStore {
@@ -162,14 +202,20 @@ export interface DelegationStore {
   listExecutions(tenantId: string, opts: { callerSessionId?: string; callerTurnId?: string; callerToolUseId?: string; childId?: string; limit?: number; afterId?: string }): Promise<DelegationExecution[]>;
   /**
    * Read the binding (created Cold on first use), run `work` on it, then
-   * move it to `next` by compare-and-set: the move applies only while the row
-   * is still as `work` read it, and otherwise rejects with
-   * `EnvironmentBindingChanged`. A `work` that throws
+   * move it to `next` and record what it `observed` by compare-and-set: they
+   * apply only while the row is still as `work` read it, and otherwise
+   * reject with `EnvironmentBindingChanged`. A `work` that throws
    * moves nothing. No database lock or pooled client is held while `work`
    * runs, which may call the gateway; callers of one store are serialized per
    * binding. Rejects while the binding's reclamation is in progress.
    */
   withEnvironmentLock<T>(bindingId: string, work: (binding: EnvironmentBinding) => Promise<EnvironmentLockResult<T>>): Promise<T>;
+  /**
+   * The binding's environment for the Session API (ADR-0023). One plain
+   * read: it takes no lock, creates no row and answers for a binding under
+   * reclamation too.
+   */
+  environment(bindingId: string): Promise<EnvironmentStatus>;
   /** The binding's last recorded Skill Install; null when none was recorded. */
   installedSkillSet(bindingId: string): Promise<InstalledSkillSet | null>;
   /**

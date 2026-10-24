@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import type { WorkspaceMetadataStore, AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution } from "../src/index.js";
+import type { WorkspaceMetadataStore, AgentStore, SessionStore, PendingEventStore, EventLogStore, DelegationStore, DelegationAcceptInput, PendingEventFence, DelegationExecution, EnvironmentObservation, EnvironmentTransition } from "../src/index.js";
 export interface DelegationFixture { workspaceStore: WorkspaceMetadataStore; agentStore: AgentStore; sessionStore: SessionStore; pendingEventStore: PendingEventStore; eventLogStore: EventLogStore; delegationStore: DelegationStore }
 export function delegationContract(name: string, create: () => Promise<DelegationFixture>, close?: () => Promise<void>) {
   describe(name, () => {
@@ -281,6 +281,66 @@ export function delegationContract(name: string, create: () => Promise<Delegatio
       await store.withEnvironmentLock("intent", async () => ({ next: "creating", value: undefined }));
       await store.withEnvironmentLock("intent", async () => ({ next: "cold", value: undefined }));
       expect(await read()).toMatchObject({ sandboxId: null, creatingSince: null });
+    });
+    it("reports a binding's environment from its row: cold, creating, ready and unavailable (ADR-0023)", async () => {
+      const store = stores.delegationStore;
+      const now = async () => (await store.withEnvironmentLock("reported", async ({ now: at }) => ({ value: at }))).getTime();
+      const observe = (observed: EnvironmentObservation, next?: EnvironmentTransition) =>
+        store.withEnvironmentLock("reported", async () => ({ value: undefined, next, observed }));
+      const failure = (reason: string) => ({ failure: { code: "sandbox_unavailable", reason } });
+      // Never used: Cold since nothing recorded.
+      expect(await store.environment("reported")).toEqual({ state: "cold", since: null, lastError: null });
+      await store.withEnvironmentLock("reported", async () => ({ next: "creating", value: undefined }));
+      const { creatingSince } = await store.withEnvironmentLock("reported", async (binding) => ({ value: binding }));
+      expect(await store.environment("reported")).toEqual({ state: "creating", since: creatingSince, lastError: null });
+
+      const beforeReady = await now();
+      await store.withEnvironmentLock("reported", async () => ({ next: { ready: "sandbox-1" }, value: undefined }));
+      const ready = await store.environment("reported");
+      expect(ready).toMatchObject({ state: "ready", lastError: null });
+      expect(ready.since!.getTime()).toBeGreaterThanOrEqual(beforeReady);
+      expect(ready.since!.getTime()).toBeLessThanOrEqual(await now());
+
+      // A failure: unavailable since it was recorded, with its code, reason and time.
+      const beforeFailure = await now();
+      await observe(failure("mount"));
+      const failed = await store.environment("reported");
+      expect(failed).toMatchObject({ state: "unavailable", lastError: { code: "sandbox_unavailable", reason: "mount" } });
+      expect(failed.lastError!.at.getTime()).toBeGreaterThanOrEqual(beforeFailure);
+      expect(failed.since).toEqual(failed.lastError!.at);
+      // Another one: the latest is reported, unavailable since the first.
+      await observe(failure("unreachable"));
+      const again = await store.environment("reported");
+      expect(again).toMatchObject({ state: "unavailable", since: failed.since, lastError: { reason: "unreachable" } });
+      expect(again.lastError!.at.getTime()).toBeGreaterThanOrEqual(failed.lastError!.at.getTime());
+
+      // A preparation that ends ready clears it: ready since the recovery.
+      await observe("ready");
+      const recovered = await store.environment("reported");
+      expect(recovered).toMatchObject({ state: "ready", lastError: null });
+      expect(recovered.since!.getTime()).toBeGreaterThanOrEqual(again.lastError!.at.getTime());
+      // With nothing to clear, it changes nothing.
+      await observe("ready");
+      expect(await store.environment("reported")).toEqual(recovered);
+
+      // A move begins a new state, which the old state's failure says nothing about.
+      await observe(failure("unreachable"));
+      const beforeCold = await now();
+      await store.withEnvironmentLock("reported", async () => ({ next: "cold", value: undefined }));
+      const cold = await store.environment("reported");
+      expect(cold).toMatchObject({ state: "cold", lastError: null });
+      expect(cold.since!.getTime()).toBeGreaterThanOrEqual(beforeCold);
+      // A failure recorded with a move belongs to the new state.
+      await store.withEnvironmentLock("reported", async () => ({ next: "creating", value: undefined }));
+      await observe(failure("rejected"), "cold");
+      const rejected = await store.environment("reported");
+      expect(rejected).toMatchObject({ state: "unavailable", lastError: { reason: "rejected" } });
+      expect(rejected.since).toEqual(rejected.lastError!.at);
+      expect(await store.withEnvironmentLock("reported", async (binding) => ({ value: binding }))).toMatchObject({ sandboxId: null, creatingSince: null });
+      // A callback that throws records nothing.
+      await expect(store.withEnvironmentLock("reported", async () => { throw new Error("gateway unavailable"); })).rejects.toThrow();
+      expect(await store.environment("reported")).toEqual(rejected);
+      expect(await store.environment("other-binding")).toEqual({ state: "cold", since: null, lastError: null });
     });
     it("records a Skill Install only while the binding still holds the Sandbox it went into", async () => {
       const store = stores.delegationStore;
