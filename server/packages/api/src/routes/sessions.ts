@@ -1,7 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import type { SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
-import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor } from "@oma-server/store";
+import type { DelegationStore, EnvironmentStatus, SessionShareStore, AgentStore, EventLogStore, SessionStore, WorkspaceMetadataStore } from "@oma-server/store";
+import { workspaceObjectPrefix, decodeSessionUpdatedAtCursor, environmentBindingId } from "@oma-server/store";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { TenantContext } from "../types.js";
 import { publicSession, sharedSession } from "../lib/public-projection.js";
@@ -27,7 +27,14 @@ export interface SessionRouteDeps {
   eventLogStore?: EventLogStore;
   sessionRouter?: SessionRouter;
   wakeSession?: (sessionId: string) => void;
+  /** The Sandbox bindings; without them a Session is returned without its environment. */
+  environments?: Pick<DelegationStore, "environment">;
 }
+
+/** The documented SessionEnvironment shape. */
+const environmentToWire = ({ state, since, lastError }: EnvironmentStatus) => ({
+  state, since, last_error: lastError && { code: lastError.code, reason: lastError.reason, at: lastError.at },
+});
 
 export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
   const router = createContractRouter<Env>();
@@ -227,7 +234,11 @@ export function sessionRoutes(deps: SessionRouteDeps): OpenAPIHono<Env> {
 
     const workspace = await deps.workspaceStore.getById(tenant.tenantId, session.workspaceId);
     if (workspace?.deletedAt) return c.json({ error: "Session not found" }, 404);
-    return c.json(tenant.share ? sharedSession(session) : publicSession(session));
+    if (tenant.share) return c.json(sharedSession(session));
+    // A plain read of the binding, never its lock: a Turn may be preparing or
+    // the binding being reclaimed (ADR-0023). A Child Session reports its root's.
+    const environment = await deps.environments?.environment(environmentBindingId(session));
+    return c.json({ ...publicSession(session), ...(environment ? { environment: environmentToWire(environment) } : {}) });
   });
 
   registerContractRoute(router, getOpenApiRoute("updateSession"), async (c) => {

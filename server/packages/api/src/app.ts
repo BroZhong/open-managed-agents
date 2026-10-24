@@ -2,7 +2,7 @@ import { modelProviderRoutes } from "./routes/model-providers.js";
 import { modelThinkingOptionsRoutes } from "./routes/model-thinking-options.js";
 import type { ModelProviderService } from "./lib/model-providers.js";
 import { cors } from "hono/cors";
-import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillBundleStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
+import type { SessionShareStore, AgentStore, AgentFileStore, ApiKeyStore as FullApiKeyStore, ArtifactStore, DelegationStore, EventLogIngressStore, LoopStore, PendingEventIngressStore, SessionStore, SkillStore, SkillBundleStore, UserStore, WorkspaceMetadataStore } from "@oma-server/store";
 import type { EventStreamHub } from "@oma-server/event-log";
 import type { TurnStreamStore } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
@@ -51,7 +51,8 @@ export interface AppDeps {
   pendingEventStore?: PendingEventIngressStore;
   workspaceStore?: WorkspaceMetadataStore;
   loopStore?: LoopStore;
-  delegationStore?: DelegationRouteDeps["delegationStore"];
+  /** Delegation reads, and each Session's Sandbox environment for GET /v1/sessions/{id}. */
+  delegationStore?: DelegationRouteDeps["delegationStore"] & Pick<DelegationStore, "environment">;
   userStore?: UserStore;
   artifactStore?: ArtifactStore;
   eventStreamHub?: EventStreamHub;
@@ -173,6 +174,7 @@ export function createApp(deps: AppDeps) {
       eventLogStore: deps.eventLogStore,
       sessionRouter: deps.sessionRouter,
       wakeSession: deps.wakeSession,
+      environments: deps.delegationStore,
     }));
   }
 

@@ -26,6 +26,7 @@ import {
   PathResultSchema,
   SessionListSchema,
   SessionSchema,
+  SessionDetailSchema,
   SharedSessionSchema,
   SessionStatusSchema,
   SessionUsageSchema,
@@ -1062,7 +1063,7 @@ export const openApiRoutes: readonly RegisteredOpenApiRoute[] = [
     tags: ["Sessions"],
     request: { params: idParams },
     responses: {
-      200: jsonResponse(z.union([SessionSchema, SharedSessionSchema]), "Session found; share credentials receive display fields only"),
+      200: jsonResponse(z.union([SessionDetailSchema, SharedSessionSchema]), "Session found, with its Sandbox environment; share credentials receive display fields only"),
       404: errorResponse("Session not found"),
     },
   }),

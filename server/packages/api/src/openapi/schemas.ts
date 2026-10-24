@@ -334,6 +334,39 @@ export const SessionSchema = z
   })
   .openapi("Session");
 
+export const SessionEnvironmentSchema = z
+  .object({
+    state: z.enum(["cold", "creating", "ready", "unavailable"]).openapi({
+      description:
+        "Derived from the Session's Sandbox binding, which a Child Session shares with its root: unavailable while the binding records an environment failure (last_error); otherwise ready while it records a Sandbox, creating while it records a creation intent (also past the intent's 180 s deadline, until the next tool call reconciles it), and cold when it records neither, as before the first tool call.",
+    }),
+    since: DateTimeSchema.nullable().openapi({
+      description:
+        "When the state began, by the database clock: the binding's last move (a creation intent, a Sandbox, Cold), its first environment failure since, or its recovery from one. Null while the binding has not moved since this was first recorded.",
+    }),
+    last_error: z
+      .object({
+        code: z.string().openapi({ example: "sandbox_unavailable", description: "As the failed tool results' details.code." }),
+        reason: z.string().openapi({ example: "unreachable", description: "As their details.reason: rejected, unknown, mount or unreachable." }),
+        at: DateTimeSchema,
+      })
+      .nullable()
+      .openapi({
+        description:
+          "The last environment failure observed in the current state. Cleared when a later preparation connects to or creates the Sandbox, or when the binding moves.",
+      }),
+  })
+  .openapi("SessionEnvironment", {
+    description:
+      "The state of the Session's Sandbox environment (ADR-0023). Read without waiting: a Turn's tool call may change it at any time.",
+  });
+
+export const SessionDetailSchema = SessionSchema.extend({
+  environment: SessionEnvironmentSchema.optional(),
+}).openapi("SessionDetail", {
+  description: "A Session with its Sandbox environment, which every Host that keeps Sandbox bindings reports, as deployed Hosts do.",
+});
+
 export const SharedSessionSchema = z.object({
   id: z.string(), title: z.string().optional(), workspaceId: z.string(),
   status: SessionStatusSchema, agent: z.object({ name: z.string() }), createdAt: DateTimeSchema,
