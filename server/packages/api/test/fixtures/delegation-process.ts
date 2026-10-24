@@ -14,7 +14,7 @@ const stores = await createPgStores(pool, { ensureSchema: false });
 const redis = createRedisClient({ url: process.env.REDIS_URL }, { enableOfflineQueue: false, maxRetriesPerRequest: 0, commandTimeout: 250 });
 redis.on("error", () => {}); void redis.connect().catch(() => {});
 const signals = new RedisSessionSignals(redis, process.env.REDIS_NAMESPACE);
-const eventStreamHub = new RedisEventStreamHub(signals);
+const eventStreamHub = new RedisEventStreamHub(signals, { relay: false });
 const turnStreamStore = new BestEffortTurnStreamStore(new RedisTurnStreamStore(redis), () => redis.status === "ready");
 const event = (type: string, data: object): SessionEvent => ({ id: randomUUID(), timestamp: new Date().toISOString(), type, ...data }) as SessionEvent;
 const text = (value: string) => event("agent.message", { content: [{ type: "text", text: value }] });
@@ -52,7 +52,7 @@ if (process.env.PARENT_SESSION_ID) {
     wakeSession: sessionId => signals.publish({ sessionId, kind: "wake" }),
     checkSession: sessionId => signals.publish({ sessionId, kind: "check" }) });
   // As RunnerDispatch does: the child's Runner hints this owner when the child ends.
-  signals.subscribe(signal => { if (signal.kind === "check") router.checkNow(signal.sessionId); });
+  signals.subscribe("control", signal => { if (signal.kind === "check") router.checkNow(signal.sessionId); });
   const session = (await stores.sessionStore.getById(process.env.PARENT_SESSION_ID))!;
   await router.handleNewEvent(session.id, session.agent);
   console.log("parent completed");

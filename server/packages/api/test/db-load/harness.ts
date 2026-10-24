@@ -16,7 +16,7 @@ import { createMemoryStores, type MemoryStores } from "@oma-server/store-memory"
 import { InProcessEventStreamHub } from "@oma-server/event-log";
 import { DefaultSandboxManager, FakeSandboxClient } from "@oma-server/sandbox";
 import { SessionRouter } from "@oma-server/session-router";
-import type { SessionSignal, SessionSignals } from "@oma-server/redis";
+import { sessionSignalScope, type SessionSignal, type SessionSignalScope, type SessionSignals } from "@oma-server/redis";
 import type { Agent, SandboxLifecycleStore, Session } from "@oma-server/store";
 import type { Adapter, AdapterInput, SessionEvent, ToolExecutor } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
@@ -206,16 +206,19 @@ export class Meter {
 
 // ─── Infrastructure doubles ──────────────────────────────────────────────────
 
-/** Redis pub/sub in one process: every Runner's subscription sees every signal. */
+/** Redis pub/sub in one process: every Runner's subscription sees every signal of its scope. */
 class InMemorySignals implements SessionSignals {
-  private readonly listeners = new Set<(signal: SessionSignal) => void>();
+  private readonly listeners = new Set<{ scope: SessionSignalScope; listener: (signal: SessionSignal) => void }>();
   publish(signal: SessionSignal): void {
     const origin = sourceOf(activity.getStore());
-    for (const listener of this.listeners) activity.run({ source: `${signal.kind} <- ${origin}` }, () => listener(signal));
+    for (const { scope, listener } of this.listeners) {
+      if (scope === sessionSignalScope(signal.kind)) activity.run({ source: `${signal.kind} <- ${origin}` }, () => listener(signal));
+    }
   }
-  subscribe(listener: (signal: SessionSignal) => void): () => void {
-    this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+  subscribe(scope: SessionSignalScope, listener: (signal: SessionSignal) => void): () => void {
+    const entry = { scope, listener };
+    this.listeners.add(entry);
+    return () => { this.listeners.delete(entry); };
   }
 }
 

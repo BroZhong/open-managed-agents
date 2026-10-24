@@ -51,7 +51,10 @@ best-effort Session signals. A durable signal contains only the Session ID;
 receiving APIs read the ordered authoritative PG log. Delta signals carry transient
 content and the original Turn, block and Redis entry identity. There is no second
 durable history. The process-local hub only fans out a received Redis signal to
-that API's sockets; it is never a cross-process fallback.
+that API's sockets; it is never a cross-process fallback. Control signals (wake,
+check) and output signals (durable, Delta) travel on separate channels: a Runner
+subscribes only to control and publishes output without receiving it, so no
+Runner parses the fleet's Deltas; an API subscribes only to output.
 
 Runner subscribes to wake hints and independently scans PG every five seconds
 (`PENDING_SCAN_INTERVAL_MS`). Loop dispatch retains its own fifteen-second timer
