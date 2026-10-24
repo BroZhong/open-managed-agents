@@ -3,7 +3,7 @@
 ADR-0019 and #217–#222 define the only maintained policy: 24 hours running, pause
 on expiry, approximately 24 hours retained from pause initiation, then platform
 deletion. Confirmed shared idle shortens the running deadline to 30 minutes.
-Pi stays in the Runner. No OMA resource sweeper is required.
+Pi stays in the Runner. ADR-0023's resource sweeper is not enabled yet (#291).
 
 ## Release prerequisites
 
@@ -12,7 +12,8 @@ cutover, stop old Runners before applying `0020_native_sandbox_lifecycle.sql`,
 then start the complete new build. Do not run mixed policies or roll back to a
 build requiring `sandbox_activities` after this migration. The migration removes
 `idle_since`, the old activity table and its trigger. `reclaiming` remains the
-explicit termination ticket; `creation_pending` records ambiguous allocation.
+explicit termination ticket. `creating_since` (migration 0024, which replaced
+`creation_pending`) records a creation intent; see Recovery.
 The new trigger serializes queue acceptance with binding decisions; startup checks
 that it is installed. API/Runner split migrations remain required.
 
@@ -60,12 +61,25 @@ Use the explicit Shanghai kubeconfig for read-only diagnosis:
 kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n sandbox-system get sandboxes
 ```
 
-An ambiguous create leaves `creation_pending=true`. Do not clear it merely because
-an SDK call failed, or start a replacement blindly. Reconcile exact
-`oma.dev/binding`, `oma.dev/tenant` and `oma.dev/workspace` metadata against the
-known request and control-plane state. Any allocated resource has finite native
-expiry even if the Runner never returns. A known failed mount/projection retains
-its bound ID so subsequent preparation can retry without duplicating resources.
+Creation commits `creating_since = now()` (database clock) before calling the
+gateway, and the successful create writes `sandbox_id` and clears it
+([ADR-0023](adr/0023-sandbox-binding-reconciliation.md)). Any other outcome (a
+failed create, a lost Runner, a lost binding write) leaves the intent. A Turn
+that finds it waits until `creating_since` + 180 seconds, then reconciles the
+binding itself: it lists the gateway's running and paused Sandboxes labelled
+`oma.dev/binding=<root Session id>`, adopts the one it finds (a running one,
+else the earliest claimed, killing any others), or returns the binding to Cold
+and creates. No operator action is needed, and none should clear the column by
+hand. A creator whose binding write finds the row moved on kills its own
+Sandbox. Every created Sandbox also carries `oma.dev/environment`, the Runner's
+`OMA_ENVIRONMENT` (`production` or `test`, required). A known failed mount
+keeps its bound ID so subsequent preparation can retry without duplicating
+resources.
+
+Migration `0024_binding_creating_since.sql` runs with the Runners scaled to 0:
+rows that were `creation_pending` become Creating since the epoch and are
+reconciled on first use. `0024_binding_creating_since.rollback.sql` restores
+`creation_pending` (true for every intent) for the previous image.
 
 Explicit termination uses `session_cleanup` and a committed `reclaiming` ticket.
 Kill is direct by ID and deletion is confirmed through the control plane before
@@ -73,8 +87,10 @@ clearing the pointer. Network/confirmation failures leave the ticket retryable.
 Shared non-terminated children and queued input prevent deleting their binding.
 Saved Workspace files and history are retained.
 
-There is no instruction to remove unknown activity records, no recurring Sandbox
-scan and no rollback that reinstalls infinite lifetime.
+There is no instruction to remove unknown activity records and no rollback that
+reinstalls infinite lifetime. The recurring sweeper of ADR-0023 is not enabled
+yet (#291); until then a Sandbox no binding records runs to its platform
+deadline.
 
 ## Verification
 

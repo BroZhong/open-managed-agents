@@ -191,6 +191,13 @@ never implicitly replay the uncertain command. Completed OSS writes survive;
 local processes, memory and dependencies need not. No OMA idle scanner or
 never-timeout policy remains. See ADR-0019 and `docs/sandbox-lifecycle-deployment.md`.
 
+The environment binding records intent; whether a Sandbox exists is the
+gateway's answer. A binding is Ready (it names a Sandbox), Creating (an intent
+committed at a database-clock time) or Cold. A Creating binding past its
+180-second intent deadline is Unresolved: the next use asks the gateway for the
+Sandboxes labelled with the binding and adopts one or returns it to Cold, so
+no create outcome, known or not, blocks a Session. See ADR-0023.
+
 **Environment Spec**:
 The recipe the Host computes for one sandbox and hands to the **Sandbox Manager**: which image, which env, the bound **Workspace**, and the **Skill Set** to install. It is a value, not a behaviour — no I/O, no lifecycle. It is the sole contract between the Host (which owns the domain knowledge of what an environment needs) and the Manager (which owns the mechanism of building it).
 _Avoid_: config, sandbox config, environment, EnvVars
