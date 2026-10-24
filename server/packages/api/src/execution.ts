@@ -81,9 +81,11 @@ export async function startExecution(deps: PgStores & {
   loops.start();
   // Only Runners sweep their environment's Sandboxes (ADR-0023): a round every
   // 10 minutes ± 2, the first at a random point, each written as one
-  // `sandbox_sweep` log line. Shutdown stops it before its next action.
-  const sweeper = native ? new SandboxSweeper({
-    client: native.client, facts: native.lifecycle, bindings: deps.delegationStore,
+  // `sandbox_sweep` log line. Shutdown stops it before its next action. It
+  // kills a Sandbox a binding records by reclaiming the binding through the
+  // Runner's Sandbox Manager, as termination does.
+  const sweeper = native && sandboxManager ? new SandboxSweeper({
+    client: native.client, facts: native.lifecycle, bindings: deps.delegationStore, manager: sandboxManager,
     environment: native.environment, environmentSignals: native.hints,
   }) : undefined;
   sweeper?.start();

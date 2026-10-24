@@ -172,16 +172,18 @@ resources.
 
 Migration `0024_binding_creating_since.sql` runs with the Runners scaled to 0:
 rows that were `creation_pending` become Creating since the epoch and are
-reconciled on first use. `0024_binding_creating_since.rollback.sql` restores
-`creation_pending` (true for every intent) for the previous image.
+reconciled on first use or by the sweeper, 50 a round.
+`0024_binding_creating_since.rollback.sql` restores `creation_pending` (true for
+every intent) for the previous image.
 
 Explicit termination uses `session_cleanup` and a committed `reclaiming` ticket.
 It kills the Sandbox the binding records, then every Sandbox the gateway lists
 with the binding's `oma.dev/binding`, whether the binding records a Sandbox, a
 creation intent or neither, and clears the binding to Cold only once deletion
 is confirmed through the control plane. Network/confirmation failures leave the
-ticket retryable. A binding whose creation intent is within its 180 s deadline
-stays claimed until a retry past it, so a create still in flight is killed too.
+ticket retryable: the cleanup retries it, and so does the sweeper's next round.
+A binding whose creation intent is within its 180 s deadline stays claimed until
+a retry past it, so a create still in flight is killed too.
 Shared non-terminated children and queued input prevent deleting their binding.
 Saved Workspace files and history are retained.
 
@@ -200,28 +202,47 @@ their bindings and Sessions from the Runner's schema in one query and selects
 by ADR-0023's table. A Sandbox labelled with another `oma.dev/environment` is
 never touched; one without the label only when its binding has a row in this
 schema. Before each action the round reads the binding again and acts only if
-the action still applies, under the binding's lock: it kills an orphan or a Ready
-Sandbox without a deadline that no Turn uses, adopts the Sandbox of a binding
-Creating past its deadline as a tool call would (killing the others found), and
-shortens an unused running Sandbox's deadline to 30 minutes. Busy is what
-termination's reclamation calls busy: a resource use or queued input of a live
-Session of the binding. At most 50 kills a round; the rest wait for the next.
-Runners do not coordinate, and two may both kill one Sandbox, which is harmless.
+the action still applies. It kills an orphan, a Sandbox its binding does not
+record, under the binding's lock: no Turn uses it. It kills a Sandbox its
+binding records (a Ready one without a deadline, or one of a binding whose
+Sessions are all terminated) only by reclaiming the binding, as termination
+does: the claim is refused while a live Session of the binding has a resource
+use or queued input, and otherwise makes a Turn arriving meanwhile wait until
+the binding is Cold. It adopts the Sandbox of a binding Creating past its
+deadline as a tool call would (killing the others found), and shortens an
+unused running Sandbox's deadline to 30 minutes, then reads the binding once
+more and sets 24 hours back if a Turn began using it meanwhile. Unused means no
+queued input of a live Session of the binding; a resource use left by an
+acknowledged input does not count. At most 50 kills a round; the rest wait for
+the next. Runners do not coordinate, and two may both kill one Sandbox, which
+is harmless.
+
+Each round also reads up to 50 bindings of the schema that no Turn settles,
+whatever the gateway lists: it completes a reclamation left claimed (a kill that
+failed, a Runner lost in the middle, termination's own), which otherwise keeps
+the Session's Turns waiting, and it reconciles a binding Creating past its
+deadline that the listing showed no Sandbox for (an aborted wait, a resumed
+Turn that never called a tool, a row migration 0024 left Creating since
+`epoch`): Cold, or the Sandbox the gateway lists for the binding adopted.
 
 Each round writes one JSON line to the Runner's stdout:
 
 ```json
-{"msg":"sandbox_sweep","env":"production","listed":707,"orphans":11,"unresolved":0,"unusedRunning":3,"noDeadline":1,"killed":12,"adopted":0,"shortened":3,"deferred":0,"skipped":0,"failed":0,"ms":412}
+{"msg":"sandbox_sweep","env":"production","listed":707,"orphans":11,"unresolved":0,"unusedRunning":3,"noDeadline":1,"expired":2,"killed":12,"adopted":0,"cleared":2,"shortened":3,"restored":0,"reclaimed":0,"deferred":0,"skipped":0,"failed":0,"ms":412}
 ```
 
 `orphans`, `unresolved` (bindings Creating past their deadline with a Sandbox),
-`unusedRunning` and `noDeadline` are what the round selected; `killed`, `adopted`
-and `shortened` are what it did. They differ by `skipped` (the binding, read
-again, no longer called for the action: used again, adopted by a Turn), `deferred`
-(over the 50-kill cap) and `failed` (with `failures`, the first ten failed actions
-by Sandbox, action and error name only). `error` says the list or the read failed
-and nothing was done; `aborted` that shutdown stopped the round. `ms` is its
-duration. Recent lines of one environment:
+`unusedRunning` and `noDeadline` are what the round selected, and `expired` the
+bindings Creating past their deadline without one that it read; `killed`,
+`adopted`, `cleared` (moved to Cold, the gateway holding no Sandbox for them),
+`shortened`, `restored` (set back to 24 hours) and `reclaimed` (reclamations left
+claimed that it completed) are what it did. They differ by `skipped` (the
+binding, read again, no longer called for the action: used again, adopted by a
+Turn, a reclamation still retained), `deferred` (over the 50-kill cap) and
+`failed` (with `failures`, the first ten failed actions by Sandbox or binding,
+action and error name only). `error` says the list or a read failed and nothing
+was done; `aborted` that shutdown stopped the round. `ms` is its duration.
+Recent lines of one environment:
 
 ```sh
 kubectl --kubeconfig "$HOME/.kube/agent-platform-config" -n oma-test logs -l app=oma-runner -c runner --since=30m | grep sandbox_sweep
@@ -232,16 +253,18 @@ Runner containers' lines carrying `"msg":"sandbox_sweep"` and alert, per `env`,
 when no line arrived for 30 minutes (each Runner sweeps at least every 12
 minutes, so the sweeper is not running), when `error` is set or `failed` is above
 0 in consecutive rounds of a Runner (the gateway or PostgreSQL fails it), and
-when `deferred` stays above 0 or `orphans` or `unresolved` stay high over several
-rounds (orphans or lost creation intents appear faster than they are swept; look
-for the creates behind them).
+when `deferred` stays above 0 or `orphans`, `unresolved` or `expired` stay high
+over several rounds (orphans or lost creation intents appear faster than they are
+swept; look for the creates behind them).
 
 `deploy/scripts/run-sandbox-sweep-report.sh <test|production>` prints the same
 selection read-only, with one row per Sandbox. Its "Planned `sandbox_sweep`
 counters" use the same names and the same busy definition: the next round's
 `orphans`, `unresolved`, `unusedRunning` and `noDeadline` equal them when no
 Session changed in between, its `killed` is at most `orphans` + `noDeadline`
-(and 50), its `adopted` at most `unresolved`. `deploy/scripts/run-sandbox-reconcile-acceptance.sh
+(and 50), its `adopted` at most `unresolved` (the report does not plan `expired`;
+one of those is adopted only if a Sandbox appeared after the listing).
+`deploy/scripts/run-sandbox-reconcile-acceptance.sh
 sweep-logs [since] [report]` collects every Runner Pod's lines, checks their
 spacing and makes this comparison.
 

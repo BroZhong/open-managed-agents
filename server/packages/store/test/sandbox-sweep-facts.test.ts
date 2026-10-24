@@ -104,4 +104,38 @@ describe("the sweeper's binding facts on PostgreSQL", () => {
       expect(read.now.getTime() - Date.now()).toBeLessThan(60_000);
     }
   });
+
+  it("reads the bindings no Turn settles: reclamations first, then intents past the deadline by the database clock, oldest first, up to the limit", async () => {
+    /** Creating since `seconds` ago, by the database clock. */
+    const creating = async (bindingId: string, seconds: number) => {
+      await bind(bindingId, "creating");
+      await harness.pool.query(`UPDATE delegation_environments SET creating_since = creating_since - interval '${seconds} seconds' WHERE id = $1`, [bindingId]);
+      const { rows: [row] } = await harness.pool.query<{ creating_since: Date }>("SELECT creating_since FROM delegation_environments WHERE id = $1", [bindingId]);
+      return row.creating_since;
+    };
+    const oldest = await creating("expired-long-ago", 3600);
+    const expired = await creating("expired", 200);
+    await creating("within-deadline", 100);
+    await bind("ready", { ready: "sbx-ready" });
+    await bind("cold", "cold");
+    await bind("reclaimed", { ready: "sbx-reclaimed" });
+    const reclaimedIntent = await creating("reclaimed-while-creating", 3600);
+    await harness.pool.query("UPDATE delegation_environments SET reclaiming = TRUE WHERE id IN ('reclaimed', 'reclaimed-while-creating')");
+    const before = await rows();
+
+    const read = await facts.unsettled(180, 50);
+    expect(read.slice(0, 2).sort((a, b) => a.bindingId.localeCompare(b.bindingId))).toEqual([
+      { bindingId: "reclaimed", creatingSince: null, reclaiming: true },
+      { bindingId: "reclaimed-while-creating", creatingSince: reclaimedIntent, reclaiming: true },
+    ]);
+    expect(read.slice(2)).toEqual([
+      { bindingId: "expired-long-ago", creatingSince: oldest, reclaiming: false },
+      { bindingId: "expired", creatingSince: expired, reclaiming: false },
+    ]);
+    // The deadline is the caller's: 100 s ago is past a 60 s one.
+    expect((await facts.unsettled(60, 50)).map(({ bindingId }) => bindingId)).toContain("within-deadline");
+    expect((await facts.unsettled(180, 3)).map(({ bindingId }) => bindingId).slice(2)).toEqual(["expired-long-ago"]);
+    expect(await facts.unsettled(180, 0)).toEqual([]);
+    expect(await rows()).toBe(before);
+  });
 });

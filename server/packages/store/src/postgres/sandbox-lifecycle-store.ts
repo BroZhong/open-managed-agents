@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from './connection.js';
-import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore } from '../interfaces/sandbox-lifecycle-store.js';
+import type { SandboxActivity, SandboxLifecycleStore, SandboxReclamation, SandboxSweepFacts, SandboxSweepStore, UnsettledBinding } from '../interfaces/sandbox-lifecycle-store.js';
 
 /**
  * Coordinates business execution and explicit termination, and gives the
@@ -133,5 +133,19 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
         inUse: row.in_use, allSessionsTerminated: row.all_sessions_terminated,
       }] as const])),
     };
+  }
+  /**
+   * The deadline is judged by the database clock, as every Runner judges an
+   * intent's (ADR-0023). Reclaiming rows sort first: each one keeps its
+   * Sessions' Turns from being admitted until it completes. The interval is
+   * built from text, which pg-mem, running this store's tests without a
+   * server, also understands.
+   */
+  async unsettled(intentDeadlineSeconds: number, limit: number): Promise<UnsettledBinding[]> {
+    const { rows } = await this.pool.query<{ id: string; creating_since: Date | null; reclaiming: boolean }>(
+      `SELECT id, creating_since, reclaiming FROM delegation_environments
+       WHERE reclaiming OR (sandbox_id IS NULL AND creating_since <= now() - ($1::text || ' seconds')::interval)
+       ORDER BY reclaiming DESC, creating_since, id LIMIT $2`, [intentDeadlineSeconds, limit]);
+    return rows.map((row) => ({ bindingId: row.id, creatingSince: row.creating_since, reclaiming: row.reclaiming }));
   }
 }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type SandboxBindingFacts } from "@oma-server/store";
+import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type SandboxBindingFacts, type SandboxReclamation } from "@oma-server/store";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
+import { DefaultSandboxManager } from "../src/sandbox-manager.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox-sweep.js";
 import { SWEEP_INTERVAL_MS, SWEEP_JITTER_MS, SandboxSweeper, type SweepRound } from "../src/sandbox-sweeper.js";
 import { sandboxSweeperContract, type SweeperRunnerStores, type SweeperStores } from "./sandbox-sweeper-contract.js";
@@ -13,16 +14,48 @@ interface FakeRow { sandboxId: string | null; creatingSince: Date | null; reclai
  * Runner's binding operations queue only behind its own, take a snapshot, and
  * move the row by compare-and-set; a read under the lock creates the row; a
  * reclaiming binding rejects. Intents are written with the database clock.
+ * Turn admission and reclamation each happen at once, as under the row lock:
+ * a claim is refused while a live Session has input queued or a use begun,
+ * and admission is refused while the binding is reclaimed.
  */
 function fakeSweeperStores(): SweeperStores {
   const clock = databaseClock(new Date());
   const rows = new Map<string, FakeRow>();
   const sessions = new Map<string, { bindingId: string; terminated: boolean; queued: number }>();
+  /** Resource uses by input id: the Session that began each. */
+  const uses = new Map<string, string>();
   let sessionCount = 0;
+  let inputCount = 0;
   const reclaimingError = () => new Error("Sandbox reclamation in progress; retry input");
   const facts = (bindingId: string, row: FakeRow): SandboxBindingFacts => {
     const alive = [...sessions.values()].filter((s) => s.bindingId === bindingId && !s.terminated);
     return { ...row, inUse: alive.some((s) => s.queued > 0), allSessionsTerminated: alive.length === 0 };
+  };
+  const rowOf = (bindingId: string) => {
+    if (!rows.has(bindingId)) rows.set(bindingId, { sandboxId: null, creatingSince: null, reclaiming: false });
+    return rows.get(bindingId)!;
+  };
+  const lifecycle: SweeperRunnerStores["lifecycle"] = {
+    begin: async ({ bindingId, sessionId, fence }) => {
+      if (rowOf(bindingId).reclaiming) return false;
+      uses.set(fence.eventId, sessionId);
+      return true;
+    },
+    finish: async ({ fence }) => { uses.delete(fence.eventId); },
+    claimReclamation: async (bindingId) => {
+      const row = rowOf(bindingId);
+      const ticket: SandboxReclamation = { bindingId, sandboxId: row.sandboxId, creatingSince: row.creatingSince, now: clock.now() };
+      if (row.reclaiming) return ticket;
+      const alive = [...sessions.entries()].filter(([, s]) => s.bindingId === bindingId && !s.terminated);
+      if (alive.some(([id, s]) => s.queued > 0 || [...uses.values()].includes(id))) return null;
+      row.reclaiming = true;
+      return ticket;
+    },
+    completeReclamation: async (ticket) => {
+      const row = rowOf(ticket.bindingId);
+      if (!row.reclaiming || row.sandboxId !== ticket.sandboxId || row.creatingSince?.getTime() !== ticket.creatingSince?.getTime()) return;
+      Object.assign(row, { sandboxId: null, creatingSince: null, reclaiming: false });
+    },
   };
   const runner = (): SweeperRunnerStores => {
     const queues = new Map<string, Promise<unknown>>();
@@ -51,7 +84,16 @@ function fakeSweeperStores(): SweeperStores {
           now: clock.now(),
           bindings: new Map([...new Set(bindingIds)].flatMap((id) => { const row = rows.get(id); return row ? [[id, facts(id, { ...row })] as const] : []; })),
         }),
+        unsettled: async (deadlineSeconds, limit) => {
+          const expired = (row: FakeRow) => row.sandboxId === null && row.creatingSince !== null
+            && row.creatingSince.getTime() + deadlineSeconds * 1000 <= clock.now().getTime();
+          return [...rows].filter(([, row]) => row.reclaiming || expired(row))
+            .sort(([a, x], [b, y]) => Number(y.reclaiming) - Number(x.reclaiming)
+              || (x.creatingSince?.getTime() ?? Infinity) - (y.creatingSince?.getTime() ?? Infinity) || a.localeCompare(b))
+            .slice(0, limit).map(([bindingId, row]) => ({ bindingId, creatingSince: row.creatingSince, reclaiming: row.reclaiming }));
+        },
       },
+      lifecycle,
     };
   };
   const ofBinding = (bindingId: string) => [...sessions.values()].filter((s) => s.bindingId === bindingId);
@@ -63,6 +105,10 @@ function fakeSweeperStores(): SweeperStores {
       return id;
     },
     queue: async (id) => { sessions.get(id)!.queued++; },
+    admit: async (sessionId) => {
+      sessions.get(sessionId)!.queued++;
+      return { sessionId, bindingId: sessions.get(sessionId)!.bindingId, fence: { eventId: `pevt_${++inputCount}`, ownerId: "runner", generation: 1 } };
+    },
     terminate: async (id) => { Object.assign(sessions.get(id)!, { terminated: true, queued: 0 }); },
     reclaiming: async (bindingId) => {
       for (const session of ofBinding(bindingId)) Object.assign(session, { terminated: true, queued: 0 });
@@ -85,8 +131,9 @@ describe("the sweeper on a Runner: rounds every 10 minutes with jitter, stopped 
     const stores = fakeSweeperStores();
     const gateway = new FakeSandboxClient();
     const lines: SweepRound[] = [];
-    const { bindings, facts } = stores.runner();
-    const sweeper = new SandboxSweeper({ client: gateway, facts, bindings, environment: "test", random,
+    const { bindings, facts, lifecycle } = stores.runner();
+    const manager = new DefaultSandboxManager({ sandboxClient: gateway, environment: "test", lifecycle });
+    const sweeper = new SandboxSweeper({ client: gateway, facts, bindings, manager, environment: "test", random,
       logger: { info: (line: string) => lines.push(JSON.parse(line)) } });
     const orphan = () => gateway.create({ metadata: { [SANDBOX_BINDING_LABEL]: `sesn_gone_${gateway.created.length}`, [SANDBOX_ENVIRONMENT_LABEL]: "test" } })
       .then(({ id }) => id);

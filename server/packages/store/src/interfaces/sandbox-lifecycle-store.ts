@@ -33,7 +33,18 @@ export interface SandboxSweepFacts {
   /** Only the bindings that have a row in this schema. */
   bindings: Map<string, SandboxBindingFacts>;
 }
-/** The sweeper's read of the bindings it found Sandboxes for. */
+/**
+ * A binding that stays as it is until a Runner acts on it, whether or not
+ * the gateway lists a Sandbox for it (ADR-0023, "The sweeper").
+ */
+export interface UnsettledBinding {
+  bindingId: string;
+  /** Creating since then, by the database clock, when set. */
+  creatingSince: Date | null;
+  /** A committed reclamation not completed yet: its claimer failed or was lost before it confirmed the kills. */
+  reclaiming: boolean;
+}
+/** The sweeper's reads: the bindings it found Sandboxes for, and the ones it settles without. */
 export interface SandboxSweepStore {
   /**
    * One read of the rows and Session facts of `bindingIds`. It creates no
@@ -41,6 +52,13 @@ export interface SandboxSweepStore {
    * it is taken.
    */
   sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts>;
+  /**
+   * At most `limit` bindings of this schema that no Turn may ever settle:
+   * those being reclaimed first, then those Creating for at least
+   * `intentDeadlineSeconds` by the database clock, the oldest intent first.
+   * One autocommitted statement; it creates no row and takes no lock.
+   */
+  unsettled(intentDeadlineSeconds: number, limit: number): Promise<UnsettledBinding[]>;
 }
 export interface SandboxLifecycleStore {
   /** false means committed explicit deletion must finish before admission. */

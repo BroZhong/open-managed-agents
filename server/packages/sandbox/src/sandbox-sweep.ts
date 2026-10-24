@@ -16,6 +16,8 @@ export const SANDBOX_BINDING_LABEL = "oma.dev/binding";
 /** The environment whose sweeper may act on a Sandbox. */
 export const SANDBOX_ENVIRONMENT_LABEL = "oma.dev/environment";
 export const SWEEP_MAX_KILLS = 50;
+/** How many bindings no Turn settles (`SandboxSweepStore.unsettled`) a round reads beyond its listing. */
+export const SWEEP_MAX_UNSETTLED = 50;
 
 export type SandboxEnvironment = "production" | "test";
 
@@ -53,7 +55,7 @@ export type SweepKeepReason =
   | "paused" // Ready, unused and paused: bounded by platform retention, resumed by the next Turn
   | "short-deadline" // Ready, unused, running, deadline within idleSeconds already
   | "creating" // the creator may still be producing it
-  | "reclaiming"; // termination's outbox kills it and retries until it confirms
+  | "reclaiming"; // its reclamation kills it by binding: the claimer retries, and a round resumes one left claimed
 
 export type SweepDecision = { sandboxId: string; bindingId: string | null } & (
   | { action: "keep"; reason: SweepKeepReason }
