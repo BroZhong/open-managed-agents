@@ -16,7 +16,7 @@ type Content = AssistantMessage["content"];
 interface Response { content: Content; stopReason: "stop" | "toolUse"; events?: (message: AssistantMessage) => AssistantMessageEvent[]; hold?: boolean }
 
 const control = vi.hoisted(() => ({ log: [] as string[], responses: [] as Response[], onRequest: undefined as (() => void) | undefined,
-  onTool: undefined as (() => void) | undefined, failStartup: false }));
+  onTool: undefined as (() => void) | undefined, failStartup: false, contexts: [] as string[] }));
 vi.mock("@earendil-works/pi-coding-agent", async (original) => {
   const sdk = await original<typeof import("@earendil-works/pi-coding-agent")>();
   class IsolatedLoader extends sdk.DefaultResourceLoader {
@@ -29,8 +29,9 @@ vi.mock("@earendil-works/pi-coding-agent", async (original) => {
       if (control.failStartup) throw new Error("Pi session startup failed");
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
       const result = await sdk.createAgentSession({ ...options, settingsManager });
-      result.session.agent.streamFunction = (model, _context, options) => {
+      result.session.agent.streamFunction = (model, context, options) => {
         control.log.push("request");
+        control.contexts.push(JSON.stringify(context.messages));
         control.onRequest?.();
         const response = control.responses.shift();
         if (!response) throw new Error("No scripted response left");
@@ -63,10 +64,16 @@ const ls = { type: "toolCall" as const, id: "ls-1", name: "ls", arguments: { pat
 const toolThenAnswer = (): Response[] => [{ content: [ls], stopReason: "toolUse" }, { content: [{ type: "text", text: "listed" }], stopReason: "stop" }];
 const role = (event: SessionEvent) => event.type === "agent.context_entry" ? (event.entry as { message?: { role?: string } }).message?.role : undefined;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/** Hands out `instructions` once, at the first take after they arrived. */
+const steering = (instructions: Array<{ id: string; message: string }>, arrived = () => true) => {
+  let taken = false;
+  return { takePending: async () => taken || !arrived() ? [] : (taken = true, instructions) };
+};
+const sees = (text: string) => (context: string) => context.includes(text);
 
 let dispose: (() => Promise<void>) | undefined;
 afterEach(async () => { vi.unstubAllEnvs(); await dispose?.(); dispose = undefined; });
-beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; control.onTool = undefined; control.failStartup = false; });
+beforeEach(() => { vi.stubEnv("ANTHROPIC_API_KEY", "controlled-test-key"); control.log = []; control.responses = []; control.onRequest = undefined; control.onTool = undefined; control.failStartup = false; control.contexts = []; });
 
 /** Run one attempt through `journal`; unless the Host asks it to stop, every run that settles has finished. */
 async function run(journal: MemoryTurnJournal, extra: Partial<AdapterInput> = {}, result: AdapterRunResult = "finished") {
@@ -107,16 +114,49 @@ describe("PiAgentAdapter with an injected Turn journal", () => {
     expect(new Set(journal.recorded.map(event => event.id)).size).toBe(journal.recorded.length);
   });
 
-  it("makes steering applied at the request gate durable before that request", async () => {
+  it("makes an instruction taken before the first request durable before that request", async () => {
     control.responses = [{ content: [{ type: "text", text: "steered" }], stopReason: "stop" }];
-    let delivered = false;
     const journal = new MemoryTurnJournal(async batch => {
       await sleep(20);
       if (batch.some(event => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "custom_message")) control.log.push("commit:instruction");
     });
-    const takePending = async () => delivered ? [] : (delivered = true, [{ id: "instruction1", message: "verify first" }]);
-    await run(journal, { execution: { steering: { takePending, applied: async () => {} } } });
+    await run(journal, { execution: { steering: steering([{ id: "instruction1", message: "verify first" }]) } });
     expect(control.log.filter(item => item === "commit:instruction" || item === "request")).toEqual(["commit:instruction", "request"]);
+  });
+
+  it("keeps an instruction taken before the first request in every later request", async () => {
+    control.responses = toolThenAnswer();
+    await run(slowJournal(), { execution: { steering: steering([{ id: "instruction1", message: "verify first" }]) } });
+    expect(control.contexts.map(sees("verify first"))).toEqual([true, true]);
+  });
+
+  it("keeps an instruction that arrives while a tool runs in every later request, durable before the first of them", async () => {
+    control.responses = [{ content: [ls], stopReason: "toolUse" }, { content: [{ ...ls, id: "ls-2" }], stopReason: "toolUse" },
+      { content: [{ type: "text", text: "listed" }], stopReason: "stop" }];
+    let arrived = false;
+    control.onTool = () => { arrived = true; };
+    const journal = new MemoryTurnJournal(async batch => {
+      if (batch.some(event => event.type === "agent.context_entry" && (event.entry as { type: string }).type === "custom_message")) control.log.push("commit:instruction");
+    });
+    await run(journal, { execution: { steering: steering([{ id: "instruction1", message: "verify tools" }], () => arrived) } });
+    expect(control.contexts.map(sees("verify tools"))).toEqual([false, true, true]);
+    expect(control.log.filter(item => item === "commit:instruction" || item === "request")).toEqual(["request", "commit:instruction", "request", "request"]);
+  });
+
+  it("answers an instruction that arrives with the final answer in the same run", async () => {
+    control.responses = [{ content: [{ type: "text", text: "listed" }], stopReason: "stop" }, { content: [{ type: "text", text: "verified" }], stopReason: "stop" }];
+    let arrived = false;
+    control.onRequest = () => { arrived = true; };
+    await run(slowJournal(), { execution: { steering: steering([{ id: "instruction1", message: "verify answer" }], () => arrived) } });
+    expect(control.contexts.map(sees("verify answer"))).toEqual([false, true]);
+  });
+
+  it("delivers every instruction taken together to the next request", async () => {
+    control.responses = toolThenAnswer();
+    let arrived = false;
+    control.onTool = () => { arrived = true; };
+    await run(slowJournal(), { execution: { steering: steering([{ id: "instruction1", message: "verify first" }, { id: "instruction2", message: "verify second" }], () => arrived) } });
+    expect([control.contexts.map(sees("verify first")), control.contexts.map(sees("verify second"))]).toEqual([[false, true], [false, true]]);
   });
 
   // A Resumed Turn runs with the model and thinking its first attempt ran with (#253).

@@ -341,9 +341,6 @@ export class DelegationCoordinator {
         }
         return instructions;
       },
-      // Durable injection is the acknowledgement, not an assertion that the
-      // model has understood the instruction. Restart reads that same history.
-      applied: async () => {},
     };
   }
 

@@ -37,6 +37,6 @@ export function installContinuation(session: AgentSession): () => Promise<void> 
   return () => session.sendCustomMessage({ customType: CONTINUATION, content: [], display: false }, { triggerTurn: true });
 }
 
-function isFailedRequest(message: { role: string; stopReason?: string }): boolean {
+export function isFailedRequest(message: { role: string; stopReason?: string }): boolean {
   return message.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted");
 }
