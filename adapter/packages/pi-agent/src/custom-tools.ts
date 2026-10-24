@@ -14,6 +14,7 @@ import { SANDBOX_TOOL_RUNTIME } from "./sandbox-tool-runtime.js";
 type Result = Awaited<ReturnType<ToolDefinition["execute"]>>;
 const MAX_TIMER_SECONDS = (2 ** 31 - 1) / 1000;
 const MAX_TOOL_WAIT_SECONDS = 3 * 60 * 60;
+const DEFAULT_BASH_TIMEOUT_SECONDS = 40 * 60;
 const mutationQueues = new WeakMap<ToolFileSystem, Map<string, Promise<void>>>();
 
 /** Public customTools registrations. Native execute/render callbacks never run on Host. */
@@ -25,7 +26,8 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
     const native = factory(SANDBOX_WORKSPACE_ROOT) as ToolDefinition;
     return defineTool({
       name: native.name, label: native.label, description: native.description,
-      parameters: native.parameters, promptSnippet: native.promptSnippet,
+      parameters: native.name === "bash" ? withDefaultBashTimeout(native.parameters) : native.parameters,
+      promptSnippet: native.promptSnippet,
       promptGuidelines: native.name === "bash" ? undefined : native.promptGuidelines,
       prepareArguments: native.prepareArguments,
       // Explicit renderers prevent same-name overrides inheriting Host file previews.
@@ -35,13 +37,17 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
       async execute(id, args, signal, onUpdate, context) {
         signal?.throwIfAborted();
         const input = { ...(args as Record<string, unknown>) };
+        // Pi has no default bash timeout. Without one a hung command is only
+        // bounded by the Host ceiling, which stops waiting but leaves its process
+        // group running; a native timeout makes Pi kill the group and settle.
+        if (native.name === "bash" && input.timeout === undefined) input.timeout = DEFAULT_BASH_TIMEOUT_SECONDS;
         const run = () => executeSandboxTool(executor, { sdkVersion: VERSION, id, name: native.name,
           args: input, workspaceRoot: SANDBOX_WORKSPACE_ROOT, model: context?.model }, signal, onUpdate,
-          // A paused Sandbox freezes Pi's internal timer. Mirror an explicitly
-          // requested bash deadline on the Host transport, allowing five seconds
-          // for Pi to terminate its process group and return the settled frame.
-          // All tools have a three-hour Host wait ceiling, even with no native
-          // timeout. Expiry is uncertainty, not proof of remote termination.
+          // A paused Sandbox freezes Pi's internal timer. Mirror the bash
+          // deadline on the Host transport, allowing five seconds for Pi to
+          // terminate its process group and return the settled frame. All tools
+          // have a three-hour Host wait ceiling, even with no native timeout.
+          // Expiry is uncertainty, not proof of remote termination.
           native.name === "bash" && typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0 && input.timeout <= MAX_TIMER_SECONDS
             ? Math.min(input.timeout + 5, MAX_TOOL_WAIT_SECONDS) : MAX_TOOL_WAIT_SECONDS);
         if (native.name !== "edit" && native.name !== "write") return run();
@@ -59,6 +65,13 @@ export function buildCustomTools(executor: ToolExecutor): ToolDefinition[] {
       },
     });
   });
+}
+
+/** Tell the model about the Host default that replaces Pi's "no default timeout". */
+function withDefaultBashTimeout(parameters: ToolDefinition["parameters"]): ToolDefinition["parameters"] {
+  const properties = (parameters as unknown as { properties: Record<string, object> }).properties;
+  return { ...parameters, properties: { ...properties, timeout: { ...properties.timeout,
+    description: `Timeout in seconds (optional, default ${DEFAULT_BASH_TIMEOUT_SECONDS}). On timeout the command's process group is killed; pass a larger value for longer jobs.` } } } as ToolDefinition["parameters"];
 }
 
 async function executeSandboxTool(executor: ToolExecutor, request: object, signal?: AbortSignal,

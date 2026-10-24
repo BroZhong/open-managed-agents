@@ -81,3 +81,5 @@ All native tool execution streams now have a three-hour Host wait ceiling.
 Shorter explicit bash timeouts retain five seconds of response grace within that
 ceiling. Commands may still have effects after the caller stops waiting: expiry
 is unconfirmed execution, not a successful kill or permission to replay.
+Bash calls without a timeout get a forty-minute native timeout, which Pi
+enforces by killing the process group, so they no longer reach the ceiling.
