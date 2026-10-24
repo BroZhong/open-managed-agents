@@ -116,3 +116,13 @@ bounds waiting for the execution stream, not the lifetime of a process or an
 entire Turn; preparation and bounded exceptional recovery are separate operations.
 Expiry follows the existing unconfirmed-result/recovery path, preserves output
 and never automatically replays the operation. It is not a user Interrupt.
+
+On 2026-10-24 the user approved a forty-minute default for bash calls without a
+timeout. Two 2026-10-13 production Sessions each waited the full three hours on
+a command that never exited, and the process group outlived the ceiling. The
+Host now passes `timeout: 2400` to native bash when the model omits it and
+advertises that default in the parameter description. Pi enforces it like an
+explicit timeout: it kills the process group and returns the output so far with
+"Command timed out". The Host wait for such a call is 2405 seconds. Explicit
+timeouts, including invalid ones left to native validation, and the three-hour
+ceiling for other tools are unchanged.

@@ -49,8 +49,9 @@ Display events remain available, but are not injected a second time. Native
 messages replace their Turn's assistant display blocks, their input's canonical
 record, matching tool results and applied steering instructions. Host-generated
 results for recovered synchronous waits still enter history when no native tool
-result exists. Steering is also appended to the native SessionManager, using the
-same timestamp for live context and replay.
+result exists. Steering enters through Pi's public steering queue
+(`Agent.steer`), so it stays in the rest of the run's context and AgentSession
+appends it to the native SessionManager like any other message.
 
 ## Commit barrier and failure
 

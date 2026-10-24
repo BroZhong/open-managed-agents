@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { ExecAbortedBeforeStartError } from "@open-managed-agents/adapter-core";
+import { buildCustomTools } from "../src/custom-tools.js";
 import { ProtocolExecutor, invoke, result } from "./sandbox-protocol-fixture.js";
 
 describe("sandbox native tool protocol", () => {
@@ -58,10 +60,27 @@ describe('host-side three-hour tool deadline', () => {
     expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(20);
     expect(executor.requests[0].args.timeout).toBe(15);
   });
-  it('bounds bash without an explicit timeout to three hours', async () => {
+  it('gives bash without an explicit timeout a forty-minute native timeout', async () => {
     const executor = new ProtocolExecutor(); const exec = vi.spyOn(executor, 'exec');
-    await invoke(executor, 'bash', { command: 'long-task' });
+    const args = { command: 'long-task' };
+    await invoke(executor, 'bash', args);
+    expect(executor.requests[0].args.timeout).toBe(2400);
+    expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(2405);
+    expect(args).toEqual({ command: 'long-task' });
+  });
+  it('leaves invalid explicit timeouts to native validation', async () => {
+    const executor = new ProtocolExecutor(); const exec = vi.spyOn(executor, 'exec');
+    await invoke(executor, 'bash', { command: 'long-task', timeout: 0 });
+    expect(executor.requests[0].args.timeout).toBe(0);
     expect(exec.mock.calls[0][1]?.timeoutSeconds).toBe(10800);
+  });
+  it('advertises the default timeout in a schema that still validates', () => {
+    const bash = buildCustomTools(new ProtocolExecutor()).find(tool => tool.name === 'bash')!;
+    expect((bash.parameters as any).properties.timeout.description).toContain('default 2400');
+    const call = (args: object) => ({ type: 'toolCall' as const, id: 'call', name: 'bash', arguments: args });
+    expect(validateToolArguments(bash as never, call({ command: 'ls' }))).toEqual({ command: 'ls' });
+    expect(validateToolArguments(bash as never, call({ command: 'ls', timeout: 60 }))).toEqual({ command: 'ls', timeout: 60 });
+    expect(() => validateToolArguments(bash as never, call({ command: 'ls', timeout: 'soon' }))).toThrow();
   });
   it.each([10800, 14400])('caps explicit timeout %s, including grace, at three hours', async timeout => {
     const executor = new ProtocolExecutor(); const exec = vi.spyOn(executor, 'exec');

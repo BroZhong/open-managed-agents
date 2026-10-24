@@ -102,9 +102,12 @@ export interface AdapterExecution {
     thinkingSource: string;
   }): Promise<void>;
   steering?: {
-    /** Persist the instruction's canonical history before returning it here. */
+    /**
+     * Persist the instruction's canonical history before returning it here.
+     * That record is its acknowledgement, not an assertion that the model has
+     * understood it; restart reads the same history.
+     */
     takePending(): Promise<DelegationInstruction[]>;
-    applied(id: string): Promise<void>;
   };
 }
 

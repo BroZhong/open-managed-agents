@@ -24,7 +24,6 @@ import type {
   DurableEvent,
   SessionErrorEvent,
   SkillDescriptor,
-  DelegationInstruction,
 } from "@open-managed-agents/adapter-core";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { Api, Message, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
@@ -47,7 +46,7 @@ import { imageBudgetExtension } from "./image-budget.js";
 import { restorePiSession } from "./pi-context.js";
 import { PiContextJournal } from "./pi-context-journal.js";
 import { PI_DISPLAY_TYPES, PiStreamAlignment } from "./pi-presentation.js";
-import { installContinuation } from "./pi-continuation.js";
+import { installContinuation, isFailedRequest } from "./pi-continuation.js";
 
 /**
  * The subset of the Pi SDK `AgentSession` this adapter drives. Declaring it as
@@ -129,7 +128,8 @@ export interface SessionFactoryArgs {
   /** Record a native context event through the Turn journal, aligned with its Deltas. */
   emitContext(event: DurableEvent): void;
   compactionInfo(): PiEventTranslator["activeCompaction"];
-  beforeModelStep(): Promise<DelegationInstruction[]>;
+  /** Asked before each model request: throws when the Turn was aborted or its step budget is spent. */
+  beforeModelStep(): Promise<void>;
   /**
    * Asked at the model request gate, once everything recorded is durable:
    * true when the Host has asked the Turn to stop (#254). The session then
@@ -372,7 +372,6 @@ export class PiAgentAdapter implements Adapter {
             throw new Error(`Model step budget exhausted (${maxSteps})`);
           }
           steps++;
-          return await input.execution?.steering?.takePending() ?? [];
         },
         stopBeforeRequest() {
           if (input.stopRequest?.aborted) stopped = true;
@@ -584,10 +583,28 @@ export class PiAgentAdapter implements Adapter {
           turnId: args.input.turnId, ...snapshot });
       };
       const continueSession = installContinuation(session);
+      // Delegation instructions join Pi's own steering queue. Pi drains it into
+      // the run's context before the next request, so an instruction stays in
+      // every later request and is recorded like any other native message.
+      // Instructions taken together reach the same request.
+      session.agent.steeringMode = "all";
+      const steer = async () => {
+        for (const instruction of await args.input.execution?.steering?.takePending() ?? []) session.agent.steer({
+          role: "custom", customType: "subagent.instruction",
+          content: [{ type: "text", text: `<delegation_instruction>\n${instruction.message}\n</delegation_instruction>` }],
+          display: true, details: { instructionId: instruction.id }, timestamp: Date.now(),
+        });
+      };
       // Agent listeners are awaited in registration order, after AgentSession's
       // own listener appended the native entry. Tools and the next model request
       // therefore start only after this message is durable.
-      session.agent.subscribe(async event => { if (event.type === "message_end") await journal.flush(); });
+      session.agent.subscribe(async (event, signal) => {
+        if (event.type === "message_end") await journal.flush();
+        // Every model request follows a run's start or a turn_end. Pi does not
+        // drain after a failed request, and AgentSession would continue a
+        // settled run for anything still queued.
+        if (!signal.aborted && (event.type === "agent_start" || event.type === "turn_end" && !isFailedRequest(event.message))) await steer();
+      });
       const streamFunction = withGatewayErrors(session.agent.streamFunction);
       session.agent.streamFunction = async (model, context, options) => {
         // Also gates native summary requests, which bypass transformContext.
@@ -606,29 +623,9 @@ export class PiAgentAdapter implements Adapter {
         }
         return streamFunction(model, context, options);
       };
-      const appliedInstructions = new Set(args.input.history.filter(event => event.type === "subagent.instruction" as string).map(event => (event as unknown as { instructionId?: string }).instructionId).filter(Boolean));
       const transformContext = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {
-        const instructions = await args.beforeModelStep();
-        for (const instruction of instructions) {
-          if (appliedInstructions.has(instruction.id)) {
-            await args.input.execution?.steering?.applied(instruction.id);
-            continue;
-          }
-          const message = {
-            role: "custom" as const, customType: "subagent.instruction",
-            content: [{ type: "text" as const, text: `<delegation_instruction>\n${instruction.message}\n</delegation_instruction>` }],
-            display: true, details: { instructionId: instruction.id }, timestamp: Date.now(),
-          };
-          // The Host has already persisted this instruction with its stable ID.
-          // Keep both live transcript and this request's context in agreement.
-          const instructionEntryId = sessionManager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details);
-          message.timestamp = Date.parse(sessionManager.getEntry(instructionEntryId)!.timestamp);
-          session.agent.state.messages = [...session.agent.state.messages, message];
-          messages = [...messages, message];
-          appliedInstructions.add(instruction.id);
-          await args.input.execution?.steering?.applied(instruction.id);
-        }
+        await args.beforeModelStep();
         return transformContext ? transformContext(messages, signal) : messages;
       };
 
