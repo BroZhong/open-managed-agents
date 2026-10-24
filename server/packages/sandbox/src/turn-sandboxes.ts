@@ -1,5 +1,5 @@
 import type { Agent, DelegationStore, PendingEventFence, SandboxActivity, Session, SessionStore } from "@oma-server/store";
-import { workspaceObjectPrefix } from "@oma-server/store";
+import { environmentBindingId, workspaceObjectPrefix } from "@oma-server/store";
 import type { ToolExecutor } from "@open-managed-agents/adapter-core";
 import type { EnvSpec, SandboxEnvironmentBinding, SandboxManager, SandboxPrepareObserver, SkillInstallObserver } from "./sandbox-manager.js";
 import type { SkillSet } from "./skill-install.js";
@@ -17,9 +17,6 @@ import type { WorkspaceMountSpec } from "./workspace-mount.js";
 export function isSandboxedAgent(agent: Pick<Agent, "sandbox">): boolean {
   return agent.sandbox?.enabled !== false;
 }
-
-/** A Child Session shares its root's binding, and so its Sandbox and its Skill Install record. */
-const bindingIdOf = (session: Session): string => session.delegation?.sandboxSessionId ?? session.id;
 
 /** What a Turn attempt hands the acquisition of its Sandbox lease. */
 export interface SandboxLeaseRequest extends TurnExecutorGuard {
@@ -154,7 +151,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
     // `open` is cheap: it starts no Sandbox, the first filesystem or code
     // primitive does, so a pure-chat Turn spins nothing up.
     const sandbox = manager.open(this.specFor(session, agent, request.skills), this.bindingFor(session));
-    const activity: SandboxActivity = { bindingId: bindingIdOf(session), sessionId: session.id, fence };
+    const activity: SandboxActivity = { bindingId: environmentBindingId(session), sessionId: session.id, fence };
     // The use protects the binding from reclamation while this claim owns
     // the Turn; an admitted activity keeps it until observed settlement.
     await bindings.acquireResourceUse(session.id, activity.bindingId, fence);
@@ -228,7 +225,7 @@ export class DefaultTurnSandboxes implements TurnSandboxes {
    * Skill Install record.
    */
   private bindingFor(session: Session): SandboxEnvironmentBinding {
-    const bindingId = bindingIdOf(session);
+    const bindingId = environmentBindingId(session);
     const { bindings, sessions } = this.deps;
     return {
       id: bindingId,

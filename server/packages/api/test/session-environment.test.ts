@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStores } from "@oma-server/store-memory";
 import { DefaultSandboxManager, FakeSandboxClient, SandboxCreateRejected, type SandboxEnvironmentBinding } from "@oma-server/sandbox";
-import { workspaceObjectPrefix, type Session } from "@oma-server/store";
+import { environmentBindingId, workspaceObjectPrefix, type Session } from "@oma-server/store";
 import { createApp } from "../src/app.js";
 
 /**
@@ -28,7 +28,7 @@ async function setup() {
   const manager = new DefaultSandboxManager({ sandboxClient: gateway, environment: "test" });
   /** A Turn's Sandbox session of `session`, coordinated through its binding as a Runner's are. */
   const sandbox = (session: Session) => {
-    const bindingId = session.delegation?.sandboxSessionId ?? session.id;
+    const bindingId = environmentBindingId(session);
     const binding: SandboxEnvironmentBinding = { id: bindingId, withLock: (work) => stores.delegationStore.withEnvironmentLock(bindingId, work) };
     return manager.open({ tenantId: "dev", workspaceId: workspace.id,
       workspaceMount: { ...workspaceMount, prefix: workspaceObjectPrefix("dev", workspace.id) } }, binding);
