@@ -22,7 +22,7 @@ export interface SandboxBindingFacts {
   creatingSince: Date | null;
   /** Termination claimed the reclamation and has not completed it. */
   reclaiming: boolean;
-  /** Busy as `claimReclamation` counts it: a resource use or queued input of a non-terminated Session of the binding. */
+  /** Pending input of a non-terminated Session of the binding, or a resource use whose input is still pending. A use left by an acknowledged input does not count. */
   inUse: boolean;
   /** No Session of the binding is alive (also true when none is left). */
   allSessionsTerminated: boolean;

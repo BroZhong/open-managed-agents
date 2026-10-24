@@ -92,9 +92,12 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
   }
   /**
    * One autocommitted statement over the bindings' rows; it inserts no row,
-   * so a binding without one stays absent. Busy is claimReclamation's: a
-   * resource use of a non-terminated Session, or a pending event of a
-   * non-terminated Session of the binding (a Child shares its root's).
+   * so a binding without one stays absent. In use means a pending event of a
+   * non-terminated Session of the binding (a Child shares its root's), or a
+   * resource use whose input is still pending. Unlike claimReclamation, a use
+   * left after its input was acknowledged does not count: it records a Turn
+   * that ended with an uncertain execution, and ADR-0023 pauses that Sandbox
+   * 30 minutes after the sweeper finds it, as any idle one.
    */
   async sweepFacts(bindingIds: readonly string[]): Promise<SandboxSweepFacts> {
     const ids = [...new Set(bindingIds)];
@@ -108,6 +111,7 @@ export class PgSandboxLifecycleStore implements SandboxLifecycleStore, SandboxSw
          WHERE s.status <> 'terminated' AND COALESCE(s.delegation->>'sandboxSessionId', s.id) IN (${listed})
        ), in_use AS (
          SELECT u.record->>'sandboxSessionId' AS binding_id FROM delegation_resource_uses u JOIN sessions s ON s.id = u.record->>'sessionId'
+           JOIN pending_events pu ON pu.id = u.record->>'pendingEventId'
          WHERE u.record->>'sandboxSessionId' IN (${listed}) AND s.status <> 'terminated'
          UNION SELECT a.binding_id FROM pending_events p JOIN alive a ON a.id = p.session_id
        ), found AS (

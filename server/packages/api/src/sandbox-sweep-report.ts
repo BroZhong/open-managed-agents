@@ -107,6 +107,7 @@ async function readBindings(pool: Pool, schema: string, bindingIds: string[], sa
          SELECT s.id, COALESCE(s.delegation->>'sandboxSessionId', s.id) AS binding_id FROM sessions s WHERE s.status <> 'terminated'
        ), in_use AS (
          SELECT u.record->>'sandboxSessionId' AS binding_id FROM delegation_resource_uses u JOIN alive a ON a.id = u.record->>'sessionId'
+           JOIN pending_events pu ON pu.id = u.record->>'pendingEventId'
          UNION SELECT a.binding_id FROM pending_events p JOIN alive a ON a.id = p.session_id
        )
        SELECT e.id, e.sandbox_id, e.reclaiming, ${creatingSince} AS creating_since,

@@ -27,7 +27,7 @@ export interface SweepBinding {
   creatingSince: Date | null;
   /** Termination claimed the reclamation and has not completed it. */
   reclaiming: boolean;
-  /** A resource user or queued input of a non-terminated Session. */
+  /** Pending input of a non-terminated Session, or a resource use whose input is still pending. */
   inUse: boolean;
   /** No Session of the binding is alive (also true when none is left). */
   allSessionsTerminated: boolean;

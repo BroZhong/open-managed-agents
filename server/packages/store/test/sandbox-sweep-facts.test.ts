@@ -39,7 +39,7 @@ describe("the sweeper's binding facts on PostgreSQL", () => {
   const rows = async () => Number((await harness.pool.query<{ n: string }>("SELECT count(*) AS n FROM delegation_environments")).rows[0].n);
   const unused = { reclaiming: false, inUse: false, allSessionsTerminated: false };
 
-  it("reads each binding's row and whether a live Session uses it or has input queued for it, as claimReclamation does", async () => {
+  it("reads each binding's row and whether a live Session has input pending for it", async () => {
     const idle = await root();
     const queuedForChild = await root();
     const used = await root();
@@ -50,6 +50,11 @@ describe("the sweeper's binding facts on PostgreSQL", () => {
     await queue(await child(queuedForChild));
     await bind(used.id, "creating");
     await use(used, used.id);
+    // A use left after its input was acknowledged (an uncertain execution) is idle here.
+    const leftover = await root();
+    await bind(leftover.id, { ready: "sbx-leftover" });
+    await use(leftover, leftover.id);
+    await queue(used);
     await bind(terminated.id, { ready: "sbx-terminated" });
     // A terminated Session's leftover use and input protect nothing.
     await use(terminated, terminated.id);
@@ -60,18 +65,20 @@ describe("the sweeper's binding facts on PostgreSQL", () => {
     await stores.sessionStore.terminate(parentGone.id);
     const { rows: [intent] } = await harness.pool.query<{ creating_since: Date }>("SELECT creating_since FROM delegation_environments WHERE id = $1", [used.id]);
 
-    const read = await facts.sweepFacts([idle.id, queuedForChild.id, used.id, terminated.id, parentGone.id]);
+    const read = await facts.sweepFacts([idle.id, queuedForChild.id, used.id, leftover.id, terminated.id, parentGone.id]);
     expect(Object.fromEntries(read.bindings)).toEqual({
       [idle.id]: { ...unused, sandboxId: "sbx-idle", creatingSince: null },
       [queuedForChild.id]: { ...unused, sandboxId: "sbx-child", creatingSince: null, inUse: true },
       [used.id]: { ...unused, sandboxId: null, creatingSince: intent.creating_since, inUse: true },
+      [leftover.id]: { ...unused, sandboxId: "sbx-leftover", creatingSince: null },
       [terminated.id]: { ...unused, sandboxId: "sbx-terminated", creatingSince: null, allSessionsTerminated: true },
       // The Child still lives, so the binding is not all terminated; it queued nothing.
       [parentGone.id]: { ...unused, sandboxId: null, creatingSince: null },
     });
-    // The claim and the binding agree on busy.
+    // Termination stays conservative: it keeps a binding the sweeper may shorten.
     expect(await facts.claimReclamation(queuedForChild.id)).toBeNull();
     expect(await facts.claimReclamation(used.id)).toBeNull();
+    expect(await facts.claimReclamation(leftover.id)).toBeNull();
   });
 
   it("reads a reclaiming binding and a binding without Sessions, leaves out one without a row and creates none", async () => {
