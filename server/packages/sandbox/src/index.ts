@@ -91,6 +91,8 @@ export {
   type SkillInstallObserver,
 } from "./sandbox-manager.js";
 
+export { BINDING_REREAD_MS, type EnvironmentSignals } from "./environment-signals.js";
+
 export {
   DefaultTurnSandboxes,
   isSandboxedAgent,

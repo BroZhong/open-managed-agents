@@ -1,5 +1,6 @@
 import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet } from "@oma-server/store";
 import type { SandboxEnvironmentBinding } from "../src/sandbox-manager.js";
+import type { EnvironmentSignals } from "../src/environment-signals.js";
 
 /** A binding row (ADR-0023): Ready while `sandboxId` is set, Creating while `creatingSince` is. */
 export interface BindingRow { sandboxId: string | null; creatingSince: Date | null }
@@ -47,4 +48,27 @@ export function durableBinding(id = "root", clock: () => Date = () => new Date()
     write: (next: BindingRow) => { row = next; },
   };
   return binding satisfies SandboxEnvironmentBinding;
+}
+
+/**
+ * The `environment` hints of Runners sharing one Redis: every subscriber, the
+ * publisher's own Runner included, hears each publish a moment later. While
+ * `losing`, hints are published and never delivered.
+ */
+export function signalBus() {
+  const listeners = new Set<(bindingId: string) => void>();
+  const bus = {
+    losing: false,
+    published: [] as string[],
+    publish(bindingId: string) {
+      bus.published.push(bindingId);
+      if (!bus.losing) queueMicrotask(() => { for (const listener of [...listeners]) listener(bindingId); });
+    },
+    subscribe(listener: (bindingId: string) => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    subscribers: () => listeners.size,
+  };
+  return bus satisfies EnvironmentSignals;
 }

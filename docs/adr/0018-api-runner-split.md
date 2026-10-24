@@ -52,7 +52,8 @@ receiving APIs read the ordered authoritative PG log. Delta signals carry transi
 content and the original Turn, block and Redis entry identity. There is no second
 durable history. The process-local hub only fans out a received Redis signal to
 that API's sockets; it is never a cross-process fallback. Control signals (wake,
-check) and output signals (durable, Delta) travel on separate channels: a Runner
+check, and ADR-0023's `environment` hint for a Sandbox binding) and output
+signals (durable, Delta) travel on separate channels: a Runner
 subscribes only to control and publishes output without receiving it, so no
 Runner parses the fleet's Deltas; an API subscribes only to output.
 

@@ -9,6 +9,7 @@ import { workspaceConfigFromEnv } from "./lib/workspace-config.js";
 import { sandboxBaseEnvFromKubernetes } from "./lib/sandbox-base-secret.js";
 import { sandboxEnvPolicyFromHost } from "./lib/sandbox-env.js";
 import { sandboxLifecycle } from "./lib/sandbox-lifecycle.js";
+import { environmentSignals } from "./lib/environment-signals.js";
 import { LoopScheduler } from "./lib/loop-scheduler.js";
 import { RunnerDispatch } from "./lib/runner-dispatch.js";
 import { MockAdapter } from "@open-managed-agents/adapter-mock";
@@ -41,6 +42,8 @@ export async function startExecution(deps: PgStores & {
     }),
     environment: workspaceConfig.environment,
     lifecycle: await sandboxLifecycle(deps.pool),
+    // A Turn waiting for a binding another Runner creates or reclaims continues on its hint.
+    environmentSignals: environmentSignals(deps.signals),
     // Signs install URLs for the OSS internal endpoint; Sandboxes download bundles themselves.
     skillBundleStore: deps.skillBundleStore,
   }) : undefined);

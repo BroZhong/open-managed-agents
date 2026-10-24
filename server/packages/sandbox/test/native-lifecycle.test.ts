@@ -2,13 +2,14 @@ import { describe, it, expect, vi } from 'vitest';
 import { DefaultSandboxManager, type EnvSpec } from '../src/sandbox-manager.js';
 import { FakeSandboxClient } from '../src/fake-sandbox-client.js';
 import type { ToolFileSystem } from '@open-managed-agents/adapter-core';
-import { durableBinding } from './bindings.js';
+import { durableBinding, signalBus } from './bindings.js';
 const spec: EnvSpec = { tenantId: 't', workspaceId: 'w', workspaceMount: {
   bucket: 'agentry', prefix: 't/w/', agentName: 'agent', pvName: 'pv', credentialProviderName: 'credentials',
 } };
 function setup() {
   const client = new FakeSandboxClient();
-  const manager = new DefaultSandboxManager({ sandboxClient: client, environment: 'test' });
+  // A Runner's handles of one binding hear its environment hints.
+  const manager = new DefaultSandboxManager({ sandboxClient: client, environment: 'test', environmentSignals: signalBus() });
   return { client, manager, session: manager.open(spec, durableBinding()) };
 }
 describe('native lifecycle per Turn', () => {

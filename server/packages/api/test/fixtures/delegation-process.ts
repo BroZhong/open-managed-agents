@@ -7,6 +7,7 @@ import { SessionRouter } from "@oma-server/session-router";
 import type { Adapter, SessionEvent } from "@open-managed-agents/adapter-core";
 import { journalWriter } from "@open-managed-agents/adapter-mock";
 import { startExecution } from "../../src/execution.js";
+import { environmentSignals } from "../../src/lib/environment-signals.js";
 import { InMemoryArtifactStore, InMemorySkillBundleStore } from "@oma-server/store-memory";
 
 const pool = createPgPool(pgConfigFromEnv());
@@ -42,7 +43,7 @@ if (process.env.TEST_DELETE_URL) {
     deleted.add(id);
   };
 }
-const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: activities, environment: "test" });
+const sandboxManager = new DefaultSandboxManager({ sandboxClient: client, lifecycle: activities, environment: "test", environmentSignals: environmentSignals(signals) });
 const workspaceMount = { bucket: "test", agentName: "test", pvName: "test", credentialProviderName: "test" };
 const deps = { ...stores, pool, signals, eventStreamHub, turnStreamStore, local: true,
   artifactStore: new InMemoryArtifactStore(), skillBundleStore: new InMemorySkillBundleStore() };

@@ -8,7 +8,8 @@ import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL } from "../src/sandbox
 import { EMPTY_SKILL_SET, skillSetOf, type SkillSet } from "../src/skill-install.js";
 import { DefaultTurnSandboxes, type SandboxLease } from "../src/turn-sandboxes.js";
 import { workspaceMountMetadata } from "../src/workspace-mount.js";
-import { databaseClock } from "./bindings.js";
+import { BINDING_REREAD_MS, type EnvironmentSignals } from "../src/environment-signals.js";
+import { databaseClock, signalBus } from "./bindings.js";
 import { Bundles, TENANT, text } from "./skill-bundles.js";
 import type { TurnSandboxStores } from "./turn-sandboxes-contract.js";
 
@@ -58,14 +59,14 @@ function watch<T>(promise: Promise<T>) {
 
 /**
  * One Runner: its own Sandbox Manager and Turn side of the Sandbox protocol
- * over the shared stores and the shared gateway. Lost at `loss`, every call
- * it makes stops settling.
+ * over the shared stores, the shared gateway and the shared environment
+ * hints. Lost at `loss`, every call it makes stops settling.
  */
 class Runner {
   dead = false;
   readonly sandboxes: DefaultTurnSandboxes;
-  constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, readonly loss?: LossPoint) {
-    const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test" });
+  constructor(stores: ReconciliationStores, gateway: FakeSandboxClient, bundles: Bundles, hints: EnvironmentSignals, readonly loss?: LossPoint) {
+    const manager = new DefaultSandboxManager({ sandboxClient: this.client(gateway), skillBundleStore: bundles, environment: "test", environmentSignals: hints });
     this.sandboxes = new DefaultTurnSandboxes({ manager, bindings: this.bindings(stores.delegationStore),
       sessions: this.alive(stores.sessionStore) as Pick<SessionStore, "getById">, workspaceMount });
     if (loss === "during-skill-install") {
@@ -157,7 +158,8 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       const gateway = new FakeSandboxClient({ clock: gatewayClock.now });
       const bundles = new Bundles();
       const list = vi.spyOn(gateway, "listSandboxes");
-      const runner = (loss?: LossPoint) => new Runner(stores, gateway, bundles, loss);
+      const hints = signalBus();
+      const runner = (loss?: LossPoint) => new Runner(stores, gateway, bundles, hints, loss);
       const session = (parent?: Session) => stores.sessionStore.create({
         tenantId: TENANT, agentId: agent.id, agent, workspaceId: "ws_1",
         ...(parent ? { delegation: { parentSessionId: parent.id, parentTurnId: "turn_1_a1", parentToolUseId: "call_agent", sandboxSessionId: parent.id } } : {}),
@@ -487,9 +489,10 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       await sleep(250);
       expect(tool.settled).toBe(false);
       expect(h.list).not.toHaveBeenCalled();
-      // The first intent's deadline: reconciled, none found, created once more.
+      // The first intent's deadline: reconciled, none found, created once more,
+      // at the call's next read of the binding.
       await h.elapse(INTENT_DEADLINE_SECONDS - budget);
-      await vi.waitFor(() => expect(creates).toBe(2));
+      await vi.waitFor(() => expect(creates).toBe(2), { timeout: BINDING_REREAD_MS + 1000 });
       expect(h.list).toHaveBeenCalledTimes(1);
       await sleep(250);
       expect(tool.settled).toBe(false);
@@ -504,7 +507,7 @@ export function bindingReconciliationContract(name: string, createStores: () => 
       expect(h.list).toHaveBeenCalledTimes(2);
       expect(h.gateway.created).toEqual([]);
       expect(await h.row(session.id)).toEqual({ sandboxId: null, creatingSince: null });
-    });
+    }, 15_000);
 
     it("fails the tool at once, the binding Cold, when the create after reconciling is rejected", async () => {
       const h = await setup();

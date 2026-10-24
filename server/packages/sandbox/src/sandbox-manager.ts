@@ -11,7 +11,7 @@ import { INTENT_DEADLINE_SECONDS, SANDBOX_RUNNING_SECONDS, SANDBOX_IDLE_SECONDS,
 import type { SandboxClient, SandboxHandle } from "./sandbox-client.js";
 import { SANDBOX_BINDING_LABEL, SANDBOX_ENVIRONMENT_LABEL, byKeepPreference, type SandboxEnvironment } from "./sandbox-sweep.js";
 import { EnvironmentBindingChanged, type EnvironmentBinding, type EnvironmentLockResult, type InstalledSkillSet, type SandboxActivity, type SandboxLifecycleStore, type SkillBundleStore, type SkillSetRecordOutcome } from '@oma-server/store';
-import { setTimeout as delay } from 'node:timers/promises';
+import { BINDING_REREAD_MS, BindingChanges, signallingBinding, type EnvironmentSignals } from "./environment-signals.js";
 import { EMPTY_SKILL_SET, SkillInstaller, type SkillInstallBudget, type SkillInstallLedger, type SkillInstallReport, type SkillSet } from "./skill-install.js";
 import {
   assertWorkspaceMountSpec,
@@ -45,6 +45,11 @@ export interface SandboxManagerDeps {
   skillBundleStore?: Pick<SkillBundleStore, "createInstallUrl">;
   /** Skill Install budget calibration (ADR-0022): 20 MB/s with a 30 s floor by default. */
   skillInstallBudget?: SkillInstallBudget;
+  /**
+   * The bindings' `environment` hints across Runners (ADR-0023). Without them
+   * a Turn waiting for a binding reads its row every 2 s alone.
+   */
+  environmentSignals?: EnvironmentSignals;
 }
 export interface SandboxDescriptor {
   sandboxId: string;
@@ -60,12 +65,6 @@ export class SandboxSessionClosed extends Error {
 }
 
 const INTENT_DEADLINE_MS = INTENT_DEADLINE_SECONDS * 1000;
-/**
- * How often a Turn waiting for another's create reads the binding again. The
- * wait ends at the intent deadline, when the binding is reconciled. #286
- * replaces the poll with the binding's `environment` signal.
- */
-const CREATING_POLL_MS = 100;
 /**
  * The gateway's definite answers to a create: an invalid request (400), the
  * API key's quota (403), a conflict (409). It claimed nothing. Any other
@@ -216,9 +215,16 @@ export class DefaultSandboxManager implements SandboxManager {
     // No binding transition is waited for longer than a creation intent may
     // stay unresolved; termination's outbox retries a slower reclamation.
     const deadline = Date.now() + INTENT_DEADLINE_MS;
-    while (!await store.begin(activity)) {
-      if (Date.now() >= deadline) throw new Error('Sandbox termination cleanup is still pending; retry later');
-      await delay(250, undefined, { signal });
+    // Heard from before the first attempt: the reclaimer's hint ends a wait at once.
+    const changes = new BindingChanges(this.deps.environmentSignals, activity.bindingId);
+    try {
+      while (!await store.begin(activity)) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) throw new Error('Sandbox termination cleanup is still pending; retry later');
+        await changes.wait(Math.min(BINDING_REREAD_MS, remainingMs), signal);
+      }
+    } finally {
+      changes.close();
     }
     return true;
   }
@@ -227,7 +233,7 @@ export class DefaultSandboxManager implements SandboxManager {
     await store?.finish(activity, id => this.deps.sandboxClient.setTimeout(id, SANDBOX_IDLE_SECONDS));
   }
   open(spec: EnvSpec, binding: SandboxEnvironmentBinding): SandboxSession {
-    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, binding);
+    return new SandboxSessionImpl(this.deps, this.skillInstaller, spec, signallingBinding(binding, this.deps.environmentSignals));
   }
   async list(_filter?: {
     tenantId?: string;
@@ -511,6 +517,8 @@ class SandboxSessionImpl implements SandboxSession {
         if (ticket) {
           await this.deps.sandboxClient.destroy(ticket.sandboxId);
           await lifecycle.completeReclamation(ticket);
+          // Turns waiting for admission while it was reclaimed ask again now.
+          this.deps.environmentSignals?.publish(this.binding.id);
           this.sandboxId = undefined;
         } else await this.binding.withLock<void>(async ({ sandboxId: id }) => {
           // Unknown business users may retain a pointer beyond native expiry.
@@ -556,8 +564,13 @@ class SandboxSessionImpl implements SandboxSession {
     // No business operation runs before the Turn's install succeeded.
     if (this.installing) await this.installing;
     if (this.prepared && this.sandboxId) return this.sandboxId;
-    // Parallel tool calls of the Turn share one in-flight ensure.
-    if (!this.ensuring) this.ensuring = this.provision().finally(() => { this.ensuring = undefined; });
+    // Parallel tool calls of the Turn share one in-flight ensure, and so one wait.
+    if (!this.ensuring) {
+      // Heard from before its first read of the row: a change committed after
+      // a read ends the wait that read decided.
+      const changes = new BindingChanges(this.deps.environmentSignals, this.binding.id);
+      this.ensuring = this.provision(changes).finally(() => { changes.close(); this.ensuring = undefined; });
+    }
     const id = await this.ensuring;
     this.assertOpen();
     return id;
@@ -566,8 +579,9 @@ class SandboxSessionImpl implements SandboxSession {
    * Bring the binding to Ready and prepare its Sandbox (ADR-0023, "ensure").
    * Each step reads the row and acts on it alone: Ready → connect, a
    * confirmed missing Sandbox → Cold; Creating → wait; Unresolved →
-   * reconcile; Cold → create. A wait ends at the intent deadline, so no
-   * outcome, known or not, blocks the binding for longer.
+   * reconcile; Cold → create. A wait ends on the binding's `environment`
+   * hint, or after 2 s, when the row is read again; it lasts until the intent
+   * deadline at most, so no outcome, known or not, blocks the binding longer.
    *
    * A create the gateway rejected leaves the binding Cold and fails the call.
    * One with an unknown outcome keeps its intent: the call waits for its
@@ -580,7 +594,7 @@ class SandboxSessionImpl implements SandboxSession {
    * the binding's reads and writes: about six minutes (ADR-0023,
    * Consequences). Preparing a Sandbox it got (mount, Skills) adds its own.
    */
-  private async provision(): Promise<string> {
+  private async provision(changes: BindingChanges): Promise<string> {
     // One create per call, and one more after an unknown outcome was reconciled.
     let creates = 1;
     let retries = 1;
@@ -589,7 +603,7 @@ class SandboxSessionImpl implements SandboxSession {
       try {
         const step = await this.nextStep(creates > 0);
         if (step.kind === "ready") id = step.sandboxId;
-        else if (step.kind === "wait") await delay(step.ms, undefined, { signal: this.turn.signal });
+        else if (step.kind === "wait") await changes.wait(step.ms, this.turn.signal);
         else if (step.kind === "reconcile") await this.reconcile(step.creatingSince);
         else if (step.kind === "create") {
           creates--;
@@ -626,7 +640,8 @@ class SandboxSessionImpl implements SandboxSession {
         }
         if (binding.creatingSince !== null) {
           const remainingMs = binding.creatingSince.getTime() + INTENT_DEADLINE_MS - binding.now.getTime();
-          // Another Turn's create may still produce the Sandbox.
+          // Another Turn's create, or this call's own whose outcome is
+          // unknown, may still produce the Sandbox.
           if (remainingMs > 0) throw new CreationInProgress(remainingMs);
           return { value: { kind: "reconcile", creatingSince: binding.creatingSince } };
         }
@@ -637,7 +652,7 @@ class SandboxSessionImpl implements SandboxSession {
       });
     } catch (error) {
       if (!(error instanceof CreationInProgress)) throw error;
-      return { kind: "wait", ms: Math.min(CREATING_POLL_MS, error.remainingMs) };
+      return { kind: "wait", ms: Math.min(BINDING_REREAD_MS, error.remainingMs) };
     }
   }
   /**

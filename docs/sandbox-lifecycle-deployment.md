@@ -67,8 +67,13 @@ gateway, and the successful create writes `sandbox_id` and clears it
 rejects with HTTP 400, 403 or 409 returns the binding to Cold and fails the
 tool call. Any other outcome (a 5xx, the gateway's claim timeout included, a
 create timeout or lost connection, a lost Runner, a lost binding write) leaves
-the intent. A Turn that finds it waits until `creating_since` + 180 seconds,
-then reconciles the binding itself: it lists the gateway's running and paused
+the intent. A Turn that finds it (a Child Session sharing the binding, a Turn
+resumed after a takeover) waits: it reads the row again when the creator's
+`environment` hint arrives on the Redis control channel and every 2 seconds
+regardless, so it continues at once when the creator records the Sandbox and
+within 2 seconds without Redis. A Turn starting while the binding is reclaimed
+waits the same way for the reclaimer's hint. Past `creating_since` + 180
+seconds it reconciles the binding itself: it lists the gateway's running and paused
 Sandboxes labelled `oma.dev/binding=<root Session id>`, adopts the one it finds
 (a running one, else the earliest claimed, killing any others), or returns the
 binding to Cold and creates. The tool call whose create had the unknown outcome
