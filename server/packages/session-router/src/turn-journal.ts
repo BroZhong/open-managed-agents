@@ -49,6 +49,40 @@ export interface TurnJournalOptions {
 }
 
 /**
+ * Consecutive chunks of one output block leave as one Delta: a Delta may carry
+ * more than one token, and each costs a Redis append and a publish. A run of
+ * chunks leaves this long after its first chunk, or at once when the next
+ * Delta belongs elsewhere, at a flush, or before it would pass the size cap.
+ */
+const DELTA_WINDOW_MS = 50;
+const DELTA_MAX_CHARS = 8192;
+
+/** The text a chunk adds and the key of the chunks it joins; none for stream start/end markers. */
+function chunkText(event: StreamEvent): { text: string; key: string } | undefined {
+  switch (event.type) {
+    case "agent.message_chunk":
+    case "agent.thinking_chunk":
+      return { text: event.text, key: event.type };
+    case "agent.tool_use_input_chunk":
+      return { text: event.delta, key: `${event.type}:${event.toolUseId}` };
+    default:
+      return undefined;
+  }
+}
+
+/** A run of chunks still taking more: queued for output, not yet left. */
+interface DeltaRun {
+  key: string;
+  blockIndex: number;
+  /** The run leaves as its first chunk, carrying the joined text. */
+  first: StreamEvent;
+  parts: string[];
+  chars: number;
+  /** Ends the run's window early. */
+  close(): void;
+}
+
+/**
  * The only write entry of one Turn attempt (ADR-0020). The Router creates it
  * after claiming the input, records its own events with explicit idempotency
  * keys, and hands {@link adapter} to the Adapter. Nothing is written outside
@@ -64,6 +98,11 @@ export class TurnJournal {
   private turnId?: string;
   private tail: Promise<void> = Promise.resolve();
   private deltas: Promise<void> = Promise.resolve();
+  private run?: DeltaRun;
+  private deltasEnded = false;
+  /** Chunks received and Deltas queued since the last flush log line. */
+  private deltasIn = 0;
+  private deltasOut = 0;
   private failure: unknown;
   private failed = false;
   private revoked = false;
@@ -116,10 +155,24 @@ export class TurnJournal {
    */
   revokeAdapter(): void {
     this.revoked = true;
+    this.closeRun();
+  }
+
+  /**
+   * End Delta output once the Turn's content is durable, before its Delta
+   * stream is reclaimed: queued Deltas are dropped (a completed Turn rejects
+   * them anyway) and the one leaving is awaited, so none lands after reclaim.
+   */
+  endDeltas(): Promise<void> {
+    this.deltasEnded = true;
+    this.closeRun();
+    return this.deltas;
   }
 
   flush(): Promise<void> {
     const started = performance.now();
+    // What the Adapter streamed before this flush leaves now, ahead of its window.
+    this.closeRun();
     const write = this.tail.then(() => this.write(started));
     this.tail = write.catch(() => {});
     return write;
@@ -143,10 +196,53 @@ export class TurnJournal {
 
   /** Deltas leave one at a time so the live projection keeps call order. */
   private delta(event: StreamEvent, blockIndex: number): void {
+    if (this.deltasEnded) return;
+    this.deltasIn++;
+    const chunk = chunkText(event);
+    const run = this.run;
+    if (chunk && run && run.key === chunk.key && run.blockIndex === blockIndex && run.chars + chunk.text.length <= DELTA_MAX_CHARS) {
+      run.parts.push(chunk.text);
+      run.chars += chunk.text.length;
+      return;
+    }
+    this.closeRun();
+    if (!chunk) {
+      this.output(() => event, blockIndex);
+      return;
+    }
+    let close!: () => void;
+    const window = new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, DELTA_WINDOW_MS);
+      timer.unref?.();
+      close = () => { clearTimeout(timer); resolve(); };
+    });
+    const next: DeltaRun = { key: chunk.key, blockIndex, first: event, parts: [chunk.text], chars: chunk.text.length, close };
+    this.run = next;
+    this.output(async () => {
+      await window;
+      // Until it leaves the run keeps taking chunks, also while earlier output holds it past its window.
+      if (this.run === next) this.run = undefined;
+      const text = next.parts.join("");
+      return (next.first.type === "agent.tool_use_input_chunk" ? { ...next.first, delta: text } : { ...next.first, text }) as StreamEvent;
+    }, blockIndex);
+  }
+
+  /** The open run takes no more chunks and leaves as soon as the Deltas ahead of it have. */
+  private closeRun(): void {
+    this.run?.close();
+    this.run = undefined;
+  }
+
+  private output(take: () => StreamEvent | Promise<StreamEvent>, blockIndex: number): void {
     // The Adapter receives its port only once the Turn is bound.
-    const delta: JournalDelta = { turnId: this.turnId!, blockIndex, attempt: this.options.attempt, type: event.type, data: event };
-    // Checked again at output time, after earlier Deltas have left.
-    this.deltas = this.deltas.then(() => this.adapterOpen ? this.options.outputDelta(delta) : undefined).then(() => {}, () => {});
+    const turnId = this.turnId!;
+    this.deltasOut++;
+    this.deltas = this.deltas.then(async () => {
+      const event = await take();
+      // Checked at output time, after earlier Deltas have left.
+      if (!this.adapterOpen || this.deltasEnded) return;
+      await this.options.outputDelta({ turnId, blockIndex, attempt: this.options.attempt, type: event.type, data: event });
+    }).then(() => {}, () => {});
   }
 
   /** A later write must never land behind a lost one, so failure is sticky. */
@@ -185,10 +281,13 @@ export class TurnJournal {
     } finally {
       // One line per write round, for flush latency p50/p99 from Runner logs.
       // The duration is what the flush caller waited, queueing included. The
-      // flush that promotes the input runs before the Turn has a name.
+      // flush that promotes the input runs before the Turn has a name. The
+      // Delta counts since the previous line give the coalescing ratio.
       const durationMs = Math.round((performance.now() - started) * 10) / 10;
+      const { deltasIn, deltasOut } = this;
+      this.deltasIn = this.deltasOut = 0;
       this.logger.info(JSON.stringify({ msg: "turn_journal_flush", sessionId: this.options.sessionId, turnId: this.turnId,
-        events, bytes, durationMs, ...(error === undefined ? {} : { error }) }));
+        events, bytes, deltasIn, deltasOut, durationMs, ...(error === undefined ? {} : { error }) }));
     }
   }
 }

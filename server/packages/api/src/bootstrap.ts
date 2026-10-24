@@ -36,7 +36,7 @@ export async function startHost(role: HostRole): Promise<void> {
   redis.on("error", () => {});
   void redis.connect().catch(() => {}); // Startup and readiness do not depend on Redis.
   const signals = new RedisSessionSignals(redis, process.env.REDIS_NAMESPACE ?? `oma:${pgConfig.schema ?? "oma"}`);
-  const eventStreamHub = new RedisEventStreamHub(signals);
+  const eventStreamHub = new RedisEventStreamHub(signals, { relay: role !== "runner" });
   const turnStreamStore = new BestEffortTurnStreamStore(new RedisTurnStreamStore(redis), () => redis.status === "ready");
   let artifactStore: ArtifactStore;
   let skillBundleStore: SkillBundleStore;

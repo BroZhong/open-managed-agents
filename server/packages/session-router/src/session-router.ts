@@ -1352,6 +1352,8 @@ export class SessionRouter {
         // An install still running ends inside the Turn: its end span precedes
         // the Turn's end, and a complete install is recorded on the binding.
         await skillInstalls?.settled();
+        // No Delta may land in the stream after it is reclaimed.
+        await journal.endDeltas();
         await this.endTurnStream(sessionId, endedTurnId, projectionWriter);
         lastOwnedTurn = projectionWriter;
         return this.completeTurn(journal, sessionId, pendingEvent.id, promotedEvent.seq, endedTurnId, pendingFence);

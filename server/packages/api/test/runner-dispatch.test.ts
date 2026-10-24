@@ -1,15 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SessionSignal, SessionSignals } from "@oma-server/redis";
+import { sessionSignalScope, type SessionSignal, type SessionSignalScope, type SessionSignals } from "@oma-server/redis";
 import type { SessionRouter } from "@oma-server/session-router";
 import type { SessionStore } from "@oma-server/store";
 import { RunnerDispatch } from "../src/lib/runner-dispatch.js";
 
 class Signals implements SessionSignals {
-  private readonly listeners = new Set<(signal: SessionSignal) => void>();
-  publish(signal: SessionSignal): void { for (const listener of this.listeners) listener(signal); }
-  subscribe(listener: (signal: SessionSignal) => void): () => void {
-    this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+  private readonly listeners = new Set<{ scope: SessionSignalScope; listener: (signal: SessionSignal) => void }>();
+  publish(signal: SessionSignal): void {
+    for (const { scope, listener } of this.listeners) if (scope === sessionSignalScope(signal.kind)) listener(signal);
+  }
+  subscribe(scope: SessionSignalScope, listener: (signal: SessionSignal) => void): () => void {
+    const entry = { scope, listener };
+    this.listeners.add(entry);
+    return () => { this.listeners.delete(entry); };
   }
 }
 

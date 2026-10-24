@@ -22,7 +22,7 @@ export class RunnerDispatch {
   async start(): Promise<void> {
     // Subscribed until the signals close: a Runner shutting down still runs
     // its Turns until the handoff deadline, and acts on their check hints.
-    this.deps.signals.subscribe(signal => {
+    this.deps.signals.subscribe("control", signal => {
       if (signal.kind === "wake" && !this.stopped) this.wake(signal.sessionId);
       // Not deduplicated like wakes: a drain started from a wake holds its
       // Session in `waking` for the whole Turn, and the owner must still check.

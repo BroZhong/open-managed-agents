@@ -1,8 +1,8 @@
 import { Redis, type RedisOptions } from "ioredis";
 
 export type RedisClient = Redis;
-export { RedisSessionSignals } from "./session-signals.js";
-export type { SessionSignals, SessionSignal } from "./session-signals.js";
+export { RedisSessionSignals, sessionSignalScope } from "./session-signals.js";
+export type { SessionSignals, SessionSignal, SessionSignalScope } from "./session-signals.js";
 export { BestEffortTurnStreamStore } from "./best-effort-turn-stream-store.js";
 
 export type { RedisLike } from "./redis-like.js";

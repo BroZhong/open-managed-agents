@@ -63,12 +63,11 @@ it("streams the mock runtime's Deltas on the block of the Complete Event that re
   const turnId = message.data.turnId;
   expect(turnId).toEqual(expect.any(String));
   const deltas = stream.frames.filter(frame => frame.seq === undefined);
-  expect(deltas.map(({ type, data }) => [type, data.turnId, data.blockIndex])).toEqual([
-    ["agent.message_stream_start", turnId, 0],
-    ["agent.message_chunk", turnId, 0],
-    ["agent.message_chunk", turnId, 0],
-    ["agent.message_chunk", turnId, 0],
-    ["agent.message_stream_end", turnId, 0],
+  // The chunks, streamed within one coalescing window, arrive as one Delta.
+  expect(deltas.map(({ type, data }) => [type, data.turnId, data.blockIndex, data.text])).toEqual([
+    ["agent.message_stream_start", turnId, 0, undefined],
+    ["agent.message_chunk", turnId, 0, "Hello, world!"],
+    ["agent.message_stream_end", turnId, 0, undefined],
   ]);
   // Every Delta went out before the Complete Event that replaces it.
   expect(stream.frames.indexOf(message)).toBeGreaterThan(stream.frames.indexOf(deltas.at(-1)!));
