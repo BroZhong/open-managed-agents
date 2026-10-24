@@ -58,9 +58,10 @@ export interface SandboxDescriptor {
   workspaceId: string;
   createdAtMs: number;
 }
+/** The Session was terminated: its Turn's Sandbox session runs nothing more. */
 export class SandboxSessionClosed extends Error {
   constructor() {
-    super("SandboxSession has been disposed and can no longer be used");
+    super("The Session was terminated: its Sandbox can no longer be used");
     this.name = "SandboxSessionClosed";
   }
 }
@@ -261,12 +262,6 @@ export interface SandboxSession {
   prepare(skills?: SkillSet, options?: PrepareOptions): Promise<void>;
   /** Availability check only: never scans files or claims all open handles were saved. */
   checkWorkspace(): Promise<void>;
-  /**
-   * Close the session, then reclaim its binding as `SandboxManager.reclaim`
-   * does; while that is retained, a later call tries again. Completed writes
-   * already belong to the Workspace.
-   */
-  dispose(): Promise<void>;
 }
 
 export class DefaultSandboxManager implements SandboxManager {
@@ -431,8 +426,6 @@ class SandboxSessionImpl implements SandboxSession {
   private ensuring?: Promise<string>;
   /** The Turn-start connect prepare() runs beside the Turn; operations wait for it. */
   private connecting?: Promise<void>;
-  private disposing?: Promise<void>;
-  private closed = false;
   private prepared = false;
   private generation = 0;
   private uncertainTurn = false;
@@ -588,7 +581,6 @@ class SandboxSessionImpl implements SandboxSession {
   }
 
   async prepare(skills: SkillSet = this.skills, options: PrepareOptions = {}): Promise<void> {
-    this.assertOpen();
     if (this.ensuring) await this.ensuring;
     if (this.recovering) await this.recovering;
     this.skills = skills;
@@ -742,7 +734,6 @@ class SandboxSessionImpl implements SandboxSession {
     ) };
   }
   private markPrepared(id: string): void {
-    this.assertOpen();
     this.sandboxId = id;
     this.prepared = true;
     this.generation++;
@@ -753,36 +744,11 @@ class SandboxSessionImpl implements SandboxSession {
     return { installed: () => binding.installedSkills!(), record: installed => binding.recordSkillsInstalled!(installed) };
   }
   async checkWorkspace(): Promise<void> {
-    this.assertOpen();
     // No probe at Turn end: this cannot prove that arbitrary open handles saved.
     if (this.uncertainTurn) throw new WorkspaceMountUnavailable();
   }
   private async assertExecutable(): Promise<void> {
-    this.assertOpen();
     if (this.binding.canExecute && !await this.binding.canExecute()) throw new SandboxSessionClosed();
-  }
-
-  dispose(): Promise<void> {
-    if (this.disposing) return this.disposing;
-    this.closed = true;
-    this.disposing = (async () => {
-      try {
-        await this.ensuring;
-      } catch {
-        /* A create that did not complete keeps its intent for reconciliation. */
-      }
-      if (await reclaimBinding(this.deps, this.binding)) this.sandboxId = undefined;
-      // Retained: a later dispose reclaims again.
-      else this.disposing = undefined;
-    })().catch((error) => {
-      this.disposing = undefined;
-      throw error;
-    });
-    return this.disposing;
-  }
-
-  private assertOpen(): void {
-    if (this.closed) throw new SandboxSessionClosed();
   }
   private async verify(id: string): Promise<void> {
     try {
@@ -792,7 +758,6 @@ class SandboxSessionImpl implements SandboxSession {
     }
   }
   private async ensure(): Promise<string> {
-    this.assertOpen();
     // A recovery that failed leaves the Sandbox unprepared: ensure prepares it.
     if (this.recovering) await this.recovering.catch(() => {});
     // The Turn-start connect: its failure fails the operations that waited for it.
@@ -809,9 +774,7 @@ class SandboxSessionImpl implements SandboxSession {
         .then(async (id) => { await this.finishPreparation(id); return id; })
         .finally(() => { changes.close(); this.ensuring = undefined; });
     }
-    const id = await this.ensuring;
-    this.assertOpen();
-    return id;
+    return this.ensuring;
   }
   /**
    * Bring the binding to Ready and verify its Sandbox's mount (ADR-0023,

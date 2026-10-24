@@ -436,7 +436,7 @@ function sandbox(runner: Runner, run: (call: Omit<ToolCall, "runner">) => Promis
       prepares = options?.sandboxPrepares;
       ready = false;
     },
-    checkWorkspace: async () => {}, dispose: async () => {},
+    checkWorkspace: async () => {},
   };
   return { open: () => session, list: async () => [], reclaim: async () => { reclaimed(); return true; } };
 }

@@ -213,7 +213,7 @@ describe("Turns waiting for a binding follow its environment hint (ADR-0023)", (
       const released = new Promise<void>((resolve) => { release = resolve; });
       const destroy = f.gateway.destroy.bind(f.gateway);
       vi.spyOn(f.gateway, "destroy").mockImplementationOnce(async (id) => { await released; await destroy(id); });
-      const reclaimed = reclaimer.open(spec, f.binding()).dispose();
+      const reclaimed = reclaimer.reclaim(f.binding());
       await settle();
       return { release, reclaimed };
     }

@@ -37,7 +37,6 @@ function sandbox(fail: "connect" | "install" | "checkWorkspace"): SandboxManager
       }
     },
     checkWorkspace: async () => { if (fail === "checkWorkspace") throw new Error("mount gone"); },
-    dispose: async () => {},
   };
   return { open: () => session, list: async () => [], reclaim: async () => true };
 }

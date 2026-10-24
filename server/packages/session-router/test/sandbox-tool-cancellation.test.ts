@@ -54,7 +54,6 @@ function localSandbox() {
     list: (glob) => local.list(glob),
     prepare: async () => {},
     checkWorkspace: async () => {},
-    dispose: async () => {},
   };
   const manager: SandboxManager = { open: () => session, list: async () => [], reclaim: async () => { reclaimed = true; return true; } };
   return { manager, commands, reclaimed: () => reclaimed };

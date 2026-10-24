@@ -56,10 +56,10 @@ describe("mounted Workspace Sandbox Manager", () => {
     client.pause(binding.row().sandboxId!);
     const reconnect = vi.spyOn(client, 'reconnect');
     vi.spyOn(client, 'destroy').mockRejectedValueOnce(new Error('network unavailable'));
-    await expect(session.dispose()).rejects.toThrow('network');
+    await expect(manager.reclaim(binding)).rejects.toThrow('network');
     expect(store.completeReclamation).not.toHaveBeenCalled();
     expect(binding.row().sandboxId).not.toBeNull();
-    await session.dispose();
+    expect(await manager.reclaim(binding)).toBe(true);
     expect(binding.row().sandboxId).toBeNull();
     expect(reconnect).not.toHaveBeenCalled();
     const replacement = manager.open(specFor(), binding);
@@ -79,15 +79,14 @@ describe("mounted Workspace Sandbox Manager", () => {
     const original = id()!;
     client.pause(original);
     const connect = vi.spyOn(client, 'reconnect');
-    await parent.dispose();
+    expect(await manager.reclaim(binding)).toBe(false);
     expect(id()).toBe(original);
     expect(connect).not.toHaveBeenCalled();
-    const cleanup = manager.open(specFor(), binding);
     vi.spyOn(client, 'state').mockRejectedValueOnce(new Error('control plane timeout'));
-    await expect(cleanup.dispose()).rejects.toThrow('timeout');
+    await expect(manager.reclaim(binding)).rejects.toThrow('timeout');
     expect(id()).toBe(original);
     client.reclaim(original);
-    await cleanup.dispose();
+    expect(await manager.reclaim(binding)).toBe(true);
     expect(id()).toBeNull();
     expect(client.destroyed).toEqual([]);
     expect(store.completeReclamation).not.toHaveBeenCalled();
@@ -160,7 +159,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.created).toHaveLength(1);
   });
 
-  it("checks resource users inside the environment lock before disposing a parent", async () => {
+  it("checks resource users inside the environment lock before reclaiming a parent's binding", async () => {
     const { client, manager } = makeManager();
     const durable = durableBinding();
     let insideLock = false;
@@ -175,7 +174,7 @@ describe("mounted Workspace Sandbox Manager", () => {
     };
     const parent = manager.open(specFor(), binding);
     await parent.writeFile("/tmp/shared", "still needed");
-    await parent.dispose();
+    expect(await manager.reclaim(binding)).toBe(false);
     const child = manager.open(specFor(), binding);
     expect(await child.readFile("/tmp/shared")).toBe("still needed");
     expect(client.destroyed).toHaveLength(0);
@@ -207,13 +206,13 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(session.fileSystem).toBe(capability);
     expect(client.created).toHaveLength(2);
     expect(nativeRead.mock.calls.at(-1)?.[0]).toBe(client.created[1]);
-    await session.dispose();
   });
 
-  it("writes are shared immediately and survive disposal and rebuilding", async () => {
+  it("writes are shared immediately and survive reclamation and rebuilding", async () => {
     const { client, manager } = makeManager();
-    const a = manager.open(specFor(), durableBinding("a"));
-    const b = manager.open(specFor(), durableBinding("b"));
+    const [bindingA, bindingB] = [durableBinding("a"), durableBinding("b")];
+    const a = manager.open(specFor(), bindingA);
+    const b = manager.open(specFor(), bindingB);
     await a.writeFile("中文 空格.txt", "saved by a");
     expect(await b.readFile("中文 空格.txt")).toBe("saved by a");
     await b.writeFile("other.txt", "saved by b");
@@ -222,8 +221,8 @@ describe("mounted Workspace Sandbox Manager", () => {
     client.reclaim(id);
     await expect(a.readFile("中文 空格.txt")).rejects.toThrow(/not replayed/);
     expect(await a.readFile("中文 空格.txt")).toBe("saved by a");
-    await a.dispose();
-    await b.dispose();
+    expect(await manager.reclaim(bindingA)).toBe(true);
+    expect(await manager.reclaim(bindingB)).toBe(true);
     const rebuilt = manager.open(specFor(), durableBinding("c"));
     expect(await rebuilt.readFile("other.txt")).toBe("saved by b");
   });
@@ -249,9 +248,11 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.created).toHaveLength(1);
   });
 
-  it("a missing mount or expired permissions blocks tools and disposal still preserves saved files", async () => {
+  it("a missing mount or expired permissions blocks tools and reclamation still preserves saved files", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor(), durableBinding());
+    let terminated = false;
+    const binding = { ...durableBinding(), canExecute: async () => !terminated };
+    const session = manager.open(specFor(), binding);
     await session.writeFile("saved.txt", "already closed");
     const id = client.created[0];
     client.setMountFailure(id, "permission denied");
@@ -260,14 +261,17 @@ describe("mounted Workspace Sandbox Manager", () => {
     ).rejects.toThrow(/unconfirmed/);
     await expect(session.checkWorkspace()).rejects.toThrow(/Workspace storage/);
     await expect(session.prepare()).rejects.toThrow(/Workspace storage/);
-    await session.dispose();
+    terminated = true;
+    expect(await manager.reclaim(binding)).toBe(true);
     expect(client.destroyed).toEqual([id]);
     const next = manager.open(specFor(), durableBinding("next"));
     expect(await next.readFile("saved.txt")).toBe("already closed");
     await expect(next.readFile("failed.txt")).rejects.toThrow(/no such file/);
+    // The terminated Session's Turns run nothing more.
     await expect(
-      session.writeFile("after-dispose", "x"),
+      manager.open(specFor(), binding).writeFile("after-termination", "x"),
     ).rejects.toBeInstanceOf(SandboxSessionClosed);
+    expect(client.created).toHaveLength(2);
   });
 
   it("a wrong mounted prefix blocks reads until the same mount recovers", async () => {
@@ -377,13 +381,14 @@ describe("mounted Workspace Sandbox Manager", () => {
     expect(client.created).toHaveLength(1);
   });
 
-  it("pure chat preparation, availability checks and disposal never create a Sandbox", async () => {
+  it("pure chat preparation, availability checks and reclamation never create a Sandbox", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor(), durableBinding());
+    const binding = durableBinding();
+    const session = manager.open(specFor(), binding);
     await session.prepare();
     await session.checkWorkspace();
-    await session.dispose();
-    await session.dispose();
+    expect(await manager.reclaim(binding)).toBe(true);
+    expect(await manager.reclaim(binding)).toBe(true);
     expect(client.created).toEqual([]);
     expect(client.destroyed).toEqual([]);
   });
@@ -414,19 +419,22 @@ describe("mounted Workspace Sandbox Manager", () => {
     });
   });
 
-  it("retries disposal after a gateway failure without reopening execution", async () => {
+  it("retries reclamation after a gateway failure without reopening execution", async () => {
     const { client, manager } = makeManager();
-    const session = manager.open(specFor(), durableBinding());
-    await session.writeFile("saved", "kept");
+    let terminated = false;
+    const binding = { ...durableBinding(), canExecute: async () => !terminated };
+    await manager.open(specFor(), binding).writeFile("saved", "kept");
+    terminated = true;
     vi.spyOn(client, "destroy").mockRejectedValueOnce(
       new Error("gateway unavailable"),
     );
-    await expect(session.dispose()).rejects.toThrow(/gateway unavailable/);
-    await expect(session.readFile("saved")).rejects.toBeInstanceOf(
+    await expect(manager.reclaim(binding)).rejects.toThrow(/gateway unavailable/);
+    await expect(manager.open(specFor(), binding).readFile("saved")).rejects.toBeInstanceOf(
       SandboxSessionClosed,
     );
-    await session.dispose();
+    expect(await manager.reclaim(binding)).toBe(true);
     expect(client.destroyed).toHaveLength(1);
+    expect(client.created).toHaveLength(1);
   });
 
   it("keeps a new Sandbox whose first install failed and installs on the next tool call", async () => {
