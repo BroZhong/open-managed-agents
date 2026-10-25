@@ -116,6 +116,13 @@ export type {
 
 export { OSSArtifactStore } from "./oss/artifact-store.js";
 export { OSSEventPayloadStore } from "./oss/event-payload-store.js";
+export { OSSEnvironmentBuildLogStore, type OSSBuildLogClient } from "./oss/environment-build-log-store.js";
+export {
+  ENVIRONMENT_BUILD_LOG_MAX_BYTES,
+  environmentBuildLogKey,
+  type EnvironmentBuildLog,
+  type EnvironmentBuildLogStore,
+} from "./interfaces/environment-build-log-store.js";
 export { OSSSkillBundleStore, skillBundleObjectKey } from "./oss/skill-bundle-store.js";
 export type { OSSSkillBundleStoreOptions } from "./oss/skill-bundle-store.js";
 export { EventPayloadCodec, BIG_RESULT_BYTES, lazyEventData, eventPayloadRef } from "./event-payload.js";
@@ -201,6 +208,10 @@ export type {
   Environment,
   EnvironmentBaseImage,
   EnvironmentBuild,
+  EnvironmentBuildLease,
+  EnvironmentBuildQueue,
+  EnvironmentBuildRenewal,
+  ClaimedEnvironmentBuild,
   EnvironmentBuildStatus,
   EnvironmentBuildSummary,
   EnvironmentOwner,

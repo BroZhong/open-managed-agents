@@ -2,9 +2,13 @@ import { EnvironmentNameConflictError } from "../errors.js";
 import { environmentDefinitionSha256, newEnvironmentBuildId } from "../environment.js";
 import type { Pool, PoolClient } from "./connection.js";
 import type {
+  ClaimedEnvironmentBuild,
   Environment,
   EnvironmentBaseImage,
   EnvironmentBuild,
+  EnvironmentBuildLease,
+  EnvironmentBuildQueue,
+  EnvironmentBuildRenewal,
   EnvironmentBuildStatus,
   EnvironmentOwner,
   EnvironmentOwnerType,
@@ -133,7 +137,16 @@ function ownedBy(owner: EnvironmentOwner, params: unknown[]): string {
 
 const tenantOf = (owner: EnvironmentOwner) => (owner.ownerType === "tenant" ? owner.tenantId : null);
 
-export class PgEnvironmentStore implements EnvironmentStore {
+/** A build row's fence: the lease a builder holds on it. */
+const HELD = `status = 'running' AND lease_owner = $2 AND attempts = $3`;
+const leaseParams = (lease: EnvironmentBuildLease) => [lease.buildId, lease.owner, lease.attempt];
+const LEASE_EXPIRES = (param: string) => `clock_timestamp() + CAST(${param} || ' milliseconds' AS interval)`;
+
+function validateLeaseMs(leaseMs: number): void {
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw new RangeError("Environment Build lease must be a positive integer of milliseconds");
+}
+
+export class PgEnvironmentStore implements EnvironmentStore, EnvironmentBuildQueue {
   constructor(private readonly pool: Pool) {}
 
   async list(tenantId: string): Promise<Environment[]> {
@@ -248,12 +261,176 @@ export class PgEnvironmentStore implements EnvironmentStore {
     });
   }
 
+  async rebuild(owner: EnvironmentOwner, id: string): Promise<Environment | null> {
+    return this.transaction(async (client) => {
+      const params: unknown[] = [id];
+      const { rows } = await client.query<EnvironmentRow>(
+        `SELECT * FROM environments WHERE id = $1 AND ${ownedBy(owner, params)} AND deleted_at IS NULL FOR UPDATE`,
+        params,
+      );
+      const row = rows[0];
+      if (!row) return null;
+      const now = new Date();
+      await this.supersedeActiveBuild(client, id, now);
+      const buildId = await this.queueBuild(client, id, owner, row.base_image, row.init_script, now);
+      await client.query(`UPDATE environments SET last_build_id = $2, status = 'pending' WHERE id = $1`, [id, buildId]);
+      return this.read(client, id);
+    });
+  }
+
   async listBuilds(environmentId: string): Promise<EnvironmentBuild[]> {
     const { rows } = await this.pool.query<BuildRow>(
       `SELECT * FROM environment_builds WHERE environment_id = $1 ORDER BY seq DESC`,
       [environmentId],
     );
     return rows.map(rowToBuild);
+  }
+
+  async getBuild(environmentId: string, buildId: string): Promise<EnvironmentBuild | null> {
+    const { rows } = await this.pool.query<BuildRow>(
+      `SELECT * FROM environment_builds WHERE id = $1 AND environment_id = $2`,
+      [buildId, environmentId],
+    );
+    return rows[0] ? rowToBuild(rows[0]) : null;
+  }
+
+  async claimBuild(owner: string, leaseMs: number): Promise<ClaimedEnvironmentBuild | null> {
+    if (!owner) throw new RangeError("Environment Build lease owner must not be empty");
+    validateLeaseMs(leaseMs);
+    return this.transaction(async (client) => {
+      // Skip a row another builder is claiming; the claim re-checks the
+      // lease after the lock, by the database's clock.
+      const candidate = await client.query<{ id: string; status: EnvironmentBuildStatus }>(
+        `SELECT id, status FROM environment_builds
+         WHERE status = 'pending' OR (status = 'running' AND lease_expires_at <= clock_timestamp())
+         ORDER BY seq ASC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED`,
+      );
+      const head = candidate.rows[0];
+      if (!head) return null;
+      const { rows } = await client.query<BuildRow>(
+        `UPDATE environment_builds
+         SET status = 'running', attempts = attempts + 1, lease_owner = $2,
+             lease_expires_at = ${LEASE_EXPIRES("$3")},
+             started_at = COALESCE(started_at, clock_timestamp())
+         WHERE id = $1 AND (status = 'pending' OR (status = 'running' AND lease_expires_at <= clock_timestamp()))
+         RETURNING *`,
+        [head.id, owner, leaseMs],
+      );
+      const row = rows[0];
+      if (!row) return null;
+      await client.query(
+        `UPDATE environments SET status = 'building' WHERE id = $1 AND last_build_id = $2 AND deleted_at IS NULL`,
+        [row.environment_id, row.id],
+      );
+      const env = await client.query<{ env: EnvironmentVariable[] }>(`SELECT env FROM environments WHERE id = $1`, [row.environment_id]);
+      const build = rowToBuild(row);
+      return {
+        build,
+        lease: { buildId: build.id, owner, attempt: build.attempts },
+        env: env.rows[0]?.env ?? [],
+        reclaimed: head.status === "running",
+      };
+    });
+  }
+
+  async renewBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildRenewal> {
+    validateLeaseMs(leaseMs);
+    return this.transaction(async (client) => {
+      // Lock first: the lease is judged after any concurrent writer committed.
+      const locked = await client.query<{ status: EnvironmentBuildStatus }>(
+        `SELECT status FROM environment_builds WHERE id = $1 FOR UPDATE`, [lease.buildId]);
+      const status = locked.rows[0]?.status;
+      if (status === "superseded") return "superseded";
+      const { rows } = await client.query(
+        `UPDATE environment_builds SET lease_expires_at = ${LEASE_EXPIRES("$4")}
+         WHERE id = $1 AND ${HELD} AND lease_expires_at > clock_timestamp() RETURNING id`,
+        [...leaseParams(lease), leaseMs],
+      );
+      return rows[0] ? "renewed" : "lost";
+    });
+  }
+
+  async retryBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildLease | null> {
+    validateLeaseMs(leaseMs);
+    return this.transaction(async (client) => {
+      await client.query(`SELECT id FROM environment_builds WHERE id = $1 FOR UPDATE`, [lease.buildId]);
+      const { rows } = await client.query<{ attempts: number }>(
+        `UPDATE environment_builds SET attempts = attempts + 1, lease_expires_at = ${LEASE_EXPIRES("$4")}
+         WHERE id = $1 AND ${HELD} AND lease_expires_at > clock_timestamp() RETURNING attempts`,
+        [...leaseParams(lease), leaseMs],
+      );
+      return rows[0] ? { ...lease, attempt: rows[0].attempts } : null;
+    });
+  }
+
+  async releaseBuild(lease: EnvironmentBuildLease): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      `UPDATE environment_builds SET lease_expires_at = clock_timestamp() WHERE id = $1 AND ${HELD} RETURNING id`,
+      leaseParams(lease),
+    );
+    return rows.length > 0;
+  }
+
+  async recordBuildProgress(lease: EnvironmentBuildLease, progress: { baseImageDigest?: string; logKey?: string }): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      `UPDATE environment_builds
+       SET base_image_digest = COALESCE($4, base_image_digest), log_key = COALESCE($5, log_key)
+       WHERE id = $1 AND ${HELD} RETURNING id`,
+      [...leaseParams(lease), progress.baseImageDigest ?? null, progress.logKey ?? null],
+    );
+    return rows.length > 0;
+  }
+
+  async succeedBuild(lease: EnvironmentBuildLease, result: { image: string; manifest: Record<string, unknown> }): Promise<boolean> {
+    return this.finish(lease, "succeeded", async (client, environmentId) => {
+      await client.query(
+        `UPDATE environment_builds SET image = $2, manifest = $3::jsonb WHERE id = $1`,
+        [lease.buildId, result.image, JSON.stringify(result.manifest)],
+      );
+      await client.query(
+        `UPDATE environments SET status = 'ready', image = $3, manifest = $4::jsonb
+         WHERE id = $1 AND last_build_id = $2 AND deleted_at IS NULL`,
+        [environmentId, lease.buildId, result.image, JSON.stringify(result.manifest)],
+      );
+    });
+  }
+
+  async failBuild(lease: EnvironmentBuildLease, error: { code: string; message: string }): Promise<boolean> {
+    return this.finish(lease, "failed", async (client, environmentId) => {
+      await client.query(
+        `UPDATE environment_builds SET error_code = $2, error_message = $3 WHERE id = $1`,
+        [lease.buildId, error.code, error.message],
+      );
+      await client.query(
+        `UPDATE environments SET status = 'failed' WHERE id = $1 AND last_build_id = $2 AND deleted_at IS NULL`,
+        [environmentId, lease.buildId],
+      );
+    });
+  }
+
+  /**
+   * End a held build with `status`, then let `record` write the outcome, in
+   * one transaction. A lease that lapsed without a reclaim still finishes:
+   * only a newer holder or a supersede fences it out.
+   */
+  private async finish(
+    lease: EnvironmentBuildLease,
+    status: "succeeded" | "failed",
+    record: (client: PoolClient, environmentId: string) => Promise<void>,
+  ): Promise<boolean> {
+    return this.transaction(async (client) => {
+      await client.query(`SELECT id FROM environment_builds WHERE id = $1 FOR UPDATE`, [lease.buildId]);
+      const { rows } = await client.query<{ environment_id: string }>(
+        `UPDATE environment_builds SET status = $4, finished_at = clock_timestamp()
+         WHERE id = $1 AND ${HELD} RETURNING environment_id`,
+        [...leaseParams(lease), status],
+      );
+      if (!rows[0]) return false;
+      await record(client, rows[0].environment_id);
+      return true;
+    });
   }
 
   private async read(client: PoolClient, id: string): Promise<Environment | null> {

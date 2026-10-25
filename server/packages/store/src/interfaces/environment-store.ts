@@ -182,6 +182,87 @@ export interface EnvironmentStore {
    * or not owned by `owner`.
    */
   delete(owner: EnvironmentOwner, id: string): Promise<boolean>;
+  /**
+   * Build the current definition again (`POST /v1/environments/{id}/build`):
+   * supersede the active build and queue a new one, making the Environment
+   * `pending`, in one transaction. Null when it is absent, deleted or not
+   * owned by `owner`.
+   */
+  rebuild(owner: EnvironmentOwner, id: string): Promise<Environment | null>;
   /** An Environment's builds, newest first, deleted or not. */
   listBuilds(environmentId: string): Promise<EnvironmentBuild[]>;
+  /** One of an Environment's builds; null when it has no build of that id. */
+  getBuild(environmentId: string, buildId: string): Promise<EnvironmentBuild | null>;
+}
+
+/**
+ * A builder's hold on a running build (ADR-0018). Every write the builder
+ * makes to the build is fenced by it: a reclaim or a retry moves `attempt`
+ * on, so a run that lost its lease can no longer change anything.
+ */
+export interface EnvironmentBuildLease {
+  buildId: string;
+  owner: string;
+  /** The build's `attempts` when this lease was taken. */
+  attempt: number;
+}
+
+/** A build a builder claimed, with what it needs to run it. */
+export interface ClaimedEnvironmentBuild {
+  build: EnvironmentBuild;
+  lease: EnvironmentBuildLease;
+  /**
+   * The Environment's variables at claim time. Secret references carry no
+   * value; the builder gives the script only the plain ones.
+   */
+  env: EnvironmentVariable[];
+  /** The build was running under a lease that expired: an earlier attempt may have left a pod. */
+  reclaimed: boolean;
+}
+
+/**
+ * How a lease renewal ended: still held, the build `superseded` by a newer
+ * change (or deletion), or the lease `lost` (expired or taken over).
+ */
+export type EnvironmentBuildRenewal = "renewed" | "superseded" | "lost";
+
+/**
+ * The image builder's side of Environment Builds (ADR-0024 "Building"). It
+ * claims the oldest `pending` build, or a `running` one whose lease expired,
+ * and records each step and the outcome under its lease. All lease decisions
+ * use the database's clock.
+ */
+export interface EnvironmentBuildQueue {
+  /**
+   * Claim the oldest claimable build: mark it `running` under a new lease,
+   * count the attempt, keep its first `startedAt`, and mark its Environment
+   * `building` when the build is still the Environment's latest. Null when
+   * none is claimable.
+   */
+  claimBuild(owner: string, leaseMs: number): Promise<ClaimedEnvironmentBuild | null>;
+  /** Extend a lease that has not expired. */
+  renewBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildRenewal>;
+  /**
+   * Start another attempt of the same build under the same owner (an
+   * infrastructure failure is retried): count it and extend the lease. Null
+   * when the lease is no longer held.
+   */
+  retryBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildLease | null>;
+  /** Let the lease expire now, so the next builder reclaims the build at once (shutdown). */
+  releaseBuild(lease: EnvironmentBuildLease): Promise<boolean>;
+  /** Record the resolved Base Image digest and/or the log's OSS key. */
+  recordBuildProgress(lease: EnvironmentBuildLease, progress: { baseImageDigest?: string; logKey?: string }): Promise<boolean>;
+  /**
+   * End the build `succeeded` with its image and manifest; when it is still
+   * the Environment's latest build, that image now serves and the
+   * Environment is `ready`. False, writing nothing, when the lease is no
+   * longer held (a superseded build never replaces the image).
+   */
+  succeedBuild(lease: EnvironmentBuildLease, result: { image: string; manifest: Record<string, unknown> }): Promise<boolean>;
+  /**
+   * End the build `failed` with the error; the Environment becomes `failed`
+   * when it is still its latest build and keeps its image. False, writing
+   * nothing, when the lease is no longer held.
+   */
+  failBuild(lease: EnvironmentBuildLease, error: { code: string; message: string }): Promise<boolean>;
 }

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PgEnvironmentStore } from "../src/postgres/environment-store.js";
 import { createPgTestHarness, type PgTestHarness } from "./pg-harness.js";
 import { environmentStoreContract } from "./environment-store-contract.js";
+import { environmentBuildQueueContract } from "./environment-build-queue-contract.js";
 
 let harness: PgTestHarness;
 beforeAll(async () => { harness = await createPgTestHarness(); });
@@ -10,6 +11,38 @@ environmentStoreContract("PgEnvironmentStore", async () => {
   await harness.reset();
   return new PgEnvironmentStore(harness.pool);
 }, async () => { await harness.close(); });
+
+let queueHarness: PgTestHarness;
+environmentBuildQueueContract("PgEnvironmentStore build queue", async () => {
+  // pg-mem ignores SKIP LOCKED; the concurrent claim below needs real PostgreSQL.
+  queueHarness ??= await createPgTestHarness({ allowUnsupportedLockSyntax: true });
+  await queueHarness.reset();
+  return {
+    store: new PgEnvironmentStore(queueHarness.pool),
+    expireLeases: async () => {
+      await queueHarness.pool.query(`UPDATE environment_builds SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE status = 'running'`);
+    },
+  };
+}, async () => { await queueHarness?.close(); });
+
+describe.skipIf(!process.env.PG_TEST_URL)("PgEnvironmentStore claims concurrently", () => {
+  let pg: PgTestHarness;
+  beforeAll(async () => { pg = await createPgTestHarness(); });
+  afterAll(async () => { await pg.close(); });
+
+  it("gives concurrent builders distinct builds, skipping rows another is claiming", async () => {
+    const store = new PgEnvironmentStore(pg.pool);
+    for (let i = 0; i < 6; i++) {
+      await store.create({ id: `env_c${i}`, owner: { ownerType: "tenant", tenantId: "t1" }, name: `c${i}`, description: "", baseImage: "oma-base", initScript: "", env: [], encryptedSecrets: {} });
+    }
+    const claims = await Promise.all(Array.from({ length: 8 }, (_, i) => store.claimBuild(`builder-${i}`, 60_000)));
+    const claimed = claims.filter((claim) => claim !== null).map((claim) => claim!.build.environmentId);
+    expect(new Set(claimed).size).toBe(claimed.length);
+    // SKIP LOCKED may pass over a row being claimed; a second round takes whatever is left.
+    while (await store.claimBuild("builder-late", 60_000)) claimed.push("late");
+    expect(claimed).toHaveLength(6);
+  });
+});
 
 describe("PgEnvironmentStore builds as the builder leaves them", () => {
   let pg: PgTestHarness;

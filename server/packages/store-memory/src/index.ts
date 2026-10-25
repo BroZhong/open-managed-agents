@@ -2,6 +2,7 @@ import { InMemoryModelProviderStore } from "./model-provider-store.js";
 export { InMemoryModelProviderStore } from "./model-provider-store.js";
 import { InMemoryEnvironmentStore } from "./environment-store.js";
 export { InMemoryEnvironmentStore } from "./environment-store.js";
+export { InMemoryEnvironmentBuildLogStore } from "./environment-build-log-store.js";
 import { InMemorySessionShareStore } from "./session-share-store.js";
 export { InMemorySessionShareStore } from "./session-share-store.js";
 import { InMemoryDelegationStore } from "./delegation-store.js";

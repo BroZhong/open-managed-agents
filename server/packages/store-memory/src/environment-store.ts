@@ -2,9 +2,13 @@ import {
   EnvironmentNameConflictError,
   environmentDefinitionSha256,
   newEnvironmentBuildId,
+  type ClaimedEnvironmentBuild,
   type Environment,
   type EnvironmentBaseImage,
   type EnvironmentBuild,
+  type EnvironmentBuildLease,
+  type EnvironmentBuildQueue,
+  type EnvironmentBuildRenewal,
   type EnvironmentOwner,
   type EnvironmentStore,
   type EnvironmentStoreCreateInput,
@@ -12,16 +16,29 @@ import {
   type SandboxEnvironmentRecord,
 } from "@oma-server/store";
 
+function validateLeaseMs(leaseMs: number): void {
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw new RangeError("Environment Build lease must be a positive integer of milliseconds");
+}
+
 type StoredEnvironment = Omit<Environment, "lastBuild"> & { lastBuildId: string; deletedAt: Date | null };
 
 const owns = (owner: EnvironmentOwner, env: StoredEnvironment) =>
   owner.ownerType === "platform" ? env.ownerType === "platform" : env.ownerType === "tenant" && env.tenantId === owner.tenantId;
 
-/** In-memory {@link EnvironmentStore} with the PostgreSQL store's semantics. */
-export class InMemoryEnvironmentStore implements EnvironmentStore {
+/**
+ * In-memory {@link EnvironmentStore} and {@link EnvironmentBuildQueue} with
+ * the PostgreSQL store's semantics. `now` stands in for the database clock
+ * that judges leases.
+ */
+export class InMemoryEnvironmentStore implements EnvironmentStore, EnvironmentBuildQueue {
   private environments = new Map<string, StoredEnvironment>();
   /** Insertion order is build order. */
   private builds: EnvironmentBuild[] = [];
+  private readonly now: () => Date;
+
+  constructor(options: { now?: () => Date } = {}) {
+    this.now = options.now ?? (() => new Date());
+  }
 
   async list(tenantId: string): Promise<Environment[]> {
     const visible = [...this.environments.values()].filter((env) => this.visible(tenantId, env));
@@ -121,8 +138,121 @@ export class InMemoryEnvironmentStore implements EnvironmentStore {
     return true;
   }
 
+  async rebuild(owner: EnvironmentOwner, id: string): Promise<Environment | null> {
+    const env = this.environments.get(id);
+    if (!env || env.deletedAt || !owns(owner, env)) return null;
+    const now = new Date();
+    this.supersedeActiveBuild(id, now);
+    env.lastBuildId = this.queueBuild(env, env.baseImage, env.initScript, now);
+    env.status = "pending";
+    return this.view(env);
+  }
+
   async listBuilds(environmentId: string): Promise<EnvironmentBuild[]> {
     return this.builds.filter((build) => build.environmentId === environmentId).reverse().map((build) => structuredClone(build));
+  }
+
+  async getBuild(environmentId: string, buildId: string): Promise<EnvironmentBuild | null> {
+    const build = this.builds.find((candidate) => candidate.id === buildId && candidate.environmentId === environmentId);
+    return build ? structuredClone(build) : null;
+  }
+
+  async claimBuild(owner: string, leaseMs: number): Promise<ClaimedEnvironmentBuild | null> {
+    if (!owner) throw new RangeError("Environment Build lease owner must not be empty");
+    validateLeaseMs(leaseMs);
+    const now = this.now();
+    const build = this.builds.find((candidate) => candidate.status === "pending" || (candidate.status === "running" && candidate.leaseExpiresAt! <= now));
+    if (!build) return null;
+    const reclaimed = build.status === "running";
+    build.status = "running";
+    build.attempts += 1;
+    build.leaseOwner = owner;
+    build.leaseExpiresAt = new Date(now.getTime() + leaseMs);
+    build.startedAt ??= now;
+    const env = this.environments.get(build.environmentId);
+    if (env && !env.deletedAt && env.lastBuildId === build.id) env.status = "building";
+    return {
+      build: structuredClone(build),
+      lease: { buildId: build.id, owner, attempt: build.attempts },
+      env: structuredClone(env?.env ?? []),
+      reclaimed,
+    };
+  }
+
+  async renewBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildRenewal> {
+    validateLeaseMs(leaseMs);
+    const build = this.builds.find((candidate) => candidate.id === lease.buildId);
+    if (build?.status === "superseded") return "superseded";
+    const held = this.held(lease, true);
+    if (!held) return "lost";
+    held.leaseExpiresAt = new Date(this.now().getTime() + leaseMs);
+    return "renewed";
+  }
+
+  async retryBuild(lease: EnvironmentBuildLease, leaseMs: number): Promise<EnvironmentBuildLease | null> {
+    validateLeaseMs(leaseMs);
+    const held = this.held(lease, true);
+    if (!held) return null;
+    held.attempts += 1;
+    held.leaseExpiresAt = new Date(this.now().getTime() + leaseMs);
+    return { ...lease, attempt: held.attempts };
+  }
+
+  async releaseBuild(lease: EnvironmentBuildLease): Promise<boolean> {
+    const held = this.held(lease, false);
+    if (held) held.leaseExpiresAt = this.now();
+    return !!held;
+  }
+
+  async recordBuildProgress(lease: EnvironmentBuildLease, progress: { baseImageDigest?: string; logKey?: string }): Promise<boolean> {
+    const held = this.held(lease, false);
+    if (!held) return false;
+    held.baseImageDigest = progress.baseImageDigest ?? held.baseImageDigest;
+    held.logKey = progress.logKey ?? held.logKey;
+    return true;
+  }
+
+  async succeedBuild(lease: EnvironmentBuildLease, result: { image: string; manifest: Record<string, unknown> }): Promise<boolean> {
+    return this.finish(lease, "succeeded", (build, env) => {
+      build.image = result.image;
+      build.manifest = structuredClone(result.manifest);
+      if (env) {
+        env.status = "ready";
+        env.image = result.image;
+        env.manifest = structuredClone(result.manifest);
+      }
+    });
+  }
+
+  async failBuild(lease: EnvironmentBuildLease, error: { code: string; message: string }): Promise<boolean> {
+    return this.finish(lease, "failed", (build, env) => {
+      build.errorCode = error.code;
+      build.errorMessage = error.message;
+      if (env) env.status = "failed";
+    });
+  }
+
+  /** The build `lease` holds; with `live`, only while the lease has not expired. */
+  private held(lease: EnvironmentBuildLease, live: boolean): EnvironmentBuild | undefined {
+    const build = this.builds.find((candidate) => candidate.id === lease.buildId);
+    if (!build || build.status !== "running" || build.leaseOwner !== lease.owner || build.attempts !== lease.attempt) return undefined;
+    if (live && !(build.leaseExpiresAt! > this.now())) return undefined;
+    return build;
+  }
+
+  /** End a held build; `record` gets its Environment only while the build is still the latest. */
+  private finish(
+    lease: EnvironmentBuildLease,
+    status: "succeeded" | "failed",
+    record: (build: EnvironmentBuild, env: StoredEnvironment | undefined) => void,
+  ): boolean {
+    const build = this.held(lease, false);
+    if (!build) return false;
+    build.status = status;
+    build.finishedAt = this.now();
+    const env = this.environments.get(build.environmentId);
+    record(build, env && !env.deletedAt && env.lastBuildId === build.id ? env : undefined);
+    return true;
   }
 
   private visible(tenantId: string, env: StoredEnvironment): boolean {
