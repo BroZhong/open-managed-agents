@@ -76,9 +76,14 @@ Measured on the agent-platform cluster on 2026-10-25:
   `name` (unique per Tenant), `description`, `baseImage` (`oma-base` or
   `oma-media`), `env`, `initScript`, `status`, `image` (the digest that serves
   Sandboxes), the last build and its manifest.
-- `status` is `pending`, `building`, `failed` or `ready`. Only a `ready`
-  Environment may be bound to an Agent or passed at Session creation; otherwise
-  the API answers 409 `environment_not_ready`.
+- `status` is `pending`, `building`, `failed` or `ready`. An Environment may be
+  bound to an Agent (explicitly, as the default, or resent by an edit) or
+  passed at Session creation iff it serves an `image`, whatever a rebuild in
+  progress or a failed rebuild; otherwise, when it has never built
+  successfully, the API answers 409 `environment_not_ready`. A Sandboxed Agent
+  that names none while `video-production` serves no image gets the same 409.
+  A Session whose Environment serves no image when a Sandbox is needed fails
+  that tool with the Sandbox unavailability reason `environment_has_no_image`.
 - Agents and Sessions reference the Environment by ID. Changing `initScript` or
   `baseImage` starts a rebuild; while it runs, Sandboxes keep using the current
   `image`; success replaces `image`, failure leaves it and records the error.
@@ -97,8 +102,9 @@ Measured on the agent-platform cluster on 2026-10-25:
   `Pillow` and `fonttools` constrained by the packages already present, and the
   read-only vfs-cli policy `/etc/vfs-cli/policy.json` that the pool mounted
   from a ConfigMap; the sing-box proxy (`HTTP(S)_PROXY`, with `NO_PROXY`
-  covering Aliyun and cluster addresses) as platform defaults; and the platform
-  secrets that `base-secret` provides today, declared one to one. The live
+  covering Aliyun and cluster addresses) as plain variables of its definition,
+  which a copy may override (not deployment-wide platform defaults); and the
+  platform secrets that `base-secret` provides today, declared one to one. The live
   image's recipe is the reference (branch `codex/sandbox-runtime-0.3.1`, image
   0.3.3), not the older recipe on main. It is the default for a new Sandboxed
   Agent that names no Environment.
@@ -213,12 +219,17 @@ Measured on the agent-platform cluster on 2026-10-25:
   Environment's variables, the Workspace variables; system-reserved names are
   rejected when the Environment is saved. The Host reads the Environment for
   each command (one primary-key read) and resolves Tenant secrets and platform
-  secret references only then. A Sandbox of a Session in an Environment is
-  created with the Workspace variables alone; Host-internal commands (the
-  Skill Install, Workspace mount checks, file primitives) do not receive the
-  Environment's variables (#307).
-- `span.sandbox_prepare_*` carries the Environment ID, image digest, whether the
-  claim swapped, and its duration.
+  secret references only then; the platform values (`base-secret`) are
+  re-read every 60 s, keeping the last good ones when a read fails, and a
+  reference they lack is left out and logged by name once per refresh.
+  Variables travel as the command's envd `envs` only, never in its command
+  string, so the `${NAME:-value}` profile convention is what keeps a profile
+  script from overriding them. A Sandbox is created with the Workspace
+  variables alone; Host-internal commands (the Skill Install, Workspace mount
+  checks, file primitives) do not receive the Environment's variables (#307).
+- `span.sandbox_prepare_*` carries the Environment ID and the image digest (a
+  claim's; for a reused Sandbox the binding's record), and, only when the
+  preparation claimed, whether the claim swapped and its duration.
 - `GET /v1/sessions/{id}` renames ADR-0023's `environment: {state, since,
   last_error}` to `sandbox`, and `environment` becomes `{id, name}` of the
   Session's Environment. The Redis control signal kind `environment` becomes
@@ -241,7 +252,8 @@ Measured on the agent-platform cluster on 2026-10-25:
 - Agents lose `sandbox.image` and `sandbox.env`; `sandbox.enabled` stays. Every
   Sandboxed Agent is bound to `video-production`; an Agent that set
   `sandbox.env` gets a Tenant copy of `video-production` with those variables.
-  Existing Sessions are frozen to `video-production`.
+  Existing Sessions are frozen to their Agent's resulting Environment: its copy,
+  or `video-production` (also for a Session whose Agent was deleted).
 - The `AUTO_STORY_*` and `OPENGROVE_WW_*` injections, the `oma-auto-story-env`
   Secret and their code are deleted. `SANDBOX_TEMPLATE` becomes the pool name.
 - `auto-story-v2` keeps serving production until the production release;
@@ -254,7 +266,8 @@ Measured on the agent-platform cluster on 2026-10-25:
   has the same definition. A Sandboxed Agent always has an Environment: one
   that names none is bound to `video-production`, and `SANDBOX_IMAGE` is gone;
   a Session that froze none (its Agent then ran without a Sandbox) uses its
-  Agent's.
+  Agent's. The rollback restores what the migration changed and deletes the
+  copies, keeping one that an Agent or Session created since still references.
 
 ## Considered options
 

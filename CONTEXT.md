@@ -177,7 +177,7 @@ _Avoid_: Tenant, home directory, snapshot, Turn output transaction
 ## Sandbox provisioning
 
 **Environment**:
-A named recipe for a Sandbox's software — a **Base Image**, an init script and environment variables — built once into an image. Agents and Sessions reference it by ID; only a ready Environment may be bound to an Agent or chosen for a Session, and a rebuild only replaces the image new Sandboxes start from. A Session freezes its Environment at creation; Child Sessions use their parent's. See ADR-0024.
+A named recipe for a Sandbox's software — a **Base Image**, an init script and environment variables — built once into an image. Agents and Sessions reference it by ID; only an Environment that serves an image (a rebuild in progress or failed keeps serving the last) may be bound to an Agent or chosen for a Session, and a rebuild only replaces the image new Sandboxes start from. A Session freezes its Environment at creation; Child Sessions use their parent's. See ADR-0024.
 _Avoid_: template, sandbox image, setup script, Environment Spec
 
 **Built-in Environment**:
