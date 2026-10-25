@@ -3,7 +3,7 @@
 ## Source and image
 
 - Source commit: `462e1ac15ca4891d113151e6927fd7354ade4f08`.
-- Branch: `codex/subagent-session-tab` (pushed; not merged into main).
+- Release source branch: `codex/subagent-session-tab`.
 - Built from the exact committed checkout on `vfs-dev`, using
   `deploy/scripts/build-images.sh --push web`.
 - Image tag: `462e1ac15ca4`.
