@@ -149,6 +149,48 @@ nothing; a concurrent edit returns a version conflict to retry. Skill file delet
 files in an existing Skill. Skill export is not an atomic snapshot and
 preserves unrelated local files.
 
+## Environments
+
+An Environment is what a Sandbox runs: a Base Image (`oma-base`, or `oma-media`
+with FFmpeg and CJK fonts), an init script and variables, built once into an
+image. Built-in Environments (ownerType platform, such as
+`env_video_production`) are listed first, are read-only and can be copied.
+
+```sh
+oma-cli environment list
+oma-cli environment create --name data --base-image oma-base --init-script @init.sh \
+  --env PIP_NO_CACHE_DIR=1 --env-file ./vars.env --secret-file ./secrets.env
+oma-cli environment create --from env_video_production --name video
+oma-cli environment get --environment-id env-example
+oma-cli environment update --environment-id env-example --env FOO=bar --unset OLD
+oma-cli environment update --environment-id env-example --init-script @init.sh
+oma-cli environment delete --environment-id env-example --yes
+```
+
+A new Environment, or one whose init script or Base Image changed, is pending
+until its build; changing variables, name or description never builds and
+applies to the next command. `--init-script` takes text, `@file` or `-`.
+`--env NAME=VALUE` and `--secret NAME=VALUE` repeat; `--env-file` and
+`--secret-file` read dotenv lines (`NAME=VALUE`, optional `export`, `#`
+comments, one pair of outer quotes removed, no expansion). Values must not be
+empty; all values together are at most 32 KiB, the script at most 256 KiB.
+Secrets are stored encrypted and never shown again: output lists their names
+with a secretRef only, and dry-run plans redact them. Prefer `--secret-file`
+over `--secret` to keep values out of shell history. Update merges the flags
+into the current variables (stored secrets are kept); `--body env` replaces
+the whole list instead. `--from` copies any visible Environment, including its
+secrets and the platform secrets of a built-in, which no other way provides.
+The platform reserves names it injects or a command's shell needs (HOME, PATH,
+USER, SHELL, PWD, the Workspace variables, OMA_*, E2B_*, ENVD_*, BASH_*) and
+provides PIP_INDEX_URL and NPM_CONFIG_REGISTRY defaults, which you may override.
+
+The init script runs once per build as root in /home/user with bash -euo
+pipefail; it can use apt-get, pip and npm (pointed at Aliyun mirrors) and sees
+the plain variables, not the secrets. Sandbox commands run as `bash -l -c`, so
+a variable every command should inherit from the image belongs in
+`/etc/profile.d/*.sh` as `export FOO="${FOO:-value}"`, which keeps an
+Environment variable of the same name in charge.
+
 ## Inputs, output and errors
 
 Flags can precede or follow command paths. IDs must be explicit. Missing input

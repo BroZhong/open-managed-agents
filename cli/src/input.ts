@@ -36,6 +36,8 @@ export function duration(value: unknown, param: string, zero = true): number {
   return n;
 }
 export function check(value: unknown, def: Flag, param: string): any {
+  if (def.repeat && Array.isArray(value))
+    return value.map((item) => check(item, { ...def, repeat: false }, param));
   if (def.type === "boolean") {
     if (typeof value !== "boolean") invalid("Expected a boolean", param);
   } else if (def.type === "integer") {
@@ -80,7 +82,7 @@ export function parse(
     const k = a.slice(2, split < 0 ? undefined : split);
     const def = Object.hasOwn(definitions, k) ? definitions[k] : undefined;
     if (!def) invalid("Unknown flag", `--${k}`);
-    if (k in flags) invalid("Repeated flag", `--${k}`);
+    if (k in flags && !def.repeat) invalid("Repeated flag", `--${k}`);
     if (def.type === "boolean") {
       if (split >= 0) invalid("Boolean flags do not accept a value", `--${k}`);
       flags[k] = true;
@@ -88,7 +90,7 @@ export function parse(
       const v = split >= 0 ? a.slice(split + 1) : argv[++i];
       if (v === undefined || v.startsWith("--"))
         invalid("Missing flag value", `--${k}`);
-      flags[k] = v;
+      flags[k] = def.repeat ? [...(flags[k] ?? []), v] : v;
     }
   }
   return { words, flags };
@@ -111,7 +113,13 @@ export function utf8(bytes: Uint8Array, param: string): string {
     throw e;
   }
 }
-async function textInput(path: string): Promise<string> {
+/** Literal text, `@path` for a UTF-8 file, or `-` for stdin (the --body convention). */
+async function textOrFile(value: string): Promise<string> {
+  if (value === "-") return textInput("-");
+  if (value.startsWith("@")) return textInput(value.slice(1));
+  return value;
+}
+export async function textInput(path: string): Promise<string> {
   if (path === "-") {
     const chunks: Buffer[] = [];
     for await (const c of process.stdin) chunks.push(Buffer.from(c));
@@ -183,7 +191,7 @@ export async function prepare(
       if (!provided[required])
         invalid(`--${k} requires --${required}`, `--${k}`);
   const stdin = Object.entries(provided).filter(
-    ([k, v]) => v === "-" && (k === "body" || defs[k]?.source === "text-file"),
+    ([k, v]) => v === "-" && (k === "body" || defs[k]?.source !== undefined),
   );
   if (stdin.length > 1) invalid("Only one stdin consumer is allowed");
   let body: Values = {};
@@ -211,7 +219,11 @@ export async function prepare(
     if (k in provided && def.field) {
       if (def.field in body) invalid(`Duplicate field ${def.field}`, "--" + k);
       body[def.field] =
-        def.source === "text-file" ? await textInput(flags[k]) : flags[k];
+        def.source === "text-file"
+          ? await textInput(flags[k])
+          : def.source === "text"
+            ? await textOrFile(flags[k])
+            : flags[k];
     }
   }
   for (const field of command.requiredBody ?? [])
@@ -224,7 +236,7 @@ export async function prepare(
   }
   if (command.confirm && !flags.yes && !flags["dry-run"])
     invalid("This operation requires --yes; inspect --dry-run first", "--yes");
-  for (const k of ["agent-id", "session-id", "skill-id", "workspace-id"])
+  for (const k of ["agent-id", "session-id", "skill-id", "workspace-id", "environment-id"])
     if (k in flags && typeof flags[k] === "string" && !flags[k])
       invalid("ID cannot be empty", "--" + k);
   command.validate?.(flags, body);

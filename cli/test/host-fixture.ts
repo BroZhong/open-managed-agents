@@ -5,6 +5,7 @@ import { createApp } from "../../server/packages/api/src/app.js";
 import { createMemoryStores } from "../../server/packages/store-memory/src/index.js";
 import { InProcessEventStreamHub } from "../../server/packages/event-log/src/index.js";
 import { SessionRouter } from "../../server/packages/session-router/src/index.js";
+import { EnvironmentService } from "../../server/packages/api/src/lib/environments.js";
 process.env.AUTH_DISABLED = "true";
 process.env.API_BASE_PATH = "";
 const stores = createMemoryStores();
@@ -56,10 +57,21 @@ stores.eventLogStore.append = async (sessionId, event) => {
   }
   return stored;
 };
+await stores.environmentStore.create({
+  id: "env_video_production",
+  owner: { ownerType: "platform" },
+  name: "video-production",
+  description: "Built-in",
+  baseImage: "oma-media",
+  initScript: "true\n",
+  env: [{ name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }],
+  encryptedSecrets: {},
+});
 const app = createApp({
   ...stores,
   eventStreamHub: hub,
   sessionRouter: router,
+  environmentService: new EnvironmentService(stores.environmentStore, "ab".repeat(32)),
 });
 const server = serve(
   { fetch: app.fetch, port: 0, hostname: "127.0.0.1" },

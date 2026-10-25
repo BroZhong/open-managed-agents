@@ -384,3 +384,33 @@ test("real Host resource workflows preserve private forks and Workspace deletion
       await rm(dir, { recursive: true, force: true });
     }
   }));
+test("CLI defines Environments against the real Host: pending, copied, secrets never shown", async () =>
+  withHost(async (_config, opts) => {
+    const secret = "integration-secret-value";
+    const call = async (args, code = 0) => {
+      const r = await run(args, opts);
+      assert.equal(r.code, code, r.stderr);
+      assert.doesNotMatch(r.stdout + r.stderr, new RegExp(secret));
+      return code === 0 ? r.data().data : r.error();
+    };
+    const env = await call([
+      "environment", "create", "--name", "data", "--base-image", "oma-base",
+      "--init-script", "pip install requests", "--env", "A=1", "--secret", `TOKEN=${secret}`,
+    ]);
+    assert.equal(env.status, "pending");
+    assert.deepEqual(env.env, [{ name: "A", value: "1" }, { name: "TOKEN", secretRef: { source: "environment", key: "TOKEN" } }]);
+    const listed = await call(["environment", "list"]);
+    assert.deepEqual(listed.map((x) => [x.id, x.ownerType, x.status]), [["env_video_production", "platform", "pending"], [env.id, "tenant", "pending"]]);
+    const updated = await call(["environment", "update", "--environment-id", env.id, "--env", "B=2", "--unset", "A"]);
+    assert.deepEqual(updated.env.map((x) => x.name), ["TOKEN", "B"]);
+    assert.equal(updated.lastBuild.id, env.lastBuild.id);
+    const rebuilt = await call(["environment", "update", "--environment-id", env.id, "--base-image", "oma-media"]);
+    assert.notEqual(rebuilt.lastBuild.id, env.lastBuild.id);
+    assert.equal((await call(["environment", "update", "--environment-id", "env_video_production", "--name", "x"], 4)).subtype, "environment_read_only");
+    assert.equal((await call(["environment", "create", "--name", "bad", "--base-image", "oma-base", "--env", "PATH=/x"], 2)).subtype, "environment_env_reserved");
+    const copy = await call(["environment", "create", "--from", "env_video_production"]);
+    assert.equal(copy.name, "video-production-copy");
+    assert.deepEqual(copy.env, [{ name: "GEMINI_API_KEY", secretRef: { source: "platform", key: "GEMINI_API_KEY" } }]);
+    await call(["environment", "delete", "--environment-id", env.id, "--yes"]);
+    await call(["environment", "get", "--environment-id", env.id], 3);
+  }));
