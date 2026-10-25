@@ -32,12 +32,18 @@ type Write = ReturnType<typeof journalWriter>;
 type Script = (input: AdapterInput, write: Write, attempt: number) => Promise<void>;
 
 /** Runners sharing one store and one gateway, each with its own Sandbox Manager; a lost Runner never renews or claims again. */
-async function harness(script: Script, claims: { poolImage?: string; sandboxImage?: string } = {}) {
+async function harness(script: Script, claims: { poolImage?: string; sandboxImage?: string; environmentImage?: string } = {}) {
   const stores = createMemoryStores();
+  // The Session's Environment, built, when the test names its image (ADR-0024).
+  const environment = claims.environmentImage === undefined ? undefined : await stores.environmentStore.create({
+    id: "env_tools", owner: { ownerType: "tenant", tenantId: "tenant" }, name: "tools", description: "", baseImage: "oma-base",
+    initScript: "", env: [], encryptedSecrets: {} });
+  if (environment) stores.environmentStore.succeedBuild(environment.id, claims.environmentImage!);
   const agent = await stores.agentStore.create({ tenantId: "tenant", name: "Test", model: "test", system: "test",
-    runtime: "pi-agent", sandbox: { enabled: true } });
+    runtime: "pi-agent", sandbox: { enabled: true }, environmentId: environment?.id });
   const workspace = await stores.workspaceStore.create({ tenantId: "tenant" });
-  const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id });
+  const session = await stores.sessionStore.create({ tenantId: "tenant", agentId: agent.id, agent, workspaceId: workspace.id,
+    environmentId: environment?.id });
   const gateway = new FakeSandboxClient({ poolImage: claims.poolImage });
   const attempts: AdapterInput[] = [];
   const adapter: Adapter = { async run(input) {
@@ -57,6 +63,7 @@ async function harness(script: Script, claims: { poolImage?: string; sandboxImag
     ...stores, eventStreamHub: hub, resolveAdapter: () => adapter,
     sandboxes: new DefaultTurnSandboxes({ manager: new DefaultSandboxManager({ sandboxClient: gateway, environment: "test" }),
       bindings: stores.delegationStore, sessions: stores.sessionStore, workspaceMount, sandboxImage: claims.sandboxImage,
+      environments: stores.environmentStore,
       onError: ({ error }) => errors.push({ owner: ownerId, error }) }),
     pendingClaimOwnerId: ownerId, pendingClaimLeaseMs: 100, pendingClaimRenewIntervalMs: 30,
     pendingClaimRetryMinMs: 10, pendingClaimRetryMaxMs: 20,
@@ -125,6 +132,23 @@ describe("a Turn's preparation records its Warm Pool claim (ADR-0024)", () => {
       ["span.sandbox_prepare_end", { turnId: expect.not.stringMatching(/^turn_1_/), prepareId: "1.1", outcome: "ready", sandboxId: h.gateway.created[0],
         durationMs: expect.any(Number) }],
     ]);
+    expect(h.errors).toEqual([]);
+  });
+
+  it("claims a Session's Sandbox with its Environment's image, and the span and the binding name the Environment", async () => {
+    const h = await harness(async (input, write) => {
+      await tool(input, write, `call_${input.turnId}`);
+      await answer(write);
+    }, { poolImage: POOL, sandboxImage: POOL, environmentImage: OTHER });
+    await h.turn("write a note");
+    const [sandboxId] = h.gateway.created;
+    expect(h.gateway.createOptsOf(sandboxId).image).toBe(OTHER);
+    expect(spansOf(await h.log()).filter(([type]) => type === "span.sandbox_prepare_end")).toEqual([
+      ["span.sandbox_prepare_end", { turnId: "turn_1_a1", prepareId: "1.1", outcome: "ready", sandboxId,
+        environmentId: "env_tools", image: OTHER, swapped: true, claimMs: 0, durationMs: expect.any(Number) }],
+    ]);
+    expect(await h.stores.delegationStore.withBindingLock(h.session.id, async (row) => ({ value: row })))
+      .toMatchObject({ sandboxId, environmentId: "env_tools", image: OTHER });
     expect(h.errors).toEqual([]);
   });
 });

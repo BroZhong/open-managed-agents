@@ -41,10 +41,10 @@ function sandboxEnvironmentFromEnv(env: HostEnv): SandboxEnvironment {
 }
 
 /**
- * The image every Sandbox is claimed with (ADR-0024): the Warm Pool's own
- * image for a plain claim, byte for byte, since the gateway compares the
- * references as strings; any other is swapped in place. From configuration
- * until the Session's Environment supplies it (#306).
+ * The image a Session without an Environment claims its Sandboxes with
+ * (ADR-0024): the Warm Pool's own image for a plain claim, byte for byte,
+ * since the gateway compares the references as strings; any other is swapped
+ * in place. A Session with an Environment claims with that Environment's.
  */
 function sandboxImageFromEnv(env: HostEnv): string {
   const image = env.SANDBOX_IMAGE?.trim();

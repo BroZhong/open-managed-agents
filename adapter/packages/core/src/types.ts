@@ -402,11 +402,13 @@ export interface SpanSandboxPrepareEndEvent extends BaseEvent {
   reason?: string;
   /**
    * `ready` after a preparation that claimed `sandboxId` from the Warm Pool
-   * (ADR-0024); absent when it connected to an existing Sandbox. `image`:
-   * the image digest it was claimed with. `swapped`: whether the claim
-   * replaced the warm Sandbox's container with that image in place (absent
-   * when unobserved). `claimMs`: how long the claim took.
+   * (ADR-0024); absent when it connected to an existing Sandbox.
+   * `environmentId`: the Session's Environment it was claimed for (absent
+   * without one). `image`: the image digest it was claimed with. `swapped`:
+   * whether the claim replaced the warm Sandbox's container with that image
+   * in place (absent when unobserved). `claimMs`: how long the claim took.
    */
+  environmentId?: string;
   image?: string;
   swapped?: boolean;
   claimMs?: number;

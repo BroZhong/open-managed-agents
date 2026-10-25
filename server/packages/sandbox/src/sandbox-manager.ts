@@ -28,8 +28,14 @@ export interface EnvSpec {
   workspaceId: string;
   workspaceMount: WorkspaceMountSpec;
   /**
-   * The image digest a Sandbox is claimed with (ADR-0024): from the Host's
-   * configuration until the Session's Environment supplies it (#306).
+   * The Session's Environment (ADR-0024), absent without one. The binding
+   * records it, with `image`, for each Sandbox created from this spec.
+   */
+  environmentId?: string;
+  /**
+   * The image digest a Sandbox is claimed with (ADR-0024): the Environment's
+   * when the Turn began, otherwise the Host's configured one. Only creation
+   * reads it: a running Sandbox keeps the image it was created with.
    */
   image?: string;
   env?: Record<string, string>;
@@ -205,13 +211,16 @@ export interface SkillInstallObserver {
   ended(outcome: { report: SkillInstallReport } | { error: unknown }): void;
 }
 
+/** A Warm Pool claim of a preparation, with the Environment it claimed the Sandbox for (absent without one). */
+export type PreparedClaim = SandboxClaim & { environmentId?: string };
+
 /** How one preparation of the Turn's Sandbox ended (ADR-0023). */
 export type SandboxPrepareOutcome =
   /**
    * The Sandbox is connected, or created, and its mount verified. `claim`:
    * this preparation claimed it from the Warm Pool (ADR-0024).
    */
-  | { outcome: "ready"; sandboxId: string; claim?: SandboxClaim }
+  | { outcome: "ready"; sandboxId: string; claim?: PreparedClaim }
   /**
    * The Turn-start connect found no Sandbox to connect: the recorded one is
    * gone, or the binding moved on. The first operation brings it to Ready.
@@ -448,7 +457,7 @@ class SandboxSessionImpl implements SandboxSession {
   /** What a Sandbox unavailability is recorded against (see recordFailure). */
   private known?: KnownRow;
   /** The Sandbox the running preparation claimed, and how (ADR-0024). */
-  private claimed?: { sandboxId: string; claim: SandboxClaim };
+  private claimed?: { sandboxId: string; claim: PreparedClaim };
 
   constructor(
     private readonly deps: SandboxManagerDeps,
@@ -679,7 +688,7 @@ class SandboxSessionImpl implements SandboxSession {
     return id;
   }
   /** The Warm Pool claim of Sandbox `id`, when the preparation that ends claimed it. */
-  private takeClaim(id: string): SandboxClaim | undefined {
+  private takeClaim(id: string): PreparedClaim | undefined {
     const claimed = this.claimed;
     this.claimed = undefined;
     return claimed?.sandboxId === id ? claimed.claim : undefined;
@@ -893,7 +902,8 @@ class SandboxSessionImpl implements SandboxSession {
       return undefined;
     }
     this.sandboxId = handle.id;
-    if (handle.claim) this.claimed = { sandboxId: handle.id, claim: handle.claim };
+    const { environmentId } = this.spec;
+    if (handle.claim) this.claimed = { sandboxId: handle.id, claim: { ...handle.claim, ...(environmentId ? { environmentId } : {}) } };
     await this.assertExecutable();
     // A known Sandbox whose mount fails verification stays recorded: the
     // next tool retries its preparation, not its creation.
@@ -914,7 +924,8 @@ class SandboxSessionImpl implements SandboxSession {
       // A Runner that reconciled the intent past its deadline adopted it already.
       if (binding.sandboxId === id) return { value: true };
       if (!holdsIntent(binding, notBefore)) return { value: false };
-      return { next: { ready: id }, value: true };
+      // What the Sandbox was created with (ADR-0024); an adopted one records neither.
+      return { next: { ready: id, environmentId: this.spec.environmentId ?? null, image: this.spec.image ?? null }, value: true };
     });
   }
   /** Under the binding lock; a row that moved on between the read and the write is decided again as it is now. */

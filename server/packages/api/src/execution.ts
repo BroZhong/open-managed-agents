@@ -58,7 +58,8 @@ export async function startExecution(deps: PgStores & {
   // and releases leases; bindings, resource uses and activity live behind it.
   const sandboxes = sandboxManager && workspaceMount ? new DefaultTurnSandboxes({
     manager: sandboxManager, bindings: deps.delegationStore, sessions: deps.sessionStore, workspaceMount, ...sandboxEnvPolicy,
-    sandboxImage: workspaceConfig?.sandboxImage,
+    // A Session's Environment supplies its image; the configured one serves Sessions without (ADR-0024).
+    sandboxImage: workspaceConfig?.sandboxImage, environments: deps.environmentStore,
     onError: reportDrainFailure,
   }) : undefined;
   const router = new SessionRouter({

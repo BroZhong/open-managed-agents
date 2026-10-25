@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
-import type { Agent, DelegationStore, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
+import type { Agent, DelegationStore, Environment, PendingEventFence, PendingEventStore, SandboxLifecycleStore, Session, SessionStore } from "@oma-server/store";
 import { DefaultSandboxManager, SandboxUnavailable, type SandboxPrepareOutcome } from "../src/sandbox-manager.js";
 import { FakeSandboxClient } from "../src/fake-sandbox-client.js";
 import { EMPTY_SKILL_SET, SkillInstallError, skillSetOf, type SkillSet } from "../src/skill-install.js";
@@ -50,8 +50,10 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       const errors: Array<{ sessionId: string; error: unknown }> = [];
       const sandboxes = new DefaultTurnSandboxes({ manager, bindings: stores.delegationStore, sessions: stores.sessionStore,
         workspaceMount, onError: (failure) => errors.push(failure), ...deps });
-      const session = (overrides: Partial<Agent> = {}, parent?: Session) => stores.sessionStore.create({
+      /** A Session; a Child of `parent` has its Environment, as the delegation store gives it. */
+      const session = (overrides: Partial<Agent> = {}, parent?: Session, environmentId?: string) => stores.sessionStore.create({
         tenantId: TENANT, agentId: agent.id, agent: { ...agent, ...overrides }, workspaceId: "ws_1",
+        environmentId: parent ? parent.environmentId : environmentId,
         ...(parent ? { delegation: { parentSessionId: parent.id, parentTurnId: "turn_1_a1", parentToolUseId: "call_agent", sandboxSessionId: parent.id } } : {}),
       });
       /** Queue an input and claim it: the Turn attempt's fence. */
@@ -76,7 +78,10 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
         return result;
       };
       const users = (bindingId: string) => stores.delegationStore.hasResourceUsers(bindingId);
-      return { stores, client, bundles, manager, open, errors, sandboxes, session, claim, ack, acquire, turn, users };
+      /** What the binding records of its Sandbox (ADR-0024). */
+      const origin = (bindingId: string) => stores.delegationStore.withBindingLock(bindingId,
+        async ({ sandboxId, environmentId, image }) => ({ value: { sandboxId, environmentId, image } }));
+      return { stores, client, bundles, manager, open, errors, sandboxes, session, claim, ack, acquire, turn, users, origin };
     }
 
     /** A Sandbox claimed for the binding that nothing recorded, as a lost create leaves one. */
@@ -369,6 +374,80 @@ export function turnSandboxesContract(name: string, createStores: () => Promise<
       expect(created.env).toMatchObject({ VFS_TOKEN: "agent", SHARED: "yes", OWN: "1", OPENGROVE_WW_ACCESS_TOKEN: "managed", HOME: "/home/user" });
       expect(created.env).not.toHaveProperty("OTHER");
       expect(h.client.workspaceContents(`${TENANT}/ws_1/`).get("saved.txt")?.content).toBe("x");
+      // A Session without an Environment records none for its Sandbox.
+      expect(await h.origin(session.id)).toEqual({ sandboxId: h.client.created[0], environmentId: null, image });
+    });
+
+    describe("a Session in an Environment (ADR-0024)", () => {
+      const digest = (n: number) => "registry.example/welltop/oma-environments@sha256:" + String(n).repeat(64);
+      const CONFIGURED = digest(1);
+      /** The Environments' serving images, as the store reads them when a Turn begins; a rebuild replaces one. */
+      function served(images: Record<string, string | null>) {
+        const reads: string[][] = [];
+        const environments = {
+          listForSessions: async (tenantId: string, ids: readonly string[]) => {
+            reads.push([...ids]);
+            return ids.filter((id) => tenantId === TENANT && id in images).map((id) => ({ id, image: images[id] }) as Environment);
+          },
+        };
+        return { images, reads, environments };
+      }
+
+      it("claims with the image its Environment serves when the Turn begins: a rebuild reaches new Sandboxes, a running one keeps its own", async () => {
+        const store = served({ env_video: digest(2) });
+        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        const prepares: SandboxPrepareOutcome[] = [];
+        const sandboxPrepares = { started: () => {}, ended: (outcome: SandboxPrepareOutcome) => { prepares.push(outcome); } };
+        const first = await h.session({}, undefined, "env_video");
+        await h.turn(first, (executor) => executor!.writeFile("a.txt", "1"), { sandboxPrepares });
+        const [original] = h.client.created;
+        expect(h.client.createOptsOf(original).image).toBe(digest(2));
+        expect(await h.origin(first.id)).toEqual({ sandboxId: original, environmentId: "env_video", image: digest(2) });
+        // The claim the preparation reports, for span.sandbox_prepare_end, names the Environment.
+        expect(prepares.filter((outcome) => outcome.outcome === "ready")).toEqual([
+          { outcome: "ready", sandboxId: original, claim: { environmentId: "env_video", image: digest(2), claimMs: expect.any(Number) } },
+        ]);
+
+        // A rebuild succeeds: the running Sandbox keeps its image, and its Child shares it.
+        store.images.env_video = digest(3);
+        expect(await h.turn(first, (executor) => executor!.readFile("a.txt"))).toBe("1");
+        const child = await h.session({}, first);
+        expect(await h.turn(child, (executor) => executor!.readFile("a.txt"))).toBe("1");
+        expect(h.client.created).toEqual([original]);
+        expect(await h.origin(first.id)).toEqual({ sandboxId: original, environmentId: "env_video", image: digest(2) });
+
+        // A new Session's Sandbox runs the new image.
+        const second = await h.session({}, undefined, "env_video");
+        await h.turn(second, (executor) => executor!.writeFile("b.txt", "2"));
+        expect(h.client.createOptsOf(h.client.created[1]).image).toBe(digest(3));
+        expect(await h.origin(second.id)).toEqual({ sandboxId: h.client.created[1], environmentId: "env_video", image: digest(3) });
+
+        // Once the old Sandbox is gone, the first Session's next one runs the new image too.
+        h.client.reclaim(original);
+        await h.turn(first, (executor) => executor!.writeFile("c.txt", "3"));
+        expect(h.client.created).toHaveLength(3);
+        expect(h.client.createOptsOf(h.client.created[2]).image).toBe(digest(3));
+        expect(await h.origin(first.id)).toEqual({ sandboxId: h.client.created[2], environmentId: "env_video", image: digest(3) });
+        expect(store.reads.every((ids) => ids.length === 1 && ids[0] === "env_video")).toBe(true);
+      });
+
+      it("never claims with the configured image for a Session whose Environment serves none, and reads none without one", async () => {
+        const store = served({ env_unbuilt: null });
+        const h = await setup({ sandboxImage: CONFIGURED, environments: store.environments });
+        for (const environmentId of ["env_unbuilt", "env_unknown"]) {
+          const session = await h.session({}, undefined, environmentId);
+          await h.turn(session, (executor) => executor!.writeFile("x.txt", "x"));
+        }
+        // The gateway rejects a create without an image (ADR-0024); the fake records the request.
+        expect(h.client.created.map((id) => h.client.createOptsOf(id).image)).toEqual([undefined, undefined]);
+        const plain = await h.session();
+        await h.turn(plain, async () => {});
+        expect(store.reads).toEqual([["env_unbuilt"], ["env_unknown"]]);
+        // An opted-out Agent reads nothing either.
+        const optedOut = await h.session({ sandbox: { enabled: false } }, undefined, "env_unbuilt");
+        expect(await h.acquire(optedOut, await h.claim(optedOut))).toBeNull();
+        expect(store.reads).toHaveLength(2);
+      });
     });
 
     it("reclaims a terminated Session's Sandbox once no other Session uses its binding", async () => {

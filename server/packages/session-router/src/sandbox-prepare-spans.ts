@@ -87,7 +87,7 @@ export class SandboxPrepareSpans implements SandboxPrepareObserver {
     this.running = undefined;
   }
 
-  private end(fields: Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "image" | "swapped" | "claimMs">): void {
+  private end(fields: Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs">): void {
     const running = this.running;
     if (!running || this.closed) return;
     this.running = undefined;
@@ -96,7 +96,7 @@ export class SandboxPrepareSpans implements SandboxPrepareObserver {
   }
 }
 
-function endOf(outcome: SandboxPrepareOutcome): Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "image" | "swapped" | "claimMs"> {
+function endOf(outcome: SandboxPrepareOutcome): Pick<SandboxPrepareEndData, "outcome" | "sandboxId" | "code" | "reason" | "environmentId" | "image" | "swapped" | "claimMs"> {
   switch (outcome.outcome) {
     // A preparation that claimed its Sandbox records the claim (ADR-0024).
     case "ready": return { outcome: "ready", sandboxId: outcome.sandboxId, ...outcome.claim };
